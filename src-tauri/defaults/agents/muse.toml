@@ -1,0 +1,13 @@
+# agents/muse.toml
+id          = "muse"
+name        = "Muse Code"
+description = "根据自然语言生成产品意图文档与任务清单"
+command     = "muse"                  # 可写二进制名字或绝对路径
+args        = ["exec", "{{prompt}}"] # 官方非交互入口；权限策略在 Muse 中配置
+cwd         = "{{workspace}}"
+stdin       = "none"                  # none | prompt
+timeout     = "30m"
+path        = []                      # 额外补全的 PATH 目录
+
+[env]
+# 可选的环境变量覆盖

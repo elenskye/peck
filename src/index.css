@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  /* Antigravity / Codex Dark Theme Tokens */
+  --bg-app: #0F1115;
+  --bg-panel: #14171C;
+  --bg-card: #181B21;
+  --bg-elevated: #1E222A;
+  --border-subtle: #262B34;
+
+  /* Geek Cyan / Teal Accent */
+  --accent: #00E5FF;
+  --accent-hover: #33EBFF;
+  --accent-muted: rgba(0, 229, 255, 0.12);
+
+  /* Status Colors */
+  --status-success: #10B981;
+  --status-running: #3B82F6;
+  --status-warning: #F59E0B;
+  --status-danger: #EF4444;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-app);
+  color: #E6EDF3;
+  font-family: var(--font-sans);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Allow text selection inside messages, code previews, and terminal output */
+.selectable-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* macOS Window Drag Regions */
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Custom Dark Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 148, 158, 0.22);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 255, 0.4);
+}
+
+.font-mono-code {
+  font-family: var(--font-mono);
+}

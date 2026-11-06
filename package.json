@@ -1,0 +1,40 @@
+{
+  "name": "peck",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Peck — 自然语言发令枪 + 文件变动看板 (macOS Tauri 2 Desktop App)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 1430 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 1430 --strictPort",
+    "check": "tsc --noEmit",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "app:install": "bash scripts/install-app.sh --install",
+    "app:package": "bash scripts/install-app.sh --build-only",
+    "clean:build": "bash scripts/clean-build.sh"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
+    "lucide-react": "^1.16.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "@tauri-apps/cli": "^2.5.0",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "tailwindcss": "^4.1.4",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

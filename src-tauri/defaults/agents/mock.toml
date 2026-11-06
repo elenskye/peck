@@ -1,0 +1,12 @@
+# agents/mock.toml
+id          = "mock"
+name        = "Peck Mock Agent"
+description = "开发测试专用模拟 Agent，模拟生成意图文档、任务清单与代码改动"
+command     = "peck-mock"
+args        = ["--prompt", "{{prompt}}", "--handoff", "{{handoff}}", "--write-files"]
+cwd         = "{{workspace}}"
+stdin       = "none"
+timeout     = "5m"
+path        = []
+
+[env]

@@ -1,0 +1,27 @@
+# flows/idea-to-code.toml
+id          = "idea-to-code"
+name        = "想法 → 代码"
+description = "Step 1 生成需求与任务，Step 2 实施代码变更"
+default     = true
+
+[[steps]]
+id          = "intent"
+agent       = "muse"
+title       = "意图与任务生成"
+prompt      = """
+{{input}}
+
+请完成以下两项输出：
+1. 将详细的设计与实现规范写入：{{handoff}}/intent.md
+2. 将需要实施的开发任务以 Markdown 复选框列表写入：.peck/tasks.md
+"""
+expects     = ["{{handoff}}/intent.md", ".peck/tasks.md"]
+
+[[steps]]
+id          = "build"
+agent       = "grok"
+title       = "代码构建与实施"
+prompt      = """
+请阅读需求规范文件 {{handoff}}/intent.md 以及任务清单 .peck/tasks.md。
+在当前工作区实施代码变更。每当完成一项任务，请将 .peck/tasks.md 中对应的复选框标记为 [x]。
+"""
