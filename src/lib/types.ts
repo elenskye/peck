@@ -61,7 +61,7 @@ export interface StepDescriptor {
   durationMs?: number;
   startedAt?: number;
   finishedAt?: number;
-  executionMode?: "mock" | "cli";
+  executionMode?: "mock" | "cli" | "api-mock" | "api-real";
   notice?: string;
 }
 
@@ -88,6 +88,7 @@ export interface RunRecord {
   steps: StepDescriptor[];
   tasks: TaskItem[];
   files: FileChangeItem[];
+  stepFiles?: Record<string, FileChangeItem[]>;
   logs: RawLogEntry[];
   summary?: string;
 }
@@ -120,9 +121,10 @@ export interface AgentInfo {
 }
 
 export type RunEvent =
+  | { type: "StepAdded"; payload: { runId: string; step: StepDescriptor } }
   | {
       type: "StepExecution";
-      payload: { runId: string; stepId: string; mode: "mock" | "cli"; notice: string };
+      payload: { runId: string; stepId: string; mode: "mock" | "cli" | "api-mock" | "api-real"; notice: string };
     }
   | {
       type: "RunStarted";

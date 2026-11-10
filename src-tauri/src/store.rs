@@ -67,12 +67,14 @@ pub struct RunRecord {
     pub steps: Vec<StepDescriptor>,
     pub tasks: Vec<TaskItem>,
     pub files: Vec<FileChangeItem>,
+    #[serde(default)]
+    pub step_files: std::collections::HashMap<String, Vec<FileChangeItem>>,
     pub logs: Vec<RawLogEntry>,
     pub summary: Option<String>,
 }
 
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -80,30 +82,9 @@ impl Store {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "PRAGMA foreign_keys = ON;
-            PRAGMA journal_mode = WAL;
-            CREATE TABLE IF NOT EXISTS workspaces (
-                id TEXT PRIMARY KEY, data TEXT NOT NULL, last_opened_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-                title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS runs (
-                id TEXT PRIMARY KEY, number INTEGER UNIQUE NOT NULL,
-                session_id TEXT NOT NULL REFERENCES sessions(id), record TEXT NOT NULL,
-                plan TEXT NOT NULL, snapshot TEXT);
-            CREATE TABLE IF NOT EXISTS steps (
-                id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-                step_index INTEGER NOT NULL, data TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
-                role TEXT NOT NULL, content TEXT NOT NULL, run_id TEXT REFERENCES runs(id),
-                created_at INTEGER NOT NULL);
-            CREATE INDEX IF NOT EXISTS sessions_workspace ON sessions(workspace_id, updated_at);
-            CREATE INDEX IF NOT EXISTS runs_session ON runs(session_id, number);
-            CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, created_at);",
-        )?;
+        let mut conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        crate::migrations::migrate(&mut conn, path)?;
         Ok(Self { conn })
     }
 
@@ -225,6 +206,7 @@ impl Store {
                 .collect(),
             tasks: vec![],
             files: vec![],
+            step_files: Default::default(),
             logs: vec![],
             summary: None,
         };
@@ -342,8 +324,8 @@ impl Store {
         )?;
         for step in &record.steps {
             tx.execute(
-                "UPDATE steps SET data=?1 WHERE id=?2 AND run_id=?3",
-                params![serde_json::to_string(step)?, step.id, record.id],
+                "INSERT INTO steps(id,run_id,step_index,data) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+                params![step.id, record.id, step.step_index, serde_json::to_string(step)?],
             )?;
         }
         tx.execute(
@@ -363,6 +345,7 @@ impl Store {
     pub fn record_event(&mut self, event: &RunEvent) -> StoreResult<()> {
         let run_id = match event {
             RunEvent::RunStarted { run_id, .. }
+            | RunEvent::StepAdded { run_id, .. }
             | RunEvent::StepStarted { run_id, .. }
             | RunEvent::StepExecution { run_id, .. }
             | RunEvent::StepOutput { run_id, .. }
@@ -374,6 +357,7 @@ impl Store {
         let mut run = self.run(run_id)?;
         let now = now_ms();
         match event {
+            RunEvent::StepAdded { step, .. } => run.steps.push(step.clone()),
             RunEvent::RunStarted { steps, .. } => {
                 run.steps = steps.clone();
                 run.status = RunStatus::Running;
@@ -450,6 +434,8 @@ impl Store {
                 changeset,
                 ..
             } => {
+                run.step_files
+                    .insert(step_id.clone(), changeset.files.clone());
                 if let Some(step) = run.steps.iter_mut().find(|s| s.id == *step_id) {
                     step.status = *status;
                     step.exit_code = *exit_code;

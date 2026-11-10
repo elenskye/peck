@@ -1,0 +1,60 @@
+/* 占位：手写，不是同步来的。Phase 2 视觉定稿、站主打 tag peck-v* 后，由 visual-atelier 的 sync 整个目录覆盖。 */
+/* 变量名照 schemes/peck/tokens/targets.json 的 web 方言（--color-*）；深色的值是现在界面在用的颜色，浅色取方案草稿。 */
+/* 根元素写 data-theme="dark" 用深色，不写是浅色（src/lib/theme.ts 负责写）。 */
+:root {
+  color-scheme: light;
+  --color-page: #F3F5F8;
+  --color-panel: #FAFBFC;
+  --color-card: #FFFFFF;
+  --color-raised: #ECF0F4;
+  --color-code: #F1F4F7;
+  --color-line: #DCE2E9;
+  --color-line-strong: #C3CCD6;
+  --color-text: #15202B;
+  --color-muted: #536273;
+  --color-faint: #66758A;
+  --color-accent: #00E5FF;
+  --color-on-accent: #04161B;
+  --color-accent-text: #007A8A;
+  --color-accent-soft: #DDF8FB;
+  --color-accent-line: #19B8CF;
+  --color-muse: #6B46F0;
+  --color-grok: #B4600A;
+  --color-api: #1D5BD6;
+  --color-success: #0B7A42;
+  --color-warning: #B45309;
+  --color-danger: #C62828;
+  --color-diff-add: #E6F6EC;
+  --color-diff-del: #FBE7E7;
+  --color-focus: var(--color-accent-line);
+  --color-running: var(--color-accent);
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-page: #0F1115;
+  --color-panel: #14171C;
+  --color-card: #181B21;
+  --color-raised: #1E222A;
+  --color-code: #0F1318;
+  --color-line: #262B34;
+  --color-line-strong: #35404D;
+  --color-text: #E6EDF3;
+  --color-muted: #B4BEC8;
+  --color-faint: #ADB7C2;
+  --color-accent: #00E5FF;
+  --color-on-accent: #04161B;
+  --color-accent-text: #00E5FF;
+  --color-accent-soft: rgba(0, 229, 255, 0.12);
+  --color-accent-line: #00E5FF;
+  --color-muse: #C6B5FF;
+  --color-grok: #FFB454;
+  --color-api: #8CC0FF;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-diff-add: #10301F;
+  --color-diff-del: #3A1A1A;
+}

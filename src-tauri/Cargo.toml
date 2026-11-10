@@ -1,6 +1,6 @@
 [package]
 name = "peck"
-version = "0.1.0"
+version = "0.3.0"
 description = "Peck — 自然语言发令枪 + 文件变动看板"
 authors = ["Peck Team"]
 edition = "2021"
@@ -19,7 +19,14 @@ serde_json = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.32.1", features = ["bundled"] }
+rusqlite = { version = "0.32.1", features = ["bundled", "backup"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "system-proxy", "json"] }
+zeroize = "1"
+time = { version = "0.3", features = ["parsing"] }
+rfd = "0.16.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [profile.dev]
 incremental = true

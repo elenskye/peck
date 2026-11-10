@@ -1,11 +1,14 @@
+// 浏览器 `?mock` 里替代 Rust IPC：数据来自 mockData.ts，只在内存，刷新重置。
 import {
   MOCK_AGENTS,
+  MOCK_API_TASKS,
   MOCK_DIFFS,
   MOCK_MESSAGES,
-  MOCK_RUN_104,
+  MOCK_RUNS,
   MOCK_SESSIONS,
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
+import type { ApiTask } from "@/lib/api";
 import type {
   AgentInfo,
   DiffResult,
@@ -18,16 +21,16 @@ import type {
   Workspace,
 } from "@/lib/types";
 
+const DEMO_NOTICE = "浏览器演示数据，没有调用真实 AI。";
 const emptyPreview = new URLSearchParams(window.location.search).has("empty");
 let workspacesState: Workspace[] = emptyPreview ? [] : [...MOCK_WORKSPACES];
 let sessionsState: Session[] = [...MOCK_SESSIONS];
 const messagesState: Record<string, Message[]> = structuredClone(MOCK_MESSAGES);
-const runsState: Record<string, RunRecord[]> = {
-  "sess-104": [structuredClone(MOCK_RUN_104)],
-  "sess-103": [],
-};
+const runsState: Record<string, RunRecord[]> = structuredClone(MOCK_RUNS);
+// 键是 `${runId}:${path}`；新发的任务也按这个键存。
 const diffsState: Record<string, DiffResult> = structuredClone(MOCK_DIFFS);
-let runCounter = 105;
+const apiTasksState: Record<string, ApiTask[]> = structuredClone(MOCK_API_TASKS);
+let runCounter = 13;
 
 const activeTimers = new Map<string, number[]>();
 const activeCallbacks = new Map<string, (event: RunEvent) => void>();
@@ -69,7 +72,7 @@ export const mockIpc = {
     const session: Session = {
       id: `sess-${Date.now()}`,
       workspaceId,
-      title: title || "新发令会话",
+      title: title || "新任务",
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -108,10 +111,10 @@ export const mockIpc = {
     const cleanPrompt = singleAgentMatch ? singleAgentMatch[2] || trimmed : trimmed;
 
     const isSingleStep = Boolean(singleAgentId);
-    const flowId = isSingleStep ? `single-${singleAgentId}` : "idea-to-code";
-    const flowName = isSingleStep
-      ? `单步直达 (@${singleAgentId})`
-      : "想法 → 代码";
+    const singleAgentName =
+      MOCK_AGENTS.find((a) => a.id === singleAgentId)?.name ?? singleAgentId ?? "";
+    const flowId = isSingleStep ? `single-${singleAgentId}` : "muse-grok";
+    const flowName = isSingleStep ? singleAgentName : "Muse → Grok";
 
     const steps: StepDescriptor[] = isSingleStep
       ? [
@@ -119,9 +122,8 @@ export const mockIpc = {
             id: `${runId}-step-1`,
             stepIndex: 0,
             agentId: singleAgentId!,
-            agentName:
-              MOCK_AGENTS.find((a) => a.id === singleAgentId)?.name ?? singleAgentId!,
-            title: `执行 @${singleAgentId} 指令`,
+            agentName: singleAgentName,
+            title: "跑完整个任务",
             status: "pending",
             expects: [],
           },
@@ -131,8 +133,8 @@ export const mockIpc = {
             id: `${runId}-step-intent`,
             stepIndex: 0,
             agentId: "muse",
-            agentName: "Muse Code",
-            title: "意图与任务生成",
+            agentName: "Muse",
+            title: "写规范",
             status: "pending",
             expects: [`.peck/handoff/${runNum}/intent.md`, ".peck/tasks.md"],
           },
@@ -140,8 +142,8 @@ export const mockIpc = {
             id: `${runId}-step-build`,
             stepIndex: 1,
             agentId: "grok",
-            agentName: "Grok Build",
-            title: "代码构建与实施",
+            agentName: "Grok",
+            title: "实施",
             status: "pending",
             expects: [],
           },
@@ -150,17 +152,17 @@ export const mockIpc = {
     const initialTasks: TaskItem[] = [
       {
         id: `${runId}-t1`,
-        text: `生成需求规范文档 (.peck/handoff/${runNum}/intent.md)`,
+        text: `写规范（.peck/handoff/${runNum}/intent.md）`,
         completed: false,
       },
       {
         id: `${runId}-t2`,
-        text: `拆解可执行任务清单 (.peck/tasks.md)`,
+        text: `列任务清单（.peck/tasks.md）`,
         completed: false,
       },
       {
         id: `${runId}-t3`,
-        text: `根据需求实施工作区代码变更并运行静态检查`,
+        text: `按规范改代码并自检`,
         completed: false,
       },
     ];
@@ -169,7 +171,7 @@ export const mockIpc = {
       prompt, status: "running", startedAt: Date.now(), steps: structuredClone(steps), tasks: [], files: [], logs: [] };
     runsState[sessionId] = [...(runsState[sessionId] ?? []), record];
     const onEvent = (event: RunEvent) => {
-      if (event.type === "StepStarted") record.steps = record.steps.map((s) => s.id === event.payload.stepId ? { ...s, status: "running", startedAt: Date.now(), executionMode: "mock", notice: "浏览器模拟执行，未调用真实 AI。" } : s);
+      if (event.type === "StepStarted") record.steps = record.steps.map((s) => s.id === event.payload.stepId ? { ...s, status: "running", startedAt: Date.now(), executionMode: "mock", notice: DEMO_NOTICE } : s);
       if (event.type === "StepOutput") record.logs.push({ id: `log-${record.logs.length}`, runId, stepId: event.payload.stepId, agentId: "mock", stream: event.payload.stream, chunk: event.payload.chunk, timestamp: Date.now() });
       if (event.type === "TasksUpdated") record.tasks = event.payload.items;
       if (event.type === "StepFinished") {
@@ -185,7 +187,7 @@ export const mockIpc = {
         activeCallbacks.delete(runId);
       }
       listener(event);
-      if (event.type === "StepStarted") listener({ type: "StepExecution", payload: { runId, stepId: event.payload.stepId, mode: "mock", notice: "浏览器模拟执行，未调用真实 AI。" } });
+      if (event.type === "StepStarted") listener({ type: "StepExecution", payload: { runId, stepId: event.payload.stepId, mode: "mock", notice: DEMO_NOTICE } });
     };
     activeCallbacks.set(runId, onEvent);
 
@@ -200,7 +202,9 @@ export const mockIpc = {
       id: `msg-a-${Date.now() + 1}`,
       sessionId,
       role: "assistant",
-      content: `已触发「${flowName}」发令流水线，正在调度底层 CLI 并监听工作区文件变动...`,
+      content: isSingleStep
+        ? `交给 ${flowName} 单个跑完整个任务。改动在右栏。`
+        : `交给 ${flowName}：Muse 先写规范，Grok 按规范实施。改动在右栏。`,
       runId,
       createdAt: Date.now() + 1,
     };
@@ -256,16 +260,16 @@ export const mockIpc = {
     });
 
     schedule(700, () => {
-      diffsState[intentPath] = {
+      diffsState[`${runId}:${intentPath}`] = {
         runId,
         stepId: step1.id,
         filePath: intentPath,
         kind: "create",
         language: "markdown",
-        additions: 28,
+        additions: 8,
         deletions: 0,
-        contentAfter: `# 意图规范文档 (Run #${runNum})\n\n> **用户指令**：${cleanPrompt}\n\n## 实施要点\n1. 解析当前工作区结构并生成变更方案；\n2. 更新 \`.peck/tasks.md\` 复选框任务；\n3. 保持只读边界与影子 Git 快照一致性。\n`,
-        unifiedDiff: `diff --git a/${intentPath} b/${intentPath}\nnew file mode 100644\n--- /dev/null\n+++ b/${intentPath}\n@@ -0,0 +1,8 @@\n+# 意图规范文档 (Run #${runNum})\n+\n+> **用户指令**：${cleanPrompt}\n+\n+## 实施要点\n+1. 解析当前工作区结构并生成变更方案；\n+2. 更新 \`.peck/tasks.md\` 复选框任务；\n+3. 保持只读边界与影子 Git 快照一致性。`,
+        contentAfter: `# 规范（任务 ${runNum}）\n\n> ${cleanPrompt}\n\n## 要点\n1. 先看项目结构，定改法；\n2. 任务清单写在 \`.peck/tasks.md\`，做一条勾一条；\n3. 只改项目里的文件，任务前有快照。\n`,
+        unifiedDiff: `diff --git a/${intentPath} b/${intentPath}\nnew file mode 100644\n--- /dev/null\n+++ b/${intentPath}\n@@ -0,0 +1,8 @@\n+# 规范（任务 ${runNum}）\n+\n+> ${cleanPrompt}\n+\n+## 要点\n+1. 先看项目结构，定改法；\n+2. 任务清单写在 \`.peck/tasks.md\`，做一条勾一条；\n+3. 只改项目里的文件，任务前有快照。`,
       };
 
       onEvent({
@@ -329,7 +333,7 @@ export const mockIpc = {
               {
                 path: intentPath,
                 kind: "create",
-                additions: 28,
+                additions: 8,
                 deletions: 0,
                 stepId: step1.id,
               },
@@ -341,7 +345,7 @@ export const mockIpc = {
                 stepId: step1.id,
               },
             ],
-            totalAdditions: 34,
+            totalAdditions: 14,
             totalDeletions: 0,
           },
         },
@@ -353,7 +357,7 @@ export const mockIpc = {
           payload: {
             runId,
             status: "succeeded",
-            summary: `单步任务 @${step1.agentId} 执行完成。`,
+            summary: `${flowName} 跑完了：改了 2 个文件。验证：演示数据，没有真实验证。`,
           },
         });
         clearRunTimers(runId);
@@ -413,7 +417,7 @@ export const mockIpc = {
             runId,
             stepId: step2.id,
             stream: "stdout",
-            chunk: `[grok] Shadow Git snapshot committed. All 3/3 tasks marked [x].`,
+            chunk: `[grok] 任务清单 3/3 已勾。`,
           },
         });
         onEvent({
@@ -444,7 +448,7 @@ export const mockIpc = {
           payload: {
             runId,
             status: "succeeded",
-            summary: `「想法 → 代码」双步流水线执行成功（Run #${runNum}）。`,
+            summary: `Muse → Grok 跑完了：Muse 写了规范，Grok 改了 1 个文件。验证：演示数据，没有真实验证。`,
           },
         });
         clearRunTimers(runId);
@@ -456,7 +460,7 @@ export const mockIpc = {
 
   async runCancel(runId: string): Promise<void> {
     clearRunTimers(runId);
-    activeCallbacks.get(runId)?.({ type: "RunFinished", payload: { runId, status: "cancelled", summary: "模拟任务已停止。" } });
+    activeCallbacks.get(runId)?.({ type: "RunFinished", payload: { runId, status: "cancelled", summary: "任务已停止。" } });
   },
 
   async runRetryStep(
@@ -465,9 +469,9 @@ export const mockIpc = {
     onEvent: (event: RunEvent) => void,
   ): Promise<void> {
     const record = Object.values(runsState).flat().find((r) => r.id === runId);
-    if (!record) throw new Error("未找到运行记录");
+    if (!record) throw new Error("没找到这个任务");
     const step = record.steps.find((s) => s.id === stepId);
-    if (!step) throw new Error("未找到步骤");
+    if (!step) throw new Error("没找到这个步骤");
     record.status = "running";
     step.status = "running";
     activeCallbacks.set(runId, (event) => {
@@ -490,7 +494,7 @@ export const mockIpc = {
           runId,
           stepId,
           stream: "stdout",
-          chunk: "[retry] Step re-executed successfully (exit code 0).",
+          chunk: "[grok] 这一步重跑完成（退出码 0）。",
         },
       });
       onEvent({
@@ -513,12 +517,12 @@ export const mockIpc = {
         payload: {
           runId,
           status: "succeeded",
-          summary: "步骤重试成功。",
+          summary: "这一步重跑完成。",
         },
       });
       record.status = "succeeded";
-      record.summary = "模拟步骤重试成功。";
-      record.steps = record.steps.map((s) => s.stepIndex >= step.stepIndex ? { ...s, status: "succeeded", executionMode: "mock", notice: "浏览器模拟执行，未调用真实 AI。" } : s);
+      record.summary = "这一步重跑完成。验证：演示数据，没有真实验证。";
+      record.steps = record.steps.map((s) => s.stepIndex >= step.stepIndex ? { ...s, status: "succeeded", executionMode: "mock", notice: DEMO_NOTICE } : s);
       record.tasks = record.tasks.map((t) => ({ ...t, completed: true }));
       activeCallbacks.delete(runId);
       activeTimers.delete(runId);
@@ -531,21 +535,28 @@ export const mockIpc = {
     stepId?: string,
     filePath?: string,
   ): Promise<DiffResult> {
-    const targetPath = filePath || ".peck/handoff/104/intent.md";
-    const found = diffsState[targetPath];
+    const record = Object.values(runsState).flat().find((r) => r.id === runId);
+    const targetPath = filePath || record?.files[0]?.path || ".peck/tasks.md";
+    const found = diffsState[`${runId}:${targetPath}`];
     if (found) {
       return { ...found, runId, stepId };
     }
+    // 新发的任务里没单独造 Diff 的文件，给一段通用的改动。
     return {
       runId,
       stepId,
       filePath: targetPath,
       kind: "modify",
       language: "typescript",
-      additions: 4,
-      deletions: 1,
-      unifiedDiff: `diff --git a/${targetPath} b/${targetPath}\n--- a/${targetPath}\n+++ b/${targetPath}\n@@ -1,3 +1,6 @@\n+// Updated by Peck Run ${runId}\n export const updated = true;\n`,
+      additions: 1,
+      deletions: 0,
+      unifiedDiff: `diff --git a/${targetPath} b/${targetPath}\n--- a/${targetPath}\n+++ b/${targetPath}\n@@ -1,2 +1,3 @@\n+// 任务 ${record?.number ?? runId} 改过这里（演示数据）\n export const updated = true;\n`,
     };
+  },
+
+  /** API 模式任务的调用与审查历史（右栏展开看）。 */
+  async apiTaskHistory(runId: string): Promise<ApiTask[]> {
+    return structuredClone(apiTasksState[runId] ?? []);
   },
 
   async agentsList(): Promise<AgentInfo[]> {
@@ -553,7 +564,7 @@ export const mockIpc = {
   },
   async agentGetConfig(agentId: string): Promise<string> {
     const agent = MOCK_AGENTS.find((a) => a.id === agentId);
-    if (!agent) throw new Error("未找到 Agent");
+    if (!agent) throw new Error("没找到这个 CLI");
     return configState[agentId] ?? `id = "${agent.id}"\nname = "${agent.name}"\ncommand = "${agent.command}"\nargs = ${JSON.stringify(agent.args)}\ncwd = "{{workspace}}"\nstdin = "none"\ntimeout = "${agent.timeout}"\npath = []\n\n[env]\n`;
   },
   async agentSaveConfig(agentId: string, content: string): Promise<void> {

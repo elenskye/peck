@@ -54,7 +54,7 @@ export const RawOutput: React.FC<RawOutputProps> = ({ logs }) => {
           )}
           <TerminalSquare className="h-3.5 w-3.5 text-[#00E5FF]" />
           <span className="font-medium text-[#C9D1D9]">
-            底层 CLI 原始输出 (Stdout / Stderr)
+            运行原始输出 (Stdout / Stderr)
           </span>
           <span className="font-mono-code rounded bg-[#1E222A] px-1.5 py-0.5 text-[10px] text-[#8B949E]">
             {logs.length} 行

@@ -1,56 +1,119 @@
-# Peck 架构设计与影子 Git 规范 (Architecture)
+# 技术架构
 
-## 1. 总体架构
+> 选型、数据存放、CLI 和 API 的接入层、代码位置。界面的用词和样子在 [design.md](./design.md)，怎么测在 [testing.md](./testing.md)。
 
-```mermaid
-flowchart LR
-  subgraph Frontend["Webview 前端 (React 19 + Tailwind 4)"]
-    Chat["左侧: ChatPanel & Composer"]
-    Board["右侧: ArtifactBoard (Timeline / Tasks / Diff / Raw)"]
-    IPC["lib/ipc.ts (Tauri invoke / ?mock 透明切换)"]
-  end
+## 选型
 
-  subgraph Backend["Tauri 2 Rust 后端 (src-tauri)"]
-    Cmd["commands.rs"]
-    Engine["run.rs + flow.rs + agent.rs"]
-    Proc["process.rs (tokio::process + pgid)"]
-    Shadow["snapshot.rs (Shadow Git bare repo)"]
-    Watcher["watch.rs + tasks.rs"]
-    DB["store.rs (SQLite peck.db)"]
-  end
+| 层 | 用什么 | 为什么 |
+|---|---|---|
+| 外壳 | Tauri 2（macOS） | 原生窗口、钥匙串、菜单栏、通知；包小 |
+| 界面 | React 19 + TypeScript + Tailwind 4，Vite 固定端口 1430 | 和 Pomelo 一样的栈；浏览器 `?mock` 能自检 |
+| 后端 | Rust | 模型请求、工具、CLI 进程、快照、SQLite 都在这里，界面只经 IPC 调 |
+| 存储 | SQLite（WAL）+ 影子 Git 仓库 | 记录和历史 Diff 分开存，重开都还在 |
 
-  Chat --> IPC
-  IPC <--> Cmd
-  Cmd --> Engine
-  Engine --> Proc
-  Engine --> Shadow
-  Watcher --> IPC
-  Cmd --> DB
-```
+不做：常驻辅助服务、通用插件框架、多层 Agent 网络、本地模型、云同步、开机自启。
 
----
+## 一个任务怎么跑
 
-## 2. 影子 Git 快照机制 (Shadow Git)
+一句话对应一个**任务**（代码里叫 Run）。任务开始前给项目拍一个**任务前快照**；任务里的每一段是一个**步骤**（Step / Task）；跑完留着，撤销是站主主动点。同一个项目同时只跑一个任务（v0.7 起不同项目能同时跑）。
 
-为了在不触碰用户工作区 `.git/index`、不产生任何临时 Commit 或 Stash 的前提下精确计算每一步的文件增删改 Diff，Peck 采用独立的裸仓库快照方案：
+| 谁来干 | 怎么执行 |
+|---|---|
+| 单个 CLI | 按清单起子进程，直接传参不经 shell，流式读输出；超时、停止都终止整个进程组 |
+| 先写规范再实施 | 前一个 CLI 写 `.peck/handoff/<任务号>/intent.md` 和 `.peck/tasks.md`，后一个读它们实施；界面里是一个任务两段 |
+| 单模型干活 | 请求 → 原生工具调用 → 串行执行 → 回传结果 → 下一轮，直到模型收尾或到上限 |
+| 规划 + 实施 | 规划的模型多两个工具：`delegate_task` 把边界明确的子任务交给实施的模型，`review_task` 记「通过 / 返工 / 接手」。子任务只拿到目标、必要上下文、写入范围和验收条件，不复制父对话 |
+| 单次请求（v0.6 起是右栏 ONE SHOT） | 现在不带工具，问一句答一句；挪进 ONE SHOT 后只给读文件的工具，CLI 用 PLAN 档答 |
 
-1. **存储路径**：
-   - `~/Library/Application Support/Peck/shadow/<workspace_md5>/`
-   - 初始化命令：`git init --bare`
-2. **快照生成 (`write-tree`)**：
-   - 注入环境变量 `GIT_DIR=<shadow_path>` 与 `GIT_WORK_TREE=<workspace_path>`。
-   - 强制追踪 `.peck/` 目录与工作区非忽略文件，执行底层 plumbing 命令生成 tree hash：
-     - `git add -A`
-     - `git write-tree`
-     - `git commit-tree <tree_id> -m "snapshot"`
-3. **步骤级 Diff 计算**：
-   - Step $k$ 启动前记录快照 $S_{k-1}$，结束后记录快照 $S_k$。
-   - 调用 `git diff <S_{k-1}> <S_k>` 获取标准 Unified Diff 文本，供前端 `DiffView` 解析染色。
+失败、取消、重开都不自动重发：可能已经生效的请求和命令不重放，继续由站主新发一个任务。
 
----
+## 数据存放
 
-## 3. 前后端通信契约
+| 内容 | 位置 |
+|---|---|
+| 正式数据 | `~/Library/Application Support/Peck/` |
+| 开发数据（`pnpm app:dev`） | `~/Library/Application Support/Peck Dev/` |
+| 项目、任务、步骤、消息、调用、工具记录、用量快照 | 数据目录里的 `peck.db`（schema v5，迁移在 `src-tauri/migrations/`） |
+| 任务前快照和历史 Diff | 数据目录里的 `shadow/<项目哈希>/` |
+| 真实 API 授权账本 | 固定在正式数据目录的 `api-budget.db`，测试目录、角色、别名都不重置 |
+| 命令用的 HOME 和缓存 | 数据目录里的 `worker-runtime/<项目哈希>/home/` |
+| CLI 清单 | 数据目录里的 `agents/*.toml`、`flows/*.toml`（第一次从 `src-tauri/defaults/` 复制） |
+| Key | macOS 钥匙串，服务名 `Peck API`、`Peck API Dev`、`Peck API Test` 分开，account `keys` |
 
-- **请求-响应 (`invoke`)**：由 `src/lib/ipc.ts` 统一封装 10 个命令（`workspace_open`, `workspace_list_recent`, `session_create`, `session_list`, `session_get_messages`, `run_dispatch`, `run_cancel`, `run_retry_step`, `changes_get_diff`, `agents_list`）。
-- **流式事件 (`Channel<RunEvent>`)**：`run_dispatch` 与 `run_retry_step` 接收事件回调，实时推送 `RunStarted`、`StepStarted`、`StepOutput`、`TasksUpdated`、`FileTouched`、`StepFinished`、`RunFinished`。
-- **浏览器 `?mock` 降级**：当 URL 带有 `?mock` 参数或不在 Tauri Webview 容器内时，`src/lib/ipc.ts` 自动路由至 `src/dev/mockIpc.ts`。
+- `PECK_DATA_DIR`、`PECK_SHADOW_ROOT` 把数据和快照指到别处（测试用）；`PECK_API_MODE=mock|real` 强制 API 模拟或真实。开发和临时目录默认 API 模拟。
+- **升级**：旧库升级前用 SQLite Backup API 做一致性备份（含 WAL 里已提交的数据）；遇到比自己新的 schema 拒绝写入。改结构就加迁移、升版本号，不改旧记录的含义。
+- **任务前快照**：影子仓库用独立的 `GIT_DIR` 和 `GIT_WORK_TREE` 跑 `add`、`write-tree`、`commit-tree`、`diff`，不碰用户仓库的 index、commit、stash。每个任务和步骤存前后两棵树，重开还能看当时的 Diff。监听项目文件按忽略规则走，保留 `.peck/`。
+- **备份**：要保住历史 Diff，`peck.db` 和 `shadow/` 一起备份，退出 App 后再复制。
+
+## CLI 接入
+
+一家 CLI 一份 TOML 清单，加一家只加清单（v1.0 只接 Muse、Grok）。字段：`id`、`name`、`description`、`command`、`args`、`cwd`、`stdin`（`none` / `prompt`）、`timeout`（如 `30m`）、`path`（补 PATH，`~/` 展开）、`env`。参数里能用 `{{prompt}}`、`{{handoff}}`、`{{workspace}}`。设置里能改、会校验，下次任务生效；旧的内置参数精确匹配时自动迁移，保留自己改过的 `command`、`args`、`env`。
+
+| CLI | 命令 | 说明 |
+|---|---|---|
+| Muse Code | `muse exec {{prompt}}` | 设 `MUSE_NO_AUTO_UPDATE=1`；[官方非交互入口](https://dev.meta.ai/docs/muse-code/extending) |
+| Grok Build | `grok -p {{prompt}} --output-format plain --no-auto-update` | [官方说明](https://docs.x.ai/build/cli/headless-scripting) |
+| 假 Agent | `peck-mock --prompt {{prompt}} --handoff {{handoff}} --write-files` | 内置，不推理，开发和验收用 |
+
+- 两家 CLI 装在仓库根目录 `cli/muse/`、`cli/grok/`（官方发布文件，关自动更新）。正式数据目录里的清单写绝对 `command`，内置清单不写机器路径；Finder 启动不继承终端的 PATH。
+- 登录（在仓库根目录跑，按提示用订阅账号授权）：`./cli/muse/muse login`、`./cli/grok/grok --no-auto-update login`（要浏览器回调加 `--oauth`）。已有 `META_API_KEY` 时 Muse 优先用它。
+- 检测只跑 `version`，看退出码；「检测到」不等于登录了、有额度。找不到可执行文件就不能选；认证、额度、权限、超时错误让任务停下，不当成成功。Peck 不默认加 `--yolo` 或关权限检查。
+- v0.5 起：权限三档 PLAN / EDIT / AUTO（`design.md`「权限」）、高危操作卡片、ASK 卡片、「让它调用 API 模型帮忙」都经 Peck 给 CLI 的本机 MCP 入口，清单里多一组能力字段。
+
+## API 接入
+
+| 供应商 | 协议 | 要点 |
+|---|---|---|
+| Anthropic | Messages | 内容、思考、签名块按顺序原样回传；运行中系统指令不变，剩余预算作为工具结果后的新消息追加，不破坏签名前缀 |
+| DeepSeek | Chat Completions | 原始 assistant 消息和 `reasoning_content` 原样回传 |
+| OpenAI | Responses | `store:false`，回传原生 output（含加密 reasoning）和 function_call |
+| Google Gemini | 官方 OpenAI 兼容接口 | 保留签名扩展 |
+| 阿里云百炼 | 兼容接口 | `enable_thinking`；北京 / 新加坡地域要和 Key 一致，可填业务空间 ID |
+
+- 内置模型 Claude Opus 5.5 和 DeepSeek Flash；其他模型在设置里加，思考能力、档位、工具支持要明确填，不按名字猜。
+- **每次 HTTP 发送**都走同一个 `request_once`，发送前在授权账本里占一次；没授权的模型拒绝发送；不隐式重试、降档、重定向。超时：连接 20 秒、读取 60 秒、整体 180 秒。
+- **Key**：Rust 读钥匙串，IPC 不返回 Key，不进配置、历史和模型上下文；看状态不加载 Key，真要用时才读。保存成功和认证成功分开显示。模拟模式的 Key 只在内存。
+- **文件工具**：列目录、读文件、搜索只接受相对路径，拒绝绝对路径、`..`、`.git` 和越界的符号链接；补丁先整批校验再写。
+- **命令工具**：`sandbox-exec` + 系统 `dyld-support.sb`，清空继承的环境；只读项目外，能写项目、专用 HOME 和临时目录；默认禁网（装依赖要显式开），默认 60 秒、最长 180 秒。沙箱起不来就不执行，不退回无限制。
+- **上限**（v0.6 起界面上只留一个花费上限，其他照存）：单模型默认 12 轮，规划 + 实施 24 轮；整个任务 80 次工具、180,000 上下文字节、500,000 tokens；最多委派 4 项，每项返工 1 次。所有角色共用一份；usage 未知就停下。
+- **导出**：调用记录能导出成脱敏 JSON（`schemaVersion=1`、`calls` 数组），不含 Key、绝对路径、提示词、回复、思考、工具参数；未知费用填 `null`。
+
+## 额度与花费
+
+- 现在的 `usage.rs` 和用量页照旧可用：API 记录（按 `source + requestId` 去重，缺 ID 的行无效）、DeepSeek 余额（只在真实 DeepSeek 请求进行中且 Key 已加载时自动查）、五家客户端额度卡（每 15 秒看进程，按来源约 60 秒查一次，客户端退出就停、留最后一次的快照，不推算满额、缺数据不填 0）。
+- Claude Code、Antigravity CLI 的额度靠官方状态栏事件：脚本随 App 打包在 `Peck.app/Contents/Resources/integrations/statusline.py`，只存额度、来源进程、账户标识和时间。接入是往 Claude Code 设置里**合并**（不替换整个文件）：
+  ```json
+  {"statusLine":{"type":"command","command":"/usr/bin/python3 '/Applications/Peck.app/Contents/Resources/integrations/statusline.py' --client claude-code"}}
+  ```
+  已有状态栏就在命令末尾加 `--forward-original '原有命令'`。
+- v0.5 起站主用 Peck 自己开发新的「额度与花费」（`src/quota/`、`src-tauri/src/quota/`），Agent 只留入口和数据接口、不写实现；接上以后旧的 `usage.rs` 和用量页退役，状态栏脚本搬到新模块名下。
+
+## 视觉
+
+- 视觉基线在 visual-atelier 的方案 `schemes/peck/`（0.1.0，2026-11-10 批）。站主在 visual-atelier 打 `peck-v<版本>` tag 后，本地账号 `npm run sync -- --scheme peck --to peck --tag peck-v<版本>` 单向复制进 `src/vendor/peck/`（清单是方案的 `sync.json`），带 `VERSION` 和 `SHA256SUMS`，不手改。
+- 同步来的：`peck.css`（Design System 的变量、字体样式类、两个字体的 @font-face）、`bundle.css`（`pk-` 组件）、`fonts/`（缝合像素 12、Departure Mono 和 OFL 原文）、`tokens.ts`、`marks/`（App 图标、A3、菜单栏模板图）、`DESIGN.md`、`peck-rules.md`、`DESIGN-SYSTEM.md` 和 `components/`（组件说明和示例）。云端开发看不到 visual-atelier，照这些做。
+- 同步以前 `src/vendor/peck/` 是一份手写的占位（`VERSION` 写 `placeholder`），只有 `peck.css` 的颜色变量。
+
+## 打包和签名
+
+- `pnpm app:package` 只打包、校验签名；`pnpm app:install` 打包并装进 /Applications，旧包先备份。`PECK_INSTALL_DIR` 改安装目标，`PECK_BUILD_PROFILE=debug` 打开发包。产物在 `src-tauri/target/release/bundle/macos/Peck.app`，`pnpm clean:build` 会删掉它，Dock 只固定 /Applications 里那份。
+- 默认用本机自签名证书 **Peck Self-Signed**（要在钥匙串里、信任代码签名）；`APPLE_SIGNING_IDENTITY` 换别的，设 `-` 是 ad-hoc。只给本机用，不是 Developer ID、没公证。
+- 版本号三处一起改：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`。
+
+## 代码位置
+
+| 位置 | 职责 |
+|---|---|
+| `src-tauri/src/{lib,commands,state,events}.rs` | 启动和恢复、IPC、共享状态、推给界面的事件 |
+| `src-tauri/src/{run,flow,agent,process,mock,mode}.rs` | 任务、先写规范再实施、CLI 清单、子进程、假 Agent、模式 |
+| `src-tauri/src/api/{mod,provider,profiles,keys,budget}.rs` | 统一请求、SSE、模型能力、Key、授权账本 |
+| `src-tauri/src/api/{worker,supervisor,tools,storage}.rs` | 单模型循环、规划 + 实施、文件和命令工具、API 记录 |
+| `src-tauri/src/{store,migrations}.rs`、`src-tauri/migrations/` | 历史存储和追加迁移 |
+| `src-tauri/src/{workspace,snapshot,watch,tasks}.rs` | 项目、任务前快照、文件监听、`.peck/tasks.md` |
+| `src-tauri/src/{usage,export}.rs`、`src-tauri/integrations/` | 旧的用量监控、原生保存面板、状态栏脚本 |
+| `src-tauri/defaults/` | 内置 CLI 清单和流程 |
+| `src/App.tsx`、`src/hooks/`、`src/lib/` | 界面编排、状态、类型化 IPC（`lib/ipc.ts` 在浏览器里转给 `?mock`） |
+| `src/components/` | 界面组件（Phase 3 换成三栏外壳） |
+| `src/dev/` | `?mock` 的假数据和假 IPC |
+| `src/vendor/peck/` | 同步来的视觉：样式、字体、图标、设计说明（不手改） |
+| `src/quota/`、`src-tauri/src/quota/` | 额度与花费，站主用 Peck 写（v0.5 起） |

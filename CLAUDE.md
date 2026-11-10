@@ -1,56 +1,110 @@
-# CLAUDE.md — Peck v0.1 架构准则与交接地图
+# CLAUDE.md
 
-> **当前任务方向（2026-11-06）**：按用户要求暂停 v0.1，待订阅后继续真实 CLI 验收。v0.2 的 API Supervisor / Worker 方案见 [架构建议](./docs/v0.2-architecture.md)，目前为设计草案，尚未实现；本轮不修改下述 v0.1 运行代码。后续实施 v0.2 时需同步更新旧架构边界与接口说明。
+Peck：只在站主自己的 Mac 上用的本地 Coding Agent（Tauri 2 + React + Rust + SQLite），调本机的 CLI（Muse Code、Grok Build）或 API 模型改代码。站主不是设计师、不是全职开发者，用自然语言指挥 Agent；规则只写在这一个文件，`AGENTS.md` 指向这里。
 
-> **当前开发进度 (Peck v0.1)**：
-> - ✅ **Phase 0**（脚手架、双栏暗色 UI、`?mock` 模式）已完成
-> - ✅ **Phase 1**（`agent.rs` 清单探测、`process.rs` 流式子进程与进程组终止、`mock.rs`）已完成
-> - ✅ **Phase 2**（`flow.rs` 路由、`run.rs` 多步状态机与失败暂停/重试、`events.rs` Channel 桥接）已完成
-> - ✅ **Phase 3**（`workspace.rs` `.gitignore` 注入、`snapshot.rs` 影子 Git 快照与 Diff、`watch.rs` 文件监听、`tasks.rs` 复选框解析）已完成
-> - ✅ **Phase 4 离线部分**：官方非交互参数、旧模板升级、配置编辑与诊断、单 Agent 入口、明确模拟状态已实现；真实 Muse/Grok 服务联调待验。
-> - ✅ **Phase 5 核心部分**：SQLite 历史保存、快照索引恢复、重开后重试、本机 ad-hoc 打包已实现；原生交互与对外签名公证单独待验。
-> - 最新交接与验证状态以 [HANDOFF.md](./HANDOFF.md) 为入口；实施蓝图见 [peck_architecture_plan.md](./peck_architecture_plan.md)。
+从 v0.4 起两个 Claude 账号分工：**云端账号**开发，**本地账号**验收（「两个账号」）。合并进 `main`、打 tag 都由站主做。
 
----
+## 开工前
 
-## 1. 铁律与边界原则 (Strict Rules)
+1. 读本文件、`docs/roadmap.md`（现在在哪个 Phase、定过什么）、`HANDOFF.md`（上一次做到哪、什么没验、有没有退回项）。定过的不重复问。
+2. 先认清自己是哪一边：在 Claude Code 网页版里、仓库从 GitHub 克隆来的，是云端账号；在站主的 Mac 上（`~/Documents/GitHub/personal-cli-studio/peck`）是本地账号。
+3. 要站主拍板的小事用提问功能问；没人答就按「默认取舍」做，记进 HANDOFF。只有两种事必须停下等站主：视觉方案或原型要批、v1.0 发布。
+4. 文档和界面都用中文，专有名词保留英文（Muse、Grok、API、Key、Diff、MCP）。
 
-1. **目录边界**：
-   - 仅在 `personal-cli-studio/` 及其子目录 `personal-cli-studio/peck/` 内开发。
-   - **绝对禁止修改** `~/Documents/GitHub/pomelo`（仅只读参考）。
-2. **构建工具与端口**：
-   - 前端包管理器固定使用 `pnpm`；Vite 端口固定为 **`1430`**（严禁使用 `1420`）。
-   - Rust 测试在沙箱内可直接运行：`/Users/elenskye/.cargo/bin/cargo test --offline --manifest-path /Users/elenskye/Documents/GitHub/personal-cli-studio/peck/src-tauri/Cargo.toml`。
-3. **架构初心**：
-   - Peck 是**「自然语言发令枪 + 文件变动看板」**，通过本地工作区文件（`.peck/handoff/<run_id>/intent.md` 与 `.peck/tasks.md`）完成多 CLI 交接。
-   - 影子 Git 只在 `<app_data_dir>/shadow/<workspace_md5>/` 中使用底层 plumbing 命令生成快照，绝不污染用户仓库的 Index、Commit 或 Stash。
-4. **强制交接**：每次完成开发（含代码、配置与开发文档）必须在汇报前更新根目录 `HANDOFF.md`，记录完成内容、实际验证、遗留问题与下一步；未更新不得视为完成。
+## 两个账号
 
----
+| | 云端账号 | 本地账号 |
+| --- | --- | --- |
+| 是谁 | 另一个 Claude 账号，在 Claude Code 网页版里 | 站主 Mac 上的 Claude Code（现用账号） |
+| 做什么 | Phase 表里 v0.4 起的开发：代码、文档、`?mock` 假数据、测试（「云端开发」） | 验收云端的分支、出验收清单页、读回意见（「本地验收」）；视觉（visual-atelier、云端画布）和同步 `src/vendor/peck/` |
+| Git | 只往自己的分支提交、推送 | 不提交，改的文件留给站主提交 |
 
-## 2. 视觉设计令牌 (Antigravity / Codex Dark)
+Peck 仓库的版本 tag 叫 `v0.4.0` 这样，由站主打；visual-atelier 里的 `peck-v*` 是视觉方案的版本，是两回事。
 
-- **背景色阶**：`--bg-app: #0F1115` · `--bg-panel: #14171C` · `--bg-card: #181B21` · `--bg-elevated: #1E222A` · `--border-subtle: #262B34`
-- **强调色与状态色**：`--accent: #00E5FF` (`#33EBFF`) · 成功 `#10B981` · 运行中 `#3B82F6` · 警告 `#F59E0B` · 失败 `#EF4444`
-- **窗口融合**：macOS `titleBarStyle: "Overlay"`，红绿灯坐标 `(x: 18, y: 27.5)`。
+## 云端的边界
 
----
+云端账号只做下面允许的事；没写到的、拿不准的，写进 HANDOFF 交给站主，不自己扩。
 
-## 3. 代码地图
+- **只在自己的分支上**：每个版本一条分支，名字 `claude/peck-v0.4`、`claude/peck-v0.5`……开工先 `git fetch`：有这条分支就接着它做，没有就从最新的 `origin/main` 切出来；`main` 有新提交（站主合并了上一版、同步了视觉）就把 `main` 合进自己的分支。只提交、推送这一条分支。**不推 `main`、不合并进 `main`、不打 tag、不动别的分支、不开 PR、不 force push。**
+- **不建任何云端页面**：验收清单页、问卷、画布、Design System 都不建、不发、不改，不用 claude-artifacts 这类发布工具。验收清单页由本地账号出。
+- **只改这个仓库**：visual-atelier、Pomelo、站主的其他仓库都不碰。`src/vendor/peck/` 是同步来的，不改；视觉照它的 `DESIGN.md` 和 `docs/design.md`，要改视觉基线写进 HANDOFF 交给本地。
+- **不发真实请求**：不跑真实的 Muse、Grok，不发真实 API 请求，不碰 Key；只用 `?mock`、本地夹具和假 Agent。验收点里要真 CLI、真 API、原生 App 的那一半留给本地验收，HANDOFF 里写清哪些没验。
+- **不打包、不安装**：不跑 `pnpm app:install`、`pnpm app:package`。
+- 额度监测器的目录不碰（「边界」）；本文件的规则不改，要改写进 HANDOFF 提给站主。
+- 新加依赖写成 `^x.y.z`，在 HANDOFF 记一笔。
 
-### Rust 后端 (`src-tauri/src/`)
-- `lib.rs` / `commands.rs` / `state.rs`：Tauri 入口、工作区/会话/运行/Agent 配置 IPC；SQLite Store 与运行中任务上下文。
-- `agent.rs`：解析 `agents/*.toml`，补全系统 `PATH`，执行 `which` 与 `--version` 探测（含 4 项单测）。
-- `process.rs`：`tokio::process` 异步流式捕获 Stdout/Stderr、超时控制、Unix `process_group(0)` 整组终止（含 5 项单测）。
-- `mock.rs`：内置 `peck-mock` 模拟执行器（默认 3 秒三阶段流式日志输出与产物写入）。
-- `flow.rs`：解析 `flows/idea-to-code.toml`，支持 `@agent` 单步直达路由与多步模板渲染（含 3 项单测）。
-- `run.rs` / `events.rs`：多步顺序执行引擎、失败自动暂停、断点步骤重试与 `EventSink`（含 2 项单测）。
-- `workspace.rs` / `snapshot.rs` / `watch.rs` / `tasks.rs`：Phase 3 的工作区、影子 Git、文件监听与任务解析实现。
-- `store.rs`：SQLite 五张核心表、运行事件保存、消息/日志/任务/步骤恢复、异常退出识别与快照索引保存。
+## 云端开发
 
-### React 前端 (`src/`)
-- `App.tsx`：主界面编排，连接 `useWorkspace`、`useSession`、`useRunEvents` 与 `ipc.ts`。
-- `lib/ipc.ts` & `dev/mockIpc.ts`：自动识别 Tauri 环境与浏览器 `?mock` 模式。
-- `components/layout/`：`TitleBar.tsx`、`SplitPane.tsx`（默认左侧 420px）。
-- `components/chat/`：`ChatPanel.tsx`、`MessageList.tsx`、`RunCard.tsx`（含失败步骤重试按钮）、`Composer.tsx`（`⌘↩` 发送、`@agent` 切换）。
-- `components/board/`：`ArtifactBoard.tsx`、`StepTimeline.tsx`、`TaskChecklist.tsx`、`ChangeList.tsx`、`FilePreview.tsx`、`MarkdownView.tsx`、`DiffView.tsx`、`RawOutput.tsx`。
+云端每个会话照这个走。**状态只在 `docs/roadmap.md` 的 Phase 表「状态」列**（`未开始`、`进行中`、`等站主批`、`完成`），别处不另记。
+
+1. **读、切分支**：读本文件、`docs/roadmap.md`、`HANDOFF.md`；照「云端的边界」切到这个版本的分支，合进 `main` 的新提交。
+2. **先修退回项**：HANDOFF「退回项」里没写「已处理」的先修，修完在那一项后面写「已处理」。
+3. **找 Phase**：表里 `进行中` 的那一行就是现在做的。没有 `进行中`：上一行是 `完成` 就把下一行改成 `进行中` 开工。当前行是 `等站主批`：不做它，也不做依赖它的后面的 Phase。**上一个版本还没合进 `main` 就不开下一个版本**（比如 `origin/claude/peck-v0.4` 还不是 `origin/main` 的祖先，就不开 v0.5 的 Phase），只修退回项。都没得做就在 HANDOFF 记一行「等站主批 Phase N」或「v0.x 等本地验收」，然后结束，不空转。
+4. **做**：一次会话做一段（两小时内能收尾的量），只做这个 Phase 表里写的内容，不扩。验证照「验证」里云端能跑的那些。
+5. **收尾**（没做到不算完成）：
+   - Phase 做完：验收点里云端能验的都过了，「状态」改 `完成`，下一行改 `进行中`（要站主批的改 `等站主批`）；没验的那一半写进 HANDOFF 留给本地。
+   - 一个版本的 Phase 都 `完成`：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 的版本号改成那个版本；HANDOFF 写「v0.x 等本地验收」和给本地的验收清单草稿（每一项：验什么、在 App 里怎么做、云端已经验了什么）。不出页、不打包。
+   - 更新 `HANDOFF.md`：只留当前状态、这次做了什么、实际验证了什么、没做完的、退回项、下一步；不按轮次追加旧历史。
+   - 提交并推送这个版本的分支，提交说明用一句中文说做了什么。
+6. **结束时说清楚**：最后一句写「Phase N 继续 / Phase N 完成，下一个 Phase M / 等站主批 Phase N / v0.x 等本地验收（分支 `claude/peck-v0.x`）」四种之一。
+
+## 本地验收
+
+站主说「验收 v0.x」时，本地账号这样做：
+
+1. `git fetch`，在旁边开一个 worktree 检出云端的分支（`git worktree add ../peck-review origin/claude/peck-v0.x`），不动主工作区和站主没提交的改动。
+2. 在那里装依赖，全跑「验证」：`pnpm check`、全量 `cargo test`、`?mock` 明暗各看一遍、升级测试；`pnpm app:install` 装进 /Applications（旧包备份）；验收点要的真 CLI 冒烟、真 API 照「额度」。模拟、自动测试、原生交互、真实服务的结果分开记。
+3. 照 `docs/acceptance/README.md` 出这个版本的验收清单页（本地账号建，云端账号读不到别的账号的页），链接填进 roadmap「版本与验收清单」。
+4. 站主填完，`db_get` 读回：退回的项写进 worktree 里 `HANDOFF.md` 的「退回项」（每项一句：哪里不对、站主的原话）；全部通过就告诉站主可以合并。
+5. 本地改的文件（`docs/acceptance/v0.x.html`、roadmap 的链接、HANDOFF）都留在 worktree 里不提交，告诉站主：提交到云端的分支并推送，云端下一个会话就读得到退回项；全部通过后站主把分支合进 `main`、打 tag `v0.x.0`。
+6. 本地不修功能上的退回项，交回云端修；只有打包、签名、钥匙串这类只有 Mac 上能做的事本地修，并在 HANDOFF 写明。
+
+## 边界
+
+- 只在 `personal-cli-studio/` 里开发（云端只有 Peck 这一个仓库）。`~/Documents/GitHub/pomelo` 只读。
+- visual-atelier（`~/Documents/GitHub/visual-atelier`，只有本地账号碰）只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引（`schemes/README.md`、`canvases/README.md`）里 Peck 自己的那一行；动索引前先 `git status`，那份文件有别人没提交的改动就不动、把要加的那行写进 HANDOFF。不碰 `schemes/pomelo/`、`schemes/vermilion/`、`bench/`、`tooling/`、`docs/`、`ROADMAP.md`、`CHANGELOG.md`，除非站主针对这一次同意；不跑它的 `sync` 除非站主打了 `peck-v*` 的 tag。它的规矩读它的 `CLAUDE.md`，命令要先 `source ~/.nvm/nvm.sh && nvm use`（Node 22）。
+- **额度监测器是 Peck 自己的作业**：`src/quota/`、`src-tauri/src/quota/` 由站主用 Peck 开发，Agent 不写、不改、不「顺手修」；只读、评估、把 Peck 的改进项记下来。Peck 其他地方给它留的接口（导航入口、数据读取点）可以改。
+- 本地账号改任何文件但不提交，保留接手时已有的改动；`git status` 里有你不认识的改动，不动也不还原。
+- 不碰 Keychain 里的 Key 内容，不把 Key、绝对路径、提示词写进文档和验收页。不新增付费服务。
+- 用户的仓库只读写文件，不动它的 index、commit、stash；任务前快照在应用数据目录的影子仓库里。
+
+## 额度
+
+- 自检优先 `?mock`（浏览器 `http://localhost:1430/?mock`，假数据）和本地夹具，不发真请求。
+- 真实 CLI、API 调用只有本地账号在验收时做。
+- CLI（Muse、Grok）用站主已登录的订阅额度。每个版本的真实 CLI 调用只做验收点要求的冒烟：最多 3 个任务、每个不超过 12 轮，在 HANDOFF 记次数和结果；失败不静默重试。
+- API 的真实请求只用 `docs/roadmap.md`「现行授权」的剩余额度，每个 Phase 不超过 5 次尝试；其他模型没有授权就不发。调用前后把账本写进 roadmap。
+- 不用「你好」探针测额度，不用模型 turn 查余额。
+
+## 默认取舍
+
+问了没人答时这样做，并记进 HANDOFF：
+
+- 先保留功能、再收界面：入口一个不少，但从新外壳能到就行，旧组件能删就删。
+- 文案照 `docs/design.md` 的用词对照；没对照的按「站主看得懂的中文 + 英文专有名词」写，不写开发者口径（Worker、Run、Step、影子、台账）。
+- 看不准的视觉细节照 `src/vendor/peck/DESIGN.md`；没写到的取沉静的那一边（少一层颜色、短一点的动效）。
+- 要改数据库结构就加迁移、升版本号、旧库先备份；不改旧记录的含义。
+- 任务跑完默认留着，撤销是站主主动点；通知默认开，能关。
+
+## 验证
+
+- 前端：`pnpm check`；改了界面开 `?mock` 看一遍（明暗各一次），截图只放会话临时目录。
+- 后端：改到的模块跑 `cargo test --offline --manifest-path src-tauri/Cargo.toml`（`PECK_DATA_DIR`、`PECK_SHADOW_ROOT` 指到临时目录），带 `set -o pipefail`，不用 `| tail` 吞退出码。云端缺 Linux 的系统库编不过时，在 HANDOFF 写明没跑，留给本地。
+- 原生（只有本地）：`pnpm app:dev` 或装正式包后在 App 里走一遍验收点；模拟、自动测试、原生交互、真实服务的结果分开记，没验过的不写「通过」。
+- 升级（只有本地）：旧数据目录复制一份再用新版打开，数据都在、备份生成。
+- 日常只跑和改动相关的最小验证；一个版本收尾才全跑。
+
+## 文档职责
+
+| 文件 | 内容 |
+| --- | --- |
+| `CLAUDE.md` | 规则（`AGENTS.md` 指向它） |
+| `README.md` | 是什么、怎么用、模块表、文档表 |
+| `HANDOFF.md` | 当前交接：做到哪、验了什么、没做完的、退回项、下一步 |
+| `docs/roadmap.md` | 现在、定位、Phase 表（唯一的状态来源）、验收清单链接、现行授权 |
+| `docs/architecture.md` | 选型、数据存放、CLI 和 API 接入层、代码位置 |
+| `docs/design.md` | 用词对照、布局、各处的样子（定值在 `src/vendor/peck/`） |
+| `docs/testing.md` | 怎么测 |
+| `docs/acceptance/` | 验收清单页的模板和出页办法 |
+
+文档只写结论，不写过程、不写验证报告式的流水；旧的阶段总结、历史日志不另建。

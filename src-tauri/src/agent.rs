@@ -359,17 +359,23 @@ pub async fn resolve_command_path(command: &str, augmented_path: &str) -> Option
 }
 
 /// Probe `--version` on a resolved executable with a short 2-second timeout.
-pub async fn probe_command_version(resolved_path: &Path, augmented_path: &str) -> Option<String> {
+pub async fn probe_command_version(
+    resolved_path: &Path,
+    augmented_path: &str,
+    env: &HashMap<String, String>,
+) -> Result<String, String> {
     let output = timeout(
         Duration::from_secs(2),
         Command::new(resolved_path)
             .arg("--version")
             .env("PATH", augmented_path)
+            .envs(env)
+            .kill_on_drop(true)
             .output(),
     )
     .await
-    .ok()?
-    .ok()?;
+    .map_err(|_| "--version 超时（2 秒）".to_string())?
+    .map_err(|e| format!("无法执行 --version：{e}"))?;
 
     let combined = if !output.stdout.is_empty() {
         String::from_utf8_lossy(&output.stdout).to_string()
@@ -377,11 +383,19 @@ pub async fn probe_command_version(resolved_path: &Path, augmented_path: &str) -
         String::from_utf8_lossy(&output.stderr).to_string()
     };
 
-    combined
+    let line = combined
         .lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
-        .map(|s| s.to_string())
+        .map(|s| s.to_string());
+    if !output.status.success() {
+        return Err(format!(
+            "--version 退出 {}：{}",
+            output.status,
+            line.as_deref().unwrap_or("没有输出")
+        ));
+    }
+    line.ok_or_else(|| "--version 没有输出".to_string())
 }
 
 /// Probe an `AgentManifest` and return its `AgentInfo`.
@@ -410,9 +424,12 @@ pub async fn probe_agent(manifest: &AgentManifest) -> AgentInfo {
 
     let augmented_path = build_augmented_path(&manifest.path);
     let resolved = resolve_command_path(&manifest.command, &augmented_path).await;
-    let version = match &resolved {
-        Some(path) => probe_command_version(path, &augmented_path).await,
-        None => None,
+    let (version, version_error) = match &resolved {
+        Some(path) => match probe_command_version(path, &augmented_path, &manifest.env).await {
+            Ok(version) => (Some(version), None),
+            Err(error) => (None, Some(error)),
+        },
+        None => (None, None),
     };
 
     AgentInfo {
@@ -426,9 +443,8 @@ pub async fn probe_agent(manifest: &AgentManifest) -> AgentInfo {
         diagnostic: if resolved.is_none() {
             "未找到可执行文件；请安装 CLI 或在配置中填写绝对路径。未安装时将明确标记为模拟执行。"
                 .into()
-        } else if version.is_none() {
-            "找到可执行文件，但版本探测失败；请在终端检查 --version 和 --help。认证与额度尚未验证。"
-                .into()
+        } else if let Some(error) = version_error {
+            format!("找到可执行文件，但版本探测失败：{error}。认证与额度尚未验证。")
         } else {
             "已检测到 CLI；认证、额度与工作区权限需由 CLI 配置，尚未验证真实调用。".into()
         },

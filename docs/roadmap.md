@@ -1,30 +1,84 @@
-# Peck v0.1 开发阶段路线图 (Roadmap)
+# 开发路线
 
-> **版本安排（2026-11-06）**：用户要求暂放 v0.1，待订阅 Grok / Muse 后继续验收。v0.2 优先讨论 API Supervisor / Worker 方案，实施阶段建议见 [v0.2 架构文档](./v0.2-architecture.md)；以下仍保留 v0.1 的阶段状态，不代表 v0.2 已实现。
+## 现在
 
-> **当前进度**：Phase 0 ~ Phase 3 核心实现已落地；Phase 4 的离线接入与配置、Phase 5 的持久化与本机打包已实现。真实服务调用、原生交互与公开分发另行验收，详见 [HANDOFF.md](../HANDOFF.md)。无需同时订阅 Muse 和 Grok。
+**v0.3 收尾**（2026-11-10）。Phase 1 完成；Phase 2 视觉基线站主认了，Design System「Peck」导入了 visual-atelier（`schemes/peck/`，`0.1.0`），等站主在 visual-atelier 提交、打 tag `peck-v0.1.0`，本地账号同步进 `src/vendor/peck/`，Phase 2 就完成。**v0.4 起在云端开发**：另一个 Claude 账号在自己的分支上做，本地账号验收（`CLAUDE.md`「两个账号」）。/Applications/Peck.app 还是 `0.2.0-alpha.4`（v0.3 不打包）。
 
-| 阶段 | 阶段名称 | 核心交付模块 | 状态 |
-|---|---|---|---|
-| **Phase 0** | 项目脚手架与双栏暗色框架 | Vite + React 19 + Tailwind v4（端口 1430）、Tauri Overlay 顶栏、`TitleBar` + `SplitPane` + 双栏看板、`?mock` 预览模式 | ✅ 已完成 |
-| **Phase 1** | Agent 清单体系与进程调度核心 | `agent.rs` (TOML + PATH `which`/`--version` 探测)、`process.rs` (流式捕获 + 超时 + `pgid` 进程组终止)、`mock.rs` (3s 模拟 Agent) | ✅ 已完成 |
-| **Phase 2** | Flow 编排引擎与统一事件流 | `flow.rs` (`idea-to-code` + `@agent` 路由)、`run.rs` (多步顺序执行 + 失败自动暂停 + 步骤重试)、`events.rs` (`Channel<RunEvent>` 桥接) | ✅ 已完成 |
-| **Phase 3** | 文件监听、影子 Git 与变动看板 | `workspace.rs` (`.gitignore` 自动注入 `.peck/`)、`snapshot.rs` (Shadow Git `write-tree` 快照与 Unified Diff)、`watch.rs`、`tasks.rs` | ✅ 已完成 |
-| **Phase 4** | CLI 接入配置与端到端验证 | 官方非交互参数、旧模板升级、配置编辑/重新检测、单 Agent 入口、模拟标记与失败暂停 | ✅ 离线部分完成；真实服务联调待验 |
-| **Phase 5** | 持久化与本机打包 | SQLite 五张表、历史/快照/重试恢复、ad-hoc 打包、备份旧包后安装、缓存只读检查 | ✅ 核心实现完成；原生交互与对外公证待验 |
+重构的方向是站主 2026-11-08 用问卷定的（答案在 visual-atelier 的 `canvases/peck-refactor-questionnaire/`），按下面的计划一路做到 v1.0。
 
----
+## 定位
 
-## 常用验证命令速查
+Peck 是只在站主自己的 Mac 上用的本地 Coding Agent：给它一个项目文件夹和一句话，它调本机装好的 CLI（Muse Code、Grok Build）或 API 模型（Anthropic、DeepSeek、OpenAI、Google Gemini、阿里云百炼）去改代码，改动看得见、整个任务能一键撤回。不跑本地模型。
 
-```bash
-# 1. 前端 TypeScript 严格检查 (在 peck/ 下)
-pnpm check
+两种模式，发任务时在「谁来干」里选：
 
-# 2. Rust 后端全量单元测试 (支持离线沙箱执行)
-cargo test --offline --manifest-path src-tauri/Cargo.toml
+| 模式 | 谁来干 | 说明 |
+| --- | --- | --- |
+| **CLI 模式** | Muse、Grok | 单个 CLI 跑完整个任务 |
+| | Muse → Grok、Grok → Muse | 双流水线：前一个写规范（意图和任务清单），后一个实施 |
+| | 以上任一 + 「让它调用 API 模型帮忙」 | CLI 跑任务时可以把子任务交给一个 API 模型（Peck 提供本机入口） |
+| **API 模式** | 单模型干活 | 一个模型带文件工具循环 |
+| | 规划 + 实施 | 一个模型规划和审查，另一个实施 |
 
-# 3. 浏览器 ?mock 预览模式 (固定端口 1430)
-pnpm dev
-# 访问 http://localhost:1430/?mock
-```
+单次请求不在「谁来干」里：它是右栏的 ONE SHOT，边干活边问，Muse、Grok 和配了 Key 的 API 模型都能答，能读项目、不改文件（`docs/design.md`「右栏」）。
+
+接入层对 CLI 通用（配置一份清单就能加一家），但 v1.0 只接 Muse、Grok 两家；第三家 v1.0 之后。
+
+## 怎么走
+
+- **一个版本号一组 Phase**，每个 Phase 1–3 天。云端账号在这个版本的分支上一个个做（`CLAUDE.md`「云端开发」），版本的 Phase 都做完就停下；本地账号装正式包、出**验收清单页**（云端页面，能勾、能写退回意见），站主在 App 里验收；退回的项写回 HANDOFF，云端先修；全部通过后站主合进 `main`、打 tag `v0.x.0`，云端再开下一个版本。
+- **停下来问站主的只有两种**：视觉方案或原型要批；v1.0 发布。其余自己走，小事用提问功能问，没人答按 `CLAUDE.md`「默认取舍」做并记进 HANDOFF。
+- **额度监测器是 Peck 自己的作业**：从 v0.5 起，站主用 Peck 真实开发「额度与花费」（监测其他 AI 客户端的订阅额度和 API 平台的余额，内嵌在 Peck 里）。Agent **不写**这个模块的代码（`src/quota/`、`src-tauri/src/quota/`），只在每个版本的验收清单里评估它：能不能跑、数据对不对、代码质量、Peck 在这次开发里哪里不顺手（这些才是 Peck 的改进项）。现在的 `usage.rs` 和用量页在它接上以前照旧可用，接上以后退役。
+- **视觉**：基线在 visual-atelier 的 `schemes/peck/`（Phase 2 定稿），单向同步进 `src/vendor/peck/`（带 `VERSION` 和校验和，不手改）。以后改视觉基线只由本地账号在站主开的会话里做，云端照同步来的副本做。
+- **自检用 `?mock`**：`pnpm dev` 后开 `http://localhost:1430/?mock`，假数据，刷新重置；原生用 `pnpm app:dev`（只有本地）。
+- **Git**：云端只推自己的分支；本地账号不提交；合并、tag 由站主做。
+
+## Phase
+
+状态只有四种：`未开始`、`进行中`、`等站主批`、`完成`。云端只认这一列。
+
+| Phase | 版本 | 内容 | 验收点 | 状态 |
+| --- | --- | --- | --- | --- |
+| 1 文档与底座 | v0.3 | 文档照 Pomelo 的样子重写；界面用词对照定稿；`?mock` 假数据按新流程重做；`src/vendor/peck/` 的目录和读取方式；版本号 `0.3.0` | 六份文档齐、口径一致；`pnpm check`、`cargo test` 通过；`?mock` 能开 | 完成 |
+| 2 视觉基线 | v0.3 | 在云端画布「[Peck Explore](https://claude.ai/artifact/2YJB1WKiiC6q7s6VmryCaR)」上四步：图形语言 → 外框小样 → 方案 → Design System「[Peck](https://claude.ai/artifact/KpUihg5AHn6cw1ggNTx6s1)」；导入 visual-atelier（`schemes/peck/`、`canvases/peck-explore/`），`scheme.json` 改 `approved`；站主打 tag `peck-v0.1.0`，本地账号 `sync` 进 `src/vendor/peck/`；`docs/design.md` 补上样子 | 站主四步都验收（11-10）；`npm run qa -- --scheme peck` 过；同步来的 `VERSION` 和校验和对 | 等站主批 |
+| 3 三栏外壳 | v0.4 | 新外壳：左栏项目和任务（打开先看项目列表，每个项目带最近几次任务；点进去是这个项目的任务列表），中栏对话（任务的提问、回答、总结），右栏四个页签（`docs/design.md`「右栏」）：这个 Phase 做 CHANGES（文件列表、Diff、任务前快照）和 FILES（只读预览，接现有的文件监听），ONE SHOT、TERM 先放页签和空状态。顶栏只剩项目名、模式、设置。一个「设置」面板（供应商、Key、花费上限、通知开关、权限模式、CLI 检测）替掉三个对话框；跟随系统明暗；字体、颜色、控件照 `src/vendor/peck/`（`pk-` 类名直接用）；舒适的疏密；旧的组件能删就删 | `?mock` 里三栏完整、明暗都对、字号 ≥ 12（代码 11 例外）；旧功能入口一个不少（都从新外壳能到）；`pnpm check` 过 | 未开始 |
+| 4 发任务与看任务 | v0.4 | 发任务：一句话 + 「谁来干」（CLI 模式 / API 模式两组选项）+ 权限；跑的时候：折叠的步骤（点开看输出）+ 改动列表；跑完：一段总结 + 验证结果，**默认留着**；「撤销整个任务」一键回到任务前快照；右栏 TERM：本机终端进程（pty），模型在跑任务时锁着、发任务前在跑的命令接着跑、做完解锁（`docs/design.md`「右栏」）；菜单栏小图标（有任务在跑时变样，用 `src/vendor/peck/marks/menubar/`）和 macOS 通知，设置里能关。版本号 `0.4.0` | `?mock` 走完发、看、撤三步；本地验收：装好后站主用假 Agent（设置里的开发者选项）走一遍 | 未开始 |
+| 5 CLI 顺手 | v0.5 | CLI 模式在新外壳里跑真实的 Muse、Grok：单个 CLI；Muse → Grok、Grok → Muse 双流水线（前一个的规范作为后一个的输入，界面里是一个任务两段）；权限三档 PLAN / EDIT（默认）/ AUTO（`docs/design.md`「权限」），高危的事开始前一张卡一次批；右栏 ONE SHOT 的 CLI 那半（Muse、Grok 用 PLAN 档答，能读项目、不改）；**ASK 卡片**：CLI 跑的时候能停下来问站主一个问题（通过 Peck 给 CLI 的本机入口），站主答了继续。接入层通用：一家 CLI 一份清单（命令、参数、输出格式、权限参数、能力），Muse、Grok 各一份，第三家只加清单 | ASK 和高危卡片在 `?mock` 里能出能答；本地验收：真实 Muse、Grok 各跑通一个小任务（冒烟，`CLAUDE.md`「额度」），双流水线两个方向各一次 | 未开始 |
+| 6 CLI 调 API | v0.5 | 「让它调用 API 模型帮忙」：CLI 在任务里把子任务交给一个 API 模型（Peck 的本机 MCP 入口），结果回到同一个任务；取消、归档都在一个任务里。额度监测器的目录和入口在 Peck 里留好（只留空壳和数据接口，不写实现）。版本号 `0.5.0`。**从这个版本起站主开始用 Peck 做额度监测器** | 用本地夹具走通委派；本地验收：一次真实委派（用现有授权） | 未开始 |
+| 7 API 模式 | v0.6 | 单模型干活、规划 + 实施两种都在新外壳里（单次请求挪进右栏 ONE SHOT：API 那半在这个 Phase 做，配了 Key 的模型只给读文件的工具，答完写花了多少）；供应商只显示配了 Key 的；选了没配 Key 的模型当场弹输入框；四个预算数字换成**一个花费上限**（按供应商价格表估算，未知的标未知）；授权账本和真实 / 模拟标记从界面收起（数据照存）；思考强度、模型选择留在「谁来干」里 | `?mock` 走完两种和 ONE SHOT；花费上限能拦住；本地验收：真实 DeepSeek 一次单模型任务（现有授权） | 未开始 |
+| 8 额度与花费 | v0.6 | **Peck 自己的作业**：站主用 Peck 开发「额度与花费」一页概览。Agent 这一 Phase 只做评估：读它的代码和数据，把评估和 Peck 的改进项写进 HANDOFF（本地出验收清单时放进去）；修 Peck 在这次开发里暴露的问题。Claude Code 状态栏脚本保留、搬到新模块名下。版本号 `0.6.0` | Peck 的改进项修完；本地验收：评估写进验收清单，状态栏脚本照旧工作 | 未开始 |
+| 9 多项目 | v0.7 | 同一个项目串行、不同项目同时跑；项目列表里看到每个项目在跑什么；菜单栏图标显示在跑的数量；关窗口不退出（菜单栏留着），⌘Q 才退出。版本号 `0.7.0` | `?mock` 两个项目同时跑；本地验收：一个真实 + 一个假的同时跑 | 未开始 |
+| 10 打磨 | v0.8 | 动效（calm 档：控件、步骤折叠、改动列表；招牌时刻：任务开始、任务完成、撤销），减弱动态效果跟系统；空状态；App 图标换成 Phase 2 定的 J2（设置里能换回现在的图标 A3，`src/vendor/peck/marks/`）；文案全文过一遍（中文为主、专有名词英文）；键盘走得通。版本号 `0.8.0` | 逐帧总览自检；`?mock` 过一遍；本地验收：原生过一遍 | 未开始 |
+| 11 收口 | v0.9 | 文档终稿（`design.md` 带样子，`testing.md` 带升级测试）；升级测试（旧数据目录升上来）、备份恢复真实走一遍（本地）；站主用 Peck 在一个**新项目**里做一个完整任务；额度监测器的终评。版本号 `0.9.0`，**停下等站主** | 站主验收 v0.9；额度监测器终评通过 | 未开始 |
+| 12 发布 | v1.0 | 站主批了 v0.9 和额度监测器后：版本号 `1.0.0`，本地打包、装；roadmap 精简到只剩 v1.0 之后的事（第三家 CLI、其他） | 站主说发布 | 未开始 |
+
+**不在 v1.0**：第三家 CLI；本地模型；通用 Provider 注册中心、自定义端点、worktree 调度、多层网络（没有真实需要不做）。
+
+## 版本与验收清单
+
+| 版本 | 内容 | 验收清单页 |
+| --- | --- | --- |
+| v0.3 | 文档与底座、视觉基线 | 不出页，站主在画布上批视觉 |
+| v0.4 | 新外壳、发任务与看任务 | 本地验收时填 |
+| v0.5 | CLI 顺手、CLI 调 API | 本地验收时填 |
+| v0.6 | API 模式、额度与花费（Peck 自己做） | 本地验收时填 |
+| v0.7 | 多项目 | 本地验收时填 |
+| v0.8 | 打磨 | 本地验收时填 |
+| v0.9 | 收口 | 本地验收时填 |
+
+验收清单页由本地账号出（`docs/acceptance/README.md`），站主在页上每一项勾「通过」或「退回」并写意见；本地账号读回，把退回项写进 HANDOFF，云端先修。
+
+## 和 Dawn Plan 的关系
+
+Dawn Plan（Pomelo v0.9 视觉，visual-atelier + Pomelo）优先。Peck 碰 visual-atelier 的只有本地账号，规则在 `CLAUDE.md`「边界」：只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里自己的那一行；Peck 的方案 tag 叫 `peck-v<版本>`，`sync` 只同步 `peck` 方案；Peck 不改 Pomelo 仓库的任何文件。
+
+## 现行授权
+
+真实 API 调用的累计账本（授权 ID `peck-v0.2-2026-11-06`，跨 Phase、会话、角色累计；一次 HTTP 发送尝试计一次，失败、取消、重试都计）。只有本地账号在验收时用：
+
+| 模型 | API ID | 累计上限 | 累计使用 | 剩余 |
+| --- | --- | ---: | ---: | ---: |
+| Claude Opus 5.5 | `claude-opus-5-5` | 20 | 7 | 13 |
+| DeepSeek Flash | `deepseek-flash` | 100 | 46 | 54 |
+
+账本固定在 `~/Library/Application Support/Peck/api-budget.db`，新目录、角色、别名不重置；其他模型没有授权就不发送。重构期间真实 API 调用只在 Phase 6、7 的本地验收各用几次（每个 Phase 不超过 5 次尝试），其余自检用 `?mock` 和本地夹具。CLI 用站主已登录的订阅额度，规则在 `CLAUDE.md`「额度」。

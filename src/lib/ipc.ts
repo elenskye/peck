@@ -18,9 +18,7 @@ declare global {
 
 export function isMockMode(): boolean {
   if (typeof window === "undefined") return true;
-  const params = new URLSearchParams(window.location.search);
-  if (params.has("mock")) return true;
-  // Automatically fall back to mock mode when opened in a standalone browser outside Tauri
+  // A native window always uses Rust IPC, including native API mock mode.
   return typeof window.__TAURI_INTERNALS__ === "undefined";
 }
 

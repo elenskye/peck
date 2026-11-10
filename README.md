@@ -1,90 +1,42 @@
 # Peck
 
-> **自然语言发令枪 + 文件变动看板** · macOS 原生桌面应用 (Tauri 2.0 + React 19 + Tailwind CSS v4)
+只在我自己的 Mac 上用的本地 Coding Agent：给它一个项目文件夹和一句话，它调本机装好的 CLI（Muse Code、Grok Build）或 API 模型（Anthropic、DeepSeek、OpenAI、Google Gemini、阿里云百炼）去改代码。改动看得见，整个任务能一键撤回。不跑本地模型，不联网同步。
 
-Peck 是一个极简、现代、克制的本地多 CLI 协同桌面工作台。它**不充当复杂的双 CLI 管道搬运工**，而是让所有本地 Agent CLI（如 **Muse Code**、**Grok Build** 及自定义 CLI）直接围绕本地工作区文件（`.peck/handoff/<run_id>/intent.md`、`.peck/tasks.md` 与项目源码）进行协同。
+Tauri 2 + React + TypeScript + Rust + SQLite。正在重构，做到哪了见[开发路线](docs/roadmap.md)。v0.4 起由另一个 Claude 账号在云端的分支上开发，我在本地验收、合并（规则在 [CLAUDE.md](CLAUDE.md)「两个账号」）。
 
----
+## 模块
 
-## 核心特性
+| 模块 | 用途 |
+|---|---|
+| 项目和任务 | 打开先看项目列表，每个项目带最近几次任务；点进去是这个项目的任务列表 |
+| 发任务 | 一句话 + 「谁来干」 + 权限（PLAN / EDIT / AUTO）：CLI 模式（Muse、Grok、Muse → Grok、Grok → Muse，可以让它调用 API 模型帮忙）或 API 模式（单模型干活、规划 + 实施） |
+| 看任务 | 折叠的步骤（点开看输出）、提问和回答、跑完的总结和验证结果 |
+| 右栏 | 四个页签：CHANGES（文件列表、Diff、任务前快照、「撤销整个任务」）、ONE SHOT（边干活边问，不改文件）、FILES（看项目文件）、TERM（我自己的终端，模型跑任务时锁着） |
+| 设置 | 供应商和 Key、花费上限、通知、权限、CLI 检测，都在一个面板里 |
+| 额度与花费 | 其他 AI 客户端的订阅额度、API 平台余额、本机花费。由我用 Peck 自己开发（v0.5 起） |
 
-1. **自然语言发令 (Dispatch)**
-   - 支持预设多步流水线（如默认 `idea-to-code`：Step 1 Muse 生成意图文档与任务清单 $\to$ Step 2 Grok 读取规范并实施代码构建）。
-   - 支持 `@agent` 单步直达语法（如 `@muse`、`@grok`、`@mock`）。
-   - 输入框可选择模拟 Agent、任意单 Agent 或双步流水线；不要求同时订阅两家。
-2. **无侵入观察 (Observe)**
-   - 自动维护工作区 `.gitignore`（追加 `.peck/` 防止污染用户 Git 仓库）。
-   - 基于**影子 Git 仓库 (Shadow Git)** 在每步前后生成毫秒级文件树快照（`git write-tree`），绝不触碰用户仓库的 Index、Commit 或 Stash。
-3. **高保真看板呈现 (Present)**
-   - **步骤时间线 (`StepTimeline`)**：实时追踪多步状态、耗时与失败重试。
-   - **任务复选框进度 (`TaskChecklist`)**：实时解析 `.peck/tasks.md` 中的 `- [ ]` / `- [x]` 任务进度。
-   - **文件变动与 Diff (`ChangeList` / `FilePreview`)**：支持 Markdown 规范渲染与 Unified / Split 双模式高亮代码 Diff。
-   - **底层原始输出 (`RawOutput`)**：默认折叠收起，需要排查时一键展开查看 Stdout / Stderr 终端流。
+## 怎么用
 
----
+- **安装或更新**：`pnpm app:install`，装进「应用程序」，旧包自动备份。新版第一次打开先备份、再升级数据库。
+- **CLI**：Muse、Grok 装在仓库根目录的 `cli/`，用订阅账号登录（命令见[技术架构](docs/architecture.md#cli-接入)），在设置里检测一下就能选。没登录的那家只是不能选，不影响别的。
+- **API**：在设置里填 Key（存在 macOS 钥匙串），只显示配了 Key 的供应商。真实请求有授权次数，见[开发路线](docs/roadmap.md#现行授权)。
+- **开发**：`pnpm dev` 后开 `http://localhost:1430/?mock` 看假数据；`pnpm app:dev` 是原生窗口，用开发数据目录。怎么测见[验证方法](docs/testing.md)。
 
-## 快速开始
+## 文档
 
-### 环境要求
-- **系统**：macOS (Apple Silicon M 系列推荐)
-- **Node.js**：v24+
-- **包管理器**：`pnpm` (`~/Library/pnpm/bin`)
-- **Rust**：stable 工具链 (`~/.cargo/bin`)
+| 文档 | 内容 |
+|---|---|
+| [开发路线](docs/roadmap.md) | 现在在哪个 Phase、每个 Phase 做什么、验收清单、授权账本 |
+| [技术架构](docs/architecture.md) | 选型、数据存放、CLI 和 API 的接入层、代码位置 |
+| [界面](docs/design.md) | 用词对照、布局、各处的样子 |
+| [验证方法](docs/testing.md) | `?mock`、原生、升级测试、真 CLI 和真接口的命令 |
+| [验收清单页](docs/acceptance/README.md) | 每个版本出给我验收的页面怎么做 |
+| [当前交接](HANDOFF.md) | 上一次做到哪、验了什么、下一步 |
+| [CLAUDE.md](CLAUDE.md) | 给 AI 编程助手的规则（[AGENTS.md](AGENTS.md) 指向它） |
 
-### 常用命令
+## 数据在哪里
 
-```bash
-# 安装依赖
-pnpm install
-
-# 启动前端开发服务器 (固定端口 1430，浏览器可访问 http://localhost:1430/?mock)
-pnpm dev
-
-# 启动 Tauri 桌面端开发模式
-pnpm app:dev
-
-# TypeScript 类型检查
-pnpm check
-
-# 构建并安装到 /Applications/Peck.app
-pnpm app:install
-
-# 仅打包 Release .app（本机 ad-hoc 签名，无需自签名证书）
-pnpm app:package
-
-# 检查并清理超过 20GB 的 Rust 编译缓存
-pnpm clean:build
-```
-
----
-
-## 浏览器 `?mock` 预览模式
-
-在未启动 Tauri 桌面外壳或尚未安装真实 CLI 时，可直接运行 `pnpm dev` 并在浏览器访问：
-
-```text
-http://localhost:1430/?mock
-```
-
-该模式会自动加载 `src/dev/mockIpc.ts` 与高仿真测试数据，完整支持：
-- 切换工作区与历史会话；
-- 在底部输入框发送新指令，实时观看 Step 1 (Muse) $\to$ Step 2 (Grok) 的流式推进、任务勾选与文件 Diff 生成；
-- 切换查看 `intent.md`、`.peck/tasks.md` 及代码文件的 Unified / Split Diff。
-
----
-
-浏览器演示使用内存数据，刷新会重置；真实 SQLite 历史由桌面端保存。首次打开项目流程可用 `http://localhost:1430/?mock&empty` 预览。
-
-## 文档导航
-
-- [v0.2 API Supervisor / Worker 架构建议（草案）](./docs/v0.2-architecture.md)
-- [最新开发交接与验证状态 (`HANDOFF.md`)](./HANDOFF.md)
-- [架构设计与分阶段实施蓝图 (`peck_architecture_plan.md`)](./peck_architecture_plan.md)
-- [编码规范与架构准则 (`CLAUDE.md`)](./CLAUDE.md)
-- [开发里程碑路线图 (`docs/roadmap.md`)](./docs/roadmap.md)
-- [业务需求与功能定义 (`docs/requirements.md`)](./docs/requirements.md)
-- [架构设计与影子 Git (`docs/architecture.md`)](./docs/architecture.md)
-- [视觉与交互设计规范 (`docs/design.md`)](./docs/design.md)
-- [测试与验证指南 (`docs/testing.md`)](./docs/testing.md)
-- [CLI 接入与无订阅开发 (`docs/cli-integration.md`)](./docs/cli-integration.md)
-- [本机打包、安装与历史数据 (`docs/packaging.md`)](./docs/packaging.md)
+- 正式数据：`~/Library/Application Support/Peck/`（`peck.db` 项目、任务和记录；`shadow/` 任务前快照；`api-budget.db` 真实 API 的授权账本；`worker-runtime/` 命令用的独立 HOME 和缓存）
+- 开发数据：`~/Library/Application Support/Peck Dev/`
+- Key：macOS 钥匙串，正式、开发、测试分开
+- 视觉基线：visual-atelier 的 `schemes/peck/`（Design System「[Peck](https://claude.ai/artifact/KpUihg5AHn6cw1ggNTx6s1)」），同步进 `src/vendor/peck/`（不手改）

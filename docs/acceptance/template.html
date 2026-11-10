@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peck 验收</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script id="acceptance-data" type="application/json">
+{
+  "version": "v0.x",
+  "title": "这个版本做了什么，一句话",
+  "installedAt": "2026-11-xx xx:xx",
+  "doc": "acceptance/v0.x",
+  "groups": [
+    {
+      "title": "Phase N 名字",
+      "items": [
+        { "id": "n-1", "what": "验什么，站主看得懂的一句话", "how": "在 App 里怎么做，一两步", "agent": "Agent 自己验过的结果：?mock / 原生 / 真实服务分开写；没验的写「没验」" }
+      ]
+    },
+    {
+      "title": "额度监测器（Peck 自己做的）",
+      "kind": "eval",
+      "items": [
+        { "id": "quota-run", "what": "能不能跑", "agent": "评估" },
+        { "id": "quota-data", "what": "数据对不对", "agent": "评估" },
+        { "id": "quota-code", "what": "代码质量", "agent": "评估" },
+        { "id": "quota-peck", "what": "Peck 在这次开发里哪里不顺手（这些是 Peck 的改进项）", "agent": "评估" }
+      ]
+    }
+  ]
+}
+</script>
+<style>
+:root {
+  --canvas: #e7eaee; --dot: #c6ccd4; --paper: #ffffff; --ink: #15181c; --muted: #56606b; --line: #cfd5dc;
+  --accent: #007a8a; --on-accent: #ffffff; --accent-soft: #ddf8fb; --pass: #0b7a42; --pass-soft: #e6f6ec; --ret: #c62828; --ret-soft: #fbe7e7;
+  --note: #fff4bf; --note-ink: #3d3410;
+  --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0c0f14; --dot: #262d37; --paper: #171c23; --ink: #e8eef4; --muted: #b4bec8; --line: #35404d;
+    --accent: #00e5ff; --on-accent: #04161b; --accent-soft: #0f2a30; --pass: #3ddc97; --pass-soft: #10301f; --ret: #ffa3a3; --ret-soft: #3a1a1a;
+    --note: #3a341a; --note-ink: #f5ebb8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas: #0c0f14; --dot: #262d37; --paper: #171c23; --ink: #e8eef4; --muted: #b4bec8; --line: #35404d;
+  --accent: #00e5ff; --on-accent: #04161b; --accent-soft: #0f2a30; --pass: #3ddc97; --pass-soft: #10301f; --ret: #ffa3a3; --ret-soft: #3a1a1a;
+  --note: #3a341a; --note-ink: #f5ebb8; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--canvas) radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 22px 22px; color: var(--ink); font: 15px/1.6 var(--sans); padding: 0 16px 80px; }
+main { max-width: 760px; margin: 0 auto; }
+header { padding: 40px 0 16px; }
+header h1 { margin: 0; font-size: 26px; line-height: 1.3; }
+header p { margin: 8px 0 0; color: var(--muted); }
+.save { position: fixed; top: 10px; right: 14px; font: 12px var(--mono); color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.save.bad { color: var(--ret); }
+section { margin-top: 28px; }
+section > h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .04em; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+.item { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+.item h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.item .how { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.item .agent { margin: 10px 0 0; padding: 8px 12px; background: var(--note); color: var(--note-ink); border-radius: 8px; font-size: 13px; white-space: pre-line; }
+.verdict { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.verdict button { font: 500 14px var(--sans); padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.verdict button[data-v="pass"][aria-pressed="true"] { background: var(--pass-soft); border-color: var(--pass); color: var(--pass); }
+.verdict button[data-v="return"][aria-pressed="true"] { background: var(--ret-soft); border-color: var(--ret); color: var(--ret); }
+textarea { width: 100%; margin-top: 10px; font: 14px/1.5 var(--sans); color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; min-height: 44px; }
+textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.overall textarea { min-height: 90px; }
+.submit { margin-top: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.submit button { font: 600 15px var(--sans); background: var(--accent); color: var(--on-accent); border: 0; border-radius: 999px; padding: 10px 20px; cursor: pointer; }
+.submit span { color: var(--muted); font-size: 13px; }
+.tally { font: 13px var(--mono); color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="save" id="save">连接中…</div>
+<main>
+  <header>
+    <h1 id="h1"></h1>
+    <p id="sub"></p>
+    <p class="tally" id="tally"></p>
+  </header>
+  <div id="groups"></div>
+  <section class="overall">
+    <h2>整体意见</h2>
+    <div class="item">
+      <h3>还有什么要说的</h3>
+      <textarea id="overall" placeholder="不想分项写的话，写在这里就行"></textarea>
+    </div>
+  </section>
+  <div class="submit">
+    <button id="submit">填完了</button>
+    <span id="submitted"></span>
+  </div>
+</main>
+<script>
+const DATA = JSON.parse(document.getElementById('acceptance-data').textContent);
+const DOC = DATA.doc;
+const LS_KEY = 'peck-acceptance-' + DATA.version;
+let state = { items: {}, overall: '', submitted: false, submittedAt: null, updatedAt: null };
+try { const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); if (s && s.items) state = Object.assign(state, s); } catch (e) {}
+let db = null, saveTimer = null, writing = false, dirty = false;
+const saveEl = document.getElementById('save');
+function setSave(t, bad) { saveEl.textContent = t; saveEl.classList.toggle('bad', !!bad); }
+function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {} }
+function touch(immediate) {
+  state.updatedAt = new Date().toISOString(); saveLocal(); tally();
+  if (!db) return;
+  clearTimeout(saveTimer); saveTimer = setTimeout(writeDb, immediate ? 0 : 500);
+}
+async function writeDb(retry) {
+  if (writing) { dirty = true; return; }
+  writing = true;
+  const body = { version: DATA.version, items: state.items, overall: state.overall, submitted: state.submitted, submittedAt: state.submittedAt, updatedAt: state.updatedAt };
+  try { await db.doc(DOC).set(body); setSave('已保存 · ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })); }
+  catch (e) {
+    if (e && e.code === 'unavailable' && !retry) { writing = false; setTimeout(() => writeDb(true), 800 + Math.random() * 800); return; }
+    setSave('保存失败，答案暂存在这台设备上', true);
+  }
+  writing = false;
+  if (dirty) { dirty = false; writeDb(); }
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function tally() {
+  const all = DATA.groups.flatMap(g => g.items);
+  const judged = all.filter(i => DATA.groups.find(g => g.items.includes(i)).kind !== 'eval');
+  const pass = judged.filter(i => state.items[i.id]?.verdict === 'pass').length;
+  const ret = judged.filter(i => state.items[i.id]?.verdict === 'return').length;
+  document.getElementById('tally').textContent = `${judged.length} 项 · 通过 ${pass} · 退回 ${ret} · 没看 ${judged.length - pass - ret}`;
+  document.getElementById('submitted').textContent = state.submitted ? '已交（' + new Date(state.submittedAt).toLocaleString('zh-CN') + '），改了还会自动保存' : '';
+}
+function render() {
+  document.getElementById('h1').textContent = `Peck ${DATA.version} 验收`;
+  document.getElementById('sub').textContent = `${DATA.title} · 装进 /Applications：${DATA.installedAt}`;
+  document.getElementById('groups').innerHTML = DATA.groups.map(g => `
+    <section><h2>${esc(g.title)}</h2>${g.items.map(i => {
+      const it = state.items[i.id] || {};
+      return `<div class="item" data-id="${esc(i.id)}">
+        <h3>${esc(i.what)}</h3>${i.how ? `<p class="how">${esc(i.how)}</p>` : ''}
+        ${i.agent ? `<p class="agent">${esc(i.agent)}</p>` : ''}
+        ${g.kind === 'eval' ? '' : `<div class="verdict">
+          <button type="button" data-v="pass" aria-pressed="${it.verdict === 'pass'}">通过</button>
+          <button type="button" data-v="return" aria-pressed="${it.verdict === 'return'}">退回</button>
+        </div>`}
+        <textarea placeholder="${g.kind === 'eval' ? '你的意见' : '退回的写哪里不对；通过也可以写想法'}">${esc(it.note)}</textarea>
+      </div>`; }).join('')}</section>`).join('');
+  document.getElementById('overall').value = state.overall || '';
+  tally();
+}
+document.getElementById('groups').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-v]'); if (!b) return;
+  const id = b.closest('.item').dataset.id;
+  const cur = state.items[id] || {};
+  cur.verdict = cur.verdict === b.dataset.v ? null : b.dataset.v;
+  state.items[id] = cur;
+  b.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.v === cur.verdict)));
+  touch();
+});
+document.getElementById('groups').addEventListener('input', (e) => {
+  const t = e.target; if (t.tagName !== 'TEXTAREA') return;
+  const id = t.closest('.item').dataset.id;
+  state.items[id] = Object.assign(state.items[id] || {}, { note: t.value });
+  touch();
+});
+document.getElementById('overall').addEventListener('input', (e) => { state.overall = e.target.value; touch(); });
+document.getElementById('submit').addEventListener('click', () => { state.submitted = true; state.submittedAt = new Date().toISOString(); touch(true); });
+render();
+(async () => {
+  try { db = window.claude && window.claude.use ? await window.claude.use('db') : null; } catch (e) { db = null; }
+  if (!db) { setSave('答案只存在这台设备上'); return; }
+  try {
+    const snap = await db.doc(DOC).get();
+    if (snap.exists) {
+      const d = snap.data();
+      if (!state.updatedAt || (d.updatedAt && d.updatedAt > state.updatedAt)) {
+        state.items = JSON.parse(JSON.stringify(d.items || {})); state.overall = d.overall || '';
+        state.submitted = !!d.submitted; state.submittedAt = d.submittedAt || null; state.updatedAt = d.updatedAt || null;
+        saveLocal(); render();
+      } else if (state.updatedAt && (!d.updatedAt || state.updatedAt > d.updatedAt)) writeDb();
+    } else if (Object.keys(state.items).length || state.overall) writeDb();
+    setSave('已连接 · 答案自动保存');
+  } catch (e) { setSave('暂时连不上存储，答案先存在这台设备上', true); }
+})();
+</script>
+</body>
+</html>

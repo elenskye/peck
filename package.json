@@ -1,7 +1,7 @@
 {
   "name": "peck",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Peck — 自然语言发令枪 + 文件变动看板 (macOS Tauri 2 Desktop App)",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "app:build": "tauri build",
     "app:install": "bash scripts/install-app.sh --install",
     "app:package": "bash scripts/install-app.sh --build-only",
-    "clean:build": "bash scripts/clean-build.sh"
+    "clean:build": "cargo clean --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
@@ -31,10 +31,5 @@
     "tailwindcss": "^4.1.4",
     "typescript": "~5.8.3",
     "vite": "^6.3.2"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

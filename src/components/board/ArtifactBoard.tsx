@@ -5,6 +5,7 @@ import { FilePreview } from "@/components/board/FilePreview";
 import { RawOutput } from "@/components/board/RawOutput";
 import { StepTimeline } from "@/components/board/StepTimeline";
 import { TaskChecklist } from "@/components/board/TaskChecklist";
+import { ApiTaskDetails } from "./ApiTaskDetails";
 import { ipc } from "@/lib/ipc";
 import type { DiffResult, RunRecord } from "@/lib/types";
 
@@ -26,7 +27,7 @@ export const ArtifactBoard: React.FC<ArtifactBoardProps> = ({
   // Filter files by step if a step is selected
   const visibleFiles = run
     ? selectedStepId
-      ? run.files.filter((f) => f.stepId === selectedStepId)
+      ? run.stepFiles?.[selectedStepId] ?? run.files.filter((f) => f.stepId === selectedStepId)
       : run.files
     : [];
 
@@ -106,11 +107,13 @@ export const ArtifactBoard: React.FC<ArtifactBoardProps> = ({
       <div className="shrink-0 space-y-2.5 border-b border-[#262B34] bg-[#0F1115] p-3">
         <StepTimeline
           steps={run.steps}
+          canRetry={run.status === "failed" || run.status === "cancelled"}
           selectedStepId={selectedStepId}
           onSelectStep={setSelectedStepId}
           onRetryStep={onRetryStep}
         />
         <TaskChecklist tasks={run.tasks} />
+        {run.flowId.startsWith("api-") && <ApiTaskDetails run={run} onSelectTask={(task) => {setSelectedStepId(task.stepId); setSelectedFilePath(task.changeset?.files[0]?.path ?? null);}} />}
       </div>
 
       {/* Middle Section: ChangeList + FilePreview (Markdown / Diff) */}

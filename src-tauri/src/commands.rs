@@ -216,6 +216,12 @@ pub async fn run_retry_step(
     let mut active = state.active_runs.lock().map_err(|e| e.to_string())?;
     let mut db = state.store.lock().map_err(|e| e.to_string())?;
     let mut record = db.run(&run_id).map_err(|e| e.to_string())?;
+    if record.flow_id.starts_with("api-") {
+        return Err(
+            "API 任务不会重放可能已执行的工具。请查看调用与工具历史，再从当前文件发起继续任务。"
+                .into(),
+        );
+    }
     if !matches!(record.status, RunStatus::Failed | RunStatus::Cancelled) {
         return Err("只有失败或中止的任务可以重试。".into());
     }

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { isMockMode } from "@/lib/ipc";
 import type { AgentInfo, Workspace } from "@/lib/types";
+import type { ApiMode } from "@/lib/api";
 import { cn, shortenHomePath } from "@/lib/utils";
 
 interface TitleBarProps {
@@ -22,6 +23,9 @@ interface TitleBarProps {
   onOpenAgentsDialog: () => void;
   onChooseWorkspace: () => void;
   disabled: boolean;
+  apiMode: ApiMode | null;
+  onOpenApi: () => void;
+  onOpenUsage: () => void;
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({
@@ -32,6 +36,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onOpenAgentsDialog,
   onChooseWorkspace,
   disabled,
+  apiMode,
+  onOpenApi,
+  onOpenUsage,
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [customPathInput, setCustomPathInput] = useState("");
@@ -202,6 +209,10 @@ export const TitleBar: React.FC<TitleBarProps> = ({
 
       {/* Right: Mock Mode Indicator + Agent Status Pill + Settings */}
       <div className="app-no-drag flex items-center gap-2">
+        <button onClick={onOpenUsage} className="rounded-md border border-[#00E5FF]/40 px-2.5 py-1 text-xs text-[#00E5FF]">用量监控</button>
+        <button onClick={onOpenApi} className={`rounded-md border px-2.5 py-1 text-xs ${apiMode === "real" ? "border-[#F59E0B]/40 text-[#F59E0B]" : "border-[#00E5FF]/40 text-[#00E5FF]"}`}>
+          API{apiMode ? ` · ${apiMode === "mock" ? "模拟" : "真实"}` : " 工作台"}
+        </button>
         {mockMode && (
           <span
             title="当前处于浏览器 ?mock 高仿真演示模式"
@@ -231,7 +242,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           className="flex items-center gap-1.5 rounded-md border border-[#262B34] bg-[#14171C] px-2.5 py-1 text-xs text-[#8B949E] transition-colors hover:border-[#373E4B] hover:bg-[#181B21] hover:text-[#E6EDF3]"
         >
           <Settings className="h-3.5 w-3.5" />
-          <span>设置</span>
+          <span>CLI 设置</span>
         </button>
       </div>
     </header>

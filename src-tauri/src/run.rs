@@ -125,7 +125,10 @@ pub async fn execute_run_from_step(
     sink.emit(RunEvent::RunFinished {
         run_id,
         status: RunStatus::Succeeded,
-        summary: format!("「{}」流水线全部步骤执行成功。", plan.flow_name),
+        summary: format!(
+            "「{}」执行器已结束，请核对任务清单、产物与验证结果。",
+            plan.flow_name
+        ),
     });
     RunStatus::Succeeded
 }
@@ -241,7 +244,15 @@ async fn execute_single_step(
     let step_id_for_logs = step.id.clone();
 
     let forward_task = tokio::spawn(async move {
+        let mut approval_blocked = false;
         while let Some(chunk) = output_rx.recv().await {
+            // Grok can exit 0 after refusing a tool in headless mode.
+            if chunk.stream == StreamType::Stderr
+                && chunk.chunk.starts_with("permission required:")
+                && chunk.chunk.contains("headless run cannot ask for approval")
+            {
+                approval_blocked = true;
+            }
             sink_for_logs.emit(RunEvent::StepOutput {
                 run_id: run_id_for_logs.clone(),
                 step_id: step_id_for_logs.clone(),
@@ -249,6 +260,7 @@ async fn execute_single_step(
                 chunk: chunk.chunk,
             });
         }
+        approval_blocked
     });
 
     let outcome = match run_process_streaming(spec, output_tx, cancel_rx).await {
@@ -282,9 +294,10 @@ async fn execute_single_step(
 
     // 3. Stop watcher (runs a final flush pass to emit any last-millisecond FileTouched / TasksUpdated)
     let watcher_touched = watcher.stop_and_flush().await;
-    let _ = forward_task.await;
+    let approval_blocked = forward_task.await.unwrap_or(false);
 
     let step_status = match outcome.status {
+        ProcessStatus::Succeeded if approval_blocked => StepStatus::Failed,
         ProcessStatus::Succeeded => StepStatus::Succeeded,
         ProcessStatus::Cancelled => StepStatus::Cancelled,
         ProcessStatus::Failed | ProcessStatus::TimedOut => StepStatus::Failed,
@@ -451,6 +464,55 @@ mod tests {
         )
         .await;
         assert_eq!(status, RunStatus::Failed);
+        std::fs::remove_dir_all(ws).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_headless_approval_block_is_failed_even_with_zero_exit() {
+        let ws = std::env::temp_dir().join(format!("peck-approval-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut grok = crate::agent::builtin_default_manifests()
+            .into_iter()
+            .find(|a| a.id == "grok")
+            .unwrap();
+        grok.command = "/bin/sh".into();
+        grok.args = vec![
+            "-c".into(),
+            "printf '%s\\n' 'permission required: Execute command was not run, as a headless run cannot ask for approval' >&2; exit 0".into(),
+        ];
+        let agents = vec![grok];
+        let plan = resolve_dispatch_plan(
+            "run-950003",
+            "@grok implement a feature",
+            ".peck/handoff/950003",
+            &ws.to_string_lossy(),
+            &agents,
+            &builtin_default_flows(),
+        )
+        .unwrap();
+        let (sink, events) = EventSink::new_memory();
+        let (_cancel, rx) = ProcessCancelHandle::new();
+        let status = execute_run_from_step(
+            "run-950003".into(),
+            ws.clone(),
+            ".peck/handoff/950003".into(),
+            plan,
+            agents,
+            0,
+            sink,
+            rx,
+            None,
+        )
+        .await;
+        assert_eq!(status, RunStatus::Failed);
+        assert!(events.lock().unwrap().iter().any(|event| matches!(
+            event,
+            RunEvent::StepFinished {
+                status: StepStatus::Failed,
+                exit_code: Some(0),
+                ..
+            }
+        )));
         std::fs::remove_dir_all(ws).unwrap();
     }
 

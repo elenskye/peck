@@ -79,7 +79,7 @@ pub struct ProcessOutcome {
 /// Handle allowing external callers (e.g. `run_cancel`) to abort a running process group.
 #[derive(Clone)]
 pub struct ProcessCancelHandle {
-    tx: watch::Sender<bool>,
+    pub(crate) tx: watch::Sender<bool>,
 }
 
 impl ProcessCancelHandle {
@@ -95,7 +95,7 @@ impl ProcessCancelHandle {
 
 /// Terminate an entire Unix process group (`-pgid`) as well as the direct child process.
 #[cfg(unix)]
-async fn terminate_process_group(pgid: Option<u32>) {
+pub(crate) async fn terminate_process_group(pgid: Option<u32>) {
     if let Some(id) = pgid {
         if id > 0 {
             let neg_pgid = format!("-{id}");
@@ -116,7 +116,7 @@ async fn terminate_process_group(pgid: Option<u32>) {
 }
 
 #[cfg(not(unix))]
-async fn terminate_process_group(_pgid: Option<u32>) {}
+pub(crate) async fn terminate_process_group(_pgid: Option<u32>) {}
 
 /// Spawn and supervise a child CLI process (or built-in `peck-mock`), streaming
 /// stdout/stderr lines in real time through `output_tx`, with timeout and process-group kill.

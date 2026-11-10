@@ -12,6 +12,7 @@ import { cn, formatDuration } from "@/lib/utils";
 
 interface StepTimelineProps {
   steps: StepDescriptor[];
+  canRetry: boolean;
   selectedStepId: string | null;
   onSelectStep: (stepId: string | null) => void;
   onRetryStep: (stepId: string) => void;
@@ -19,6 +20,7 @@ interface StepTimelineProps {
 
 export const StepTimeline: React.FC<StepTimelineProps> = ({
   steps,
+  canRetry,
   selectedStepId,
   onSelectStep,
   onRetryStep,
@@ -46,7 +48,7 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+      <div className={`grid grid-cols-1 gap-2 ${steps.length > 1 ? "md:grid-cols-2" : ""}`}>
         {steps.map((step) => {
           const isSelected = selectedStepId === step.id;
           return (
@@ -80,7 +82,7 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({
                       {formatDuration(step.durationMs)}
                     </span>
                   )}
-                  {(step.status === "failed" || step.status === "cancelled") && (
+                  {canRetry && (step.status === "failed" || step.status === "cancelled") && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -90,13 +92,13 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({
                       className="inline-flex items-center gap-1 rounded bg-[#EF4444]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#EF4444] hover:bg-[#EF4444]/30"
                     >
                       <RotateCcw className="h-2.5 w-2.5" />
-                      重试
+                      {step.agentId.startsWith("api-") ? "从当前文件继续" : "重试"}
                     </button>
                   )}
                 </div>
               </div>
 
-              {step.notice && <p className={`mt-2 rounded px-2 py-1.5 text-[11px] leading-relaxed ${step.executionMode === "mock" ? "bg-[#F59E0B]/10 text-[#F59E0B]" : step.status === "failed" ? "bg-[#EF4444]/10 text-[#FCA5A5]" : "bg-[#3B82F6]/10 text-[#93C5FD]"}`}>{step.executionMode === "mock" ? "模拟 · " : "CLI · "}{step.notice}</p>}
+              {step.notice && <p className={`mt-2 rounded px-2 py-1.5 text-[11px] leading-relaxed ${step.executionMode === "mock" || step.executionMode === "api-mock" ? "bg-[#F59E0B]/10 text-[#F59E0B]" : step.status === "failed" ? "bg-[#EF4444]/10 text-[#FCA5A5]" : "bg-[#3B82F6]/10 text-[#93C5FD]"}`}>{step.notice}</p>}
 
               {step.expects.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px] text-[#8B949E]">

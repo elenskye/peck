@@ -1,29 +1,22 @@
 @import "tailwindcss";
 
+/* 旧组件用的变量名，接到 src/vendor/peck/peck.css 的 --color-*；Phase 3 新外壳直接用 --color-* 和 pk- 类名，旧组件删掉后这段也删。
+   每个先认占位 token 的名字，没有就用同步来的方案 0.1.0 的名字（cyan、ok、warn、bad、font-body、font-code），同步前后都有颜色。 */
 :root {
-  /* Antigravity / Codex Dark Theme Tokens */
-  --bg-app: #0F1115;
-  --bg-panel: #14171C;
-  --bg-card: #181B21;
-  --bg-elevated: #1E222A;
-  --border-subtle: #262B34;
+  --bg-app: var(--color-page);
+  --bg-panel: var(--color-panel);
+  --bg-card: var(--color-card, var(--color-panel));
+  --bg-elevated: var(--color-raised);
+  --border-subtle: var(--color-line);
 
-  /* Geek Cyan / Teal Accent */
-  --accent: #00E5FF;
+  --accent: var(--color-accent, var(--color-cyan));
   --accent-hover: #33EBFF;
-  --accent-muted: rgba(0, 229, 255, 0.12);
+  --accent-muted: var(--color-accent-soft, var(--color-cyan-soft));
 
-  /* Status Colors */
-  --status-success: #10B981;
+  --status-success: var(--color-success, var(--color-ok));
   --status-running: #3B82F6;
-  --status-warning: #F59E0B;
-  --status-danger: #EF4444;
-
-  /* Typography */
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
-
-  color-scheme: dark;
+  --status-warning: var(--color-warning, var(--color-warn));
+  --status-danger: var(--color-danger, var(--color-bad));
 }
 
 * {
@@ -39,7 +32,7 @@ body,
   padding: 0;
   background-color: var(--bg-app);
   color: #E6EDF3;
-  font-family: var(--font-sans);
+  font-family: var(--font-sans, var(--font-body));
   overflow: hidden;
   user-select: none;
 }
@@ -79,5 +72,5 @@ body,
 }
 
 .font-mono-code {
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, var(--font-code));
 }

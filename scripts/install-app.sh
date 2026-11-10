@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MODE="${1:---build-only}"
 PROFILE="${PECK_BUILD_PROFILE:-release}"
-export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
+export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Peck Self-Signed}"
 
 case "$MODE" in
   --check|--build-only|--install) ;;
@@ -26,7 +26,7 @@ for tool in pnpm cargo codesign ditto; do
 done
 if [ "$APPLE_SIGNING_IDENTITY" != "-" ]; then
   if ! security find-identity -v -p codesigning | grep -Fq -- "$APPLE_SIGNING_IDENTITY"; then
-    echo "找不到签名身份: $APPLE_SIGNING_IDENTITY" >&2
+    echo "找不到受信任的代码签名身份: $APPLE_SIGNING_IDENTITY；请检查证书、私钥和代码签名信任。" >&2
     exit 1
   fi
 fi

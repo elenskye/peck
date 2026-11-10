@@ -5,11 +5,9 @@ import type { Workspace } from "@/lib/types";
 export function useWorkspace() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const refreshWorkspaces = useCallback(async () => {
-    setLoading(true);
     try {
       setError("");
       const list = await ipc.workspaceListRecent();
@@ -19,8 +17,6 @@ export function useWorkspace() {
       }
     } catch (e) {
       setError(String(e));
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -48,7 +44,6 @@ export function useWorkspace() {
   return {
     workspaces,
     activeWorkspace,
-    loading,
     selectWorkspace,
     refreshWorkspaces,
     chooseWorkspace,

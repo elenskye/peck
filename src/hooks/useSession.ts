@@ -50,5 +50,5 @@ export function useSession(workspaceId?: string) {
     if (activeSession) setMessages(await ipc.sessionGetMessages(activeSession.id));
   }, [activeSession]);
 
-  return { sessions, activeSession, messages, setMessages, switchSession, createNewSession, reloadMessages, error };
+  return { sessions, activeSession, messages, switchSession, createNewSession, reloadMessages, error };
 }

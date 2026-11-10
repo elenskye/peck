@@ -1,3 +1,6 @@
+// `?mock` 的假数据：项目列表、每个项目最近几次任务、在跑的和完成的、CLI 模式和 API 模式各有。
+// 只在浏览器里用，刷新重置。用词照 docs/design.md。
+import type { ApiTask, ModelProfile, RunLimits } from "@/lib/api";
 import type {
   AgentInfo,
   DiffResult,
@@ -7,60 +10,69 @@ import type {
   Workspace,
 } from "@/lib/types";
 
+const NOW = Date.now();
+const MIN = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+// ---------- 项目 ----------
+
 export const MOCK_WORKSPACES: Workspace[] = [
   {
-    id: "ws-my-project",
-    path: "/Users/elenskye/Documents/GitHub/my-project",
-    name: "my-project",
-    lastOpenedAt: Date.now() - 120_000,
-    gitBranch: "feat/auth-captcha",
+    id: "ws-notebook",
+    path: "/Users/me/Documents/GitHub/notebook",
+    name: "notebook",
+    lastOpenedAt: NOW - 2 * MIN,
+    gitBranch: "feat/search",
     gitignoreConfigured: true,
   },
   {
     id: "ws-peck",
-    path: "/Users/elenskye/Documents/GitHub/personal-cli-studio/peck",
+    path: "/Users/me/Documents/GitHub/personal-cli-studio/peck",
     name: "peck",
-    lastOpenedAt: Date.now() - 3_600_000,
+    lastOpenedAt: NOW - 1 * HOUR,
     gitBranch: "main",
     gitignoreConfigured: true,
   },
   {
-    id: "ws-api-gateway",
-    path: "/Users/elenskye/Documents/GitHub/edge-gateway",
+    id: "ws-gateway",
+    path: "/Users/me/Documents/GitHub/edge-gateway",
     name: "edge-gateway",
-    lastOpenedAt: Date.now() - 86_400_000,
+    lastOpenedAt: NOW - 1 * DAY,
     gitBranch: "release/v2.4",
-    gitignoreConfigured: true,
+    gitignoreConfigured: false,
   },
 ];
+
+// ---------- CLI ----------
 
 export const MOCK_AGENTS: AgentInfo[] = [
   {
     id: "muse",
-    name: "Muse Code",
-    description: "根据自然语言生成产品意图文档与任务清单 (.peck/handoff/<run_id>/intent.md & .peck/tasks.md)",
+    name: "Muse",
+    description: "写规范（意图和任务清单）；也能单个跑完整个任务",
     command: "muse",
     args: ["exec", "{{prompt}}"],
     timeout: "30m",
     available: false,
-    diagnostic: "演示：CLI 未安装，可继续使用内置模拟 Agent。",
+    diagnostic: "浏览器演示：没有检测本机 CLI。",
     isMock: false,
   },
   {
     id: "grok",
-    name: "Grok Build",
-    description: "读取意图与任务文档，在工作区实施代码变更并实时勾选 .peck/tasks.md",
+    name: "Grok",
+    description: "按规范实施，边改边勾任务清单；也能单个跑完整个任务",
     command: "grok",
     args: ["-p", "{{prompt}}", "--output-format", "plain", "--no-auto-update"],
     timeout: "45m",
     available: false,
-    diagnostic: "演示：CLI 未安装。检测不包含认证与额度验证。",
+    diagnostic: "浏览器演示：没有检测本机 CLI。",
     isMock: false,
   },
   {
     id: "mock",
-    name: "Peck Mock Agent",
-    description: "开发测试专用模拟 Agent，模拟 3 秒耗时、文件写入与复选框进度更新",
+    name: "假 Agent",
+    description: "开发者选项里的假 Agent：不调用 AI，几秒跑完并写演示文件",
     command: "peck-mock",
     args: ["--prompt", "{{prompt}}", "--handoff", "{{handoff}}", "--write-files"],
     timeout: "5m",
@@ -71,453 +83,664 @@ export const MOCK_AGENTS: AgentInfo[] = [
   },
 ];
 
+// ---------- 任务（一次对话就是一个任务） ----------
+
 export const MOCK_SESSIONS: Session[] = [
-  {
-    id: "sess-104",
-    workspaceId: "ws-my-project",
-    title: "登录页图形验证码功能",
-    createdAt: Date.now() - 600_000,
-    updatedAt: Date.now() - 45_000,
-  },
-  {
-    id: "sess-103",
-    workspaceId: "ws-my-project",
-    title: "重构 JWT 刷新中间件与错误码提示",
-    createdAt: Date.now() - 7_200_000,
-    updatedAt: Date.now() - 6_800_000,
-  },
+  // notebook：在跑一个，完成两个
+  { id: "task-12", workspaceId: "ws-notebook", title: "笔记列表加搜索框", createdAt: NOW - 6 * MIN, updatedAt: NOW - 20_000 },
+  { id: "task-11", workspaceId: "ws-notebook", title: "日期统一成 YYYY-MM-DD", createdAt: NOW - 3 * HOUR, updatedAt: NOW - 3 * HOUR + 4 * MIN },
+  { id: "task-10", workspaceId: "ws-notebook", title: "导出 Markdown 时保留标签", createdAt: NOW - 1 * DAY, updatedAt: NOW - 1 * DAY + 9 * MIN },
+  // peck：一个 API 规划 + 实施完成，一个 CLI 失败
+  { id: "task-9", workspaceId: "ws-peck", title: "设置面板加通知开关", createdAt: NOW - 1 * HOUR - 30 * MIN, updatedAt: NOW - 1 * HOUR },
+  { id: "task-8", workspaceId: "ws-peck", title: "菜单栏图标在跑时变样", createdAt: NOW - 5 * HOUR, updatedAt: NOW - 5 * HOUR + 2 * MIN },
+  // edge-gateway：一个旧的完成
+  { id: "task-7", workspaceId: "ws-gateway", title: "限流中间件按路由配置", createdAt: NOW - 2 * DAY, updatedAt: NOW - 2 * DAY + 11 * MIN },
 ];
 
+// ---------- 对话 ----------
+
 export const MOCK_MESSAGES: Record<string, Message[]> = {
-  "sess-104": [
-    {
-      id: "msg-1",
-      sessionId: "sess-104",
-      role: "user",
-      content: "帮我给登录页加一个图形验证码功能，支持点击刷新、大小写不敏感校验，并在连续输错时自动刷新验证码。",
-      createdAt: Date.now() - 320_000,
-    },
-    {
-      id: "msg-2",
-      sessionId: "sess-104",
-      role: "assistant",
-      content: "已启动「想法 → 代码」双步协同流水线（Muse Code → Grok Build）。所有交接文档与代码变更已由影子 Git 记录快照。",
-      runId: "run-104",
-      createdAt: Date.now() - 318_000,
-    },
+  "task-12": [
+    { id: "m-12-1", sessionId: "task-12", role: "user", content: "给笔记列表顶部加一个搜索框，按标题和正文模糊匹配，输入时实时过滤，清空后恢复全部。", createdAt: NOW - 6 * MIN },
+    { id: "m-12-2", sessionId: "task-12", role: "assistant", content: "交给 Muse → Grok：Muse 先写规范，Grok 按规范实施。改动在右栏。", runId: "run-12", createdAt: NOW - 6 * MIN + 2_000 },
   ],
-  "sess-103": [
-    {
-      id: "msg-103-1",
-      sessionId: "sess-103",
-      role: "user",
-      content: "@grok 检查 src/utils/token.ts 的过期缓冲时间，改为提前 90 秒刷新。",
-      createdAt: Date.now() - 7_200_000,
-    },
-    {
-      id: "msg-103-2",
-      sessionId: "sess-103",
-      role: "assistant",
-      content: "已完成单步执行（@grok），更新了 token 刷新阈值并补充了单元测试。",
-      createdAt: Date.now() - 7_150_000,
-    },
+  "task-11": [
+    { id: "m-11-1", sessionId: "task-11", role: "user", content: "把界面里所有日期显示统一成 YYYY-MM-DD，用一个共用的格式化函数。", createdAt: NOW - 3 * HOUR },
+    { id: "m-11-2", sessionId: "task-11", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-11", createdAt: NOW - 3 * HOUR + 2_000 },
+    { id: "m-11-3", sessionId: "task-11", role: "assistant", content: "完成：新增 formatDate，替换了 2 处日期显示。验证：pnpm check 通过。", createdAt: NOW - 3 * HOUR + 4 * MIN },
+  ],
+  "task-10": [
+    { id: "m-10-1", sessionId: "task-10", role: "user", content: "导出 Markdown 的时候把笔记的标签写进文件头（YAML front matter）。", createdAt: NOW - 1 * DAY },
+    { id: "m-10-2", sessionId: "task-10", role: "assistant", content: "交给 API 模式 · 单模型干活（DeepSeek Flash）。", runId: "run-10", createdAt: NOW - 1 * DAY + 2_000 },
+    { id: "m-10-3", sessionId: "task-10", role: "assistant", content: "完成：导出时写入 tags 字段，补了一个单元测试。验证：vitest 3 个用例通过。", createdAt: NOW - 1 * DAY + 9 * MIN },
+  ],
+  "task-9": [
+    { id: "m-9-1", sessionId: "task-9", role: "user", content: "设置里加一个「通知」开关，默认开，关了以后任务完成不发 macOS 通知。", createdAt: NOW - 1 * HOUR - 30 * MIN },
+    { id: "m-9-2", sessionId: "task-9", role: "assistant", content: "交给 API 模式 · 规划 + 实施（规划 Claude Opus 5.5，实施 DeepSeek Flash）。", runId: "run-9", createdAt: NOW - 1 * HOUR - 30 * MIN + 2_000 },
+    { id: "m-9-3", sessionId: "task-9", role: "assistant", content: "完成：规划拆成 1 个子任务，实施一次通过。改了设置存储和通知发送两处。验证：cargo test 通过。", createdAt: NOW - 1 * HOUR },
+  ],
+  "task-8": [
+    { id: "m-8-1", sessionId: "task-8", role: "user", content: "有任务在跑的时候把菜单栏小图标换成带点的那个。", createdAt: NOW - 5 * HOUR },
+    { id: "m-8-2", sessionId: "task-8", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-8", createdAt: NOW - 5 * HOUR + 2_000 },
+    { id: "m-8-3", sessionId: "task-8", role: "assistant", content: "失败：Grok 登录过期，没改任何文件。重新登录后可以重跑这一步。", createdAt: NOW - 5 * HOUR + 2 * MIN },
+  ],
+  "task-7": [
+    { id: "m-7-1", sessionId: "task-7", role: "user", content: "限流中间件改成可以按路由单独配置阈值，没配的用全局默认。", createdAt: NOW - 2 * DAY },
+    { id: "m-7-2", sessionId: "task-7", role: "assistant", content: "交给 Muse → Grok：Muse 先写规范，Grok 按规范实施。", runId: "run-7", createdAt: NOW - 2 * DAY + 2_000 },
+    { id: "m-7-3", sessionId: "task-7", role: "assistant", content: "完成：Muse 写了规范和 4 条任务，Grok 改了 3 个文件。验证：go test ./... 通过。", createdAt: NOW - 2 * DAY + 11 * MIN },
   ],
 };
 
-export const MOCK_RUN_104: RunRecord = {
-  id: "run-104",
-  number: 104,
-  sessionId: "sess-104",
-  flowId: "idea-to-code",
-  flowName: "想法 → 代码",
-  prompt: "帮我给登录页加一个图形验证码功能，支持点击刷新、大小写不敏感校验，并在连续输错时自动刷新验证码。",
-  status: "succeeded",
-  startedAt: Date.now() - 318_000,
-  finishedAt: Date.now() - 305_000,
-  summary: "Muse 生成了意图文档与 5 项任务清单；Grok 完成了 Captcha 组件与 Login 页面集成（共变动 4 个文件，+160 -3）。",
+// ---------- 任务记录 ----------
+
+const DEMO_NOTICE = "浏览器演示数据，没有调用真实 AI。";
+
+const run12: RunRecord = {
+  id: "run-12",
+  number: 12,
+  sessionId: "task-12",
+  flowId: "muse-grok",
+  flowName: "Muse → Grok",
+  prompt: MOCK_MESSAGES["task-12"][0].content,
+  status: "running",
+  startedAt: NOW - 6 * MIN,
   steps: [
-    {
-      id: "step-intent",
-      stepIndex: 0,
-      agentId: "muse",
-      agentName: "Muse Code",
-      title: "意图与任务生成",
-      executionMode: "mock",
-      notice: "浏览器演示数据，未调用真实 AI。",
-      status: "succeeded",
-      expects: [".peck/handoff/104/intent.md", ".peck/tasks.md"],
-      exitCode: 0,
-      durationMs: 4200,
-      startedAt: Date.now() - 318_000,
-      finishedAt: Date.now() - 313_800,
-    },
-    {
-      id: "step-build",
-      stepIndex: 1,
-      agentId: "grok",
-      agentName: "Grok Build",
-      title: "代码构建与实施",
-      executionMode: "mock",
-      notice: "浏览器演示数据，未调用真实 AI。",
-      status: "succeeded",
-      expects: [],
-      exitCode: 0,
-      durationMs: 8600,
-      startedAt: Date.now() - 313_800,
-      finishedAt: Date.now() - 305_200,
-    },
+    { id: "run-12-spec", stepIndex: 0, agentId: "muse", agentName: "Muse", title: "写规范", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [".peck/handoff/12/intent.md", ".peck/tasks.md"], exitCode: 0, durationMs: 38_000, startedAt: NOW - 6 * MIN, finishedAt: NOW - 6 * MIN + 38_000 },
+    { id: "run-12-build", stepIndex: 1, agentId: "grok", agentName: "Grok", title: "实施", executionMode: "mock", notice: DEMO_NOTICE, status: "running", expects: [], startedAt: NOW - 5 * MIN },
   ],
   tasks: [
-    {
-      id: "task-1",
-      text: "产生物品规格与交互边界说明文档 (.peck/handoff/104/intent.md)",
-      completed: true,
-    },
-    {
-      id: "task-2",
-      text: "实现 SVG 噪点与随机旋转字符图形验证码组件 (src/components/Captcha.tsx)",
-      completed: true,
-    },
-    {
-      id: "task-3",
-      text: "在登录页表单中集成 Captcha 组件与验证码输入框 (src/pages/Login.tsx)",
-      completed: true,
-    },
-    {
-      id: "task-4",
-      text: "支持忽略大小写比对，并在校验失败或提交报错时自动触发验证码刷新",
-      completed: true,
-    },
-    {
-      id: "task-5",
-      text: "通过 TypeScript 严格模式类型检查与无障碍键盘聚焦校验",
-      completed: true,
-    },
+    { id: "run-12-t1", text: "写规范（.peck/handoff/12/intent.md）", completed: true },
+    { id: "run-12-t2", text: "新建 SearchBox 组件（src/components/SearchBox.tsx）", completed: true },
+    { id: "run-12-t3", text: "笔记列表接上搜索框，按标题和正文过滤", completed: false },
+    { id: "run-12-t4", text: "清空输入恢复全部，补一个用例", completed: false },
   ],
   files: [
-    {
-      path: ".peck/handoff/104/intent.md",
-      kind: "create",
-      additions: 52,
-      deletions: 0,
-      stepId: "step-intent",
-    },
-    {
-      path: ".peck/tasks.md",
-      kind: "create",
-      additions: 12,
-      deletions: 0,
-      stepId: "step-intent",
-    },
-    {
-      path: "src/components/Captcha.tsx",
-      kind: "create",
-      additions: 84,
-      deletions: 0,
-      stepId: "step-build",
-    },
-    {
-      path: "src/pages/Login.tsx",
-      kind: "modify",
-      additions: 12,
-      deletions: 3,
-      stepId: "step-build",
-    },
+    { path: ".peck/handoff/12/intent.md", kind: "create", additions: 31, deletions: 0, stepId: "run-12-spec" },
+    { path: ".peck/tasks.md", kind: "create", additions: 6, deletions: 0, stepId: "run-12-spec" },
+    { path: "src/components/SearchBox.tsx", kind: "create", additions: 42, deletions: 0, stepId: "run-12-build" },
+    { path: "src/pages/NoteList.tsx", kind: "modify", additions: 0, deletions: 0, stepId: "run-12-build" },
   ],
   logs: [
-    {
-      id: "log-1",
-      runId: "run-104",
-      stepId: "step-intent",
-      agentId: "muse",
-      stream: "stdout",
-      chunk: "[muse] Initializing workspace context at /Users/elenskye/Documents/GitHub/my-project",
-      timestamp: Date.now() - 317_800,
-    },
-    {
-      id: "log-2",
-      runId: "run-104",
-      stepId: "step-intent",
-      agentId: "muse",
-      stream: "stdout",
-      chunk: "[muse] Analyzing existing auth flow in src/pages/Login.tsx ...",
-      timestamp: Date.now() - 316_500,
-    },
-    {
-      id: "log-3",
-      runId: "run-104",
-      stepId: "step-intent",
-      agentId: "muse",
-      stream: "stdout",
-      chunk: "[muse] Wrote product specification -> .peck/handoff/104/intent.md (52 lines)",
-      timestamp: Date.now() - 314_500,
-    },
-    {
-      id: "log-4",
-      runId: "run-104",
-      stepId: "step-intent",
-      agentId: "muse",
-      stream: "stdout",
-      chunk: "[muse] Wrote implementation checklist -> .peck/tasks.md (5 tasks)",
-      timestamp: Date.now() - 313_900,
-    },
-    {
-      id: "log-5",
-      runId: "run-104",
-      stepId: "step-build",
-      agentId: "grok",
-      stream: "stdout",
-      chunk: "[grok] Reading handoff spec .peck/handoff/104/intent.md and .peck/tasks.md",
-      timestamp: Date.now() - 313_400,
-    },
-    {
-      id: "log-6",
-      runId: "run-104",
-      stepId: "step-build",
-      agentId: "grok",
-      stream: "stdout",
-      chunk: "[grok] Created src/components/Captcha.tsx (+84 -0)",
-      timestamp: Date.now() - 309_500,
-    },
-    {
-      id: "log-7",
-      runId: "run-104",
-      stepId: "step-build",
-      agentId: "grok",
-      stream: "stderr",
-      chunk: "[grok:warn] Detected legacy autofill attribute on Login form, normalized to autoComplete=\"off\" for captcha input",
-      timestamp: Date.now() - 307_800,
-    },
-    {
-      id: "log-8",
-      runId: "run-104",
-      stepId: "step-build",
-      agentId: "grok",
-      stream: "stdout",
-      chunk: "[grok] Patched src/pages/Login.tsx (+12 -3) and marked 5/5 tasks completed in .peck/tasks.md",
-      timestamp: Date.now() - 305_300,
-    },
+    { id: "l-12-1", runId: "run-12", stepId: "run-12-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 读项目结构：src/pages/NoteList.tsx、src/store/notes.ts", timestamp: NOW - 6 * MIN + 3_000 },
+    { id: "l-12-2", runId: "run-12", stepId: "run-12-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 写规范 → .peck/handoff/12/intent.md（31 行）", timestamp: NOW - 6 * MIN + 30_000 },
+    { id: "l-12-3", runId: "run-12", stepId: "run-12-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 写任务清单 → .peck/tasks.md（4 条）", timestamp: NOW - 6 * MIN + 36_000 },
+    { id: "l-12-4", runId: "run-12", stepId: "run-12-build", agentId: "grok", stream: "stdout", chunk: "[grok] 读规范 .peck/handoff/12/intent.md", timestamp: NOW - 5 * MIN },
+    { id: "l-12-5", runId: "run-12", stepId: "run-12-build", agentId: "grok", stream: "stdout", chunk: "[grok] 新建 src/components/SearchBox.tsx（+42）", timestamp: NOW - 3 * MIN },
+    { id: "l-12-6", runId: "run-12", stepId: "run-12-build", agentId: "grok", stream: "stdout", chunk: "[grok] 正在改 src/pages/NoteList.tsx …", timestamp: NOW - 20_000 },
   ],
 };
 
-const INTENT_MD_CONTENT = `# 登录页图形验证码 (Captcha) 设计与实现规范
+const run11: RunRecord = {
+  id: "run-11",
+  number: 11,
+  sessionId: "task-11",
+  flowId: "single-grok",
+  flowName: "Grok",
+  prompt: MOCK_MESSAGES["task-11"][0].content,
+  status: "succeeded",
+  startedAt: NOW - 3 * HOUR + 2_000,
+  finishedAt: NOW - 3 * HOUR + 4 * MIN,
+  summary: "新增 formatDate，替换了 2 处日期显示。验证：pnpm check 通过。",
+  steps: [
+    { id: "run-11-build", stepIndex: 0, agentId: "grok", agentName: "Grok", title: "跑完整个任务", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 226_000, startedAt: NOW - 3 * HOUR + 2_000, finishedAt: NOW - 3 * HOUR + 4 * MIN },
+  ],
+  tasks: [
+    { id: "run-11-t1", text: "新增 formatDate(date) → YYYY-MM-DD（src/lib/date.ts）", completed: true },
+    { id: "run-11-t2", text: "笔记列表和详情页的日期改用 formatDate", completed: true },
+    { id: "run-11-t3", text: "pnpm check 通过", completed: true },
+  ],
+  files: [
+    { path: "src/lib/date.ts", kind: "create", additions: 9, deletions: 0, stepId: "run-11-build" },
+    { path: "src/pages/NoteList.tsx", kind: "modify", additions: 2, deletions: 1, stepId: "run-11-build" },
+    { path: "src/pages/NoteDetail.tsx", kind: "modify", additions: 2, deletions: 1, stepId: "run-11-build" },
+  ],
+  logs: [
+    { id: "l-11-1", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] 找到 2 处 toLocaleDateString()", timestamp: NOW - 3 * HOUR + 10_000 },
+    { id: "l-11-2", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] 新建 src/lib/date.ts（+9）", timestamp: NOW - 3 * HOUR + 60_000 },
+    { id: "l-11-3", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] 改 src/pages/NoteList.tsx（+2 -1）、src/pages/NoteDetail.tsx（+2 -1）", timestamp: NOW - 3 * HOUR + 150_000 },
+    { id: "l-11-4", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] pnpm check … 通过", timestamp: NOW - 3 * HOUR + 220_000 },
+  ],
+};
 
-> **Run ID**: \`#104\` · **生成引擎**: \`Muse Code\` · **目标工作区**: \`my-project\`
+const run10: RunRecord = {
+  id: "run-10",
+  number: 10,
+  sessionId: "task-10",
+  flowId: "api-worker",
+  flowName: "API 模式 · 单模型干活 · DeepSeek Flash",
+  prompt: MOCK_MESSAGES["task-10"][0].content,
+  status: "succeeded",
+  startedAt: NOW - 1 * DAY + 2_000,
+  finishedAt: NOW - 1 * DAY + 9 * MIN,
+  summary: "导出时写入 tags 字段，补了一个单元测试。验证：vitest 3 个用例通过。",
+  steps: [
+    { id: "run-10-worker", stepIndex: 0, agentId: "api-worker", agentName: "DeepSeek Flash", title: "单模型干活", executionMode: "api-mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 7 * MIN, startedAt: NOW - 1 * DAY + 2_000, finishedAt: NOW - 1 * DAY + 9 * MIN },
+  ],
+  tasks: [
+    { id: "run-10-t1", text: "exportMarkdown 写入 front matter 的 tags", completed: true },
+    { id: "run-10-t2", text: "补 export.test.ts 用例", completed: true },
+  ],
+  files: [
+    { path: "src/lib/export.ts", kind: "modify", additions: 7, deletions: 1, stepId: "run-10-worker" },
+    { path: "src/lib/export.test.ts", kind: "modify", additions: 11, deletions: 0, stepId: "run-10-worker" },
+  ],
+  logs: [
+    { id: "l-10-1", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 1 轮 · read_file src/lib/export.ts", timestamp: NOW - 1 * DAY + 5_000 },
+    { id: "l-10-2", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 2 轮 · write_file src/lib/export.ts", timestamp: NOW - 1 * DAY + 90_000 },
+    { id: "l-10-3", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 3 轮 · write_file src/lib/export.test.ts", timestamp: NOW - 1 * DAY + 200_000 },
+    { id: "l-10-4", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 4 轮 · run_command pnpm vitest run src/lib/export.test.ts → 3 passed", timestamp: NOW - 1 * DAY + 400_000 },
+  ],
+};
 
-## 1. 背景与目标
-为防止针对 \`/api/auth/login\` 的自动化撞库请求，需要在前端登录表单中引入轻量、高辨识度的 SVG 图形验证码组件，在不增加外部第三方闭源 SDK 依赖的前提下完成人机校验闭环。
+const run9: RunRecord = {
+  id: "run-9",
+  number: 9,
+  sessionId: "task-9",
+  flowId: "api-supervisor",
+  flowName: "API 模式 · 规划 + 实施 · Claude Opus 5.5 / DeepSeek Flash",
+  prompt: MOCK_MESSAGES["task-9"][0].content,
+  status: "succeeded",
+  startedAt: NOW - 1 * HOUR - 30 * MIN + 2_000,
+  finishedAt: NOW - 1 * HOUR,
+  summary: "规划拆成 1 个子任务，实施一次通过。改了设置存储和通知发送两处。验证：cargo test 通过。",
+  steps: [
+    { id: "run-9-plan", stepIndex: 0, agentId: "api-supervisor", agentName: "Claude Opus 5.5", title: "规划和审查", executionMode: "api-mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 28 * MIN, startedAt: NOW - 1 * HOUR - 30 * MIN + 2_000, finishedAt: NOW - 1 * HOUR },
+    { id: "run-9-impl", stepIndex: 1, agentId: "api-worker", agentName: "DeepSeek Flash", title: "实施：通知开关", executionMode: "api-mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 12 * MIN, startedAt: NOW - 1 * HOUR - 20 * MIN, finishedAt: NOW - 1 * HOUR - 8 * MIN },
+  ],
+  tasks: [
+    { id: "run-9-t1", text: "设置里加 notifications 字段，默认 true", completed: true },
+    { id: "run-9-t2", text: "发通知前读这个开关", completed: true },
+    { id: "run-9-t3", text: "cargo test 通过", completed: true },
+  ],
+  files: [
+    { path: "src-tauri/src/settings.rs", kind: "modify", additions: 6, deletions: 0, stepId: "run-9-impl" },
+    { path: "src-tauri/src/notify.rs", kind: "modify", additions: 3, deletions: 1, stepId: "run-9-impl" },
+  ],
+  logs: [
+    { id: "l-9-1", runId: "run-9", stepId: "run-9-plan", agentId: "api-supervisor", stream: "stdout", chunk: "规划：1 个子任务「通知开关」，写入范围 src-tauri/src/settings.rs、src-tauri/src/notify.rs", timestamp: NOW - 1 * HOUR - 25 * MIN },
+    { id: "l-9-2", runId: "run-9", stepId: "run-9-impl", agentId: "api-worker", stream: "stdout", chunk: "第 1 轮 · read_file src-tauri/src/settings.rs", timestamp: NOW - 1 * HOUR - 19 * MIN },
+    { id: "l-9-3", runId: "run-9", stepId: "run-9-impl", agentId: "api-worker", stream: "stdout", chunk: "第 3 轮 · run_command cargo test → ok", timestamp: NOW - 1 * HOUR - 9 * MIN },
+    { id: "l-9-4", runId: "run-9", stepId: "run-9-plan", agentId: "api-supervisor", stream: "stdout", chunk: "审查：通过。开关默认开，关了不发通知，测试覆盖两种情况。", timestamp: NOW - 1 * HOUR - 2 * MIN },
+  ],
+};
 
-## 2. 交互与视觉要求
-- **字符集规避歧义**：仅使用 \`23456789ABCDEFGHJKLMNPQRSTUVWXYZ\`（剔除易混淆的 \`0/O\`、\`1/I/l\`）。
-- **防 OCR 干扰层**：
-  - 4 位随机字符独立旋转（角度范围 \`-18° ~ +18°\`）；
-  - 3 条贝塞尔干扰曲线 + 18 个微透噪点圆斑；
-  - 适配暗色主题（背景 \`#14171C\`，描边 \`#262B34\`，高亮字符使用青蓝渐变）。
-- **刷新机制**：
-  1. 用户点击验证码画布或「换一张」按钮立即重新生成；
-  2. 提交时若验证码不匹配（忽略大小写），阻止表单请求并立即刷新验证码。
+const run8: RunRecord = {
+  id: "run-8",
+  number: 8,
+  sessionId: "task-8",
+  flowId: "single-grok",
+  flowName: "Grok",
+  prompt: MOCK_MESSAGES["task-8"][0].content,
+  status: "failed",
+  startedAt: NOW - 5 * HOUR + 2_000,
+  finishedAt: NOW - 5 * HOUR + 2 * MIN,
+  summary: "Grok 登录过期，没改任何文件。重新登录后可以重跑这一步。",
+  steps: [
+    { id: "run-8-build", stepIndex: 0, agentId: "grok", agentName: "Grok", title: "跑完整个任务", executionMode: "mock", notice: DEMO_NOTICE, status: "failed", expects: [], exitCode: 1, durationMs: 4_000, startedAt: NOW - 5 * HOUR + 2_000, finishedAt: NOW - 5 * HOUR + 6_000 },
+  ],
+  tasks: [],
+  files: [],
+  logs: [
+    { id: "l-8-1", runId: "run-8", stepId: "run-8-build", agentId: "grok", stream: "stderr", chunk: "[grok] error: not logged in. Run `grok login` and try again.", timestamp: NOW - 5 * HOUR + 5_000 },
+  ],
+};
 
-## 3. 涉及文件清单
-| 文件路径 | 变更类型 | 说明 |
-|---|---|---|
-| \`src/components/Captcha.tsx\` | 新增 | 封装 SVG 验证码渲染、刷新回调与受控校验 |
-| \`src/pages/Login.tsx\` | 修改 | 接入 \`Captcha\` 组件，增加 \`captchaInput\` 状态与提交拦截 |
+const run7: RunRecord = {
+  id: "run-7",
+  number: 7,
+  sessionId: "task-7",
+  flowId: "muse-grok",
+  flowName: "Muse → Grok",
+  prompt: MOCK_MESSAGES["task-7"][0].content,
+  status: "succeeded",
+  startedAt: NOW - 2 * DAY + 2_000,
+  finishedAt: NOW - 2 * DAY + 11 * MIN,
+  summary: "Muse 写了规范和 4 条任务，Grok 改了 3 个文件。验证：go test ./... 通过。",
+  steps: [
+    { id: "run-7-spec", stepIndex: 0, agentId: "muse", agentName: "Muse", title: "写规范", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [".peck/handoff/7/intent.md", ".peck/tasks.md"], exitCode: 0, durationMs: 50_000, startedAt: NOW - 2 * DAY + 2_000, finishedAt: NOW - 2 * DAY + 52_000 },
+    { id: "run-7-build", stepIndex: 1, agentId: "grok", agentName: "Grok", title: "实施", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 9 * MIN, startedAt: NOW - 2 * DAY + 60_000, finishedAt: NOW - 2 * DAY + 11 * MIN },
+  ],
+  tasks: [
+    { id: "run-7-t1", text: "写规范（.peck/handoff/7/intent.md）", completed: true },
+    { id: "run-7-t2", text: "RateLimit 配置加 per_route 表", completed: true },
+    { id: "run-7-t3", text: "中间件先查路由阈值，没有再用全局", completed: true },
+    { id: "run-7-t4", text: "go test ./... 通过", completed: true },
+  ],
+  files: [
+    { path: ".peck/handoff/7/intent.md", kind: "create", additions: 24, deletions: 0, stepId: "run-7-spec" },
+    { path: ".peck/tasks.md", kind: "create", additions: 6, deletions: 0, stepId: "run-7-spec" },
+    { path: "internal/ratelimit/config.go", kind: "modify", additions: 14, deletions: 2, stepId: "run-7-build" },
+    { path: "internal/ratelimit/middleware.go", kind: "modify", additions: 9, deletions: 3, stepId: "run-7-build" },
+    { path: "internal/ratelimit/middleware_test.go", kind: "modify", additions: 22, deletions: 0, stepId: "run-7-build" },
+  ],
+  logs: [
+    { id: "l-7-1", runId: "run-7", stepId: "run-7-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 写规范 → .peck/handoff/7/intent.md（24 行）、任务清单 4 条", timestamp: NOW - 2 * DAY + 50_000 },
+    { id: "l-7-2", runId: "run-7", stepId: "run-7-build", agentId: "grok", stream: "stdout", chunk: "[grok] 改 internal/ratelimit/config.go、middleware.go，补 middleware_test.go", timestamp: NOW - 2 * DAY + 8 * MIN },
+    { id: "l-7-3", runId: "run-7", stepId: "run-7-build", agentId: "grok", stream: "stdout", chunk: "[grok] go test ./... → ok", timestamp: NOW - 2 * DAY + 10 * MIN },
+  ],
+};
+
+/** 每个任务的记录，键是任务 id。 */
+export const MOCK_RUNS: Record<string, RunRecord[]> = {
+  "task-12": [run12],
+  "task-11": [run11],
+  "task-10": [run10],
+  "task-9": [run9],
+  "task-8": [run8],
+  "task-7": [run7],
+};
+
+// ---------- Diff（键 `${runId}:${path}`） ----------
+
+function created(runId: string, stepId: string, path: string, body: string, language = "markdown"): DiffResult {
+  const lines = body.replace(/\n$/, "").split("\n");
+  return {
+    runId,
+    stepId,
+    filePath: path,
+    kind: "create",
+    language,
+    additions: lines.length,
+    deletions: 0,
+    contentAfter: body,
+    unifiedDiff: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}`,
+  };
+}
+
+const INTENT_12 = `# 笔记列表搜索框 · 规范
+
+> 任务 12 · Muse 写 · 项目 notebook
+
+## 目标
+笔记列表顶部放一个搜索框，按标题和正文模糊匹配，输入时实时过滤，清空后恢复全部。
+
+## 要点
+- 匹配不分大小写；中文直接按子串。
+- 过滤只在前端做，不改存储。
+- 空结果显示「没有匹配的笔记」。
+
+## 文件
+| 文件 | 改法 |
+|---|---|
+| src/components/SearchBox.tsx | 新建：受控输入框，带清空按钮 |
+| src/pages/NoteList.tsx | 接上搜索框，列表按关键字过滤 |
 `;
 
-const TASKS_MD_CONTENT = `# Peck 任务执行清单 (.peck/tasks.md)
+const TASKS_12 = `# 任务清单
 
-- [x] 产生物品规格与交互边界说明文档 (.peck/handoff/104/intent.md)
-- [x] 实现 SVG 噪点与随机旋转字符图形验证码组件 (src/components/Captcha.tsx)
-- [x] 在登录页表单中集成 Captcha 组件与验证码输入框 (src/pages/Login.tsx)
-- [x] 支持忽略大小写比对，并在校验失败或提交报错时自动触发验证码刷新
-- [x] 通过 TypeScript 严格模式类型检查与无障碍键盘聚焦校验
+- [x] 写规范（.peck/handoff/12/intent.md）
+- [x] 新建 SearchBox 组件（src/components/SearchBox.tsx）
+- [ ] 笔记列表接上搜索框，按标题和正文过滤
+- [ ] 清空输入恢复全部，补一个用例
+`;
+
+const INTENT_7 = `# 限流按路由配置 · 规范
+
+> 任务 7 · Muse 写 · 项目 edge-gateway
+
+## 目标
+限流中间件支持按路由单独配置阈值，没配的用全局默认。
+
+## 要点
+- 配置里加 per_route: map[string]Limit。
+- 中间件先查路由，查不到再用全局。
+- 补两个用例：命中路由阈值、回落全局。
+`;
+
+const TASKS_7 = `# 任务清单
+
+- [x] 写规范（.peck/handoff/7/intent.md）
+- [x] RateLimit 配置加 per_route 表
+- [x] 中间件先查路由阈值，没有再用全局
+- [x] go test ./... 通过
 `;
 
 export const MOCK_DIFFS: Record<string, DiffResult> = {
-  ".peck/handoff/104/intent.md": {
-    runId: "run-104",
-    stepId: "step-intent",
-    filePath: ".peck/handoff/104/intent.md",
-    kind: "create",
-    language: "markdown",
-    additions: 52,
-    deletions: 0,
-    contentAfter: INTENT_MD_CONTENT,
-    unifiedDiff: `diff --git a/.peck/handoff/104/intent.md b/.peck/handoff/104/intent.md
-new file mode 100644
-index 0000000..8f4e2a1
---- /dev/null
-+++ b/.peck/handoff/104/intent.md
-@@ -0,0 +1,24 @@
-+# 登录页图形验证码 (Captcha) 设计与实现规范
-+
-+> **Run ID**: \`#104\` · **生成引擎**: \`Muse Code\` · **目标工作区**: \`my-project\`
-+
-+## 1. 背景与目标
-+为防止针对 \`/api/auth/login\` 的自动化撞库请求，需要在前端登录表单中引入轻量、高辨识度的 SVG 图形验证码组件。
-+
-+## 2. 交互与视觉要求
-+- **字符集规避歧义**：仅使用 \`23456789ABCDEFGHJKLMNPQRSTUVWXYZ\`（剔除易混淆的 \`0/O\`、\`1/I/l\`）。
-+- **防 OCR 干扰层**：
-+  - 4 位随机字符独立旋转（角度范围 \`-18° ~ +18°\`）；
-+  - 3 条贝塞尔干扰曲线 + 18 个微透噪点圆斑；
-+  - 适配暗色主题（背景 \`#14171C\`，描边 \`#262B34\`）。
-+- **刷新机制**：
-+  1. 用户点击验证码画布或「换一张」按钮立即重新生成；
-+  2. 提交时若验证码不匹配（忽略大小写），阻止表单请求并立即刷新验证码。
-+
-+## 3. 涉及文件清单
-+| 文件路径 | 变更类型 | 说明 |
-+|---|---|---|
-+| \`src/components/Captcha.tsx\` | 新增 | 封装 SVG 验证码渲染、刷新回调与受控校验 |
-+| \`src/pages/Login.tsx\` | 修改 | 接入 \`Captcha\` 组件，增加 \`captchaInput\` 状态与提交拦截 |`,
-  },
-  ".peck/tasks.md": {
-    runId: "run-104",
-    stepId: "step-intent",
-    filePath: ".peck/tasks.md",
-    kind: "create",
-    language: "markdown",
-    additions: 12,
-    deletions: 0,
-    contentAfter: TASKS_MD_CONTENT,
-    unifiedDiff: `diff --git a/.peck/tasks.md b/.peck/tasks.md
-new file mode 100644
-index 0000000..41c920b
---- /dev/null
-+++ b/.peck/tasks.md
-@@ -0,0 +1,7 @@
-+# Peck 任务执行清单 (.peck/tasks.md)
-+
-+- [x] 产生物品规格与交互边界说明文档 (.peck/handoff/104/intent.md)
-+- [x] 实现 SVG 噪点与随机旋转字符图形验证码组件 (src/components/Captcha.tsx)
-+- [x] 在登录页表单中集成 Captcha 组件与验证码输入框 (src/pages/Login.tsx)
-+- [x] 支持忽略大小写比对，并在校验失败或提交报错时自动触发验证码刷新
-+- [x] 通过 TypeScript 严格模式类型检查与无障碍键盘聚焦校验`,
-  },
-  "src/components/Captcha.tsx": {
-    runId: "run-104",
-    stepId: "step-build",
-    filePath: "src/components/Captcha.tsx",
-    kind: "create",
-    language: "typescript",
-    additions: 84,
-    deletions: 0,
-    unifiedDiff: `diff --git a/src/components/Captcha.tsx b/src/components/Captcha.tsx
-new file mode 100644
-index 0000000..c92b71e
---- /dev/null
-+++ b/src/components/Captcha.tsx
-@@ -0,0 +1,46 @@
-+import React, { useCallback, useEffect, useState } from "react";
-+
-+const CHARSET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-+
-+export interface CaptchaProps {
-+  length?: number;
-+  refreshSeed?: number;
-+  onCodeChange: (code: string) => void;
-+}
-+
-+export const Captcha: React.FC<CaptchaProps> = ({
-+  length = 4,
-+  refreshSeed = 0,
-+  onCodeChange,
-+}) => {
-+  const [chars, setChars] = useState<string[]>([]);
-+
-+  const regenerate = useCallback(() => {
-+    const next = Array.from({ length }, () => {
-+      const idx = Math.floor(Math.random() * CHARSET.length);
-+      return CHARSET[idx];
-+    });
-+    setChars(next);
-+    onCodeChange(next.join(""));
-+  }, [length, onCodeChange]);
-+
-+  useEffect(() => {
-+    regenerate();
-+  }, [regenerate, refreshSeed]);
-+
-+  return (
-+    <button
-+      type="button"
-+      onClick={regenerate}
-+      title="点击刷新验证码"
-+      className="inline-flex items-center justify-center rounded-md border border-[#262B34] bg-[#14171C] px-3 py-1.5 hover:border-[#00E5FF]/60 transition-colors"
-+    >
-+      <svg width="96" height="32" viewBox="0 0 96 32" aria-label="图形验证码">
-+        {chars.map((ch, idx) => (
-+          <text
-+            key={idx}
-+            x={14 + idx * 20}
-+            y={22}
-+            fill="#00E5FF"
-+            fontSize="18"
-+            fontFamily="JetBrains Mono, monospace"
-+          >
-+            {ch}
-+          </text>
-+        ))}
-+      </svg>
-+    </button>
-+  );
-+};`,
-  },
-  "src/pages/Login.tsx": {
-    runId: "run-104",
-    stepId: "step-build",
-    filePath: "src/pages/Login.tsx",
+  "run-12:.peck/handoff/12/intent.md": created("run-12", "run-12-spec", ".peck/handoff/12/intent.md", INTENT_12),
+  "run-12:.peck/tasks.md": created("run-12", "run-12-spec", ".peck/tasks.md", TASKS_12),
+  "run-12:src/components/SearchBox.tsx": created(
+    "run-12",
+    "run-12-build",
+    "src/components/SearchBox.tsx",
+    `import React from "react";
+
+export interface SearchBoxProps {
+  value: string;
+  onChange: (next: string) => void;
+}
+
+export const SearchBox: React.FC<SearchBoxProps> = ({ value, onChange }) => (
+  <div className="search-box">
+    <input
+      type="search"
+      value={value}
+      placeholder="搜索标题或正文"
+      onChange={(e) => onChange(e.target.value)}
+    />
+    {value && (
+      <button type="button" aria-label="清空" onClick={() => onChange("")}>
+        ×
+      </button>
+    )}
+  </div>
+);
+`,
+    "typescript",
+  ),
+  "run-12:src/pages/NoteList.tsx": {
+    runId: "run-12",
+    stepId: "run-12-build",
+    filePath: "src/pages/NoteList.tsx",
     kind: "modify",
     language: "typescript",
-    additions: 12,
-    deletions: 3,
-    unifiedDiff: `diff --git a/src/pages/Login.tsx b/src/pages/Login.tsx
-index 51a9d02..9e84b11 100644
---- a/src/pages/Login.tsx
-+++ b/src/pages/Login.tsx
-@@ -1,8 +1,11 @@
- import React, { useState } from "react";
- import { loginWithCredentials } from "../api/auth";
-+import { Captcha } from "../components/Captcha";
- 
- export const Login: React.FC = () => {
-   const [email, setEmail] = useState("");
-   const [password, setPassword] = useState("");
-+  const [captchaExpected, setCaptchaExpected] = useState("");
-+  const [captchaInput, setCaptchaInput] = useState("");
-+  const [captchaSeed, setCaptchaSeed] = useState(0);
-   const [error, setError] = useState<string | null>(null);
- 
-   const handleSubmit = async (e: React.FormEvent) => {
-     e.preventDefault();
--    setError(null);
--    await loginWithCredentials({ email, password });
-+    if (captchaInput.trim().toUpperCase() !== captchaExpected.toUpperCase()) {
-+      setError("图形验证码不正确，请重新输入");
-+      setCaptchaSeed((s) => s + 1);
-+      return;
-+    }
-+    setError(null);
-+    await loginWithCredentials({ email, password, captcha: captchaInput });
-   };
- 
-   return (
-@@ -26,6 +29,12 @@ export const Login: React.FC = () => {
-         onChange={(e) => setPassword(e.target.value)}
-         placeholder="登录密码"
-       />
-+      <div className="flex items-center gap-2">
-+        <input
-+          value={captchaInput}
-+          onChange={(e) => setCaptchaInput(e.target.value)}
-+          placeholder="输入 4 位验证码"
-+          autoComplete="off"
-+        />
-+        <Captcha refreshSeed={captchaSeed} onCodeChange={setCaptchaExpected} />
-+      </div>
-       {error && <p className="text-red-400 text-xs">{error}</p>}
-       <button type="submit">安全登录</button>
-     </form>`,
+    additions: 0,
+    deletions: 0,
+    unifiedDiff: "",
   },
+
+  "run-11:src/lib/date.ts": created(
+    "run-11",
+    "run-11-build",
+    "src/lib/date.ts",
+    `/** 日期统一显示成 YYYY-MM-DD。 */
+export function formatDate(input: Date | number | string): string {
+  const d = new Date(input);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return \`\${y}-\${m}-\${day}\`;
+}
+`,
+    "typescript",
+  ),
+  "run-11:src/pages/NoteList.tsx": {
+    runId: "run-11",
+    stepId: "run-11-build",
+    filePath: "src/pages/NoteList.tsx",
+    kind: "modify",
+    language: "typescript",
+    additions: 2,
+    deletions: 1,
+    unifiedDiff: `diff --git a/src/pages/NoteList.tsx b/src/pages/NoteList.tsx
+--- a/src/pages/NoteList.tsx
++++ b/src/pages/NoteList.tsx
+@@ -1,4 +1,5 @@
+ import React from "react";
++import { formatDate } from "../lib/date";
+ import { useNotes } from "../store/notes";
+
+@@ -18,7 +19,7 @@ export const NoteList: React.FC = () => {
+         <li key={note.id}>
+           <span>{note.title}</span>
+-          <time>{new Date(note.updatedAt).toLocaleDateString()}</time>
++          <time>{formatDate(note.updatedAt)}</time>
+         </li>`,
+  },
+  "run-11:src/pages/NoteDetail.tsx": {
+    runId: "run-11",
+    stepId: "run-11-build",
+    filePath: "src/pages/NoteDetail.tsx",
+    kind: "modify",
+    language: "typescript",
+    additions: 2,
+    deletions: 1,
+    unifiedDiff: `diff --git a/src/pages/NoteDetail.tsx b/src/pages/NoteDetail.tsx
+--- a/src/pages/NoteDetail.tsx
++++ b/src/pages/NoteDetail.tsx
+@@ -1,3 +1,4 @@
+ import React from "react";
++import { formatDate } from "../lib/date";
+
+@@ -12,5 +13,5 @@ export const NoteDetail: React.FC<{ id: string }> = ({ id }) => {
+-      <p className="meta">更新于 {new Date(note.updatedAt).toLocaleDateString()}</p>
++      <p className="meta">更新于 {formatDate(note.updatedAt)}</p>`,
+  },
+
+  "run-10:src/lib/export.ts": {
+    runId: "run-10",
+    stepId: "run-10-worker",
+    filePath: "src/lib/export.ts",
+    kind: "modify",
+    language: "typescript",
+    additions: 7,
+    deletions: 1,
+    unifiedDiff: `diff --git a/src/lib/export.ts b/src/lib/export.ts
+--- a/src/lib/export.ts
++++ b/src/lib/export.ts
+@@ -3,6 +3,12 @@ import type { Note } from "./types";
+ export function exportMarkdown(note: Note): string {
+-  return \`# \${note.title}\\n\\n\${note.body}\`;
++  const frontMatter = [
++    "---",
++    \`title: \${JSON.stringify(note.title)}\`,
++    \`tags: [\${note.tags.map((t) => JSON.stringify(t)).join(", ")}]\`,
++    "---",
++  ].join("\\n");
++  return \`\${frontMatter}\\n\\n# \${note.title}\\n\\n\${note.body}\`;
+ }`,
+  },
+  "run-10:src/lib/export.test.ts": {
+    runId: "run-10",
+    stepId: "run-10-worker",
+    filePath: "src/lib/export.test.ts",
+    kind: "modify",
+    language: "typescript",
+    additions: 11,
+    deletions: 0,
+    unifiedDiff: `diff --git a/src/lib/export.test.ts b/src/lib/export.test.ts
+--- a/src/lib/export.test.ts
++++ b/src/lib/export.test.ts
+@@ -14,3 +14,14 @@ describe("exportMarkdown", () => {
+   });
++
++  it("写入 tags", () => {
++    const md = exportMarkdown({
++      id: "n1",
++      title: "买菜",
++      body: "鸡蛋",
++      tags: ["家务", "周末"],
++      updatedAt: 0,
++    });
++    expect(md).toContain('tags: ["家务", "周末"]');
++  });
+ });`,
+  },
+
+  "run-9:src-tauri/src/settings.rs": {
+    runId: "run-9",
+    stepId: "run-9-impl",
+    filePath: "src-tauri/src/settings.rs",
+    kind: "modify",
+    language: "rust",
+    additions: 6,
+    deletions: 0,
+    unifiedDiff: `diff --git a/src-tauri/src/settings.rs b/src-tauri/src/settings.rs
+--- a/src-tauri/src/settings.rs
++++ b/src-tauri/src/settings.rs
+@@ -8,6 +8,12 @@ pub struct Settings {
+     pub permission: Permission,
++    /// 任务完成、要回答时发 macOS 通知。
++    #[serde(default = "default_true")]
++    pub notifications: bool,
+ }
++
++fn default_true() -> bool {
++    true
++}`,
+  },
+  "run-9:src-tauri/src/notify.rs": {
+    runId: "run-9",
+    stepId: "run-9-impl",
+    filePath: "src-tauri/src/notify.rs",
+    kind: "modify",
+    language: "rust",
+    additions: 3,
+    deletions: 1,
+    unifiedDiff: `diff --git a/src-tauri/src/notify.rs b/src-tauri/src/notify.rs
+--- a/src-tauri/src/notify.rs
++++ b/src-tauri/src/notify.rs
+@@ -5,5 +5,7 @@ use crate::settings::Settings;
+-pub fn task_finished(app: &AppHandle, title: &str) {
++pub fn task_finished(app: &AppHandle, settings: &Settings, title: &str) {
++    if !settings.notifications {
++        return;
++    }
+     send(app, "任务完成", title);
+ }`,
+  },
+
+  "run-7:.peck/handoff/7/intent.md": created("run-7", "run-7-spec", ".peck/handoff/7/intent.md", INTENT_7),
+  "run-7:.peck/tasks.md": created("run-7", "run-7-spec", ".peck/tasks.md", TASKS_7),
+  "run-7:internal/ratelimit/config.go": {
+    runId: "run-7",
+    stepId: "run-7-build",
+    filePath: "internal/ratelimit/config.go",
+    kind: "modify",
+    language: "plaintext",
+    additions: 14,
+    deletions: 2,
+    unifiedDiff: `diff --git a/internal/ratelimit/config.go b/internal/ratelimit/config.go
+--- a/internal/ratelimit/config.go
++++ b/internal/ratelimit/config.go
+@@ -4,6 +4,18 @@ type Limit struct {
+ 	Burst int
+ }
+
+-type Config struct {
+-	Global Limit
++type Config struct {
++	Global   Limit
++	PerRoute map[string]Limit
++}
++
++// For 返回路由的阈值，没配的用全局。
++func (c Config) For(route string) Limit {
++	if c.PerRoute != nil {
++		if l, ok := c.PerRoute[route]; ok {
++			return l
++		}
++	}
++	return c.Global
+ }`,
+  },
+  "run-7:internal/ratelimit/middleware.go": {
+    runId: "run-7",
+    stepId: "run-7-build",
+    filePath: "internal/ratelimit/middleware.go",
+    kind: "modify",
+    language: "plaintext",
+    additions: 9,
+    deletions: 3,
+    unifiedDiff: `diff --git a/internal/ratelimit/middleware.go b/internal/ratelimit/middleware.go
+--- a/internal/ratelimit/middleware.go
++++ b/internal/ratelimit/middleware.go
+@@ -12,9 +12,15 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
+ 	return func(next http.Handler) http.Handler {
+ 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-			if !global.Allow() {
+-				http.Error(w, "too many requests", http.StatusTooManyRequests)
+-				return
++			limit := cfg.For(r.URL.Path)
++			bucket := buckets.get(r.URL.Path, limit)
++			if !bucket.Allow() {
++				http.Error(w, "too many requests", http.StatusTooManyRequests)
++				return
++			}
++			if limit != cfg.Global {
++				w.Header().Set("X-RateLimit-Scope", "route")
+ 			}
+ 			next.ServeHTTP(w, r)
+ 		})`,
+  },
+  "run-7:internal/ratelimit/middleware_test.go": {
+    runId: "run-7",
+    stepId: "run-7-build",
+    filePath: "internal/ratelimit/middleware_test.go",
+    kind: "modify",
+    language: "plaintext",
+    additions: 22,
+    deletions: 0,
+    unifiedDiff: `diff --git a/internal/ratelimit/middleware_test.go b/internal/ratelimit/middleware_test.go
+--- a/internal/ratelimit/middleware_test.go
++++ b/internal/ratelimit/middleware_test.go
+@@ -30,3 +30,25 @@ func TestGlobalLimit(t *testing.T) {
+ 	}
+ }
++
++func TestPerRouteLimit(t *testing.T) {
++	cfg := Config{
++		Global:   Limit{Rate: 100, Burst: 100},
++		PerRoute: map[string]Limit{"/login": {Rate: 1, Burst: 1}},
++	}
++	h := Middleware(cfg)(okHandler)
++	if code := hit(h, "/login"); code != 200 {
++		t.Fatalf("first /login: %d", code)
++	}
++	if code := hit(h, "/login"); code != 429 {
++		t.Fatalf("second /login should be limited: %d", code)
++	}
++}
++
++func TestFallbackToGlobal(t *testing.T) {
++	cfg := Config{Global: Limit{Rate: 1, Burst: 2}}
++	h := Middleware(cfg)(okHandler)
++	if cfg.For("/anything") != cfg.Global {
++		t.Fatal("expected global limit")
++	}
++}`,
+  },
+};
+
+// ---------- API 模式的调用历史（右栏「调用与审查历史」） ----------
+
+const LIMITS: RunLimits = { maxRounds: 12, maxToolCalls: 80, maxContextBytes: 180000, maxTotalTokens: 500000, maxDelegations: 4, maxReworks: 1, workerMaxRounds: 6 };
+
+const DEEPSEEK: ModelProfile = { id: "deepseek-flash", name: "DeepSeek Flash", providerId: "deepseek", apiModel: "deepseek-flash", contextWindow: 128000, maxOutputTokens: 8192, thinking: "switch", efforts: [], tools: true };
+const OPUS: ModelProfile = { id: "claude-opus-5-5", name: "Claude Opus 5.5", providerId: "anthropic", apiModel: "claude-opus-5-5", contextWindow: 200000, maxOutputTokens: 16000, thinking: "switch", efforts: ["low", "medium", "high"], tools: true };
+
+export const MOCK_API_TASKS: Record<string, ApiTask[]> = {
+  "run-10": [
+    {
+      id: "apitask-10", runId: "run-10", parentId: null, previousTaskId: null, stepId: "run-10-worker",
+      title: "导出 Markdown 时保留标签", paths: [], acceptance: "", attempt: 1, review: null,
+      changeset: { files: run10.files },
+      mode: "mock", model: DEEPSEEK, settings: { role: "worker", modelId: "deepseek-flash", thinking: false, effort: null, maxOutputTokens: 8192 },
+      status: "completed", round: 4, limits: LIMITS, callIds: ["call-10-1", "call-10-2", "call-10-3", "call-10-4"],
+      summary: run10.summary ?? null, inputTokens: 18_420, outputTokens: 2_310,
+      tools: [
+        { callId: "call-10-1", tool: { id: "t1", name: "read_file", arguments: { path: "src/lib/export.ts" } }, status: "completed", output: "export function exportMarkdown(note: Note): string { … }", startedAt: NOW - 1 * DAY + 5_000, finishedAt: NOW - 1 * DAY + 5_200 },
+        { callId: "call-10-2", tool: { id: "t2", name: "write_file", arguments: { path: "src/lib/export.ts" } }, status: "completed", output: "写入 18 行", startedAt: NOW - 1 * DAY + 90_000, finishedAt: NOW - 1 * DAY + 90_300 },
+        { callId: "call-10-3", tool: { id: "t3", name: "write_file", arguments: { path: "src/lib/export.test.ts" } }, status: "completed", output: "写入 27 行", startedAt: NOW - 1 * DAY + 200_000, finishedAt: NOW - 1 * DAY + 200_300 },
+        { callId: "call-10-4", tool: { id: "t4", name: "run_command", arguments: { command: "pnpm vitest run src/lib/export.test.ts" } }, status: "completed", output: "Test Files  1 passed (1)\nTests  3 passed (3)", startedAt: NOW - 1 * DAY + 400_000, finishedAt: NOW - 1 * DAY + 412_000 },
+      ],
+    },
+  ],
+  "run-9": [
+    {
+      id: "apitask-9", runId: "run-9", parentId: null, previousTaskId: null, stepId: "run-9-plan",
+      title: "设置面板加通知开关", paths: [], acceptance: "", attempt: 1, review: null,
+      changeset: { files: [] },
+      mode: "mock", model: OPUS, settings: { role: "supervisor", modelId: "claude-opus-5-5", thinking: true, effort: "medium", maxOutputTokens: 16000 },
+      status: "completed", round: 3, limits: LIMITS, callIds: ["call-9-1", "call-9-2", "call-9-3"],
+      summary: "拆成 1 个子任务交给实施的模型；审查通过。", inputTokens: 9_800, outputTokens: 1_450,
+      tools: [
+        { callId: "call-9-1", tool: { id: "t1", name: "list_files", arguments: { path: "src-tauri/src" } }, status: "completed", output: "settings.rs\nnotify.rs\n…", startedAt: NOW - 1 * HOUR - 28 * MIN, finishedAt: NOW - 1 * HOUR - 28 * MIN + 300 },
+        { callId: "call-9-2", tool: { id: "t2", name: "delegate_task", arguments: { title: "通知开关", paths: ["src-tauri/src/settings.rs", "src-tauri/src/notify.rs"] } }, status: "completed", output: "子任务完成，改了 2 个文件", startedAt: NOW - 1 * HOUR - 20 * MIN, finishedAt: NOW - 1 * HOUR - 8 * MIN },
+      ],
+    },
+    {
+      id: "apitask-9-1", runId: "run-9", parentId: "apitask-9", previousTaskId: null, stepId: "run-9-impl",
+      title: "通知开关", paths: ["src-tauri/src/settings.rs", "src-tauri/src/notify.rs"], acceptance: "设置里有 notifications 字段默认 true；关了不发通知；cargo test 通过", attempt: 1,
+      review: { decision: "accept", feedback: "开关默认开，关了不发通知，测试覆盖两种情况。", reviewedAt: NOW - 1 * HOUR - 2 * MIN },
+      changeset: { files: run9.files },
+      mode: "mock", model: DEEPSEEK, settings: { role: "worker", modelId: "deepseek-flash", thinking: false, effort: null, maxOutputTokens: 8192 },
+      status: "completed", round: 3, limits: LIMITS, callIds: ["call-9-w1", "call-9-w2", "call-9-w3"],
+      summary: "settings.rs 加 notifications 字段（默认 true），notify.rs 发通知前读开关。cargo test 通过。", inputTokens: 12_300, outputTokens: 1_900,
+      tools: [
+        { callId: "call-9-w1", tool: { id: "t1", name: "read_file", arguments: { path: "src-tauri/src/settings.rs" } }, status: "completed", output: "pub struct Settings { … }", startedAt: NOW - 1 * HOUR - 19 * MIN, finishedAt: NOW - 1 * HOUR - 19 * MIN + 200 },
+        { callId: "call-9-w2", tool: { id: "t2", name: "write_file", arguments: { path: "src-tauri/src/notify.rs" } }, status: "completed", output: "写入 11 行", startedAt: NOW - 1 * HOUR - 14 * MIN, finishedAt: NOW - 1 * HOUR - 14 * MIN + 300 },
+        { callId: "call-9-w3", tool: { id: "t3", name: "run_command", arguments: { command: "cargo test" } }, status: "completed", output: "test result: ok. 41 passed; 0 failed", startedAt: NOW - 1 * HOUR - 9 * MIN, finishedAt: NOW - 1 * HOUR - 8 * MIN },
+      ],
+    },
+  ],
 };

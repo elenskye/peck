@@ -76,6 +76,11 @@ pub struct ChangeSetSummary {
 #[serde(tag = "type", content = "payload")]
 pub enum RunEvent {
     #[serde(rename_all = "camelCase")]
+    StepAdded {
+        run_id: String,
+        step: StepDescriptor,
+    },
+    #[serde(rename_all = "camelCase")]
     RunStarted {
         run_id: String,
         flow_id: String,

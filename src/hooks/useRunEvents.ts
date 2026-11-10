@@ -65,6 +65,7 @@ export function useRunEvents(sessionId?: string, initialPrompt?: string) {
         const current = { ...next[idx] };
 
         switch (event.type) {
+          case "StepAdded": { current.steps = [...current.steps, event.payload.step]; break; }
           case "StepExecution": {
             current.steps = current.steps.map((s) => s.id === event.payload.stepId
               ? { ...s, executionMode: event.payload.mode, notice: event.payload.notice } : s);
@@ -133,6 +134,7 @@ export function useRunEvents(sessionId?: string, initialPrompt?: string) {
             break;
           }
           case "StepFinished": {
+            current.stepFiles = { ...current.stepFiles, [event.payload.stepId]: event.payload.changeset.files };
             current.steps = current.steps.map((s) =>
               s.id === event.payload.stepId
                 ? {
@@ -173,25 +175,6 @@ export function useRunEvents(sessionId?: string, initialPrompt?: string) {
     [sessionId, initialPrompt],
   );
 
-  const markRunCancelled = useCallback((runId: string) => {
-    setRuns((prev) =>
-      prev.map((r) =>
-        r.id === runId
-          ? {
-              ...r,
-              status: "cancelled",
-              finishedAt: Date.now(),
-              steps: r.steps.map((s) =>
-                s.status === "running" || s.status === "pending"
-                  ? { ...s, status: "cancelled" }
-                  : s,
-              ),
-            }
-          : r,
-      ),
-    );
-  }, []);
-
   const activeRun = runs.find((r) => r.id === activeRunId) ?? runs[runs.length - 1] ?? null;
 
   return {
@@ -200,7 +183,6 @@ export function useRunEvents(sessionId?: string, initialPrompt?: string) {
     activeRunId,
     setActiveRunId,
     handleRunEvent,
-    markRunCancelled,
     reloadRuns,
     error,
   };

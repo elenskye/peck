@@ -4,6 +4,7 @@ import { Composer } from "@/components/chat/Composer";
 import { MessageList } from "@/components/chat/MessageList";
 import type { AgentInfo, Message, RunRecord, Session } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import type { ApiMode, ApiRole, RunLimits } from "@/lib/api";
 
 interface ChatPanelProps {
   sessions: Session[];
@@ -13,10 +14,11 @@ interface ChatPanelProps {
   activeRunId: string | null;
   agents: AgentInfo[];
   isRunning: boolean;
+  apiMode: ApiMode | null;
   onSelectSession: (session: Session) => void;
   onNewSession: () => void;
   onSelectRun: (runId: string) => void;
-  onSendPrompt: (prompt: string) => void;
+  onSendPrompt: (prompt: string, limits?: RunLimits, scenario?: string, role?: ApiRole) => void;
   onCancelRun: () => void;
   onRetryStep: (runId: string, stepId: string) => void;
 }
@@ -29,6 +31,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   activeRunId,
   agents,
   isRunning,
+  apiMode,
   onSelectSession,
   onNewSession,
   onSelectRun,
@@ -89,6 +92,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       <Composer
         agents={agents}
         isRunning={isRunning}
+        apiMode={apiMode}
         onSend={onSendPrompt}
         onCancel={onCancelRun}
       />
