@@ -90,9 +90,9 @@
 
 ## 视觉
 
-- 视觉基线在 visual-atelier 的方案 `schemes/peck/`（0.1.0，2026-11-10 批）。站主在 visual-atelier 打 `peck-v<版本>` tag 后，本地账号 `npm run sync -- --scheme peck --to peck --tag peck-v<版本>` 单向复制进 `src/vendor/peck/`（清单是方案的 `sync.json`），带 `VERSION` 和 `SHA256SUMS`，不手改。
+- 视觉基线在 visual-atelier 的方案 `schemes/peck/`，按 tag 单向同步进 `src/vendor/peck/`（现在是 `peck-v0.1.0`，`VERSION` 记着提交，`SHA256SUMS` 记校验和），不手改；同步怎么跑在 `CLAUDE.md`「边界」。
+- 读取：`src/main.tsx` 先引 `vendor/peck/peck.css`，再引 `src/index.css`；根元素的 `data-theme` 由 `src/lib/theme.ts` 写。新外壳再引 `vendor/peck/bundle.css` 用 `pk-` 组件。
 - 同步来的：`peck.css`（Design System 的变量、字体样式类、两个字体的 @font-face）、`bundle.css`（`pk-` 组件）、`fonts/`（缝合像素 12、Departure Mono 和 OFL 原文）、`tokens.ts`、`marks/`（App 图标、A3、菜单栏模板图）、`DESIGN.md`、`peck-rules.md`、`DESIGN-SYSTEM.md` 和 `components/`（组件说明和示例）。云端开发看不到 visual-atelier，照这些做。
-- 同步以前 `src/vendor/peck/` 是一份手写的占位（`VERSION` 写 `placeholder`），只有 `peck.css` 的颜色变量。
 
 ## 打包和签名
 

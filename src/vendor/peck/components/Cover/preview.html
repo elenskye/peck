@@ -1,0 +1,62 @@
+<!-- @dsCard height=320 -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Peck</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--color-page); color: var(--color-text); font-family: var(--font-name); overflow: hidden; }
+  .cover { position: relative; height: 320px; overflow: hidden; }
+  .art { position: absolute; top: 0; left: 480px; width: 480px; height: 320px; overflow: hidden; }
+  .art svg { display: block; width: 480px; height: 320px; }
+  .cyan { fill: var(--color-cyan); }
+  .mod { fill: var(--color-line-strong); }
+  .face { fill: var(--color-panel); }
+  .warn { fill: var(--color-warn); }
+  .blk, .head { fill: var(--color-cyan-block); }
+  .off { fill: var(--color-block-off); }
+  .words { position: absolute; left: 30px; bottom: 28px; max-width: 440px; }
+  .name { margin: 0; font-family: var(--font-name); font-size: 120px; line-height: .95; font-weight: 400; color: var(--color-text); }
+  .tag { margin: 12px 0 0 4px; font-family: var(--font-body); font-size: 14px; line-height: 20px; color: var(--color-text-2); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="art" aria-hidden="true">
+<svg viewBox="0 0 480 320" width="480" height="320">
+<!--
+  blocks      color-cyan 128×264 slab bleeding off the top (the one colour that glows, the identity) · color-line-strong 216×168 module with a color-panel face inset 6 (a pk-mod, the structure) · color-warn 30×30 once, off the module's lower right corner (it only means 等你) — about a quarter of 960×320
+  arrangement the three columns of the app: a narrow left slab, a wider module beside it on the width-gap 16 gutter, the small amber square waiting just outside the module's corner
+  pattern     the literal motif, the 方块进度: 16 blocks 9×14 at a 3px gap (pk-blocks), 12 lit in color-cyan-block, 4 dark in color-block-off, inside the module space-8 16 from its edge — Peck shows work as a row of lit blocks, not a bar
+  scales      sides in space multiples (gutter width-gap 16, inset space-3 6); corners are the pixel steps, 2 levels × step-module 3 scaled ×2 = 6 for the cover; block gap 3 and height 14 from pk-blocks
+-->
+<polygon class="cyan" points="40,-12 46,-12 46,-18 52,-18 52,-24 156,-24 156,-18 162,-18 162,-12 168,-12 168,228 162,228 162,234 156,234 156,240 52,240 52,234 46,234 46,228 40,228"/>
+<polygon class="mod" points="184,52 190,52 190,46 196,46 196,40 388,40 388,46 394,46 394,52 400,52 400,196 394,196 394,202 388,202 388,208 196,208 196,202 190,202 190,196 184,196"/>
+<polygon class="face" points="186,54 192,54 192,48 198,48 198,42 386,42 386,48 392,48 392,54 398,54 398,194 392,194 392,200 386,200 386,206 198,206 198,200 192,200 192,194 186,194"/>
+<rect class="blk" x="200" y="176" width="9" height="14"/>
+<rect class="blk" x="212" y="176" width="9" height="14"/>
+<rect class="blk" x="224" y="176" width="9" height="14"/>
+<rect class="blk" x="236" y="176" width="9" height="14"/>
+<rect class="blk" x="248" y="176" width="9" height="14"/>
+<rect class="blk" x="260" y="176" width="9" height="14"/>
+<rect class="blk" x="272" y="176" width="9" height="14"/>
+<rect class="blk" x="284" y="176" width="9" height="14"/>
+<rect class="blk" x="296" y="176" width="9" height="14"/>
+<rect class="blk" x="308" y="176" width="9" height="14"/>
+<rect class="blk" x="320" y="176" width="9" height="14"/>
+<rect class="blk" x="332" y="176" width="9" height="14"/>
+<rect class="off" x="344" y="176" width="9" height="14"/>
+<rect class="off" x="356" y="176" width="9" height="14"/>
+<rect class="off" x="368" y="176" width="9" height="14"/>
+<rect class="off" x="380" y="176" width="9" height="14"/>
+<polygon class="warn" points="408,220 410,220 410,218 412,218 412,216 434,216 434,218 436,218 436,220 438,220 438,242 436,242 436,244 434,244 434,246 412,246 412,244 410,244 410,242 408,242"/>
+</svg>
+</div>
+<div class="words">
+  <h1 class="name">Peck</h1>
+  <p class="tag">点阵终端 × 深海：青色是全屏唯一会发光的颜色。</p>
+</div>
+</div>
+</body>
+</html>

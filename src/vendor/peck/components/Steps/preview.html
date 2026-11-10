@@ -1,0 +1,18 @@
+<!-- @dsCard group="状态" height=290 width=960 subtitle="做完、在跑、等你、还没到、失败" -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Steps</title>
+<style>
+  html, body { margin: 0; }
+  .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 24px 32px; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .lb { width: 100%; font-size: 12px; color: var(--color-text-3); margin-bottom: -4px; }
+  ol { width: 560px; }
+</style>
+</head>
+<body class="pk pk-dots">
+<div class="demo"><ol><li class="pk-step pk-step--ok"><span class="pk-step-node"><i class="pk-i pk-i--check pk-i--12"></i></span><div><p class="pk-step-head"><b class="pk-step-name">Muse 写规范</b><span class="pk-step-time">48s</span></p><p class="pk-step-desc">读了 12 个文件，列出 6 条要改的</p></div></li><li class="pk-step pk-step--ok"><span class="pk-step-node"><i class="pk-i pk-i--check pk-i--12"></i></span><div><p class="pk-step-head"><b class="pk-step-name">Grok 改 Composer.tsx、App.tsx</b><span class="pk-step-time">1:02</span></p><p class="pk-step-desc">新建 SettingsSheet.tsx，删掉两个旧对话框</p></div></li><li class="pk-step pk-step--run"><span class="pk-step-node"><span class="pk-run"></span></span><div><p class="pk-step-head"><b class="pk-step-name">Grok 跑 pnpm check</b><span class="pk-step-time">0:24</span></p><p class="pk-step-desc">第一次有报错，Grok 在改</p></div></li><li class="pk-step pk-step--wait"><span class="pk-step-node"><i class="pk-i pk-i--ask pk-i--12"></i></span><div><p class="pk-step-head"><b class="pk-step-name">Grok 问你：Tailwind 要不要升</b><span class="pk-step-time">WAIT</span></p></div></li><li class="pk-step pk-step--todo"><span class="pk-step-node"></span><div><p class="pk-step-head"><b class="pk-step-name">验证并总结</b></p></div></li><li class="pk-step pk-step--fail"><span class="pk-step-node"><i class="pk-i pk-i--x pk-i--12"></i></span><div><p class="pk-step-head"><b class="pk-step-name">跑 e2e</b><span class="pk-step-time">0:12</span></p><p class="pk-step-desc">少了 playwright，没装</p></div></li></ol></div>
+</body>
+</html>

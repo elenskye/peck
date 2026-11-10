@@ -1,4 +1,4 @@
 scheme: peck
-version: placeholder
-tag: none
-commit: none
+version: 0.1.0
+tag: peck-v0.1.0
+commit: 27c2db41ec99c57987a3b48b3f6d11bff17eb645

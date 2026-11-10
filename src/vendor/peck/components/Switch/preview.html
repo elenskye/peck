@@ -1,0 +1,18 @@
+<!-- @dsCard group="控件" height=80 width=960 subtitle="开着、关着、悬停、不能用" -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Switch</title>
+<style>
+  html, body { margin: 0; }
+  .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 24px 32px; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .lb { width: 100%; font-size: 12px; color: var(--color-text-3); margin-bottom: -4px; }
+
+</style>
+</head>
+<body class="pk pk-dots">
+<div class="demo"><button type="button" class="pk-switch" role="switch" aria-checked="true"><span class="pk-switch-track"><i></i></span>完成时通知</button><button type="button" class="pk-switch" role="switch" aria-checked="false"><span class="pk-switch-track"><i></i></span>跑完自动撤销失败的步骤</button><button type="button" class="pk-switch is-hover" role="switch" aria-checked="true"><span class="pk-switch-track"><i></i></span>完成时通知</button><button type="button" class="pk-switch is-hover" role="switch" aria-checked="false"><span class="pk-switch-track"><i></i></span>跑完自动撤销</button><button type="button" class="pk-switch" role="switch" aria-checked="true" disabled=""><span class="pk-switch-track"><i></i></span>联网前问我</button></div>
+</body>
+</html>

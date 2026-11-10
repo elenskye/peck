@@ -1,0 +1,19 @@
+<!-- @dsCard group="控件" height=260 width=960 subtitle="单选（带推荐、说明、快捷键）、多选、不能用" -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Choice</title>
+<style>
+  html, body { margin: 0; }
+  .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 24px 32px; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .lb { width: 100%; font-size: 12px; color: var(--color-text-3); margin-bottom: -4px; }
+  .demo { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; align-items: start; }
+</style>
+</head>
+<body class="pk pk-dots">
+<div class="demo"><div class="col"><button type="button" class="pk-opt" role="radio" aria-checked="true"><span class="pk-radio"></span><span><b class="pk-opt-name">一起升到 4.1 <em class="pk-tag pk-tag--rec">DEFAULT</em></b><span class="pk-opt-desc">顺手改 6 个文件的类名</span></span><span class="pk-opt-key">1</span></button><button type="button" class="pk-opt" role="radio" aria-checked="false"><span class="pk-radio"></span><span><b class="pk-opt-name">先不升</b><span class="pk-opt-desc">这次任务照样能做完</span></span><span class="pk-opt-key">2</span></button><button type="button" class="pk-opt is-hover" role="radio" aria-checked="false"><span class="pk-radio"></span><span><b class="pk-opt-name">这个任务跑完再说</b><span class="pk-opt-desc">跑完以后再问一次</span></span><span class="pk-opt-key">3</span></button><button type="button" class="pk-opt" role="radio" aria-checked="false" disabled=""><span class="pk-radio"></span><span><b class="pk-opt-name">换成 UnoCSS</b><span class="pk-opt-desc">这个项目没装</span></span><span class="pk-opt-key"></span></button></div>
+<div class="col"><button type="button" class="pk-opt" role="checkbox" aria-checked="true"><span class="pk-check"><i class="pk-i pk-i--check pk-i--12"></i></span><span><b class="pk-opt-name">删 2 个旧文件</b><span class="pk-opt-desc">AgentsDialog.tsx、ProvidersDialog.tsx</span></span><span class="pk-opt-key"></span></button><button type="button" class="pk-opt" role="checkbox" aria-checked="true"><span class="pk-check"><i class="pk-i pk-i--check pk-i--12"></i></span><span><b class="pk-opt-name">跑 pnpm check</b></span><span class="pk-opt-key"></span></button><button type="button" class="pk-opt" role="checkbox" aria-checked="false"><span class="pk-check"><i class="pk-i pk-i--check pk-i--12"></i></span><span><b class="pk-opt-name">改 README.md</b><span class="pk-opt-desc">项目外的文件，要再确认</span></span><span class="pk-opt-key"></span></button><button type="button" class="pk-opt" role="checkbox" aria-checked="false" disabled=""><span class="pk-check"><i class="pk-i pk-i--check pk-i--12"></i></span><span><b class="pk-opt-name">联网装依赖</b><span class="pk-opt-desc">PLAN 档不能装</span></span><span class="pk-opt-key"></span></button></div></div>
+</body>
+</html>

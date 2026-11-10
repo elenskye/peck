@@ -62,7 +62,7 @@ Peck 仓库的版本 tag 叫 `v0.4.0` 这样，由站主打；visual-atelier 里
 ## 边界
 
 - 只在 `personal-cli-studio/` 里开发（云端只有 Peck 这一个仓库）。`~/Documents/GitHub/pomelo` 只读。
-- visual-atelier（`~/Documents/GitHub/visual-atelier`，只有本地账号碰）只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引（`schemes/README.md`、`canvases/README.md`）里 Peck 自己的那一行；动索引前先 `git status`，那份文件有别人没提交的改动就不动、把要加的那行写进 HANDOFF。不碰 `schemes/pomelo/`、`schemes/vermilion/`、`bench/`、`tooling/`、`docs/`、`ROADMAP.md`、`CHANGELOG.md`，除非站主针对这一次同意；不跑它的 `sync` 除非站主打了 `peck-v*` 的 tag。它的规矩读它的 `CLAUDE.md`，命令要先 `source ~/.nvm/nvm.sh && nvm use`（Node 22）。
+- visual-atelier（`~/Documents/GitHub/visual-atelier`，只有本地账号碰）：只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里 Peck 那一行（动索引前先 `git status`，有别人没提交的改动就不动）；别的地方要站主针对这一次同意。站主打了 `peck-v*` 的 tag 才同步：`VA_BROWSER_CHANNEL=chrome npm run sync -- --scheme peck --to peck --tag peck-v<版本>`。它的规矩读它的 `CLAUDE.md`，命令前先 `source ~/.nvm/nvm.sh && nvm use`（Node 22）。
 - **额度监测器是 Peck 自己的作业**：`src/quota/`、`src-tauri/src/quota/` 由站主用 Peck 开发，Agent 不写、不改、不「顺手修」；只读、评估、把 Peck 的改进项记下来。Peck 其他地方给它留的接口（导航入口、数据读取点）可以改。
 - 本地账号改任何文件但不提交，保留接手时已有的改动；`git status` 里有你不认识的改动，不动也不还原。
 - 不碰 Keychain 里的 Key 内容，不把 Key、绝对路径、提示词写进文档和验收页。不新增付费服务。

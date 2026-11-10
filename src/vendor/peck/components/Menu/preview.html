@@ -1,0 +1,18 @@
+<!-- @dsCard group="控件" height=280 width=960 subtitle="CLI 一组、API 一组、悬停、不能用、配 Key" -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Menu</title>
+<style>
+  html, body { margin: 0; }
+  .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 24px 32px; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .lb { width: 100%; font-size: 12px; color: var(--color-text-3); margin-bottom: -4px; }
+  .pk-menu { width: 336px; }
+</style>
+</head>
+<body class="pk pk-dots">
+<div class="demo"><div class="pk-menu" role="menu"><p class="pk-menu-group">CLI</p><button type="button" class="pk-menu-item is-on"><i class="pk-dot pk-dot--muse"></i><b>MUSE</b><span>订阅额度 · 只读</span></button><button type="button" class="pk-menu-item is-hover"><i class="pk-dot pk-dot--grok"></i><b>GROK</b><span>PLAN 档 · 订阅额度</span></button><div class="pk-menu-sep"></div><p class="pk-menu-group">API</p><button type="button" class="pk-menu-item"><i class="pk-dot pk-dot--api"></i><b>DEEPSEEK V3</b><span>按次算钱 · 只读文件</span></button><button type="button" class="pk-menu-item" disabled=""><i class="pk-dot pk-dot--api"></i><b>QWEN 3</b><span>没配 Key</span></button><button type="button" class="pk-menu-action"><i class="pk-i pk-i--plus pk-i--12"></i>配 Key 用 API 模型<em>当场填</em></button></div></div>
+</body>
+</html>

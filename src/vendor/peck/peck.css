@@ -1,60 +1,165 @@
-/* 占位：手写，不是同步来的。Phase 2 视觉定稿、站主打 tag peck-v* 后，由 visual-atelier 的 sync 整个目录覆盖。 */
-/* 变量名照 schemes/peck/tokens/targets.json 的 web 方言（--color-*）；深色的值是现在界面在用的颜色，浅色取方案草稿。 */
-/* 根元素写 data-theme="dark" 用深色，不写是浅色（src/lib/theme.ts 负责写）。 */
+/* Peck — generated from tokens.json */
+:root, [data-theme="dark"] {
+  --color-page: #050816;
+  --color-grid: rgba(120,140,255,.085);
+  --color-panel: #0A0F24;
+  --color-panel-2: #0F1630;
+  --color-raised: #172040;
+  --color-line: #1E2850;
+  --color-line-strong: #43528B;
+  --color-block-off: #141C3C;
+  --color-text: #E8ECFF;
+  --color-text-2: #BEC7F5;
+  --color-text-3: #9FAADE;
+  --color-cyan: #00E5FF;
+  --color-cyan-hover: #4DEDFF;
+  --color-on-cyan: #02101A;
+  --color-cyan-text: #00E5FF;
+  --color-cyan-block: #00E5FF;
+  --color-cyan-line: #048FA7;
+  --color-cyan-soft: #09243A;
+  --color-cyan-scan: rgba(0,229,255,.22);
+  --color-ok: #4ADE80;
+  --color-ok-soft: #10242D;
+  --color-warn: #FFB86B;
+  --color-warn-hover: #FFCD97;
+  --color-warn-soft: #23202B;
+  --color-warn-line: #9D744F;
+  --color-on-warn: #02101A;
+  --color-bad: #FE9AA4;
+  --color-bad-hover: #FEB8BF;
+  --color-bad-soft: #221D31;
+  --color-bad-line: #A96977;
+  --color-on-bad: #050816;
+  --color-muse: #A78BFA;
+  --color-grok: #FFB86B;
+  --color-api: #60A5FA;
+  --color-focus: var(--color-cyan-text);
+  --shadow-glow-dot: 0 0 8px rgba(0,229,255,1);
+  --shadow-glow-block: 0 0 12px rgba(0,229,255,.85);
+  --shadow-glow-text: 0 0 16px rgba(0,229,255,.85);
+  --shadow-glow-timer: 0 0 26px rgba(0,229,255,.75), 0 0 6px rgba(0,229,255,1);
+  --shadow-glow-on-cyan: 0 0 6px rgba(0,229,255,.9);
+  --shadow-glow-ink: 0 0 8px rgba(232,236,255,.35);
+}
+[data-theme="light"] {
+  --color-page: #F2F4FC;
+  --color-grid: rgba(40,50,130,.10);
+  --color-panel: #FFFFFF;
+  --color-panel-2: #F5F7FD;
+  --color-raised: #E7EBF8;
+  --color-line: #DAE0F0;
+  --color-line-strong: #B4BDDB;
+  --color-block-off: #E1E6F5;
+  --color-text: #0B1030;
+  --color-text-2: #4E567A;
+  --color-text-3: #646C92;
+  --color-cyan: #007A94;
+  --color-cyan-hover: #00687E;
+  --color-on-cyan: #FFFFFF;
+  --color-cyan-text: #007A94;
+  --color-cyan-block: #0099B8;
+  --color-cyan-line: #0099B8;
+  --color-cyan-soft: #E2F4F8;
+  --color-cyan-scan: rgba(0,153,184,.24);
+  --color-ok: #12804C;
+  --color-ok-soft: #E3F5EC;
+  --color-warn: #A35E00;
+  --color-warn-hover: #8B5000;
+  --color-warn-soft: #FFF3E2;
+  --color-warn-line: #A35E00;
+  --color-on-warn: #FFFFFF;
+  --color-bad: #E11D48;
+  --color-bad-hover: #BF193D;
+  --color-bad-soft: #FFE9EE;
+  --color-bad-line: #E11D48;
+  --color-on-bad: #FFFFFF;
+  --color-muse: #6D4AE8;
+  --color-grok: #A35E00;
+  --color-api: #2563EB;
+  --color-focus: var(--color-cyan-text);
+  --shadow-glow-dot: none;
+  --shadow-glow-block: none;
+  --shadow-glow-text: none;
+  --shadow-glow-timer: none;
+  --shadow-glow-on-cyan: none;
+  --shadow-glow-ink: none;
+}
 :root {
-  color-scheme: light;
-  --color-page: #F3F5F8;
-  --color-panel: #FAFBFC;
-  --color-card: #FFFFFF;
-  --color-raised: #ECF0F4;
-  --color-code: #F1F4F7;
-  --color-line: #DCE2E9;
-  --color-line-strong: #C3CCD6;
-  --color-text: #15202B;
-  --color-muted: #536273;
-  --color-faint: #66758A;
-  --color-accent: #00E5FF;
-  --color-on-accent: #04161B;
-  --color-accent-text: #007A8A;
-  --color-accent-soft: #DDF8FB;
-  --color-accent-line: #19B8CF;
-  --color-muse: #6B46F0;
-  --color-grok: #B4600A;
-  --color-api: #1D5BD6;
-  --color-success: #0B7A42;
-  --color-warning: #B45309;
-  --color-danger: #C62828;
-  --color-diff-add: #E6F6EC;
-  --color-diff-del: #FBE7E7;
-  --color-focus: var(--color-accent-line);
-  --color-running: var(--color-accent);
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 18px;
+  --space-10: 22px;
+  --space-11: 28px;
+  --space-12: 30px;
+  --width-left: 288px;
+  --width-right: 336px;
+  --width-gap: 16px;
+  --width-pad-top: 22px;
+  --width-pad-x: 30px;
+  --width-pad-bottom: 28px;
+  --text-hero: 24px;
+  --text-title: 18px;
+  --text-name: 12px;
+  --text-body: 12.5px;
+  --text-small: 12px;
+  --text-code: 11px;
+  --text-label: 13px;
+  --text-button: 14px;
+  --text-count: 17px;
+  --text-num: 26px;
+  --text-timer: 54px;
+  --leading-hero: 30px;
+  --leading-title: 24px;
+  --leading-name: 18px;
+  --leading-body: 19px;
+  --leading-small: 18px;
+  --leading-code: 18px;
+  --leading-label: 16px;
+  --leading-button: 16px;
+  --leading-count: 17px;
+  --leading-num: 26px;
+  --leading-timer: 54px;
+  --size-button: 34px;
+  --size-button-sm: 26px;
+  --size-chip: 28px;
+  --size-seg: 28px;
+  --size-input: 30px;
+  --size-field: 38px;
+  --size-row: 23px;
+  --size-menu-row: 30px;
+  --size-tag: 19px;
+  --size-check: 16px;
+  --size-switch-w: 34px;
+  --size-switch-h: 18px;
+  --size-icon: 16px;
+  --size-icon-sm: 12px;
+  --size-icon-lg: 24px;
+  --size-header: 44px;
+  --step-module: 3px;
+  --step-control: 2px;
+  --step-small: 2px;
+  --font-name: "Fusion Pixel 12","PingFang SC",sans-serif;
+  --font-body: "IBM Plex Sans","PingFang SC","Hiragino Sans GB",sans-serif;
+  --font-code: "Departure Mono","Fusion Pixel 12","PingFang SC",monospace;
+  --font-dots: "Doto","IBM Plex Mono",monospace;
 }
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --color-page: #0F1115;
-  --color-panel: #14171C;
-  --color-card: #181B21;
-  --color-raised: #1E222A;
-  --color-code: #0F1318;
-  --color-line: #262B34;
-  --color-line-strong: #35404D;
-  --color-text: #E6EDF3;
-  --color-muted: #B4BEC8;
-  --color-faint: #ADB7C2;
-  --color-accent: #00E5FF;
-  --color-on-accent: #04161B;
-  --color-accent-text: #00E5FF;
-  --color-accent-soft: rgba(0, 229, 255, 0.12);
-  --color-accent-line: #00E5FF;
-  --color-muse: #C6B5FF;
-  --color-grok: #FFB454;
-  --color-api: #8CC0FF;
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-danger: #EF4444;
-  --color-diff-add: #10301F;
-  --color-diff-del: #3A1A1A;
-}
+.t-hero { font-family: var(--font-name); font-size: 24px; line-height: 30px; font-weight: 400; }
+.t-title { font-family: var(--font-name); font-size: 18px; line-height: 24px; font-weight: 400; }
+.t-name { font-family: var(--font-name); font-size: 12px; line-height: 18px; font-weight: 400; }
+.t-body { font-family: var(--font-body); font-size: 12.5px; line-height: 19px; font-weight: 400; }
+.t-small { font-family: var(--font-body); font-size: 12px; line-height: 18px; font-weight: 400; }
+.t-code { font-family: var(--font-code); font-size: 11px; line-height: 18px; font-weight: 400; }
+.t-label { font-family: var(--font-dots); font-size: 13px; line-height: 16px; font-weight: 900; letter-spacing: .06em; }
+.t-button { font-family: var(--font-dots); font-size: 14px; line-height: 16px; font-weight: 900; letter-spacing: .08em; }
+.t-count { font-family: var(--font-dots); font-size: 17px; line-height: 17px; font-weight: 900; }
+.t-num { font-family: var(--font-dots); font-size: 26px; line-height: 26px; font-weight: 900; }
+.t-timer { font-family: var(--font-dots); font-size: 54px; line-height: 54px; font-weight: 900; }
+@font-face { font-family: "Fusion Pixel 12"; src: url("fonts/fusion-pixel-12.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Departure Mono"; src: url("fonts/departure-mono.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
