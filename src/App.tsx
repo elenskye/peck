@@ -362,7 +362,7 @@ export const App: React.FC = () => {
       </main>
       {toast && (
         <div className="app-toast" role="status">
-          <div className="pk-toast pk-anim-reveal-s"><Icon name="bang" size={12} /><span>{toast}</span></div>
+          <div className="pk-anim-reveal-s"><div className="pk-toast"><Icon name="bang" size={12} /><span>{toast}</span></div></div>
         </div>
       )}
       {run && <span className="sr-only" aria-live="polite">{`任务 ${run.number} ${whoLabel(run)}`}</span>}

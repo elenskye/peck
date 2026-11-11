@@ -178,7 +178,12 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
   const [confirm, setConfirm] = useState<UndoPreview | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [copied, setCopied] = useState(false);
-  useEffect(() => { setStepId(null); setConfirm(null); }, [run?.id]);
+  // 撤销的动效：out 是一行行溶掉、扫一道光，back 是以已撤销的样子露出来。
+  const [fx, setFx] = useState<"out" | "back" | null>(null);
+  const fxTimers = useRef<number[]>([]);
+  const clearFx = () => { fxTimers.current.forEach((t) => window.clearTimeout(t)); fxTimers.current = []; setFx(null); };
+  useEffect(() => { setStepId(null); setConfirm(null); clearFx(); }, [run?.id]);
+  useEffect(() => () => fxTimers.current.forEach((t) => window.clearTimeout(t)), []);
 
   const files = !run ? [] : stepId ? run.stepFiles?.[stepId] ?? run.files.filter((f) => f.stepId === stepId) : run.files;
   const selected = files.find((f) => f.path === filePath) ?? null;
@@ -208,7 +213,13 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
   const doUndo = async () => {
     if (!run) return;
     setUndoing(true);
-    try { await onUndo(run); setConfirm(null); } catch { /* 提示条里说了为什么 */ } finally { setUndoing(false); }
+    try {
+      await onUndo(run);
+      setConfirm(null);
+      clearFx();
+      setFx("out");
+      fxTimers.current = [window.setTimeout(() => setFx("back"), 700), window.setTimeout(() => setFx(null), 950)];
+    } catch { /* 提示条里说了为什么 */ } finally { setUndoing(false); }
   };
   const copy = () => {
     if (!diff) return;
@@ -235,7 +246,7 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
       {files.length === 0 ? (
         <p className="empty-line">{!run ? "发一个任务，它改了哪些文件会列在这里。" : state === "running" ? "还没有改动。它一动文件，这里就会列出来。" : "这个任务没有改文件。"}</p>
       ) : (
-        <div className={cn("pk-tree scroll", state === "undone" && "is-undone")}>
+        <div className={cn("pk-tree scroll", state === "undone" && "is-undone", fx && `fx-${fx}`)}>
           {files.map((f) => <FileRow key={f.path} name={wide ? f.path : f.path.split("/").pop()!} title={f.path} mark={f} on={f.path === filePath} onClick={() => onFilePath(f.path === filePath ? null : f.path)} />)}
         </div>
       )}
@@ -261,7 +272,7 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
   const foot = run && (
     <div className="changes-foot">
       {state === "undone" ? (
-        <p className="back"><Icon name="check" size={12} /><span>已撤销。要再做一次，点左边 NEW TASK。</span></p>
+        fx === "out" ? null : <p className={cn("back", fx === "back" && "fx-back")}><Icon name="check" size={12} /><span>已撤销。要再做一次，点左边 NEW TASK。</span></p>
       ) : confirm ? (
         <div className="confirm">
           <p className="confirm-t"><Icon name="undo" /><b className="t-name">撤销这个任务？</b></p>
@@ -291,6 +302,7 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
         {preview}
       </div>
       {!wide && foot}
+      {fx === "out" && <div className="changes-fx" aria-hidden><i className="pk-scan" /></div>}
     </div>
   );
 };

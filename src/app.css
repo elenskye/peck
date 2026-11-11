@@ -47,7 +47,9 @@ body { overflow: hidden; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-cyan-line); }
 
 .app-toast { position: absolute; left: 0; right: 0; bottom: var(--width-pad-bottom); display: flex; justify-content: center; pointer-events: none; z-index: 20; }
-.app-toast .pk-toast { white-space: normal; }
+/* 提示条用大一号的像素角（3 像素一级），实心底上才看得出是像素的；方案 bundle.css 里是 2 像素，改视觉基线时补进方案。
+   露出动画（pk-reveal-y）收尾时把 clip-path 停在 inset(0)，会盖掉像素角，所以动画放在外面一层（App.tsx、ui.tsx 的菜单同理）。 */
+.app-toast .pk-toast { white-space: normal; clip-path: var(--pk-clip); padding: 10px 18px; }
 
 /* ---------- 文字的几种小样子 ---------- */
 .lbl { font-family: var(--font-dots); font-weight: 900; font-size: var(--text-label); letter-spacing: .1em; color: var(--color-text-3); margin: var(--space-8) 0 var(--space-3); }
@@ -64,7 +66,9 @@ body { overflow: hidden; }
 .is-warn { color: var(--color-warn); }
 .link { font-size: var(--text-small); color: var(--color-cyan-text); }
 .link:hover { text-decoration: underline; }
-.app button:focus-visible, .app textarea:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+.app button:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+/* 输入框不画焦点框（点线会压住正文）；光标就是焦点，外面的模块边变亮一档。 */
+.composer:focus-within { --pk-edge: var(--color-line-strong); }
 .app :is(.pk-btn, .pk-chip, .pk-seg > button, .pk-opt, .pk-menu-item, .pk-row, .pk-switch):focus-visible { outline: none; }
 .app textarea, .app input { font: inherit; color: var(--color-text); background: none; border: 0; outline: none; padding: 0; margin: 0; }
 .app textarea::placeholder, .app input::placeholder { color: var(--color-text-3); }
@@ -209,6 +213,17 @@ body { overflow: hidden; }
 .changes-list { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .changes-list .pk-tree { flex: 1 1 auto; }
 .pk-tree.is-undone .pk-row-name { color: var(--color-text-3); text-decoration: line-through; }
+/* 撤销的招牌时刻（DESIGN.md 动效表 dissolve + scan-once）：改动一行行从左往右溶掉，扫一道光，再以已撤销的样子露出来。 */
+.changes-fx { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 2; }
+.pk-tree.fx-out > * { animation: pk-dissolve .4s steps(8, end) both; }
+.pk-tree.fx-out > :nth-child(2) { animation-delay: 50ms; }
+.pk-tree.fx-out > :nth-child(3) { animation-delay: 100ms; }
+.pk-tree.fx-out > :nth-child(4) { animation-delay: 150ms; }
+.pk-tree.fx-out > :nth-child(5) { animation-delay: 200ms; }
+.pk-tree.fx-out > :nth-child(6) { animation-delay: 250ms; }
+.pk-tree.fx-out > :nth-child(n+7) { animation-delay: 300ms; }
+.pk-tree.fx-back > *, .changes-foot .back.fx-back { animation: pk-reveal-y .2s steps(4, end) both; }
+@media (prefers-reduced-motion: reduce) { .pk-tree.fx-out > *, .pk-tree.fx-back > *, .changes-foot .back.fx-back { animation: none !important; } .changes-fx { display: none; } }
 .snap { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
 .snap .pk-i { color: var(--color-cyan-text); }
 .nums { display: flex; align-items: baseline; gap: var(--space-4); margin: var(--space-5) 0; }
@@ -301,6 +316,8 @@ body { overflow: hidden; }
 .set-block > .set-row { border-top: 0; }
 .set-name { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 .set-code { color: var(--color-text-3); overflow-wrap: anywhere; }
+.set-ver { color: var(--color-text-3); }
+.set-cmd { display: block; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-3); }
 .set-desc { margin-top: var(--space-1); font-size: var(--text-small); line-height: 1.5; color: var(--color-text-2); overflow-wrap: anywhere; }
 .set-ctl { display: flex; align-items: center; gap: var(--space-4); justify-content: flex-end; }
 .set-row.is-off .set-name, .set-row.is-off .set-desc { color: var(--color-text-3); }

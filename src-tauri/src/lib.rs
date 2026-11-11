@@ -100,6 +100,24 @@ pub fn run() {
             commands::shell_set_activity,
             commands::notify,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Peck tauri application");
+        // 点红色关闭只把窗口藏起来：菜单栏图标和在跑的任务都留着；⌘Q 或菜单栏图标的「退出 Peck」才退出。
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Peck tauri application")
+        .run(|app, event| {
+            // 窗口藏起来以后点 Dock 里的图标，把窗口叫回来。
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_main_window(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }

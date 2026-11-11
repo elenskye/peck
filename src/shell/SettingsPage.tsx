@@ -292,6 +292,9 @@ const Access: React.FC<Props> = ({ settings, onSettings }) => (
 const AgentRow: React.FC<{ agent: AgentInfo; onRefresh: () => Promise<void>; say: Props["say"] }> = ({ agent, onRefresh, say }) => {
   const [toml, setToml] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 一行只放版本号和命令：完整的参数在 EDIT 里看，鼠标停在命令上也能看全。
+  const version = agent.version?.match(/\d+\.\d+(\.\d+)?/)?.[0] ?? "";
+  const command = [agent.command.split("/").pop() ?? agent.command, ...agent.args].join(" ");
   const open = async () => { setBusy(true); try { setToml(await ipc.agentGetConfig(agent.id)); } catch (e) { say(e); } finally { setBusy(false); } };
   const save = async () => {
     if (toml == null) return;
@@ -301,9 +304,12 @@ const AgentRow: React.FC<{ agent: AgentInfo; onRefresh: () => Promise<void>; say
   return (
     <div className="set-block">
       <Row
-        name={<><Dot kind={agentDot(agent.id)} />{agentName(agent.id, agent.name)}<span className="t-code set-code">{agent.command} {agent.args.join(" ")}</span></>}
+        name={<><Dot kind={agentDot(agent.id)} />{agentName(agent.id, agent.name)}{version && <span className="t-code set-ver">{version}</span>}</>}
         off={!agent.available}
-        desc={agent.isMock ? "内置，不推理，照剧本写演示文件" : agent.available ? `检测到${agent.version ? ` · ${agent.version}` : ""} · 登录和额度要跑任务时才知道${agent.diagnostic ? ` · ${agent.diagnostic}` : ""}` : `没检测到，「谁来干」里不出现${agent.diagnostic ? ` · ${agent.diagnostic}` : ""}`}
+        desc={<>
+          <span className="t-code set-cmd" title={command}>{command}</span>
+          {!agent.available && <span>没检测到，「谁来干」里不出现{agent.diagnostic ? ` · ${agent.diagnostic}` : ""}</span>}
+        </>}
       >
         {agent.available ? <Tag v="ok">FOUND</Tag> : <Tag>NOT FOUND</Tag>}
         <Btn sm disabled={busy} onClick={() => (toml == null ? void open() : setToml(null))}>{toml == null ? "EDIT" : "CLOSE"}</Btn>

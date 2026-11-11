@@ -43,7 +43,7 @@ pub struct TrayState {
     current: Mutex<(Option<Activity>, u64)>,
 }
 
-fn show_main_window(app: &AppHandle) {
+pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();

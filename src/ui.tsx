@@ -113,7 +113,7 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
         {label}
         <Icon name="triD" size={12} />
       </button>
-      {open && <div className={cn("pk-menu pk-anim-reveal-s menu-pop", up ? "menu-pop--up" : "menu-pop--down")} role="menu">{children(() => setOpen(false))}</div>}
+      {open && <div className={cn("pk-anim-reveal-s menu-pop", up ? "menu-pop--up" : "menu-pop--down")}><div className="pk-menu" role="menu">{children(() => setOpen(false))}</div></div>}
     </span>
   );
 }

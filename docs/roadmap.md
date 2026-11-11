@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v0.4 等站主验收**（2026-11-11）：Phase 3、4 云端做完；本地在 Mac 上把云端验不了的那一半走了一遍、修了原生才露出来的问题，本地的改动由站主提交到分支 `claude/peck-v0.4`，细节和没验的几条见 `HANDOFF.md`。站主验收通过、合进 `main` 并打 tag `v0.4.0` 以后，云端才开 v0.5。正式包 `0.4.0` 已装进 /Applications，验收清单页「[Peck v0.4 验收](https://claude.ai/artifact/65eT7MNmNNFbn343WTX6BK)」等站主填。
+**v0.4 验收通过、已并进 `main`；Peck 改方向，转成个人 Harness**（2026-11-11）：站主 19 项全部通过（意见见 `HANDOFF.md`），`claude/peck-v0.4` 快进合并进 `main`，以后本地直接在 `main` 上开发、云端直接推自己的分支。站主要把 Peck 从 GUI 升级成只为自己、只在这台 Mac 上的 Harness：Model Gateway（各家 API、各家 CLI、Vertex AI）、本地工具箱、上下文工程、后台验证和 Monitor。下面的 Phase 5–12 是旧计划，**等「[Peck Harness 问卷](https://claude.ai/artifact/1tXsLfFDZmfBB6WMCuVhF3)」读回后重写**；在那之前云端不开新 Phase。
 
 ## 定位
 
@@ -39,7 +39,7 @@ Peck 是只在站主自己的 Mac 上用的本地 Coding Agent：给它一个项
 | 2 视觉基线 | v0.3 | 在云端画布「[Peck Explore](https://claude.ai/artifact/2YJB1WKiiC6q7s6VmryCaR)」上四步定稿，Design System「[Peck](https://claude.ai/artifact/KpUihg5AHn6cw1ggNTx6s1)」；方案 `peck` 0.1.0 导入 visual-atelier、打 tag `peck-v0.1.0`、同步进 `src/vendor/peck/`；`docs/design.md` 补上样子 | 已验（qa 91 项、同步核对一致） | 完成 |
 | 3 三栏外壳 | v0.4 | 新外壳：左栏项目和任务（打开先看项目列表，每个项目带最近几次任务；点进去是这个项目的任务列表），中栏对话（任务的提问、回答、总结），右栏四个页签（`docs/design.md`「右栏」）：这个 Phase 做 CHANGES（文件列表、Diff、任务前快照）和 FILES（只读预览，接现有的文件监听），ONE SHOT、TERM 先放页签和空状态。顶栏只剩项目名、模式、设置。一个「设置」面板（供应商、Key、花费上限、通知开关、权限模式、CLI 检测）替掉三个对话框；跟随系统明暗；字体、颜色、控件照 `src/vendor/peck/`（`pk-` 类名直接用）；舒适的疏密；旧的组件能删就删（`src/index.css` 里旧变量的映射随旧组件一起删） | `?mock` 里三栏完整、明暗都对、字号 ≥ 12（代码 11 例外）；旧功能入口一个不少（都从新外壳能到）；`pnpm check` 过 | 完成 |
 | 4 发任务与看任务 | v0.4 | 发任务：一句话 + 「谁来干」（CLI 模式 / API 模式两组选项）+ 权限；跑的时候：折叠的步骤（点开看输出）+ 改动列表；跑完：一段总结 + 验证结果，**默认留着**；「撤销整个任务」一键回到任务前快照；右栏 TERM：本机终端进程（pty），模型在跑任务时锁着、发任务前在跑的命令接着跑、做完解锁（`docs/design.md`「右栏」）；菜单栏小图标（有任务在跑时变样，用 `src/vendor/peck/marks/menubar/`）和 macOS 通知，设置里能关。版本号 `0.4.0` | `?mock` 走完发、看、撤三步；本地验收：装好后站主用假 Agent（设置里的开发者选项）走一遍 | 完成 |
-| 5 CLI 顺手 | v0.5 | CLI 模式在新外壳里跑真实的 Muse、Grok：单个 CLI；Muse → Grok、Grok → Muse 双流水线（前一个的规范作为后一个的输入，界面里是一个任务两段）；权限三档 PLAN / EDIT（默认）/ AUTO（`docs/design.md`「权限」），高危的事开始前一张卡一次批；右栏 ONE SHOT 的 CLI 那半（Muse、Grok 用 PLAN 档答，能读项目、不改）；**ASK 卡片**：CLI 跑的时候能停下来问站主一个问题（通过 Peck 给 CLI 的本机入口），站主答了继续。接入层通用：一家 CLI 一份清单（命令、参数、输出格式、权限参数、能力），Muse、Grok 各一份，第三家只加清单 | ASK 和高危卡片在 `?mock` 里能出能答；本地验收：真实 Muse、Grok 各跑通一个小任务（冒烟，`CLAUDE.md`「额度」），双流水线两个方向各一次 | 未开始 |
+| 5 CLI 顺手 | v0.5 | CLI 模式在新外壳里跑真实的 Muse、Grok：单个 CLI；Muse → Grok、Grok → Muse 双流水线（前一个的规范作为后一个的输入，界面里是一个任务两段）；权限三档 PLAN / EDIT（默认）/ AUTO（`docs/design.md`「权限」），高危的事开始前一张卡一次批；右栏 ONE SHOT 的 CLI 那半（Muse、Grok 用 PLAN 档答，能读项目、不改）；**ASK 卡片**：CLI 跑的时候能停下来问站主一个问题（通过 Peck 给 CLI 的本机入口），站主答了继续。接入层通用：一家 CLI 一份清单（命令、参数、输出格式、权限参数、能力），Muse、Grok 各一份，第三家只加清单 | ASK 和高危卡片在 `?mock` 里能出能答；本地验收：真实 Muse、Grok 各跑通一个小任务（冒烟，`CLAUDE.md`「额度」），双流水线两个方向各一次 | 等站主批 |
 | 6 CLI 调 API | v0.5 | 「让它调用 API 模型帮忙」：CLI 在任务里把子任务交给一个 API 模型（Peck 的本机 MCP 入口），结果回到同一个任务；取消、归档都在一个任务里。额度监测器的目录和入口在 Peck 里留好（只留空壳和数据接口，不写实现）。版本号 `0.5.0`。**从这个版本起站主开始用 Peck 做额度监测器** | 用本地夹具走通委派；本地验收：一次真实委派（用现有授权） | 未开始 |
 | 7 API 模式 | v0.6 | 单模型干活、规划 + 实施两种都在新外壳里（单次请求挪进右栏 ONE SHOT：API 那半在这个 Phase 做，配了 Key 的模型只给读文件的工具，答完写花了多少）；供应商只显示配了 Key 的；选了没配 Key 的模型当场弹输入框；四个预算数字换成**一个花费上限**（按供应商价格表估算，未知的标未知）；授权账本和真实 / 模拟标记从界面收起（数据照存）；思考强度、模型选择留在「谁来干」里 | `?mock` 走完两种和 ONE SHOT；花费上限能拦住；本地验收：真实 DeepSeek 一次单模型任务（现有授权） | 未开始 |
 | 8 额度与花费 | v0.6 | **Peck 自己的作业**：站主用 Peck 开发「额度与花费」一页概览。Agent 这一 Phase 只做评估：读它的代码和数据，把评估和 Peck 的改进项写进 HANDOFF（本地出验收清单时放进去）；修 Peck 在这次开发里暴露的问题。Claude Code 状态栏脚本保留、搬到新模块名下。版本号 `0.6.0` | Peck 的改进项修完；本地验收：评估写进验收清单，状态栏脚本照旧工作 | 未开始 |
@@ -55,7 +55,7 @@ Peck 是只在站主自己的 Mac 上用的本地 Coding Agent：给它一个项
 | 版本 | 内容 | 验收清单页 |
 | --- | --- | --- |
 | v0.3 | 文档与底座、视觉基线（完成） | 不出页，站主在画布上批的视觉 |
-| v0.4 | 新外壳、发任务与看任务 | [Peck v0.4 验收](https://claude.ai/artifact/65eT7MNmNNFbn343WTX6BK) |
+| v0.4 | 新外壳、发任务与看任务（通过，19/19） | [Peck v0.4 验收](https://claude.ai/artifact/65eT7MNmNNFbn343WTX6BK) |
 | v0.5 | CLI 顺手、CLI 调 API | 本地验收时填 |
 | v0.6 | API 模式、额度与花费（Peck 自己做） | 本地验收时填 |
 | v0.7 | 多项目 | 本地验收时填 |

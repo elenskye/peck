@@ -175,7 +175,11 @@ document.getElementById('overall').addEventListener('input', (e) => { state.over
 document.getElementById('submit').addEventListener('click', () => { state.submitted = true; state.submittedAt = new Date().toISOString(); touch(true); });
 render();
 (async () => {
-  try { db = window.claude && window.claude.use ? await window.claude.use('db') : null; } catch (e) { db = null; }
+  // 云端的 window.claude 不保证在脚本第一次运行时就在：最多等 10 秒再判断「没有存储」（v0.4 的验收页一打开就判断，答案只存在了浏览器里）。
+  for (let i = 0; i < 100 && !db; i += 1) {
+    if (window.claude && typeof window.claude.use === 'function') { try { db = await window.claude.use('db'); } catch (e) { db = null; } break; }
+    await new Promise((r) => setTimeout(r, 100));
+  }
   if (!db) { setSave('答案只存在这台设备上'); return; }
   try {
     const snap = await db.doc(DOC).get();
