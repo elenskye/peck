@@ -30,8 +30,8 @@
 - **发任务**（`run_dispatch`）带「谁来干」`who`（`muse`、`grok`、`muse>grok`、`grok>muse`、`mock`）和权限档 `permission`（`plan` / `edit` / `auto`），都记在任务记录上。v0.4 权限档只记不管：CLI 的权限参数 v0.5 接，API 模式按档位给工具 v0.6 接。
 - **跑完的总结**：CLI 是最后一步收尾时的最后一段输出（最多 24 行），API 模式是模型自己的总结。
 - **撤销整个任务**（`run_undo`）：算出任务前快照到任务做完之间改过的文件，新建的删掉、改过和删掉的用 `git restore --source=<任务前的树> --worktree` 写回；只动这几个文件，用户仓库的 index、commit、stash 不碰。撤销前再存一份快照。记录上写 `undoneAt`，历史 Diff 照旧能看。
-- **终端**（右栏 TERM，`term.rs`）：每条命令在 pty 里起一个登录 shell（`$SHELL -l -c`），输出当文字显示（`TERM=dumb`），跑完报退出码和用时；`cd` 到哪儿记着，`export` 不带到下一条。这个项目有任务在跑时后端拒绝新命令；已经在跑的不管，STOP 结束整个进程组。只在内存，退出就没了。
-- **菜单栏图标和通知**（`tray.rs`）：界面告诉后端现在是空闲、在跑还是等你，图标跟着换（在跑时三帧轮流，每帧 300ms）；任务做完、失败、停下时界面按设置决定发不发 macOS 通知（Peck 在最前面时不发）。模板图是 `scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出的 @2x PNG，放在 `src-tauri/icons/menubar/`。
+- **终端**（右栏 TERM，`term.rs`）：每条命令在 pty 里起一个 shell，输出当文字显示（`TERM=dumb`），跑完报退出码和用时；`cd` 到哪儿记着，`export` 不带到下一条。环境照站主平时的终端：App 打开时在后台起一次交互式登录 shell（`$SHELL -l -i -c`，`.zprofile`、`.zshrc` 都过一遍，最多等 8 秒）把环境变量读出来，这次打开期间每条命令带着它跑（`$SHELL -c`）；从访达打开的 App 只有系统给的最小 PATH，不这样就找不到 pnpm、node。读不出来时退回登录 shell（`$SHELL -l -c`）。改了 shell 的启动脚本要重开 App 才生效。这个项目有任务在跑时后端拒绝新命令；已经在跑的不管，STOP 结束整个进程组。只在内存，退出就没了。
+- **菜单栏图标和通知**（`tray.rs`）：界面告诉后端现在是空闲、在跑还是等你，图标跟着换（在跑时三帧轮流，每帧 300ms）；任务做完、失败、停下时界面按设置决定发不发 macOS 通知（Peck 在最前面时不发）。模板图是 `scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出的 @2x PNG，放在 `src-tauri/icons/menubar/`：托盘把图片高度一律压成 18pt，所以脚本先裁掉四周的空（几个状态同一个裁法），一格出 3 像素，菜单栏里一格 1.5pt。
 
 ## 数据存放
 

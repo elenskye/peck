@@ -40,6 +40,8 @@ export const App: React.FC = () => {
   const [projects, setProjects] = useState<ProjectOverview[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
+  /** 一个任务里发过好几次时，右栏和 LOG 看的是哪一次；没点过就是最新一次。 */
+  const [shownRunId, setShownRunId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, RunRecord[]>>({});
   const [messages, setMessages] = useState<Message[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -98,7 +100,7 @@ export const App: React.FC = () => {
   const project = projects.find((p) => p.workspace.id === projectId) ?? null;
   const task = project?.tasks.find((t) => t.id === taskId) ?? null;
   const runs = useMemo(() => (taskId ? runsByTask[taskId] ?? [] : []), [runsByTask, taskId]);
-  const run = runs[runs.length - 1] ?? null;
+  const run = runs.find((r) => r.id === shownRunId) ?? runs[runs.length - 1] ?? null;
 
   // 一个项目有没有任务在跑：这次发出去的，或者列表里还标着在跑的。
   const busyProjects = useMemo(() => {
@@ -128,11 +130,12 @@ export const App: React.FC = () => {
   useEffect(() => {
     setMessages([]);
     setFilePath(null);
+    setShownRunId(null);
     if (taskId) void loadTask(taskId);
   }, [taskId, loadTask]);
 
-  const receive = useCallback((ctx: { projectId: string; taskId: string; prompt: string }, event: RunEvent) => {
-    setRunsByTask((prev) => ({ ...prev, [ctx.taskId]: applyRunEvent(prev[ctx.taskId] ?? [], ctx.taskId, ctx.prompt, event) }));
+  const receive = useCallback((ctx: { projectId: string; taskId: string; prompt: string; sent?: Pick<RunRecord, "who" | "permission"> }, event: RunEvent) => {
+    setRunsByTask((prev) => ({ ...prev, [ctx.taskId]: applyRunEvent(prev[ctx.taskId] ?? [], ctx.taskId, ctx.prompt, event, ctx.sent) }));
     if (event.type === "RunStarted" || event.type === "StepStarted") {
       setLive((prev) => (prev[event.payload.runId] ? prev : { ...prev, [event.payload.runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
     }
@@ -157,7 +160,7 @@ export const App: React.FC = () => {
         const created = await ipc.sessionCreate(project.workspace.id, prompt.replace(/\s+/g, " ").slice(0, 60));
         target = created.id;
       }
-      const ctx = { projectId: project.workspace.id, taskId: target, prompt };
+      const ctx = { projectId: project.workspace.id, taskId: target, prompt, sent: who.startsWith("api-") ? { permission } : { who, permission } };
       const onEvent = (event: RunEvent) => receive(ctx, event);
       const s = settingsRef.current;
       const runId = who.startsWith("api-")
@@ -165,6 +168,7 @@ export const App: React.FC = () => {
         : await ipc.runDispatch(target, prompt, who, permission, onEvent);
       setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
       setDraft("");
+      setShownRunId(null);
       setTaskId(target);
       setTab((t) => (t === "term" || t === "oneshot" ? t : "changes"));
       await refreshProjects();
@@ -196,6 +200,7 @@ export const App: React.FC = () => {
     }
     const ctx = { projectId: project.workspace.id, taskId, prompt: target.prompt };
     try {
+      setShownRunId(target.id);
       setLive((prev) => ({ ...prev, [target.id]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
       await ipc.runRetryStep(target.id, stepId, (event) => receive(ctx, event));
     } catch (e) {
@@ -330,7 +335,8 @@ export const App: React.FC = () => {
                 onRetryStep={retryStep}
                 onOpen={openProject}
                 onOpenSettings={() => setPage("settings")}
-                onShowFile={(path) => { setFilePath(path); setTab("changes"); }}
+                shownRunId={run?.id ?? null}
+                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("changes"); }}
                 native={native}
               />
             )}

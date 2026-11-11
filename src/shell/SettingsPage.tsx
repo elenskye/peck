@@ -310,7 +310,7 @@ const AgentRow: React.FC<{ agent: AgentInfo; onRefresh: () => Promise<void>; say
       </Row>
       {toml != null && (
         <div className="set-toml">
-          <textarea className="t-code sel" aria-label={`${agent.name} 的清单（TOML）`} rows={11} spellCheck={false} value={toml} onChange={(e) => setToml(e.target.value)} />
+          <textarea className="t-code sel" aria-label={`${agent.name} 的清单（TOML）`} rows={11} spellCheck={false} autoCorrect="off" autoCapitalize="off" value={toml} onChange={(e) => setToml(e.target.value)} />
           <div className="set-inline"><Btn sm v="primary" disabled={busy} onClick={() => void save()}>SAVE</Btn><span className="hint">存了以后下一个任务生效。登录交给 CLI 自己，Key 不要写进清单。</span></div>
         </div>
       )}

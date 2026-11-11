@@ -122,7 +122,7 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
 export const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { off?: boolean; width?: number }> = ({ off, width, className, ...rest }) => (
   <label className={cn("pk-field", off && "is-off", className)} style={width ? { width } : undefined}>
     <span className="pk-prompt">›</span>
-    <input {...rest} disabled={off || rest.disabled} spellCheck={false} autoComplete="off" />
+    <input {...rest} disabled={off || rest.disabled} spellCheck={false} autoComplete="off" autoCorrect="off" autoCapitalize="off" />
   </label>
 );
 

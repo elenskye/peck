@@ -1,6 +1,10 @@
 #!/usr/bin/env node
-// 菜单栏模板图：把 src/vendor/peck/marks/menubar/*.svg（18pt 像素格，全是 <rect>）出成 @2x 的 PNG，
+// 菜单栏模板图：把 src/vendor/peck/marks/menubar/*.svg（18 格的框，全是 <rect>）出成 @2x 的 PNG，
 // 放进 src-tauri/icons/menubar/。黑 + 透明，由系统上色。视觉换了版本再跑一次：node scripts/menubar-icons.mjs
+//
+// Tauri 的托盘把图片高度一律压成 18pt。原样出图时鸟只占 18 格里的 10×9 格（一格 1pt），在菜单栏里偏小；
+// 所以先裁掉四周的空（几个状态共用同一个范围，鸟不跳），一格出 3 像素：菜单栏里一格 1.5pt，
+// 鸟 15×13.5pt，和系统图标差不多大，Retina 屏上还是整像素。
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import path from "node:path";
@@ -9,7 +13,9 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "src/vendor/peck/marks/menubar");
 const target = path.join(root, "src-tauri/icons/menubar");
-const SCALE = 2;
+const SCALE = 3; // 一格几个像素（@2x 下一格 1.5pt）
+const HEIGHT = 36; // 托盘压成 18pt 高，36 像素正好 @2x
+const PAD = 1; // 左右各留一格
 const NAMES = ["idle", "run-1", "run-2", "run-3", "wait"];
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -47,27 +53,48 @@ function png(width, height, rgba) {
   ]);
 }
 
-mkdirSync(target, { recursive: true });
-for (const name of NAMES) {
+function readRects(name) {
   const svg = readFileSync(path.join(source, `${name}.svg`), "utf8");
-  const [, w, h] = svg.match(/viewBox="0 0 (\d+) (\d+)"/).map(Number);
-  const width = w * SCALE;
-  const height = h * SCALE;
-  const rgba = Buffer.alloc(width * height * 4);
-  for (const [, attrs] of svg.matchAll(/<rect ([^>]*)>/g)) {
+  return [...svg.matchAll(/<rect ([^>]*)>/g)].map(([, attrs]) => {
     const num = (key, fallback) => {
       const found = attrs.match(new RegExp(`${key}="([\\d.]+)"`));
       return found ? Number(found[1]) : fallback;
     };
-    const alpha = Math.round(num("opacity", 1) * 255);
-    const x0 = num("x", 0) * SCALE;
-    const y0 = num("y", 0) * SCALE;
-    for (let y = y0; y < y0 + num("height", 0) * SCALE; y++) {
-      for (let x = x0; x < x0 + num("width", 0) * SCALE; x++) {
-        rgba[(y * width + x) * 4 + 3] = alpha; // RGB 留 0（黑），只写透明度
+    return {
+      x: num("x", 0),
+      y: num("y", 0),
+      w: num("width", 0),
+      h: num("height", 0),
+      alpha: Math.round(num("opacity", 1) * 255),
+    };
+  });
+}
+
+const frames = NAMES.map((name) => ({ name, rects: readRects(name) }));
+const all = frames.flatMap((frame) => frame.rects);
+// 共用的裁法：左边和上下按所有状态里最外的格子算，右边每张图各自到自己的最后一格。
+const left = Math.min(...all.map((r) => r.x)) - PAD;
+const top = Math.min(...all.map((r) => r.y));
+const bottom = Math.max(...all.map((r) => r.y + r.h));
+const contentHeight = (bottom - top) * SCALE;
+if (contentHeight > HEIGHT) throw new Error(`内容 ${contentHeight} 像素高，放不进 ${HEIGHT}`);
+const offsetY = Math.ceil((HEIGHT - contentHeight) / 2); // 多出来的一像素给上面，和原图一样略偏下
+
+mkdirSync(target, { recursive: true });
+for (const { name, rects } of frames) {
+  const right = Math.max(...rects.map((r) => r.x + r.w)) + PAD;
+  const width = (right - left) * SCALE;
+  const height = HEIGHT;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (const r of rects) {
+    const x0 = (r.x - left) * SCALE;
+    const y0 = (r.y - top) * SCALE + offsetY;
+    for (let y = y0; y < y0 + r.h * SCALE; y++) {
+      for (let x = x0; x < x0 + r.w * SCALE; x++) {
+        rgba[(y * width + x) * 4 + 3] = r.alpha; // RGB 留 0（黑），只写透明度
       }
     }
   }
   writeFileSync(path.join(target, `${name}.png`), png(width, height, rgba));
-  console.log(`${name}.png ${width}×${height}`);
+  console.log(`${name}.png ${width}×${height}（菜单栏里 ${width / 2}×${height / 2}pt）`);
 }

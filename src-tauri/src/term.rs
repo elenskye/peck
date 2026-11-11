@@ -1,5 +1,6 @@
-//! 右栏 TERM：站主自己的终端。每条命令在项目根目录起一个 pty 里的登录 shell，
+//! 右栏 TERM：站主自己的终端。每条命令在项目根目录起一个 pty 里的 shell，
 //! 跑完报退出码和用时；`cd` 到哪儿记下来，下一条命令接着在那儿跑。
+//! 环境照站主平时的终端：头一回先用交互式登录 shell 把环境读出来（`user_env`），之后每条命令带着它跑。
 //! 不经过权限三档、不进模型上下文；模型在跑任务时不让发新命令（锁在 `commands::term_run` 里判）。
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// 命令跑完后把所在目录写到 `PECK_CWD_FILE`，不混进输出。
@@ -81,6 +82,74 @@ fn pick_shell() -> String {
     "/bin/sh".to_string()
 }
 
+const ENV_MARK: &str = "__PECK_ENV_3f9c__";
+const ENV_WAIT: Duration = Duration::from_secs(8);
+/// shell 自己管的变量，不从读出来的环境里带。
+const ENV_SKIP: [&str; 5] = ["PWD", "OLDPWD", "SHLVL", "_", "TERM"];
+
+/// 从 `<标记>KEY=VALUE\0KEY=VALUE\0<标记>` 里取出环境变量；标记外面是启动脚本自己打的字，不要。
+fn parse_env(raw: &[u8]) -> Option<Vec<(String, String)>> {
+    let mark = ENV_MARK.as_bytes();
+    let find = |hay: &[u8]| hay.windows(mark.len()).position(|w| w == mark);
+    let start = find(raw)? + mark.len();
+    let end = start + find(&raw[start..])?;
+    let vars: Vec<(String, String)> = raw[start..end]
+        .split(|b| *b == 0)
+        .filter_map(|entry| {
+            let entry = std::str::from_utf8(entry).ok()?;
+            let (key, value) = entry.split_once('=')?;
+            let usable = !key.is_empty()
+                && !ENV_SKIP.contains(&key)
+                && !key.starts_with("PECK_")
+                && key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            usable.then(|| (key.to_string(), value.to_string()))
+        })
+        .collect();
+    vars.iter().any(|(key, _)| key == "PATH").then_some(vars)
+}
+
+/// 起一个交互式登录 shell 读环境（`.zprofile`、`.zshrc` 这些都过一遍），最多等 8 秒。
+fn read_user_env(shell: &str) -> Option<Vec<(String, String)>> {
+    use std::process::{Command, Stdio};
+    let script = format!("printf %s {ENV_MARK}; /usr/bin/env -0; printf %s {ENV_MARK}");
+    let mut child = Command::new(shell)
+        .args(["-l", "-i", "-c", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut raw = Vec::new();
+        let _ = stdout.read_to_end(&mut raw);
+        let _ = tx.send(raw);
+    });
+    let raw = rx.recv_timeout(ENV_WAIT).ok();
+    if raw.is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    parse_env(&raw?)
+}
+
+/// 站主平时在终端里的环境。从访达打开的 App 只有系统给的最小 PATH（找不到 pnpm、node 这些），
+/// 所以读一次站主自己 shell 的环境，这次打开 App 期间一直用它。读不出来就是 `None`，退回登录 shell。
+fn user_env() -> &'static Option<Vec<(String, String)>> {
+    static ENV: OnceLock<Option<Vec<(String, String)>>> = OnceLock::new();
+    ENV.get_or_init(|| read_user_env(&pick_shell()))
+}
+
+/// App 打开时先在后台读一遍，第一条命令就不用等。
+pub fn warm_env() {
+    std::thread::spawn(|| {
+        let _ = user_env();
+    });
+}
+
 impl Terminals {
     pub fn state(&self, key: &str, root: &Path) -> TermState {
         let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
@@ -118,6 +187,8 @@ impl Terminals {
         let root = root
             .canonicalize()
             .map_err(|_| "项目文件夹不在了，重新打开一次。".to_string())?;
+        // 头一回要等 shell 的启动脚本跑完，放在拿锁之前。
+        let env = user_env();
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let session = sessions.entry(key.to_string()).or_insert_with(|| Session {
             root: root.clone(),
@@ -143,7 +214,16 @@ impl Terminals {
             })
             .map_err(|e| format!("终端起不来：{e}"))?;
         let mut builder = CommandBuilder::new(pick_shell());
-        builder.args(["-l", "-c", SCRIPT]);
+        match env {
+            // 环境已经是站主终端里的样子，不再过一遍登录脚本（macOS 的登录脚本会把 PATH 重排）。
+            Some(vars) => {
+                builder.args(["-c", SCRIPT]);
+                for (key, value) in vars {
+                    builder.env(key, value);
+                }
+            }
+            None => builder.args(["-l", "-c", SCRIPT]),
+        }
         builder.cwd(&session.cwd);
         builder.env("PECK_COMMAND", command);
         builder.env("PECK_CWD_FILE", &cwd_file);
@@ -302,6 +382,33 @@ mod tests {
                 exit @ TermEvent::Exit { .. } => return (output, exit),
             }
         }
+    }
+
+    #[test]
+    fn env_is_read_between_the_marks_and_shell_owned_names_are_left_out() {
+        let raw = format!(
+            "启动脚本打的字\n{ENV_MARK}PATH=/opt/homebrew/bin:/usr/bin\0PWD=/tmp\0LANG=zh_CN.UTF-8\0PECK_COMMAND=x\0A=b=c\0{ENV_MARK}后面的不要"
+        );
+        let vars = parse_env(raw.as_bytes()).unwrap();
+        assert_eq!(
+            vars,
+            vec![
+                ("PATH".to_string(), "/opt/homebrew/bin:/usr/bin".to_string()),
+                ("LANG".to_string(), "zh_CN.UTF-8".to_string()),
+                ("A".to_string(), "b=c".to_string()),
+            ]
+        );
+        // 没有标记、或者里面没有 PATH，都当没读到。
+        assert!(parse_env(b"PATH=/usr/bin\0").is_none());
+        assert!(parse_env(format!("{ENV_MARK}LANG=C\0{ENV_MARK}").as_bytes()).is_none());
+    }
+
+    #[test]
+    fn the_shell_environment_is_what_the_owner_gets_in_a_terminal() {
+        // 真的起一次交互式登录 shell：读得出 PATH，里面至少有 /usr/bin。
+        let vars = read_user_env(&pick_shell()).expect("读不出 shell 的环境");
+        let path = &vars.iter().find(|(key, _)| key == "PATH").unwrap().1;
+        assert!(path.split(':').any(|dir| dir == "/usr/bin"), "{path}");
     }
 
     #[test]

@@ -14,8 +14,10 @@ body { overflow: hidden; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .app-top { flex: none; display: flex; align-items: center; gap: var(--space-7); height: var(--size-header); }
-/* 原生窗口：红绿灯在顶栏左边，品牌让开 */
-.app-top--native { padding-left: 68px; }
+/* 原生窗口：红绿灯在顶栏左边（三颗占 60，位置在 tauri.conf.json 的 trafficLightPosition），品牌让开一个顶栏间距 */
+.app-top--native { padding-left: calc(60px + var(--space-7)); }
+/* 按在品牌、项目名的字上也能拖窗口：Tauri 只认按下的那个元素自己带不带拖动标记，所以字不接鼠标 */
+.brand > *, .top-project > * { pointer-events: none; }
 .brand { display: flex; align-items: center; gap: var(--space-4); }
 .brand b { font-family: var(--font-dots); font-weight: 900; font-size: 30px; letter-spacing: .06em; line-height: 1; }
 .brand-mark { width: 12px; height: 24px; background: var(--color-cyan-block); box-shadow: var(--shadow-glow-text); animation: pk-blink 1s steps(1) infinite; }
@@ -23,6 +25,8 @@ body { overflow: hidden; }
 .top-project b { color: var(--color-text); }
 .top-project em { color: var(--color-text-3); overflow: hidden; text-overflow: ellipsis; }
 .top-project .top-project-none { color: var(--color-text-3); }
+/* 在跑时权限那一格禁用着：选中的还要认得出是哪一档（bundle.css 里禁用的字色盖过了选中的字色） */
+.pk-seg > .is-on:disabled { color: var(--color-on-cyan); text-shadow: none; opacity: .55; }
 .pk-btn.is-here { color: var(--color-cyan-text); background: var(--color-cyan-soft); }
 .top-gear { width: var(--size-button); }
 

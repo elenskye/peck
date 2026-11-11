@@ -1,7 +1,8 @@
 // 把任务跑的时候推来的事件并进记录里（和后端存进数据库的是同一套规则）。
 import type { RunEvent, RunRecord } from "@/lib/types";
 
-export function applyRunEvent(runs: RunRecord[], sessionId: string, prompt: string, event: RunEvent): RunRecord[] {
+/** `sent` 是发任务时就知道、事件里不带的那几样（谁来干、权限档）。 */
+export function applyRunEvent(runs: RunRecord[], sessionId: string, prompt: string, event: RunEvent, sent?: Pick<RunRecord, "who" | "permission">): RunRecord[] {
   if (event.type === "RunStarted") {
     const { runId, flowId, flowName, steps } = event.payload;
     const existing = runs.find((r) => r.id === runId);
@@ -16,6 +17,7 @@ export function applyRunEvent(runs: RunRecord[], sessionId: string, prompt: stri
       tasks: [],
       files: [],
       logs: [],
+      ...sent,
       ...existing,
       status: "running",
       steps,

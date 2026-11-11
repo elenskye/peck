@@ -23,7 +23,10 @@ interface Props {
   onRetryStep: (run: RunRecord, stepId: string) => void;
   onOpen: (path?: string) => void;
   onOpenSettings: () => void;
-  onShowFile: (path: string) => void;
+  /** 右栏现在看的是哪一次记录 */
+  shownRunId: string | null;
+  /** 让右栏看这一次的改动（带上文件就直接开它的 Diff） */
+  onShowRun: (runId: string, path?: string) => void;
   native: boolean;
 }
 
@@ -126,7 +129,15 @@ export const MiddleColumn: React.FC<Props> = (props) => {
               <span className="t-name you-text">{run.prompt}</span>
               <span className="you-meta">{clock(run.startedAt)}</span>
             </p>
-            <TaskModule run={run} latest={i === runs.length - 1} onRetryStep={props.onRetryStep} onShowFile={props.onShowFile} busy={busy} />
+            <TaskModule
+              run={run}
+              latest={i === runs.length - 1}
+              shown={run.id === props.shownRunId}
+              onShow={runs.length > 1 ? () => props.onShowRun(run.id) : undefined}
+              onRetryStep={props.onRetryStep}
+              onShowFile={(path) => props.onShowRun(run.id, path)}
+              busy={busy}
+            />
           </React.Fragment>
         ))}
       </div>
@@ -169,6 +180,9 @@ const Composer: React.FC<Props & {
           value={draft}
           disabled={busy}
           placeholder={placeholder}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
           onChange={(e) => onDraft(e.target.value)}
         />
       </label>
@@ -215,10 +229,14 @@ const STATE: Record<string, { word: string; cls: string }> = {
 const TaskModule: React.FC<{
   run: RunRecord;
   latest: boolean;
+  /** 右栏正看着这一次 */
+  shown: boolean;
+  /** 这个任务里发过好几次才有：让右栏看这一次的改动 */
+  onShow?: () => void;
   busy: boolean;
   onRetryStep: (run: RunRecord, stepId: string) => void;
   onShowFile: (path: string) => void;
-}> = ({ run, latest, busy, onRetryStep, onShowFile }) => {
+}> = ({ run, latest, shown, onShow, busy, onRetryStep, onShowFile }) => {
   const state = runState(run);
   const running = state === "running";
   const now = useNow(running);
@@ -241,7 +259,11 @@ const TaskModule: React.FC<{
         label="TASK"
         note={<>{dots.map((d) => <Dot key={d} kind={d} />)} {whoLabel(run)}{run.permission ? ` · ${run.permission.toUpperCase()}` : ""}</>}
         count={`${doneSteps}/${run.steps.length}`}
-      />
+      >
+        {onShow && (
+          <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏看任务 ${run.number} 的改动`} onClick={onShow}>CHANGES</Btn>
+        )}
+      </ModHead>
       <div className="task-st">
         <span className={cn("pk-state", STATE[state].cls)}>{STATE[state].word}</span>
         <span className="task-info">

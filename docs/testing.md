@@ -32,6 +32,8 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 - 日常只跑改到的模块：在命令末尾加模块名过滤，如 `-- snapshot::`。一个版本收尾才全跑。
 - 云端（Linux）：装上 `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libsoup-3.0-dev`、`librsvg2-dev`、`libayatana-appindicator3-dev`、`libxdo-dev` 就编得过（没有离线的 crate 缓存，去掉 `--offline`）。`api::tools` 的 3 项和 `api::worker` 的 5 项要 macOS 的 `sandbox-exec`，在 Linux 上一定失败，留给本地。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
+- 每次用新的临时目录（上面的 `mktemp -d`）：模拟授权的次数记在数据目录里，重复用同一个目录会把次数用完，`api::worker` 的测试就失败。
+- 终端的测试会真的起一次站主的交互式登录 shell 读环境（`term.rs`），启动脚本特别慢的机器上会多等几秒。
 - 有些测试要本机允许回环 HTTP 夹具和 `sandbox-exec`。API 协议的测试用本地夹具，不发真请求；夹具通过不等于真实账号通过。
 
 ## 原生（只有本地）

@@ -98,7 +98,7 @@ impl ShadowRepo {
     pub fn with_shadow_dir(workspace_path: &Path, shadow_dir: &Path) -> Result<Self, String> {
         if !workspace_path.exists() {
             return Err(format!(
-                "Workspace path does not exist: {}",
+                "项目文件夹不在了（{}），读不了它的快照。",
                 workspace_path.display()
             ));
         }

@@ -46,6 +46,7 @@ pub fn run() {
             let api_arc = state.api.clone();
             app.manage(state);
             crate::usage::start_monitor(app.handle().clone(), store_arc, monitor_arc, api_arc);
+            term::warm_env();
             // 菜单栏图标起不来不挡 App 打开。
             if let Err(error) = tray::init(app) {
                 eprintln!("Peck 菜单栏图标没起来: {error}");

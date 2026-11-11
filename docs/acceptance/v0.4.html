@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peck v0.4 验收</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script id="acceptance-data" type="application/json">
+{
+  "version": "v0.4",
+  "title": "换成三栏新外壳，能发任务、看任务、一键撤销，带终端、菜单栏图标和通知",
+  "installedAt": "2026-11-11 10:28",
+  "doc": "acceptance/v0.4",
+  "groups": [
+    {
+      "title": "Phase 3 三栏外壳",
+      "items": [
+        {
+          "id": "p3-shell",
+          "what": "打开是三栏，顶栏只有 PECK、项目名、CLI / API、QUOTA、设置",
+          "how": "打开 Peck，整体看一眼",
+          "agent": "?mock：明暗都看过（今天装包前又看了一遍，没有报错）。\n原生（正式包）：打开正常，浅色。\n自动测试：pnpm check 过；cargo test 80 项全过。"
+        },
+        {
+          "id": "p3-titlebar",
+          "what": "红绿灯在顶栏那一行、不压 PECK；按住顶栏能拖窗口",
+          "how": "按住顶栏空白处或项目名，拖一下窗口",
+          "agent": "原生（调试包）：位置量过，空白和项目名都能拖。\n原生（正式包）：截图里红绿灯和 PECK 在一行。"
+        },
+        {
+          "id": "p3-theme",
+          "what": "跟随系统明暗，也能在设置里固定一种",
+          "how": "系统设置 → 外观切深浅，看 Peck 跟不跟；再到 Peck 设置 → LOOK 固定一种",
+          "agent": "?mock：明暗都对。\n原生：深色和实时切换都没试——请你看。"
+        },
+        {
+          "id": "p3-left",
+          "what": "左栏：每个项目带最近几次任务，点进去是它的任务列表",
+          "how": "点一个项目，展开它的任务和 NEW TASK；再点项目名回到列表；点 OPEN FOLDER 用系统面板选一个文件夹",
+          "agent": "?mock：验过。\n原生（调试包）：手输路径打开项目验过；系统选文件夹的面板没点——请你点一次。"
+        },
+        {
+          "id": "p3-old-task",
+          "what": "v0.2 留下的旧任务都在、能看",
+          "how": "点一个旧任务：步骤、输出、改动、Diff 都在；一个对话里发过好几次的，点每次记录头上的 CHANGES 看那一次",
+          "agent": "升级测试（你的正式数据的副本）：正式包打开，两个项目和它们的任务都在。\n原生（调试包）：早上点开过旧任务，步骤、总结、改动列表、Diff 都在。"
+        },
+        {
+          "id": "p3-changes",
+          "what": "CHANGES：看这个任务改了哪些文件、每个文件的 Diff",
+          "how": "点一个文件看 Diff；按 STEP 筛；点右上角展开到宽栏看 SPLIT；Markdown 文件有 VIEW",
+          "agent": "?mock：都验过。\n原生（调试包）：Diff、STEP、VIEW 验过。"
+        },
+        {
+          "id": "p3-files",
+          "what": "FILES：看项目里的文件",
+          "how": "切到 FILES：写着藏了几个；改过的文件标 NEW / DEL / + −；点开预览有行号，改过的行左边一条绿",
+          "agent": "?mock：验过；后端有自动测试。\n原生：没点——请你看。"
+        },
+        {
+          "id": "p3-settings",
+          "what": "设置：一个面板，七组",
+          "how": "点右上角齿轮，七组挨个点开；在供应商里存一个 Key 再删掉；CLI 检测里点 RECHECK",
+          "agent": "?mock：验过。\n原生（调试包）：七组都能开，钥匙串状态读得出（用的测试分区）。\n存、删 Key 没验——请你用自己的 Key 试（Agent 不碰 Key）。"
+        },
+        {
+          "id": "p3-legacy",
+          "what": "旧功能一个不少",
+          "how": "设置 → DEV 里有单次请求、API 模拟 / 真实、导出调用记录；顶栏 QUOTA 是原来的用量页",
+          "agent": "?mock：都打开过。\n原生：没逐个点。"
+        }
+      ]
+    },
+    {
+      "title": "Phase 4 发任务与看任务",
+      "items": [
+        {
+          "id": "p4-dispatch",
+          "what": "用假 Agent 发一个任务",
+          "how": "设置 → DEV 打开假 Agent；拿一个临时文件夹当项目；NEW TASK 写一句话，「谁来干」选 FAKE，按 ⌘↵",
+          "agent": "?mock、原生（调试包）都验过。\n留意：模拟点击时，输入框有焦点的话点别的按钮会没反应（旧版也这样，判断是输入法的事）。你手点也遇到的话，记成退回。"
+        },
+        {
+          "id": "p4-running",
+          "what": "跑的时候看得见进度",
+          "how": "看输入框只剩 STOP；步骤在动；右栏 CHANGES 的数字跟着涨；菜单栏的鸟后面三颗点轮流亮",
+          "agent": "?mock、原生（调试包）都验过。"
+        },
+        {
+          "id": "p4-menubar",
+          "what": "菜单栏图标大小合适，点它能回到窗口",
+          "how": "看菜单栏里 Peck 的鸟，和旁边的图标比大小；把 Peck 窗口切到后面，点一下鸟",
+          "agent": "这次照你说的调大了：每格从 1pt 放到 1.5pt，鸟从 10×9pt 变成 15×13.5pt，和微信、Claude 的图标差不多大；在跑时整个宽 34.5pt。也试过每格 2pt，比微信还大、在跑时要占 46pt 宽，没选。\n原生（正式包）：空闲的样子在菜单栏里截图看过。在跑的三帧用同样的换算挂到菜单栏比过大小。\n点图标回到窗口：没点成（自动点击被拦）——请你点。"
+        },
+        {
+          "id": "p4-done",
+          "what": "跑完有总结，切到别的 App 时收到通知",
+          "how": "发完任务马上切到别的 App，等它做完：收到一条 Peck 的通知；回来看有一段总结和验证结果，任务留着",
+          "agent": "原生（调试包）：总结、验证结果验过。\n通知：截图看不到系统的横幅，没验——请你看。"
+        },
+        {
+          "id": "p4-undo",
+          "what": "一键撤销整个任务",
+          "how": "右栏 CHANGES 底下 UNDO TASK → 确认里写着几个文件、回到几点、你的 Git 不动 → 撤销后文件回到任务前，状态写已撤销",
+          "agent": "?mock、原生（调试包，拿一个临时 Git 项目）都验过：任务新建的文件和文件夹没了，别的文件没动，git status 和暂存区都和撤销前一样。后端有自动测试。"
+        },
+        {
+          "id": "p4-term",
+          "what": "终端能跑命令",
+          "how": "TERM 里跑 ls、pnpm -v，看 EXIT 码和用时；cd 进子目录再 pwd；跑一条久的（比如 sleep 30）再 STOP",
+          "agent": "原生（调试包，像从访达打开那样）：pnpm、node 都找得到，中文输出正常，cd 记得住，STOP 以后子进程都停了。"
+        },
+        {
+          "id": "p4-term-lock",
+          "what": "任务在跑时终端锁着，做完解锁",
+          "how": "先在 TERM 跑一条久的命令，再发任务：那条命令接着跑、STOP 能点；任务在跑时不能发新命令；做完解锁",
+          "agent": "原生（调试包）：验过。"
+        },
+        {
+          "id": "p4-who",
+          "what": "「谁来干」跟着模式换",
+          "how": "顶栏切 CLI / API：CLI 是 MUSE、GROK、MUSE→GROK、GROK→MUSE（没装的不出现），API 是 SOLO、PLAN→DO",
+          "agent": "?mock：验过。\n原生：两头都见过（临时数据下没检测到就不出现；你的正式数据下四种都出现）。\n这一版只看选项，不跑真的 Muse、Grok（v0.5 才跑）。"
+        },
+        {
+          "id": "p4-notify-off",
+          "what": "设置里关掉通知，就不再发",
+          "how": "设置 → NOTIFY 关掉「做完发通知」，再跑一个任务、切到别的 App",
+          "agent": "没验——请你看。"
+        },
+        {
+          "id": "p4-upgrade",
+          "what": "第一次打开正式版，你的旧数据自动升级、都在",
+          "how": "直接打开 /Applications 里的 Peck（已经是 0.4.0），左栏是你原来的项目和任务",
+          "agent": "升级测试（你的正式数据的副本，正式目录没动）：正式包打开后数据库从第 5 版升到第 6 版，先生成了升级前的备份；项目、对话、任务记录、消息、步骤、调用数都和升级前一样。用旧版 0.2 打开升级后的库，会直接拒绝、什么都不写。\n旧版 0.2 的包留着备份。"
+        }
+      ]
+    }
+  ]
+}
+</script>
+<style>
+:root {
+  --canvas: #e7eaee; --dot: #c6ccd4; --paper: #ffffff; --ink: #15181c; --muted: #56606b; --line: #cfd5dc;
+  --accent: #007a8a; --on-accent: #ffffff; --accent-soft: #ddf8fb; --pass: #0b7a42; --pass-soft: #e6f6ec; --ret: #c62828; --ret-soft: #fbe7e7;
+  --note: #fff4bf; --note-ink: #3d3410;
+  --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0c0f14; --dot: #262d37; --paper: #171c23; --ink: #e8eef4; --muted: #b4bec8; --line: #35404d;
+    --accent: #00e5ff; --on-accent: #04161b; --accent-soft: #0f2a30; --pass: #3ddc97; --pass-soft: #10301f; --ret: #ffa3a3; --ret-soft: #3a1a1a;
+    --note: #3a341a; --note-ink: #f5ebb8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas: #0c0f14; --dot: #262d37; --paper: #171c23; --ink: #e8eef4; --muted: #b4bec8; --line: #35404d;
+  --accent: #00e5ff; --on-accent: #04161b; --accent-soft: #0f2a30; --pass: #3ddc97; --pass-soft: #10301f; --ret: #ffa3a3; --ret-soft: #3a1a1a;
+  --note: #3a341a; --note-ink: #f5ebb8; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--canvas) radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 22px 22px; color: var(--ink); font: 15px/1.6 var(--sans); padding: 0 16px 80px; }
+main { max-width: 760px; margin: 0 auto; }
+header { padding: 40px 0 16px; }
+header h1 { margin: 0; font-size: 26px; line-height: 1.3; }
+header p { margin: 8px 0 0; color: var(--muted); }
+.save { position: fixed; top: 10px; right: 14px; font: 12px var(--mono); color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.save.bad { color: var(--ret); }
+section { margin-top: 28px; }
+section > h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .04em; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+.item { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+.item h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.item .how { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.item .agent { margin: 10px 0 0; padding: 8px 12px; background: var(--note); color: var(--note-ink); border-radius: 8px; font-size: 13px; white-space: pre-line; }
+.verdict { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.verdict button { font: 500 14px var(--sans); padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.verdict button[data-v="pass"][aria-pressed="true"] { background: var(--pass-soft); border-color: var(--pass); color: var(--pass); }
+.verdict button[data-v="return"][aria-pressed="true"] { background: var(--ret-soft); border-color: var(--ret); color: var(--ret); }
+textarea { width: 100%; margin-top: 10px; font: 14px/1.5 var(--sans); color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; min-height: 44px; }
+textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.overall textarea { min-height: 90px; }
+.submit { margin-top: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.submit button { font: 600 15px var(--sans); background: var(--accent); color: var(--on-accent); border: 0; border-radius: 999px; padding: 10px 20px; cursor: pointer; }
+.submit span { color: var(--muted); font-size: 13px; }
+.tally { font: 13px var(--mono); color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="save" id="save">连接中…</div>
+<main>
+  <header>
+    <h1 id="h1"></h1>
+    <p id="sub"></p>
+    <p class="tally" id="tally"></p>
+  </header>
+  <div id="groups"></div>
+  <section class="overall">
+    <h2>整体意见</h2>
+    <div class="item">
+      <h3>还有什么要说的</h3>
+      <textarea id="overall" placeholder="不想分项写的话，写在这里就行"></textarea>
+    </div>
+  </section>
+  <div class="submit">
+    <button id="submit">填完了</button>
+    <span id="submitted"></span>
+  </div>
+</main>
+<script>
+const DATA = JSON.parse(document.getElementById('acceptance-data').textContent);
+const DOC = DATA.doc;
+const LS_KEY = 'peck-acceptance-' + DATA.version;
+let state = { items: {}, overall: '', submitted: false, submittedAt: null, updatedAt: null };
+try { const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); if (s && s.items) state = Object.assign(state, s); } catch (e) {}
+let db = null, saveTimer = null, writing = false, dirty = false;
+const saveEl = document.getElementById('save');
+function setSave(t, bad) { saveEl.textContent = t; saveEl.classList.toggle('bad', !!bad); }
+function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {} }
+function touch(immediate) {
+  state.updatedAt = new Date().toISOString(); saveLocal(); tally();
+  if (!db) return;
+  clearTimeout(saveTimer); saveTimer = setTimeout(writeDb, immediate ? 0 : 500);
+}
+async function writeDb(retry) {
+  if (writing) { dirty = true; return; }
+  writing = true;
+  const body = { version: DATA.version, items: state.items, overall: state.overall, submitted: state.submitted, submittedAt: state.submittedAt, updatedAt: state.updatedAt };
+  try { await db.doc(DOC).set(body); setSave('已保存 · ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })); }
+  catch (e) {
+    if (e && e.code === 'unavailable' && !retry) { writing = false; setTimeout(() => writeDb(true), 800 + Math.random() * 800); return; }
+    setSave('保存失败，答案暂存在这台设备上', true);
+  }
+  writing = false;
+  if (dirty) { dirty = false; writeDb(); }
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function tally() {
+  const all = DATA.groups.flatMap(g => g.items);
+  const judged = all.filter(i => DATA.groups.find(g => g.items.includes(i)).kind !== 'eval');
+  const pass = judged.filter(i => state.items[i.id]?.verdict === 'pass').length;
+  const ret = judged.filter(i => state.items[i.id]?.verdict === 'return').length;
+  document.getElementById('tally').textContent = `${judged.length} 项 · 通过 ${pass} · 退回 ${ret} · 没看 ${judged.length - pass - ret}`;
+  document.getElementById('submitted').textContent = state.submitted ? '已交（' + new Date(state.submittedAt).toLocaleString('zh-CN') + '），改了还会自动保存' : '';
+}
+function render() {
+  document.getElementById('h1').textContent = `Peck ${DATA.version} 验收`;
+  document.getElementById('sub').textContent = `${DATA.title} · 装进 /Applications：${DATA.installedAt}`;
+  document.getElementById('groups').innerHTML = DATA.groups.map(g => `
+    <section><h2>${esc(g.title)}</h2>${g.items.map(i => {
+      const it = state.items[i.id] || {};
+      return `<div class="item" data-id="${esc(i.id)}">
+        <h3>${esc(i.what)}</h3>${i.how ? `<p class="how">${esc(i.how)}</p>` : ''}
+        ${i.agent ? `<p class="agent">${esc(i.agent)}</p>` : ''}
+        ${g.kind === 'eval' ? '' : `<div class="verdict">
+          <button type="button" data-v="pass" aria-pressed="${it.verdict === 'pass'}">通过</button>
+          <button type="button" data-v="return" aria-pressed="${it.verdict === 'return'}">退回</button>
+        </div>`}
+        <textarea placeholder="${g.kind === 'eval' ? '你的意见' : '退回的写哪里不对；通过也可以写想法'}">${esc(it.note)}</textarea>
+      </div>`; }).join('')}</section>`).join('');
+  document.getElementById('overall').value = state.overall || '';
+  tally();
+}
+document.getElementById('groups').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-v]'); if (!b) return;
+  const id = b.closest('.item').dataset.id;
+  const cur = state.items[id] || {};
+  cur.verdict = cur.verdict === b.dataset.v ? null : b.dataset.v;
+  state.items[id] = cur;
+  b.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.v === cur.verdict)));
+  touch();
+});
+document.getElementById('groups').addEventListener('input', (e) => {
+  const t = e.target; if (t.tagName !== 'TEXTAREA') return;
+  const id = t.closest('.item').dataset.id;
+  state.items[id] = Object.assign(state.items[id] || {}, { note: t.value });
+  touch();
+});
+document.getElementById('overall').addEventListener('input', (e) => { state.overall = e.target.value; touch(); });
+document.getElementById('submit').addEventListener('click', () => { state.submitted = true; state.submittedAt = new Date().toISOString(); touch(true); });
+render();
+(async () => {
+  try { db = window.claude && window.claude.use ? await window.claude.use('db') : null; } catch (e) { db = null; }
+  if (!db) { setSave('答案只存在这台设备上'); return; }
+  try {
+    const snap = await db.doc(DOC).get();
+    if (snap.exists) {
+      const d = snap.data();
+      if (!state.updatedAt || (d.updatedAt && d.updatedAt > state.updatedAt)) {
+        state.items = JSON.parse(JSON.stringify(d.items || {})); state.overall = d.overall || '';
+        state.submitted = !!d.submitted; state.submittedAt = d.submittedAt || null; state.updatedAt = d.updatedAt || null;
+        saveLocal(); render();
+      } else if (state.updatedAt && (!d.updatedAt || state.updatedAt > d.updatedAt)) writeDb();
+    } else if (Object.keys(state.items).length || state.overall) writeDb();
+    setSave('已连接 · 答案自动保存');
+  } catch (e) { setSave('暂时连不上存储，答案先存在这台设备上', true); }
+})();
+</script>
+</body>
+</html>

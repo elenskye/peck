@@ -1,5 +1,6 @@
 //! 菜单栏小图标：空闲、在跑（三颗点轮流亮，每帧 300ms）、等你。
-//! 模板图在 `icons/menubar/`（`scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出的 @2x PNG）。
+//! 模板图在 `icons/menubar/`（`scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出的 @2x PNG，
+//! 裁掉四周的空、一格 1.5pt；托盘会把图片高度压成 18pt）。
 
 use std::sync::Mutex;
 use std::time::Duration;

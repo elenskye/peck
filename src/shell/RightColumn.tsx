@@ -173,6 +173,7 @@ const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; o
 const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePath, onUndo, busy }) => {
   const [stepId, setStepId] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [diffError, setDiffError] = useState("");
   const [view, setView] = useState<"diff" | "split" | "view">("diff");
   const [confirm, setConfirm] = useState<UndoPreview | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -188,8 +189,13 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
   useEffect(() => {
     let cancelled = false;
     setDiff(null);
+    setDiffError("");
     if (!run || !selected) return;
-    void ipc.changesGetDiff(run.id, stepId ?? undefined, selected.path).then((d) => { if (!cancelled) setDiff(d); }).catch(() => { if (!cancelled) setDiff(null); });
+    void ipc.changesGetDiff(run.id, stepId ?? undefined, selected.path).then((d) => { if (!cancelled) setDiff(d); }).catch((e) => {
+      if (cancelled) return;
+      setDiff(null);
+      setDiffError(String(e instanceof Error ? e.message : e).replace(/^Error:\s*/, "") || "没有原因");
+    });
     return () => { cancelled = true; };
     // 文件的行数变了（这一步收尾了）就重读一遍
   }, [run?.id, run?.status, stepId, selected?.path, selected?.additions, selected?.deletions]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -212,7 +218,7 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
   const canView = !!diff && isMarkdownFile(diff.filePath) && !!diff.contentAfter;
   const list = (
     <div className="changes-list">
-      <p className="snap"><Icon name="clock" size={12} /><span>{run ? `任务前快照 · ${clock(run.startedAt)}` : "发任务时先存一份快照"}</span></p>
+      <p className="snap"><Icon name="clock" size={12} /><span>{run ? `任务 ${run.number} · 任务前快照 · ${clock(run.startedAt)}` : "发任务时先存一份快照"}</span></p>
       <div className="nums">
         <b className={cn("pk-readout pk-readout--num", state === "undone" && "nums-off")}>{files.length}</b><span>个文件</span>
         <b className="pk-readout pk-readout--num pk-readout--done">+{adds}</b>
@@ -247,7 +253,7 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
         </div>
         <Btn v="ghost" sm onClick={copy} disabled={!diff}>{copied ? "COPIED" : "COPY"}</Btn>
       </div>
-      {!diff ? <p className="empty-line">在读这个文件的改动…</p> : view === "view" && canView ? <Markdown text={diff.contentAfter!} /> : <DiffView diff={diff} split={view === "split"} />}
+      {diffError ? <p className="empty-line is-err sel">读不出这个文件的改动：{diffError}</p> : !diff ? <p className="empty-line">在读这个文件的改动…</p> : view === "view" && canView ? <Markdown text={diff.contentAfter!} /> : <DiffView diff={diff} split={view === "split"} />}
     </div>
   );
   const changed = confirm?.files.filter((f) => f.changedSince).length ?? 0;
@@ -477,7 +483,7 @@ const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, o
           )}
           <div className={cn("term-in", (locked || running) && "is-off")}>
             <span className="t-code term-p">{prompt(term.cwd)}</span>
-            <input className="t-code" aria-label="一条命令" value={locked ? "" : draft} disabled={locked || running} placeholder={locked ? "任务在跑，终端锁着" : running ? "" : "打一条命令"} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} spellCheck={false} autoComplete="off" />
+            <input className="t-code" aria-label="一条命令" autoCorrect="off" autoCapitalize="off" value={locked ? "" : draft} disabled={locked || running} placeholder={locked ? "任务在跑，终端锁着" : running ? "" : "打一条命令"} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} spellCheck={false} autoComplete="off" />
             {running ? <Btn v="danger" icon="stop" onClick={onTermStop}>STOP</Btn> : locked ? <span className="term-lock t-label"><Icon name="lock" size={12} />LOCKED</span> : <><span className="kbd">⏎</span><Btn v={draft.trim() ? "primary" : undefined} disabled={!draft.trim()} onClick={run}>RUN</Btn></>}
           </div>
           <p className="hint term-note">
