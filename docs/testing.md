@@ -8,7 +8,8 @@
 - 浏览器里 `src/lib/ipc.ts` 把所有调用转给 `src/dev/mockIpc.ts`，数据在 `src/dev/mockData.ts`，只在内存，刷新重置；原生窗口永远走 Rust。
 - 参数：`&empty` 没有项目（看空状态）。
 - 假数据里有 3 个项目（notebook、peck、edge-gateway），6 个任务：在跑的一个（Muse → Grok，第二步在跑）、完成的四个（Grok 单个、Muse → Grok、API 模式单模型干活、API 模式规划 + 实施）、失败的一个（Grok 登录过期）。每个完成的任务都有改动列表和 Diff，API 模式的有调用与审查历史。
-- 在 `?mock` 里发任务：不带前缀走 Muse → Grok，`@muse`、`@grok`、`@mock` 开头走单个；几秒跑完，能停、能重跑步骤。
+- 在 `?mock` 里发任务：选项目 → NEW TASK → 一句话 + 「谁来干」（四种 CLI 都列着；设置的开发者选项开了假 Agent 多一个 FAKE；顶栏换成 API 是单模型干活、规划 + 实施）→ ⌘↵。几秒跑完，能停、能重跑步骤、能撤销（新建的文件消失、删掉的回来）。
+- `?mock` 里的终端只认几条命令：`ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败，退出码 1）、`pnpm dev`（一直跑，点 STOP 才停）。任务在跑时终端锁着。
 - 改了界面明暗各看一次（内置浏览器的 `resize_window` 切 `colorScheme`），截图只放会话临时目录。截图常慢一拍，关键结果用 `read_page` 或 JS 读页面确认。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
 
@@ -29,6 +30,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 ```
 
 - 日常只跑改到的模块：在命令末尾加模块名过滤，如 `-- snapshot::`。一个版本收尾才全跑。
+- 云端（Linux）：装上 `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libsoup-3.0-dev`、`librsvg2-dev`、`libayatana-appindicator3-dev`、`libxdo-dev` 就编得过（没有离线的 crate 缓存，去掉 `--offline`）。`api::tools` 的 3 项和 `api::worker` 的 5 项要 macOS 的 `sandbox-exec`，在 Linux 上一定失败，留给本地。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 有些测试要本机允许回环 HTTP 夹具和 `sandbox-exec`。API 协议的测试用本地夹具，不发真请求；夹具通过不等于真实账号通过。
 

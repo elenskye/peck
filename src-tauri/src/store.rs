@@ -71,6 +71,53 @@ pub struct RunRecord {
     pub step_files: std::collections::HashMap<String, Vec<FileChangeItem>>,
     pub logs: Vec<RawLogEntry>,
     pub summary: Option<String>,
+    /// 谁来干：`muse`、`grok`、`muse>grok`、`grok>muse`、`mock`；API 模式和旧记录没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub who: Option<String>,
+    /// 发任务时选的权限档：`plan` / `edit` / `auto`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+    /// 「撤销整个任务」的时间；没撤销过就没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undone_at: Option<i64>,
+}
+
+/// 左栏用的任务摘要：一次对话（session）一行，带最近一次记录的状态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskBrief {
+    pub id: String,
+    pub workspace_id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub run_count: usize,
+    pub last_run: Option<RunBrief>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunBrief {
+    pub id: String,
+    pub number: u64,
+    pub flow_id: String,
+    pub flow_name: String,
+    pub status: RunStatus,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    #[serde(default)]
+    pub files: Vec<FileChangeItem>,
+    #[serde(default)]
+    pub who: Option<String>,
+    #[serde(default)]
+    pub undone_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOverview {
+    pub workspace: Workspace,
+    pub tasks: Vec<TaskBrief>,
 }
 
 pub struct Store {
@@ -107,6 +154,88 @@ impl Store {
             .collect()
     }
 
+    pub fn workspace(&self, workspace_id: &str) -> StoreResult<Workspace> {
+        let raw: String = self.conn.query_row(
+            "SELECT data FROM workspaces WHERE id=?1",
+            [workspace_id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&raw)?)
+    }
+
+    /// 界面设置：`key` 对应一段 JSON，没存过返回 `None`。
+    pub fn setting(&self, key: &str) -> StoreResult<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM app_settings WHERE key=?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO app_settings(key, value, updated_at) VALUES(?1, ?2, ?3)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            params![key, value, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// 左栏的项目列表：每个项目带它的任务（新的在上），只带最近一次记录的摘要，不带输出。
+    /// 没发过任务的空对话不列。
+    pub fn overview(&self) -> StoreResult<Vec<ProjectOverview>> {
+        let mut out = Vec::new();
+        for workspace in self.workspaces()? {
+            let mut tasks = Vec::new();
+            for session in self.sessions(&workspace.id)? {
+                let run_count: usize = self.conn.query_row(
+                    "SELECT COUNT(*) FROM runs WHERE session_id=?1",
+                    [&session.id],
+                    |row| row.get(0),
+                )?;
+                if run_count == 0 {
+                    continue;
+                }
+                let last: Option<String> = self
+                    .conn
+                    .query_row(
+                        "SELECT record FROM runs WHERE session_id=?1 ORDER BY number DESC LIMIT 1",
+                        [&session.id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let last_run = last.and_then(|raw| serde_json::from_str::<RunBrief>(&raw).ok());
+                // 旧版的对话没有自己的名字，用第一句话当任务名。
+                let title = if matches!(session.title.as_str(), "新会话" | "默认发令会话" | "新任务")
+                {
+                    self.conn
+                        .query_row(
+                            "SELECT content FROM messages WHERE session_id=?1 AND role='user'
+                            ORDER BY created_at, rowid LIMIT 1",
+                            [&session.id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?
+                        .unwrap_or(session.title.clone())
+                } else {
+                    session.title.clone()
+                };
+                tasks.push(TaskBrief {
+                    id: session.id,
+                    workspace_id: session.workspace_id,
+                    title,
+                    created_at: session.created_at,
+                    updated_at: session.updated_at,
+                    run_count,
+                    last_run,
+                });
+            }
+            out.push(ProjectOverview { workspace, tasks });
+        }
+        Ok(out)
+    }
+
     pub fn workspace_for_session(&self, session_id: &str) -> StoreResult<Workspace> {
         let raw: String = self.conn.query_row(
             "SELECT w.data FROM workspaces w
@@ -128,7 +257,7 @@ impl Store {
             workspace_id: workspace_id.into(),
             title: title
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "新会话".into()),
+                .unwrap_or_else(|| "新任务".into()),
             created_at: now,
             updated_at: now,
         };
@@ -209,6 +338,9 @@ impl Store {
             step_files: Default::default(),
             logs: vec![],
             summary: None,
+            who: None,
+            permission: None,
+            undone_at: None,
         };
         let mut stored = record.clone();
         stored.steps.clear();
@@ -248,7 +380,7 @@ impl Store {
             params![
                 uuid::Uuid::new_v4().to_string(),
                 session_id,
-                format!("已启动「{}」，正在观察工作区文件变动。", plan.flow_name),
+                format!("交给 {}。改动在右栏。", plan.flow_name),
                 record.id,
                 record.started_at
             ],
@@ -479,7 +611,7 @@ impl Store {
             if run.status == RunStatus::Running {
                 run.status = RunStatus::Failed;
                 run.finished_at = Some(now_ms());
-                run.summary = Some("上次退出时运行中断；可重试未完成步骤。".into());
+                run.summary = Some("上次退出时任务被打断了；可以重跑没做完的那一步。".into());
                 for step in &mut run.steps {
                     if step.status == StepStatus::Running {
                         step.status = StepStatus::Failed;

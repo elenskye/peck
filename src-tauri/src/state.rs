@@ -8,6 +8,7 @@ pub struct AppState {
     pub store: Arc<Mutex<Store>>,
     pub active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>>,
     pub usage_monitor: Arc<crate::usage::UsageMonitor>,
+    pub terminals: Arc<crate::term::Terminals>,
 }
 
 impl AppState {
@@ -18,6 +19,7 @@ impl AppState {
             store: Arc::new(Mutex::new(store)),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             usage_monitor: Arc::new(crate::usage::UsageMonitor::new()),
+            terminals: Arc::new(crate::term::Terminals::default()),
         })
     }
 

@@ -257,6 +257,112 @@ pub fn resolve_dispatch_plan(
     })
 }
 
+/// 界面上的短名字：Muse、Grok、假 Agent；别的 CLI 用清单里的名字。
+pub fn short_agent_name(agent_id: &str, agents: &[AgentManifest]) -> String {
+    match agent_id.to_ascii_lowercase().as_str() {
+        "muse" => "Muse".into(),
+        "grok" => "Grok".into(),
+        "mock" => "假 Agent".into(),
+        other => agents
+            .iter()
+            .find(|a| a.id.eq_ignore_ascii_case(other))
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| agent_id.to_string()),
+    }
+}
+
+/// 按「谁来干」定计划：`muse`、`grok`、`mock` 是单个 CLI 跑完整个任务；
+/// `muse>grok`、`grok>muse` 是先写规范再实施（前一个写规范，后一个实施，提示词取默认流程的两步）。
+pub fn resolve_plan_for_who(
+    run_id: &str,
+    who: &str,
+    raw_input: &str,
+    handoff_rel: &str,
+    workspace_path: &str,
+    agents: &[AgentManifest],
+    flows: &[FlowManifest],
+) -> Result<DispatchPlan, String> {
+    let ids: Vec<String> = who
+        .split('>')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .collect();
+    let valid_id = |id: &String| {
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    };
+    if ids.is_empty() || ids.len() > 2 || !ids.iter().all(valid_id) {
+        return Err("「谁来干」选得不对，重新选一次。".into());
+    }
+    for id in &ids {
+        if id != "mock" && !agents.iter().any(|a| a.id.eq_ignore_ascii_case(id)) {
+            return Err(format!("没有 {id} 这个 CLI 的清单，到设置的 CLI 检测里看看。"));
+        }
+    }
+    let clean_input = raw_input.trim().to_string();
+    let vars = FlowTemplateVars {
+        input: clean_input.clone(),
+        handoff: handoff_rel.to_string(),
+        workspace: workspace_path.to_string(),
+    };
+
+    if let [single] = ids.as_slice() {
+        return Ok(DispatchPlan {
+            flow_id: format!("single-{single}"),
+            flow_name: short_agent_name(single, agents),
+            clean_input,
+            steps: vec![ResolvedStepPlan {
+                id: format!("{run_id}-step-1"),
+                step_index: 0,
+                agent_id: single.clone(),
+                agent_name: short_agent_name(single, agents),
+                title: "跑完整个任务".into(),
+                rendered_prompt: render_flow_template("{{input}}", &vars),
+                rendered_expects: vec![],
+            }],
+        });
+    }
+
+    let flow = flows
+        .iter()
+        .find(|f| f.default)
+        .or_else(|| flows.first())
+        .filter(|f| f.steps.len() >= 2)
+        .ok_or_else(|| "先写规范再实施要一份两步的流程清单，现在没有。".to_string())?;
+    let titles = ["写规范", "实施"];
+    let steps = flow
+        .steps
+        .iter()
+        .take(2)
+        .zip(ids.iter())
+        .enumerate()
+        .map(|(idx, (step, agent_id))| ResolvedStepPlan {
+            id: format!("{run_id}-{}", step.id),
+            step_index: idx,
+            agent_id: agent_id.clone(),
+            agent_name: short_agent_name(agent_id, agents),
+            title: titles[idx].into(),
+            rendered_prompt: render_flow_template(&step.prompt, &vars),
+            rendered_expects: step
+                .expects
+                .iter()
+                .map(|exp| render_flow_template(exp, &vars))
+                .collect(),
+        })
+        .collect();
+    Ok(DispatchPlan {
+        flow_id: format!("pipe-{}-{}", ids[0], ids[1]),
+        flow_name: format!(
+            "{} → {}",
+            short_agent_name(&ids[0], agents),
+            short_agent_name(&ids[1], agents)
+        ),
+        clean_input,
+        steps,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,5 +428,65 @@ mod tests {
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(plan.steps[0].agent_id, "grok");
         assert_eq!(plan.steps[0].rendered_prompt, "修复 Captcha 组件边框样式");
+    }
+
+    #[test]
+    fn who_picks_single_cli_or_spec_then_build_in_either_direction() {
+        let agents = builtin_default_manifests();
+        let flows = builtin_default_flows();
+        let single = resolve_plan_for_who(
+            "run-300",
+            "grok",
+            "@muse 这个前缀不再有特殊含义",
+            ".peck/handoff/300",
+            "/tmp/ws",
+            &agents,
+            &flows,
+        )
+        .unwrap();
+        assert_eq!(single.flow_id, "single-grok");
+        assert_eq!(single.flow_name, "Grok");
+        assert_eq!(single.steps[0].rendered_prompt, "@muse 这个前缀不再有特殊含义");
+
+        let forward = resolve_plan_for_who(
+            "run-301",
+            "muse>grok",
+            "加搜索框",
+            ".peck/handoff/301",
+            "/tmp/ws",
+            &agents,
+            &flows,
+        )
+        .unwrap();
+        assert_eq!(forward.flow_id, "pipe-muse-grok");
+        assert_eq!(forward.flow_name, "Muse → Grok");
+        assert_eq!(forward.steps[0].agent_id, "muse");
+        assert_eq!(forward.steps[0].title, "写规范");
+        assert_eq!(forward.steps[1].agent_id, "grok");
+        assert_eq!(forward.steps[1].id, "run-301-build");
+
+        let reverse = resolve_plan_for_who(
+            "run-302",
+            "grok>muse",
+            "加搜索框",
+            ".peck/handoff/302",
+            "/tmp/ws",
+            &agents,
+            &flows,
+        )
+        .unwrap();
+        assert_eq!(reverse.flow_name, "Grok → Muse");
+        assert_eq!(reverse.steps[0].agent_id, "grok");
+        assert_eq!(
+            reverse.steps[0].rendered_expects,
+            vec![
+                ".peck/handoff/302/intent.md".to_string(),
+                ".peck/tasks.md".to_string()
+            ]
+        );
+        assert_eq!(reverse.steps[1].agent_id, "muse");
+
+        assert!(resolve_plan_for_who("run-303", "nobody", "x", "h", "/tmp", &agents, &flows).is_err());
+        assert!(resolve_plan_for_who("run-304", "a>b>c", "x", "h", "/tmp", &agents, &flows).is_err());
     }
 }

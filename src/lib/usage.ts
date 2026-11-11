@@ -14,7 +14,7 @@ export interface BalanceCard { provider: string; label: string; status: string; 
 
 const now = Date.now();
 export const mockUsageList: UsageListResult = { calls: [], summary: { requestCount: 0, tokens: { input: null, output: null, cacheRead: null, cacheCreation: null, reasoning: null, unknownCount: 0 }, costs: [] }, projects: [], models: [], providers: [] };
-export const mockClients: ClientCard[] = ["codex", "claude-code", "antigravity", "muse-code", "grok"].map((client) => ({ client, label: { codex: "Codex", "claude-code": "Claude Code", antigravity: "Antigravity", "muse-code": "Muse", grok: "Grok Build" }[client]!, status: "fields_missing", source: "浏览器演示态（模拟，未读取真实客户端）", coverage: "演示数据，不代表真实额度", accountId: null, tier: null, windows: [], rawLabel: "模拟标注：无真实字段", lastSuccessAt: null, lastFailureAt: now, failureReason: "浏览器演示态不读取真实客户端；请在 Peck 原生 App 中查看。", collectedAt: now, fresh: false, running: false, installed: false, manual: false, previous: null }));
+export const mockClients: ClientCard[] = ["codex", "claude-code", "antigravity", "muse-code", "grok"].map((client) => ({ client, label: { codex: "Codex", "claude-code": "Claude Code", antigravity: "Antigravity", "muse-code": "Muse", grok: "Grok Build" }[client]!, status: "fields_missing", source: "浏览器演示，没有读真实的客户端", coverage: "演示数据", accountId: null, tier: null, windows: [], rawLabel: "", lastSuccessAt: null, lastFailureAt: now, failureReason: "浏览器演示里不读客户端，到 Peck.app 里看。", collectedAt: now, fresh: false, running: false, installed: false, manual: false, previous: null }));
 
 export const usageApi = {
   list: (filter: UsageFilter): Promise<UsageListResult> => isMockMode() ? Promise.resolve(mockUsageList) : invoke("usage_list", { filter }),
@@ -22,7 +22,7 @@ export const usageApi = {
   exportCsv: (filter: UsageFilter) => isMockMode() ? Promise.resolve(null) : invoke<string | null>("usage_export_csv", { filter }),
   clients: (): Promise<ClientCard[]> => isMockMode() ? Promise.resolve(mockClients) : invoke("usage_clients"),
   refresh: (): Promise<ClientCard[]> => isMockMode() ? Promise.resolve(mockClients) : invoke("usage_refresh"),
-  manual: (input: { client: string; usedPercent: number | null; resetAtMs: number | null; note: string }) => isMockMode() ? Promise.reject(new Error("浏览器演示态不能保存手工快照")) : invoke<ClientCard>("usage_manual_snapshot", { input }),
-  balance: (provider: string): Promise<BalanceCard> => isMockMode() ? Promise.resolve({ provider, label: provider, status: "unknown", balances: [], checkedAt: now, lastSuccessAt: null, lastFailureAt: null, message: "浏览器演示态不查询真实余额。" }) : invoke("usage_balance", { provider }),
+  manual: (input: { client: string; usedPercent: number | null; resetAtMs: number | null; note: string }) => isMockMode() ? Promise.reject(new Error("浏览器演示里存不了手工记的快照")) : invoke<ClientCard>("usage_manual_snapshot", { input }),
+  balance: (provider: string): Promise<BalanceCard> => isMockMode() ? Promise.resolve({ provider, label: provider, status: "unknown", balances: [], checkedAt: now, lastSuccessAt: null, lastFailureAt: null, message: "浏览器演示里不查余额。" }) : invoke("usage_balance", { provider }),
   balances: (): Promise<BalanceCard[]> => isMockMode() ? Promise.resolve([]) : invoke("usage_balances"),
 };

@@ -421,6 +421,120 @@ impl ShadowRepo {
     }
 }
 
+/// 「撤销整个任务」要动的一个文件。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoFile {
+    pub path: String,
+    /// 任务对它做了什么：`create`（撤销时删掉）、`modify`、`delete`（撤销时写回任务前的样子）。
+    pub kind: String,
+    /// 任务做完以后这个文件又变过（站主自己改的，或后来的任务改的）；撤销一样会回到任务前。
+    pub changed_since: bool,
+}
+
+/// 撤销前先看一眼：会动哪些文件。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoPreview {
+    pub run_id: String,
+    pub files: Vec<UndoFile>,
+}
+
+impl ShadowRepo {
+    /// 把 `files` 里的路径放回 `tree` 的样子：任务新建的删掉，改过、删掉的照任务前写回。
+    /// 只动这几个路径；用户仓库的 index、commit、stash 不碰。
+    pub fn restore_paths(&self, tree: &str, files: &[UndoFile]) -> Result<(), String> {
+        let back: Vec<&str> = files
+            .iter()
+            .filter(|f| f.kind != "create")
+            .map(|f| f.path.as_str())
+            .collect();
+        for chunk in back.chunks(64) {
+            let out = self
+                .git_cmd()
+                .args(["restore", "--source", tree, "--worktree", "--"])
+                .args(chunk)
+                .output()
+                .map_err(|e| format!("任务前快照读不出来：{e}"))?;
+            if !out.status.success() {
+                return Err(format!(
+                    "没能放回任务前的文件：{}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
+        }
+        for file in files.iter().filter(|f| f.kind == "create") {
+            let rel = Path::new(&file.path);
+            if rel.is_absolute()
+                || rel
+                    .components()
+                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            {
+                continue;
+            }
+            let full = self.workspace_path.join(rel);
+            if full.is_file() || full.is_symlink() {
+                fs::remove_file(&full).map_err(|e| format!("删不掉 {}：{e}", file.path))?;
+            }
+            // 任务新建的空文件夹一起收掉；不空的、项目根不动。
+            let mut dir = full.parent();
+            while let Some(current) = dir {
+                if current == self.workspace_path || !current.starts_with(&self.workspace_path) {
+                    break;
+                }
+                if fs::remove_dir(current).is_err() {
+                    break;
+                }
+                dir = current.parent();
+            }
+        }
+        Ok(())
+    }
+}
+
+/// 这个任务从开始到做完改了哪些文件，以及做完以后哪些又变过。
+/// 返回的第三项是「撤销前」的快照（撤销之前的样子也留一份在影子仓库里）。
+pub fn undo_preview(record: &RunSnapshotRecord) -> Result<(ShadowRepo, UndoPreview), String> {
+    let repo = ShadowRepo::with_shadow_dir(&record.workspace_path, &record.shadow_dir)?;
+    let now_tree = repo.create_snapshot(&format!("{}-before-undo", record.run_id))?;
+    // 没有步骤收尾过（比如刚开始就被打断）时，拿现在的样子当任务后的样子。
+    let after_tree = if record.latest_tree == record.base_tree {
+        now_tree.clone()
+    } else {
+        record.latest_tree.clone()
+    };
+    let changed = repo.diff_changeset(&record.base_tree, &after_tree, "")?;
+    let since: std::collections::HashSet<String> = repo
+        .diff_changeset(&after_tree, &now_tree, "")?
+        .files
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    let files = changed
+        .files
+        .into_iter()
+        .map(|f| UndoFile {
+            changed_since: since.contains(&f.path),
+            path: f.path,
+            kind: f.kind,
+        })
+        .collect();
+    Ok((
+        repo,
+        UndoPreview {
+            run_id: record.run_id.clone(),
+            files,
+        },
+    ))
+}
+
+/// 撤销整个任务：任务改过的文件回到任务前快照，别的文件不动。
+pub fn undo_run(record: &RunSnapshotRecord) -> Result<UndoPreview, String> {
+    let (repo, preview) = undo_preview(record)?;
+    repo.restore_paths(&record.base_tree, &preview.files)?;
+    Ok(preview)
+}
+
 fn synthesize_creation_diff(file_path: &str, content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let count = lines.len();
@@ -802,5 +916,68 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_ws);
         let _ = fs::remove_dir_all(&temp_shadow);
+    }
+
+    #[test]
+    fn undo_puts_task_files_back_and_leaves_everything_else_alone() {
+        let ws = std::env::temp_dir().join(format!("peck-undo-ws-{}", uuid::Uuid::new_v4()));
+        let shadow = std::env::temp_dir().join(format!("peck-undo-bare-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(ws.join("src")).unwrap();
+        Command::new("/usr/bin/git").arg("init").arg(&ws).output().unwrap();
+        fs::write(ws.join("src/a.txt"), "任务前\n").unwrap();
+        fs::write(ws.join("gone.txt"), "会被任务删掉\n").unwrap();
+        fs::write(ws.join("mine.txt"), "站主的文件\n").unwrap();
+        let user_index_before = fs::read(ws.join(".git/HEAD")).unwrap();
+
+        let repo = ShadowRepo::with_shadow_dir(&ws, &shadow).unwrap();
+        let base = repo.create_snapshot("run-base").unwrap();
+
+        // 任务：改一个、删一个、在新文件夹里建一个。
+        fs::write(ws.join("src/a.txt"), "任务改过\n").unwrap();
+        fs::remove_file(ws.join("gone.txt")).unwrap();
+        fs::create_dir_all(ws.join("src/new/deep")).unwrap();
+        fs::write(ws.join("src/new/deep/b.txt"), "任务新建\n").unwrap();
+        let after = repo.create_snapshot("run-after").unwrap();
+
+        // 任务做完以后，站主改了自己的文件，又动了任务改过的那个。
+        fs::write(ws.join("mine.txt"), "站主后来改的\n").unwrap();
+        fs::write(ws.join("src/a.txt"), "任务改过，站主又改\n").unwrap();
+
+        let record = RunSnapshotRecord {
+            run_id: "run-undo".into(),
+            workspace_path: repo.workspace_path.clone(),
+            shadow_dir: repo.shadow_dir.clone(),
+            base_tree: base,
+            latest_tree: after,
+            steps: HashMap::new(),
+        };
+        let (_, preview) = undo_preview(&record).unwrap();
+        let by_path: HashMap<&str, &UndoFile> =
+            preview.files.iter().map(|f| (f.path.as_str(), f)).collect();
+        assert_eq!(preview.files.len(), 3);
+        assert_eq!(by_path["src/a.txt"].kind, "modify");
+        assert!(by_path["src/a.txt"].changed_since);
+        assert_eq!(by_path["gone.txt"].kind, "delete");
+        assert!(!by_path["gone.txt"].changed_since);
+        assert_eq!(by_path["src/new/deep/b.txt"].kind, "create");
+
+        undo_run(&record).unwrap();
+        assert_eq!(fs::read_to_string(ws.join("src/a.txt")).unwrap(), "任务前\n");
+        assert_eq!(
+            fs::read_to_string(ws.join("gone.txt")).unwrap(),
+            "会被任务删掉\n"
+        );
+        assert!(!ws.join("src/new").exists());
+        assert!(ws.join("src").is_dir());
+        // 站主后来改的别的文件不动；用户自己的 Git 不动。
+        assert_eq!(
+            fs::read_to_string(ws.join("mine.txt")).unwrap(),
+            "站主后来改的\n"
+        );
+        assert_eq!(fs::read(ws.join(".git/HEAD")).unwrap(), user_index_before);
+        assert!(!ws.join(".git/index").exists());
+
+        let _ = fs::remove_dir_all(&ws);
+        let _ = fs::remove_dir_all(&shadow);
     }
 }

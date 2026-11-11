@@ -1,5 +1,5 @@
 // 在根元素上写 data-theme，src/vendor/peck/peck.css 按它选深浅。
-// 现在的界面只有深色，先固定 "dark"；Phase 3 新外壳改成 "system"（跟随系统），设置里选了就固定。
+// 默认 "system"（跟随系统）；设置的「外观」里选了深色或浅色就固定。
 
 export type ThemeChoice = "system" | "light" | "dark";
 

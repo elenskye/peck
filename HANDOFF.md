@@ -1,30 +1,98 @@
 # 当前交接
 
-更新：2026-11-10（本地账号）。**v0.3 完成；Phase 3（三栏外壳）进行中，交给云端账号在 `claude/peck-v0.4` 分支上做。** v0.4 = Phase 3 + Phase 4，做完停在「v0.4 等本地验收」。/Applications/Peck.app 还是 `0.2.0-alpha.4`，代码里是 `0.3.0`。
+更新：2026-11-11（云端账号）。**v0.4 等本地验收**：Phase 3（三栏外壳）、Phase 4（发任务与看任务）云端做完了，版本号 `0.4.0`。/Applications/Peck.app 还是 `0.2.0-alpha.4`，代码里是 `0.4.0`。
 
-规则在 [CLAUDE.md](./CLAUDE.md)（云端先读「云端的边界」「云端开发」），Phase 和状态在 [docs/roadmap.md](./docs/roadmap.md)。
+规则在 [CLAUDE.md](./CLAUDE.md)，Phase 和状态在 [docs/roadmap.md](./docs/roadmap.md)。
 
-## 给云端：Phase 3 开工
+## 分支（先看这条）
 
-- **分支**：从最新的 `origin/main` 切 `claude/peck-v0.4`，只推这一条。
-- **视觉都在 `src/vendor/peck/`**（visual-atelier 方案 `peck-v0.1.0` 同步来的，不改）：`DESIGN.md` 是视觉基线，`peck-rules.md` 是外框规则 66 条（三栏、右栏四个页签、卡片、权限三档），`DESIGN-SYSTEM.md` 和 `components/<组件>/preview.html` 是 `pk-` 组件的写法。新外壳引 `bundle.css`，只用 `--color-*` 变量和 `pk-` 类名，不抄色值。`docs/design.md` 有用词对照、布局和「样子」的结论。
-- **旧代码现状**：`src/components/` 还是旧外壳，文案是旧口径（Run #、Step、看板），Phase 3 整体换掉、旧组件能删就删。`src/index.css` 开头那段旧变量映射（同时认占位和正式 token 的名字）随旧组件一起删。主题现在固定深色（`src/main.tsx` 里 `applyTheme("dark")`），Phase 3 改成跟随系统（`src/lib/theme.ts` 已经支持 `system`）。
-- **假数据**：`src/dev/mockData.ts`，3 个项目、6 个任务，已按新流程和用词（`docs/testing.md`「`?mock`」）。
-- **不在 Phase 3**：TERM 的终端进程、发任务和撤销（Phase 4）；ONE SHOT 的内容（Phase 5、7）；额度与花费的实现（站主自己做）。
-- **云端能验的**：`pnpm check`、`pnpm build`、无头浏览器开 `?mock` 明暗各看一遍；`cargo test` 编得过就跑，编不过在这里写明。
+- 这次的提交在分支 **`claude/pensive-hypatia-l4y0zx`**，不是规则里写的 `claude/peck-v0.4`：Claude Code 网页版给每个会话指定一条分支，会话只被允许推这一条。从 `origin/main`（`1fb8f6e`）切出来的，`main` 没有新提交要合。
+- 本地验收时检出这条分支（`git worktree add ../peck-review origin/claude/pensive-hypatia-l4y0zx`）；站主愿意的话把它改名成 `claude/peck-v0.4` 再推一次，后面的会话就接得上。要不要改规则里的分支名，站主定。
+- **推送状态看这次会话最后的回复**：写这份交接时 GitHub 拒绝了推送（403，会话没有这个仓库的写权限，拉取正常）。提交在会话的容器里；站主重新连上 GitHub 以后要在同一个会话里再推一次。
 
-## 这次做了什么（本地账号）
+## 这次做了什么
 
-- 核对了站主的提交：visual-atelier `27c2db4` 和 tag `peck-v0.1.0`（方案 `0.1.0` approved，78 个文件；画布、tooling 的改动都在）；Peck 的 `main` 是 `6b0614b`，已推到 GitHub。
-- 按 tag 同步：62 个文件写进 `src/vendor/peck/`（样式、两个字体和 OFL 原文、`tokens.ts`、App 图标、A3、菜单栏模板图、DESIGN.md、外框规则、Design System 说明和 18 个组件示例）。
-- roadmap：Phase 2 改 `完成`，Phase 3 改 `进行中`；删了和 CLAUDE.md 重复的「和 Dawn Plan 的关系」。architecture 的「视觉」一节、CLAUDE.md「边界」里 visual-atelier 那条跟着精简。
+**Phase 3 三栏外壳**
 
-## 实际验证了什么
+- 旧外壳整个换掉：`src/components/`、`src/hooks/`、`src/index.css`（连同旧变量映射）都删了；Tailwind 和 lucide-react 也去掉了。新外壳在 `src/shell/`，样式只用 `src/vendor/peck/` 的变量和 `pk-` 类名，加一份 `src/app.css` 管怎么摆。结构和文案照站主发来的画布（Peck Explore 的 S4-Main、S2 的小样和右栏四个模块、设置的迁移测试）。
+- 顶栏：PECK、项目名、CLI / API、QUOTA（额度与花费）、设置。
+- 左栏：PROJECTS（没选项目时每个项目带最近 3 个任务；点项目展开它的任务列表和 NEW TASK，别的收成一行）和 LOG（这个任务的记录）。底下 OPEN FOLDER，旁边 PATH 能手输路径。
+- 中栏：没选任务是 NEW TASK（「<项目> 要做什么？」、WHO 的流程、ACCESS 的说明）；选了任务是 YOU 那句话 + TASK 模块（状态字、计时、方块进度、任务清单、步骤、总结）。
+- 右栏四个页签：CHANGES（任务前快照、文件数和行数、按步骤筛、文件列表、Diff；展开到宽栏能看 SPLIT；Markdown 有 VIEW）、FILES（照忽略规则列文件、写藏了几个、改过的标法和 CHANGES 一样、预览带行号、改过的行左边一条绿、删掉的看删之前的样子）、ONE SHOT（页签和空状态）、TERM。每个模块头有展开到宽栏。
+- 设置：一个面板占宽栏，七组（供应商和 Key 含模型、花费上限、权限、CLI 检测、通知、外观、开发者选项），替掉 API 工作台、CLI 设置、Agent 配置三个对话框。额度与花费（旧的用量页）也搬成宽栏的一页，功能照旧。
+- 跟随系统明暗，设置的「外观」里能固定。点阵字 Doto 和说明字 IBM Plex Sans 打进了包里（原来只有两个本地字体，App 不联网取字体）。
 
-- `npm run sync -- --check --tag peck-v0.1.0`：一致。
-- `pnpm check` 通过；前端构建通过，两个字体打进了产物。
-- `?mock` 在内置浏览器里打开，旧界面接上了新颜色（深海底 `#050816`、青 `#00E5FF`）；只看了深色（界面现在固定深色）。
-- 没跑 `cargo test`（没改 Rust）。没有真实 CLI、API 调用。
+**Phase 4 发任务与看任务**
+
+- 发任务：一句话 + 「谁来干」+ 权限，⌘↵ 发。CLI 模式是 MUSE、GROK、MUSE→GROK、GROK→MUSE 四个选项片（检测到才出现），API 模式是 SOLO（单模型干活）、PLAN→DO（规划 + 实施）。后端 `run_dispatch` 多了 `who` 和 `permission`；Grok → Muse 用同一份流程清单的两步提示词，只换谁来跑。
+- 看任务：折叠的步骤，点开看输出（在跑的那一步自动露最后 3 行）；跑完一段总结（CLI 是最后一步收尾时的最后一段输出）+ 验证结果（任务清单勾了几条、每步的退出码），默认留着。失败和停下的任务能从那一步 RETRY（API 模式是 CONTINUE：从现在的文件接着发）。
+- 撤销整个任务：右栏 CHANGES 底下 UNDO TASK，原地确认一次（几个文件、回到几点、删掉的放回来、做完以后又改过的有几个、你的 Git 不动），后端 `run_undo` 只动任务改过的文件。
+- TERM：每条命令在 pty 里跑，跑完写 EXIT 码和用时；任务在跑时锁着（后端也拒绝），发任务前在跑的命令接着跑、STOP 一直能点。
+- 菜单栏小图标（空闲、在跑三帧轮流、等你）和 macOS 通知（设置里能关）。
+- 数据库 schema v6（多一张 `app_settings`，升级前照旧自动备份）；任务记录多了 `who`、`permission`、`undoneAt` 三个可选字段，旧记录不受影响。
+
+## 默认取舍（没问站主，照规则自己定的）
+
+- **权限三档这一版只记在任务上**，不管住 CLI 和工具（roadmap 里按档位管是 Phase 5、7）。输入框旁边能选，NEW TASK 和设置里都写明了「v0.5 起生效」，免得选了 PLAN 以为不会改文件。
+- **花费上限**：设置里能填、会存，但到了就停要等 v0.6 的价格表；那一行写明了。原来的四个预算数字收进「其他几个上限」，现在照旧生效。
+- **单次请求、API 模拟 / 真实、导出调用记录**放进了设置的开发者选项（单次请求 v0.6 搬进 ONE SHOT）。授权次数只在单次请求那一行写一句。
+- **假 Agent**：设置的开发者选项里开了，「谁来干」才多一个 FAKE。`?mock` 里四种 CLI 都当作检测到了。
+- **通知**：做完、失败、停下都发；Peck 就在最前面时不发。菜单栏图标没做开关（设置里写的是一直开着）。「要你回答时发通知」等 v0.5 有了卡片再接。
+- **一次对话就是一个任务**：从 NEW TASK 发是新开一个任务（任务名是那句话）；在一个任务里接着发，是同一个任务里的下一次记录。旧版自动建的空「默认发令会话」不再出现在列表里。
+- **终端**：`cd` 到哪儿会记着，`export` 的变量不带到下一条（每条命令是一个新的登录 shell）；输出当文字显示，不解释颜色和光标。
+- 画布里有、这一版没做的：左栏拖文件夹进窗口、FILES 预览的 OPEN 和 ONE SHOT 按钮、设置里的 App 图标切换（Phase 10）、顶栏 QUOTA 上的金额。
+
+## 新加的依赖
+
+- 前端：`@fontsource/doto ^5.3.0`、`@fontsource/ibm-plex-sans ^5.3.0`；去掉了 `tailwindcss`、`@tailwindcss/vite`、`lucide-react`。
+- 后端：`tauri` 开了 `tray-icon`、`image-png` 两个特性；`tauri-plugin-notification ^2.8.1`、`portable-pty ^0.9.0`。
+
+## 实际验证了什么（云端）
+
+- `pnpm check`、`pnpm build` 通过。
+- `?mock`，无头浏览器 1360×860，明暗各走一遍，脚本逐项断言、没有控制台报错：跟随系统明暗；发（Muse → Grok，权限 AUTO）→ 在跑时输入框暗着只有 STOP、终端锁着 → 做完有总结、任务头写着谁来干和权限 → 点开步骤看输出 → 看 Diff → UNDO TASK 确认 → 状态变 UNDONE、FILES 里新建的文件没了 → 终端解锁，`pnpm dev` 能 STOP；失败的任务 RETRY；API 模式 PLAN→DO 走完；停掉在跑的任务；设置七组都能开、换明暗生效；额度与花费能开；`&empty` 空状态和手输路径打开项目；980×640 不溢出。
+- 字号：脚本查了每一屏有字的元素，都不小于 12（Departure Mono 11 例外）。
+- 截图看过（只在会话临时目录）：首页、在跑、做完 + Diff、撤销确认、终端锁着、终端跑命令、FILES 宽栏、设置（供应商、开发者选项）。
+- 后端：云端装了 Linux 的系统库以后编得过。`cargo test`（不带 `--offline`）78 项里 70 项过；新加的 5 项都过（撤销、文件列表和预览、终端两项、「谁来干」定计划），迁移测试过。没过的 8 项（`api::tools` 3 项、`api::worker` 5 项）要 macOS 的 `sandbox-exec`，改动前在 Linux 上就是这 8 项失败。
+
+## 没验的（留给本地）
+
+- **原生窗口一眼都没看过**。重点看：红绿灯的位置（`tauri.conf.json` 里改成了 `x: 30, y: 72`，是照公式算的，要落在顶栏那一行、PECK 左边；不对就在本地调）；顶栏能不能拖动窗口；中文落到苹方以后的样子（云端截图用的是 Linux 的字体）。
+- macOS 上的全量 `cargo test`（尤其上面那 8 项）。
+- 菜单栏图标：出不出来、在跑时三帧动不动、明暗菜单栏下颜色对不对、点它回到窗口。
+- macOS 通知：正式包里发不发得出来、署名是不是 Peck。
+- 终端在 Mac 上：zsh 登录 shell 的 PATH（Homebrew、pnpm 找不找得到）、中文输出、STOP 能不能停掉 `pnpm dev` 这类带子进程的命令。
+- 撤销在真实项目上：改、新建、删除各一个文件，撤销后都回去，`git status` 和撤销前的暂存区不变。
+- 升级测试：旧数据目录（schema v5）用新版打开，生成备份、数据都在、旧任务的 Diff 能开。
+- 真实 CLI、真实 API：这个版本的验收点没要求，没碰。
+
+## 给本地：验收清单草稿
+
+每项：验什么 · 在 App 里怎么做 · 云端验了什么。
+
+**Phase 3 三栏外壳**
+
+1. 三栏和顶栏 · 打开 App，看顶栏只有 PECK、项目名、CLI / API、QUOTA、设置；下面三栏 · `?mock` 明暗都看过；原生没看。
+2. 红绿灯和拖动 · 红绿灯在顶栏那一行、不压 PECK；按住顶栏空白能拖窗口 · 没验（只有原生有）。
+3. 跟随系统明暗 · 系统设置里切深浅，Peck 跟着变；设置 → LOOK 里固定一种 · `?mock` 验过。
+4. 左栏 · 没选项目时每个项目带最近几次任务；点项目展开任务列表和 NEW TASK；再点项目名回到列表；OPEN FOLDER 打开一个文件夹 · `?mock` 验过（选文件夹的系统面板没验）。
+5. 看一个旧任务 · 点一个 v0.2 留下的任务：对话、步骤、输出、改动、Diff 都在 · `?mock` 验过；真实旧数据没验。
+6. CHANGES · 点文件看 Diff；按 STEP 筛；展开到宽栏看 SPLIT；Markdown 文件有 VIEW · `?mock` 验过。
+7. FILES · 列出项目文件、写着藏了几个；改过的文件有 NEW / DEL / + −；点开预览有行号、改过的行左边一条绿 · `?mock` 验过，后端有自动测试。
+8. 设置 · 七组都能开；供应商里存、删 Key，读钥匙串状态；换模型点 SAVE；CLI 检测里 RECHECK、改清单 · `?mock` 验过；钥匙串没验。
+9. 旧功能都还在 · 单次请求、API 模拟 / 真实、导出调用记录在设置 → DEV；用量页在顶栏 QUOTA（导入、导出 CSV、查余额、手工记快照） · `?mock` 只验了能打开。
+
+**Phase 4 发任务与看任务**
+
+10. 用假 Agent 发任务 · 设置 → DEV 打开假 Agent；拿一个临时文件夹当项目；NEW TASK 写一句话，选 FAKE，⌘↵ · `?mock` 验过整条流程；原生没验。
+11. 跑的时候 · 输入框暗着只有 STOP；步骤在动；右栏 CHANGES 的数字跟着涨；菜单栏图标在动 · `?mock` 验过前三样；菜单栏没验。
+12. 跑完 · 有一段总结和验证结果，任务留着；切到别的 App 时收到一条 macOS 通知 · `?mock` 验过总结；通知没验。
+13. 撤销整个任务 · CHANGES 底下 UNDO TASK → 确认里写着几个文件、回到几点、Git 不动 → 撤销后文件回到任务前、状态写已撤销 · `?mock` 验过；后端有自动测试（改、删、新建、后来又改、别的文件不动、用户 Git 不动）；真实项目没验。
+14. 终端 · TERM 里跑 `ls`、`pnpm -v`，看 EXIT 码和用时；`cd` 进子目录再 `pwd`；跑一条久的再 STOP · `?mock` 验过；后端在 Linux 上有自动测试；Mac 上没验。
+15. 终端的锁 · 先在 TERM 跑一条久的命令，再发任务：命令接着跑、STOP 能点；任务在跑时不能发新命令，页签和输入行各一把锁；做完解锁 · `?mock` 验过锁；「先跑着的命令接着跑」只有后端逻辑，没验。
+16. 四种 CLI 和两种 API 的选项 · 顶栏切 CLI / API，「谁来干」跟着换；没检测到的 CLI 不出现 · `?mock` 验过；真实检测没验。
+17. 设置里关通知 · NOTIFY 里关掉「做完发通知」，再跑一个任务不发 · 没验。
+18. 升级 · 照 `docs/testing.md`「升级测试」 · 没验。
 
 ## 退回项
 
@@ -32,13 +100,13 @@
 
 ## 下一步
 
-1. **站主**：提交并推送这次的改动（`src/vendor/peck/` 和几份文档），云端才看得到正式的视觉。
-2. **站主**：用另一个账号在 Claude Code 网页版连上 `elenskye/peck`，说「照 CLAUDE.md 开始 v0.4」。
-3. **云端**：Phase 3 → Phase 4 → 版本号改 `0.4.0` → 在这里写「v0.4 等本地验收」和验收清单草稿。
-4. **本地**：站主说「验收 v0.4」时照 CLAUDE.md「本地验收」。
+1. **站主**：确认这条分支推上去了（见「分支」）。
+2. **本地**：站主说「验收 v0.4」时照 CLAUDE.md「本地验收」，检出的分支名用上面那条；验收页从上面的草稿出发。
+3. **云端**：有退回项先修；v0.4 合进 `main` 以前不开 v0.5（Phase 5 现在是 `未开始`）。
 
 ## 留意
 
-- 真实 API 账本：Opus 7/20、DeepSeek 46/100（roadmap「现行授权」），只有本地验收时用。
-- Claude Code 状态栏脚本的接入没动（备份在 `~/.claude/settings.json.before-peck-usage-20261107-234334`）。
-- 额度监测器（`src/quota/`、`src-tauri/src/quota/`）从 v0.5 起由站主用 Peck 做，Agent 不写。
+- 真实 API 账本没动：Opus 7/20、DeepSeek 46/100（roadmap「现行授权」），只有本地验收时用。
+- 额度监测器（`src/quota/`、`src-tauri/src/quota/`）从 v0.5 起由站主用 Peck 做，Agent 不写；这次没碰。
+- Claude Code 状态栏脚本的接入没动。
+- 云端没建、没改任何云端页面；站主发来的两个画布只读了。

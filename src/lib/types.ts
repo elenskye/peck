@@ -91,7 +91,60 @@ export interface RunRecord {
   stepFiles?: Record<string, FileChangeItem[]>;
   logs: RawLogEntry[];
   summary?: string;
+  /** 谁来干：muse、grok、muse>grok、grok>muse、mock；API 模式和旧记录没有。 */
+  who?: string;
+  permission?: Permission;
+  /** 「撤销整个任务」的时间。 */
+  undoneAt?: number;
 }
+
+export type Permission = "plan" | "edit" | "auto";
+
+/** 左栏的任务摘要：一次对话一行，带最近一次记录的状态。 */
+export interface TaskBrief {
+  id: string;
+  workspaceId: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  runCount: number;
+  lastRun?: {
+    id: string;
+    number: number;
+    flowId: string;
+    flowName: string;
+    status: RunStatus;
+    startedAt: number;
+    finishedAt?: number;
+    files: FileChangeItem[];
+    who?: string;
+    undoneAt?: number;
+  } | null;
+}
+
+export interface ProjectOverview {
+  workspace: Workspace;
+  tasks: TaskBrief[];
+}
+
+export interface FileEntry { path: string; size: number }
+export interface FileListing { entries: FileEntry[]; hidden: number; truncated: boolean }
+export interface FilePreview {
+  path: string;
+  kind: "text" | "image" | "binary" | "large" | "missing";
+  content?: string | null;
+  size: number;
+  deleted: boolean;
+}
+
+export interface UndoFile { path: string; kind: FileChangeKind; changedSince: boolean }
+export interface UndoPreview { runId: string; files: UndoFile[] }
+
+export type TermEvent =
+  | { type: "Output"; payload: { id: string; chunk: string } }
+  | { type: "Exit"; payload: { id: string; code: number | null; durationMs: number; cwd: string; stopped: boolean } };
+export interface TermState { cwd: string; running: string | null }
+export type Activity = "idle" | "running" | "waiting";
 
 export interface DiffResult {
   runId: string;

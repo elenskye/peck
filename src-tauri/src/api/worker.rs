@@ -115,12 +115,27 @@ pub async fn api_run_start(
     limits: Limits,
     role: String,
     scenario: String,
+    permission: Option<String>,
     channel: Channel<RunEvent>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    if !matches!(
+        permission.as_deref(),
+        None | Some("plan") | Some("edit") | Some("auto")
+    ) {
+        return Err("权限只有 PLAN、EDIT、AUTO 三档。".into());
+    }
     let (ctx, task, provider, rx) =
         prepare(&state, &session_id, &prompt, limits, &role, &scenario)?;
     let run_id = ctx.run_id.clone();
+    if permission.is_some() {
+        // 这次选的权限档记在任务上（API 模式按档位给工具 v0.6 接）。
+        let mut db = state.store.lock().map_err(|e| e.to_string())?;
+        if let Ok(mut record) = db.run(&run_id) {
+            record.permission = permission;
+            let _ = db.save_run(&record);
+        }
+    }
     let store = state.store.clone();
     let api = state.api.clone();
     let active = state.active_runs.clone();
@@ -174,7 +189,7 @@ pub fn prepare(
     let mut active = state.active_runs.lock().map_err(|e| e.to_string())?;
     let mut calls = state.api.active.lock().map_err(|e| e.to_string())?;
     if !calls.is_empty() {
-        return Err("请先等待或停止当前 API 请求/任务。".into());
+        return Err("API 模式一次跑一个任务，等现在的做完或先停下。".into());
     }
     let mode = *state.api.mode.lock().map_err(|e| e.to_string())?;
     if mode == ApiMode::Real && scenario != "success" {
@@ -186,9 +201,9 @@ pub fn prepare(
         .map_err(|e| e.to_string())?;
     let workspace = PathBuf::from(&ws.path)
         .canonicalize()
-        .map_err(|_| "工作区已不存在。")?;
+        .map_err(|_| "项目文件夹不在了，重新打开一次。")?;
     if active.values().any(|r| r.workspace_path == workspace) {
-        return Err("此工作区已有运行中的任务，请先停止。".into());
+        return Err("同一个项目一次跑一个任务。".into());
     }
     let config = db.api_config().map_err(|e| e.to_string())?;
     let (settings, model, provider) = config.selection(role)?;
@@ -208,11 +223,11 @@ pub fn prepare(
     let plan = DispatchPlan {
         flow_id: format!("api-{role}"),
         flow_name: format!(
-            "API {} · {}",
+            "{} · {}",
             if role == "supervisor" {
-                "Supervisor + Worker"
+                "规划 + 实施"
             } else {
-                "Worker"
+                "单模型干活"
             },
             model.name
         ),
@@ -223,9 +238,9 @@ pub fn prepare(
             agent_id: format!("api-{role}"),
             agent_name: model.name.clone(),
             title: if role == "supervisor" {
-                "Supervisor 规划、审查与接管"
+                "规划和审查"
             } else {
-                "单 Worker 开发与验证"
+                "单模型干活"
             }
             .into(),
             rendered_prompt: prompt.into(),

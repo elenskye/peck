@@ -1,12 +1,20 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { mockIpc } from "@/dev/mockIpc";
 import type {
+  Activity,
   AgentInfo,
   DiffResult,
+  FileListing,
+  FilePreview,
   Message,
+  Permission,
+  ProjectOverview,
   RunEvent,
   RunRecord,
   Session,
+  TermEvent,
+  TermState,
+  UndoPreview,
   Workspace,
 } from "@/lib/types";
 
@@ -69,21 +77,20 @@ export const ipc = {
     return invoke<RunRecord[]>("session_get_runs", { sessionId });
   },
 
+  /** 发任务。`who` 是「谁来干」（muse、grok、muse>grok、grok>muse、mock）。 */
   async runDispatch(
     sessionId: string,
     prompt: string,
+    who: string,
+    permission: Permission,
     onEvent: (event: RunEvent) => void,
   ): Promise<string> {
     if (isMockMode()) {
-      return mockIpc.runDispatch(sessionId, prompt, onEvent);
+      return mockIpc.runDispatch(sessionId, prompt, who, permission, onEvent);
     }
     const channel = new Channel<RunEvent>();
     channel.onmessage = onEvent;
-    return invoke<string>("run_dispatch", {
-      sessionId,
-      prompt,
-      channel,
-    });
+    return invoke<string>("run_dispatch", { sessionId, prompt, who, permission, channel });
   },
 
   async runCancel(runId: string): Promise<void> {
@@ -138,5 +145,57 @@ export const ipc = {
   async agentSaveConfig(agentId: string, content: string): Promise<void> {
     if (isMockMode()) return mockIpc.agentSaveConfig(agentId, content);
     return invoke<void>("agent_save_config", { agentId, content });
+  },
+
+  async overview(): Promise<ProjectOverview[]> {
+    if (isMockMode()) return mockIpc.overview();
+    return invoke<ProjectOverview[]>("projects_overview");
+  },
+  async filesList(workspaceId: string): Promise<FileListing> {
+    if (isMockMode()) return mockIpc.filesList(workspaceId);
+    return invoke<FileListing>("files_list", { workspaceId });
+  },
+  async filesRead(workspaceId: string, path: string, runId?: string): Promise<FilePreview> {
+    if (isMockMode()) return mockIpc.filesRead(workspaceId, path, runId);
+    return invoke<FilePreview>("files_read", { workspaceId, path, runId });
+  },
+  async runUndoPreview(runId: string): Promise<UndoPreview> {
+    if (isMockMode()) return mockIpc.runUndoPreview(runId);
+    return invoke<UndoPreview>("run_undo_preview", { runId });
+  },
+  async runUndo(runId: string): Promise<RunRecord> {
+    if (isMockMode()) return mockIpc.runUndo(runId);
+    return invoke<RunRecord>("run_undo", { runId });
+  },
+  async settingsGet(): Promise<string | null> {
+    if (isMockMode()) return mockIpc.settingsGet();
+    return invoke<string | null>("settings_get");
+  },
+  async settingsSet(value: string): Promise<void> {
+    if (isMockMode()) return mockIpc.settingsSet(value);
+    return invoke<void>("settings_set", { value });
+  },
+  async termRun(workspaceId: string, command: string, onEvent: (event: TermEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.termRun(workspaceId, command, onEvent);
+    const channel = new Channel<TermEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("term_run", { workspaceId, command, channel });
+  },
+  async termStop(workspaceId: string): Promise<void> {
+    if (isMockMode()) return mockIpc.termStop(workspaceId);
+    return invoke<void>("term_stop", { workspaceId });
+  },
+  async termState(workspaceId: string): Promise<TermState> {
+    if (isMockMode()) return mockIpc.termState(workspaceId);
+    return invoke<TermState>("term_state", { workspaceId });
+  },
+  /** 菜单栏小图标跟着变。浏览器里没有菜单栏，不做事。 */
+  async setActivity(activity: Activity): Promise<void> {
+    if (isMockMode()) return;
+    return invoke<void>("shell_set_activity", { activity });
+  },
+  async notify(title: string, body: string): Promise<void> {
+    if (isMockMode()) return mockIpc.notify(title, body);
+    return invoke<void>("notify", { title, body });
   },
 };

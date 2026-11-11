@@ -7,7 +7,7 @@
 | 层 | 用什么 | 为什么 |
 |---|---|---|
 | 外壳 | Tauri 2（macOS） | 原生窗口、钥匙串、菜单栏、通知；包小 |
-| 界面 | React 19 + TypeScript + Tailwind 4，Vite 固定端口 1430 | 和 Pomelo 一样的栈；浏览器 `?mock` 能自检 |
+| 界面 | React 19 + TypeScript，样式是 `src/vendor/peck/` 的变量和 `pk-` 组件加一份 `src/app.css`（不用 Tailwind），Vite 固定端口 1430 | 浏览器 `?mock` 能自检；视觉只有一个来源 |
 | 后端 | Rust | 模型请求、工具、CLI 进程、快照、SQLite 都在这里，界面只经 IPC 调 |
 | 存储 | SQLite（WAL）+ 影子 Git 仓库 | 记录和历史 Diff 分开存，重开都还在 |
 
@@ -20,12 +20,18 @@
 | 谁来干 | 怎么执行 |
 |---|---|
 | 单个 CLI | 按清单起子进程，直接传参不经 shell，流式读输出；超时、停止都终止整个进程组 |
-| 先写规范再实施 | 前一个 CLI 写 `.peck/handoff/<任务号>/intent.md` 和 `.peck/tasks.md`，后一个读它们实施；界面里是一个任务两段 |
+| 先写规范再实施 | 前一个 CLI 写 `.peck/handoff/<任务号>/intent.md` 和 `.peck/tasks.md`，后一个读它们实施；界面里是一个任务两段。两个方向（Muse → Grok、Grok → Muse）用同一份流程清单的两步提示词，只换谁来跑 |
 | 单模型干活 | 请求 → 原生工具调用 → 串行执行 → 回传结果 → 下一轮，直到模型收尾或到上限 |
 | 规划 + 实施 | 规划的模型多两个工具：`delegate_task` 把边界明确的子任务交给实施的模型，`review_task` 记「通过 / 返工 / 接手」。子任务只拿到目标、必要上下文、写入范围和验收条件，不复制父对话 |
 | 单次请求（v0.6 起是右栏 ONE SHOT） | 现在不带工具，问一句答一句；挪进 ONE SHOT 后只给读文件的工具，CLI 用 PLAN 档答 |
 
 失败、取消、重开都不自动重发：可能已经生效的请求和命令不重放，继续由站主新发一个任务。
+
+- **发任务**（`run_dispatch`）带「谁来干」`who`（`muse`、`grok`、`muse>grok`、`grok>muse`、`mock`）和权限档 `permission`（`plan` / `edit` / `auto`），都记在任务记录上。v0.4 权限档只记不管：CLI 的权限参数 v0.5 接，API 模式按档位给工具 v0.6 接。
+- **跑完的总结**：CLI 是最后一步收尾时的最后一段输出（最多 24 行），API 模式是模型自己的总结。
+- **撤销整个任务**（`run_undo`）：算出任务前快照到任务做完之间改过的文件，新建的删掉、改过和删掉的用 `git restore --source=<任务前的树> --worktree` 写回；只动这几个文件，用户仓库的 index、commit、stash 不碰。撤销前再存一份快照。记录上写 `undoneAt`，历史 Diff 照旧能看。
+- **终端**（右栏 TERM，`term.rs`）：每条命令在 pty 里起一个登录 shell（`$SHELL -l -c`），输出当文字显示（`TERM=dumb`），跑完报退出码和用时；`cd` 到哪儿记着，`export` 不带到下一条。这个项目有任务在跑时后端拒绝新命令；已经在跑的不管，STOP 结束整个进程组。只在内存，退出就没了。
+- **菜单栏图标和通知**（`tray.rs`）：界面告诉后端现在是空闲、在跑还是等你，图标跟着换（在跑时三帧轮流，每帧 300ms）；任务做完、失败、停下时界面按设置决定发不发 macOS 通知（Peck 在最前面时不发）。模板图是 `scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出的 @2x PNG，放在 `src-tauri/icons/menubar/`。
 
 ## 数据存放
 
@@ -33,7 +39,7 @@
 |---|---|
 | 正式数据 | `~/Library/Application Support/Peck/` |
 | 开发数据（`pnpm app:dev`） | `~/Library/Application Support/Peck Dev/` |
-| 项目、任务、步骤、消息、调用、工具记录、用量快照 | 数据目录里的 `peck.db`（schema v5，迁移在 `src-tauri/migrations/`） |
+| 项目、任务、步骤、消息、调用、工具记录、用量快照 | 数据目录里的 `peck.db`（schema v6，迁移在 `src-tauri/migrations/`）；v6 加了 `app_settings`，界面设置（明暗、模式、谁来干、默认权限、通知、花费上限、开发者选项）整段存成一行 JSON |
 | 任务前快照和历史 Diff | 数据目录里的 `shadow/<项目哈希>/` |
 | 真实 API 授权账本 | 固定在正式数据目录的 `api-budget.db`，测试目录、角色、别名都不重置 |
 | 命令用的 HOME 和缓存 | 数据目录里的 `worker-runtime/<项目哈希>/home/` |
@@ -91,7 +97,7 @@
 ## 视觉
 
 - 视觉基线在 visual-atelier 的方案 `schemes/peck/`，按 tag 单向同步进 `src/vendor/peck/`（现在是 `peck-v0.1.0`，`VERSION` 记着提交，`SHA256SUMS` 记校验和），不手改；同步怎么跑在 `CLAUDE.md`「边界」。
-- 读取：`src/main.tsx` 先引 `vendor/peck/peck.css`，再引 `src/index.css`；根元素的 `data-theme` 由 `src/lib/theme.ts` 写。新外壳再引 `vendor/peck/bundle.css` 用 `pk-` 组件。
+- 读取：`src/main.tsx` 依次引 `vendor/peck/peck.css`（变量、两个本地字体）、`vendor/peck/bundle.css`（`pk-` 组件）、`@fontsource/doto` 和 `@fontsource/ibm-plex-sans`（点阵字和说明字，打进包里，App 不联网取字体）、`src/app.css`（外壳怎么摆，只用变量）。根元素的 `data-theme` 由 `src/lib/theme.ts` 写，默认跟随系统。
 - 同步来的：`peck.css`（Design System 的变量、字体样式类、两个字体的 @font-face）、`bundle.css`（`pk-` 组件）、`fonts/`（缝合像素 12、Departure Mono 和 OFL 原文）、`tokens.ts`、`marks/`（App 图标、A3、菜单栏模板图）、`DESIGN.md`、`peck-rules.md`、`DESIGN-SYSTEM.md` 和 `components/`（组件说明和示例）。云端开发看不到 visual-atelier，照这些做。
 
 ## 打包和签名
@@ -109,11 +115,12 @@
 | `src-tauri/src/api/{mod,provider,profiles,keys,budget}.rs` | 统一请求、SSE、模型能力、Key、授权账本 |
 | `src-tauri/src/api/{worker,supervisor,tools,storage}.rs` | 单模型循环、规划 + 实施、文件和命令工具、API 记录 |
 | `src-tauri/src/{store,migrations}.rs`、`src-tauri/migrations/` | 历史存储和追加迁移 |
-| `src-tauri/src/{workspace,snapshot,watch,tasks}.rs` | 项目、任务前快照、文件监听、`.peck/tasks.md` |
+| `src-tauri/src/{workspace,snapshot,watch,tasks}.rs` | 项目、任务前快照和撤销、文件监听、`.peck/tasks.md` |
+| `src-tauri/src/{files,term,tray}.rs` | 右栏 FILES 的列表和预览、TERM 的 pty、菜单栏图标 |
 | `src-tauri/src/{usage,export}.rs`、`src-tauri/integrations/` | 旧的用量监控、原生保存面板、状态栏脚本 |
 | `src-tauri/defaults/` | 内置 CLI 清单和流程 |
-| `src/App.tsx`、`src/hooks/`、`src/lib/` | 界面编排、状态、类型化 IPC（`lib/ipc.ts` 在浏览器里转给 `?mock`） |
-| `src/components/` | 界面组件（Phase 3 换成三栏外壳） |
+| `src/App.tsx`、`src/lib/` | 界面编排和状态、类型化 IPC（`lib/ipc.ts` 在浏览器里转给 `?mock`）、设置、事件并进记录 |
+| `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳：顶栏、左栏、中栏、右栏四个页签、设置、额度与花费；`pk-` 组件的小零件；布局样式 |
 | `src/dev/` | `?mock` 的假数据和假 IPC |
 | `src/vendor/peck/` | 同步来的视觉：样式、字体、图标、设计说明（不手改） |
 | `src/quota/`、`src-tauri/src/quota/` | 额度与花费，站主用 Peck 写（v0.5 起） |

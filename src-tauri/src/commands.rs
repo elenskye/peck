@@ -3,12 +3,14 @@ use tauri::{ipc::Channel, State};
 
 use crate::agent::{load_agent_manifests, load_and_probe_all_agents, AgentInfo, AgentManifest};
 use crate::events::{EventSink, RunEvent, RunStatus, StepStatus};
-use crate::flow::{load_flow_manifests, resolve_dispatch_plan};
+use crate::flow::{load_flow_manifests, resolve_dispatch_plan, resolve_plan_for_who};
 use crate::process::ProcessCancelHandle;
 use crate::run::{execute_run_from_step, ActiveRunContext};
-use crate::snapshot::{get_diff_for_run, restore_snapshot, DiffResult};
+use crate::snapshot::{
+    get_diff_for_run, restore_snapshot, saved_snapshot, DiffResult, ShadowRepo, UndoPreview,
+};
 use crate::state::AppState;
-use crate::store::{Message, RunRecord, Session};
+use crate::store::{now_ms, Message, ProjectOverview, RunRecord, Session};
 use crate::workspace::{open_workspace, Workspace};
 
 #[tauri::command]
@@ -16,7 +18,7 @@ pub async fn workspace_open(path: String, state: State<'_, AppState>) -> Result<
     let expanded = crate::agent::expand_tilde(&path);
     let canonical = expanded
         .canonicalize()
-        .map_err(|e| format!("无法打开工作区：{e}"))?;
+        .map_err(|e| format!("打不开这个文件夹：{e}"))?;
     let ws = open_workspace(&canonical.to_string_lossy())?;
     state
         .store
@@ -32,7 +34,7 @@ pub async fn workspace_choose(state: State<'_, AppState>) -> Result<Option<Works
     let output = tokio::process::Command::new("/usr/bin/osascript")
         .args([
             "-e",
-            "POSIX path of (choose folder with prompt \"选择 Peck 工作区\")",
+            "POSIX path of (choose folder with prompt \"选择项目文件夹\")",
         ])
         .output()
         .await
@@ -42,7 +44,7 @@ pub async fn workspace_choose(state: State<'_, AppState>) -> Result<Option<Works
         if message.contains("-128") {
             return Ok(None);
         }
-        return Err(format!("无法选择文件夹，可改为输入完整路径：{message}"));
+        return Err(format!("选不了文件夹，可以改成输入完整路径：{message}"));
     }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     workspace_open(path, state).await.map(Some)
@@ -143,16 +145,29 @@ fn spawn_run(
     });
 }
 
+fn check_permission(permission: &Option<String>) -> Result<(), String> {
+    match permission.as_deref() {
+        None | Some("plan") | Some("edit") | Some("auto") => Ok(()),
+        Some(_) => Err("权限只有 PLAN、EDIT、AUTO 三档。".into()),
+    }
+}
+
+/// 发任务。`who` 是「谁来干」（`muse`、`grok`、`muse>grok`、`grok>muse`、`mock`）；
+/// 不带 `who` 时照旧：`@名字` 开头走单个，别的走默认的先写规范再实施。
+/// `permission` 是这次选的权限档，记在任务上（CLI 的权限参数 v0.5 接）。
 #[tauri::command]
 pub async fn run_dispatch(
     session_id: String,
     prompt: String,
+    who: Option<String>,
+    permission: Option<String>,
     channel: Channel<RunEvent>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     if prompt.trim().is_empty() {
-        return Err("请输入指令。".into());
+        return Err("先写一句话。".into());
     }
+    check_permission(&permission)?;
     let agents = load_agent_manifests();
     let flows = load_flow_manifests();
     let mut active = state.active_runs.lock().map_err(|e| e.to_string())?;
@@ -161,20 +176,37 @@ pub async fn run_dispatch(
         .workspace_for_session(&session_id)
         .map_err(|e| e.to_string())?;
     if !PathBuf::from(&ws.path).is_dir() {
-        return Err("工作区已不存在，请重新打开文件夹。".into());
+        return Err("项目文件夹不在了，重新打开一次。".into());
     }
     if active
         .values()
         .any(|r| r.workspace_path == PathBuf::from(&ws.path))
     {
-        return Err("此工作区已有运行中的任务，请等待完成或先停止。".into());
+        return Err("同一个项目一次跑一个任务。".into());
     }
     let number = db.next_run_number().map_err(|e| e.to_string())?;
     let run_id = format!("run-{number}");
     let handoff_rel = format!(".peck/handoff/{number}");
-    let plan = resolve_dispatch_plan(&run_id, &prompt, &handoff_rel, &ws.path, &agents, &flows)?;
-    db.create_run(&session_id, &prompt, number, &plan)
+    let plan = match who.as_deref().map(str::trim).filter(|w| !w.is_empty()) {
+        Some(who) => resolve_plan_for_who(
+            &run_id,
+            who,
+            &prompt,
+            &handoff_rel,
+            &ws.path,
+            &agents,
+            &flows,
+        )?,
+        None => resolve_dispatch_plan(&run_id, &prompt, &handoff_rel, &ws.path, &agents, &flows)?,
+    };
+    let mut record = db
+        .create_run(&session_id, &prompt, number, &plan)
         .map_err(|e| e.to_string())?;
+    if who.is_some() || permission.is_some() {
+        record.who = who;
+        record.permission = permission;
+        db.save_run(&record).map_err(|e| e.to_string())?;
+    }
     drop(db);
     let (cancel_handle, cancel_rx) = ProcessCancelHandle::new();
     let ctx = ActiveRunContext {
@@ -217,39 +249,36 @@ pub async fn run_retry_step(
     let mut db = state.store.lock().map_err(|e| e.to_string())?;
     let mut record = db.run(&run_id).map_err(|e| e.to_string())?;
     if record.flow_id.starts_with("api-") {
-        return Err(
-            "API 任务不会重放可能已执行的工具。请查看调用与工具历史，再从当前文件发起继续任务。"
-                .into(),
-        );
+        return Err("API 模式的任务不重放已经跑过的工具；看一下调用记录，再从现在的文件接着发一个任务。".into());
     }
     if !matches!(record.status, RunStatus::Failed | RunStatus::Cancelled) {
-        return Err("只有失败或中止的任务可以重试。".into());
+        return Err("只有失败或已停止的任务能重跑。".into());
     }
     let plan = db.plan(&run_id).map_err(|e| e.to_string())?;
     let start_index = plan
         .steps
         .iter()
         .position(|s| s.id == step_id)
-        .ok_or("未找到需要重试的步骤。")?;
+        .ok_or("没找到要重跑的那一步。")?;
     if record
         .steps
         .iter()
         .take(start_index)
         .any(|s| s.status != StepStatus::Succeeded)
     {
-        return Err("请先重试前面未完成的步骤。".into());
+        return Err("前面还有没做完的步骤，先重跑前面的。".into());
     }
     let ws = db
         .workspace_for_session(&record.session_id)
         .map_err(|e| e.to_string())?;
     if !PathBuf::from(&ws.path).is_dir() {
-        return Err("工作区已不存在，请重新打开文件夹。".into());
+        return Err("项目文件夹不在了，重新打开一次。".into());
     }
     if active
         .values()
         .any(|r| r.workspace_path == PathBuf::from(&ws.path))
     {
-        return Err("此工作区已有运行中的任务。".into());
+        return Err("同一个项目一次跑一个任务。".into());
     }
     if let Some(snapshot) = db.snapshot(&run_id).map_err(|e| e.to_string())? {
         restore_snapshot(snapshot);
@@ -266,6 +295,7 @@ pub async fn run_retry_step(
     record.status = RunStatus::Running;
     record.finished_at = None;
     record.summary = None;
+    record.undone_at = None;
     db.save_run(&record).map_err(|e| e.to_string())?;
     drop(db);
     let (cancel_handle, cancel_rx) = ProcessCancelHandle::new();
@@ -311,7 +341,7 @@ pub async fn agent_get_config(agent_id: String) -> Result<String, String> {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         || agent_id.is_empty()
     {
-        return Err("无效的 Agent ID".into());
+        return Err("这个 CLI 的名字不对。".into());
     }
     let _ = load_agent_manifests();
     std::fs::read_to_string(
@@ -329,22 +359,247 @@ pub async fn agent_save_config(agent_id: String, content: String) -> Result<(), 
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         || agent_id.is_empty()
     {
-        return Err("无效的 Agent ID".into());
+        return Err("这个 CLI 的名字不对。".into());
     }
     let manifest = AgentManifest::from_toml_str(&content)?;
     if manifest.id != agent_id {
-        return Err("清单 id 必须与当前 Agent 一致。".into());
+        return Err("清单里的 id 要和这个 CLI 一样。".into());
     }
     if manifest.command.trim().is_empty() {
-        return Err("command 不能为空。".into());
+        return Err("command 不能空着。".into());
     }
     if crate::agent::parse_timeout_str(&manifest.timeout).is_none() {
-        return Err("timeout 格式无效，例如 30m 或 60s。".into());
+        return Err("timeout 写成 30m 或 60s 这样。".into());
     }
     if !matches!(manifest.stdin.as_str(), "none" | "prompt") {
-        return Err("stdin 仅支持 none 或 prompt。".into());
+        return Err("stdin 只能是 none 或 prompt。".into());
     }
     let dir = crate::mode::app_data_dir().join("agents");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(dir.join(format!("{agent_id}.toml")), content).map_err(|e| e.to_string())
+}
+
+/// 左栏：项目列表，每个项目带它的任务。
+#[tauri::command]
+pub async fn projects_overview(state: State<'_, AppState>) -> Result<Vec<ProjectOverview>, String> {
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .overview()
+        .map_err(|e| e.to_string())
+}
+
+fn workspace_root(state: &AppState, workspace_id: &str) -> Result<PathBuf, String> {
+    let ws = state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .workspace(workspace_id)
+        .map_err(|_| "没找到这个项目。".to_string())?;
+    let root = PathBuf::from(&ws.path);
+    if !root.is_dir() {
+        return Err("项目文件夹不在了，重新打开一次。".into());
+    }
+    Ok(root)
+}
+
+fn workspace_is_busy(state: &AppState, root: &std::path::Path) -> bool {
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    state
+        .active_runs
+        .lock()
+        .map(|runs| {
+            runs.values().any(|r| {
+                r.workspace_path == root
+                    || r.workspace_path
+                        .canonicalize()
+                        .map(|p| p == canonical)
+                        .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// 右栏 FILES：项目里的文件（照忽略规则藏起一部分，写明藏了几个）。
+#[tauri::command]
+pub async fn files_list(
+    workspace_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::files::FileListing, String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    tokio::task::spawn_blocking(move || crate::files::list_files(&root))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 右栏 FILES：读一个文件给预览。文件已经不在、又给了任务号时，读任务前快照里的样子。
+#[tauri::command]
+pub async fn files_read(
+    workspace_id: String,
+    path: String,
+    run_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<crate::files::FilePreview, String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    let mut preview = crate::files::read_preview(&root, &path)?;
+    if preview.kind != "missing" {
+        return Ok(preview);
+    }
+    let Some(run_id) = run_id else {
+        return Ok(preview);
+    };
+    let snapshot = match saved_snapshot(&run_id) {
+        Some(found) => Some(found),
+        None => state
+            .store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .snapshot(&run_id)
+            .map_err(|e| e.to_string())?,
+    };
+    if let Some(record) = snapshot {
+        let repo = ShadowRepo::with_shadow_dir(&record.workspace_path, &record.shadow_dir)?;
+        if let Some(before) = repo.read_file_at_tree(&record.base_tree, &path) {
+            preview.size = before.len() as u64;
+            preview.kind = "text".into();
+            preview.content = Some(before);
+            preview.deleted = true;
+        }
+    }
+    Ok(preview)
+}
+
+fn snapshot_for_undo(
+    state: &AppState,
+    run_id: &str,
+) -> Result<(RunRecord, crate::snapshot::RunSnapshotRecord), String> {
+    let db = state.store.lock().map_err(|e| e.to_string())?;
+    let record = db.run(run_id).map_err(|_| "没找到这个任务。".to_string())?;
+    if record.status == RunStatus::Running {
+        return Err("任务还在跑，先停下来再撤销。".into());
+    }
+    if record.undone_at.is_some() {
+        return Err("这个任务已经撤销过了。".into());
+    }
+    let snapshot = match saved_snapshot(run_id) {
+        Some(found) => found,
+        None => db
+            .snapshot(run_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("这个任务没有任务前快照，撤销不了。")?,
+    };
+    if !snapshot.workspace_path.is_dir() {
+        return Err("项目文件夹不在了，重新打开一次。".into());
+    }
+    Ok((record, snapshot))
+}
+
+/// 撤销前先看：会动哪些文件，哪些在任务做完以后又变过。
+#[tauri::command]
+pub async fn run_undo_preview(
+    run_id: String,
+    state: State<'_, AppState>,
+) -> Result<UndoPreview, String> {
+    let (_, snapshot) = snapshot_for_undo(&state, &run_id)?;
+    tokio::task::spawn_blocking(move || crate::snapshot::undo_preview(&snapshot).map(|(_, p)| p))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 撤销整个任务：任务改过的文件回到任务前快照；别的文件、用户自己的 Git 都不动。
+#[tauri::command]
+pub async fn run_undo(run_id: String, state: State<'_, AppState>) -> Result<RunRecord, String> {
+    let (mut record, snapshot) = snapshot_for_undo(&state, &run_id)?;
+    if workspace_is_busy(&state, &snapshot.workspace_path) {
+        return Err("这个项目有任务在跑，等它做完再撤销。".into());
+    }
+    restore_snapshot(snapshot.clone());
+    tokio::task::spawn_blocking(move || crate::snapshot::undo_run(&snapshot))
+        .await
+        .map_err(|e| e.to_string())??;
+    record.undone_at = Some(now_ms());
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_run(&record)
+        .map_err(|e| e.to_string())?;
+    Ok(record)
+}
+
+/// 界面设置：一整段 JSON，界面自己定里面有什么。
+#[tauri::command]
+pub async fn settings_get(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .setting("ui")
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn settings_set(value: String, state: State<'_, AppState>) -> Result<(), String> {
+    if value.len() > 200_000 || serde_json::from_str::<serde_json::Value>(&value).is_err() {
+        return Err("设置存不了：内容不对。".into());
+    }
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .set_setting("ui", &value)
+        .map_err(|e| e.to_string())
+}
+
+/// 右栏 TERM：在项目里跑一条命令。模型在跑任务时锁着，不让发。
+#[tauri::command]
+pub async fn term_run(
+    workspace_id: String,
+    command: String,
+    channel: Channel<crate::term::TermEvent>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    if workspace_is_busy(&state, &root) {
+        return Err("任务在跑，终端先锁着；做完就解开。".into());
+    }
+    state.terminals.run(&workspace_id, &root, &command, move |event| {
+        let _ = channel.send(event);
+    })
+}
+
+#[tauri::command]
+pub async fn term_stop(workspace_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.terminals.stop(&workspace_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn term_state(
+    workspace_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::term::TermState, String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    Ok(state.terminals.state(&workspace_id, &root))
+}
+
+/// 菜单栏小图标跟着变：`idle`、`running`、`waiting`。
+#[tauri::command]
+pub async fn shell_set_activity(activity: String, app: tauri::AppHandle) -> Result<(), String> {
+    let activity = crate::tray::Activity::parse(&activity).ok_or("没有这个状态。")?;
+    crate::tray::set_activity(&app, activity);
+    Ok(())
+}
+
+/// 发一条 macOS 通知（任务做完、要回答）。开关在界面设置里，界面决定发不发。
+#[tauri::command]
+pub async fn notify(title: String, body: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
 }

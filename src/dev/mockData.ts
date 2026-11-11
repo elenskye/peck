@@ -1,6 +1,6 @@
 // `?mock` 的假数据：项目列表、每个项目最近几次任务、在跑的和完成的、CLI 模式和 API 模式各有。
 // 只在浏览器里用，刷新重置。用词照 docs/design.md。
-import type { ApiTask, ModelProfile, RunLimits } from "@/lib/api";
+import type { ApiStatus, ApiTask, ModelProfile, RunLimits } from "@/lib/api";
 import type {
   AgentInfo,
   DiffResult,
@@ -54,8 +54,9 @@ export const MOCK_AGENTS: AgentInfo[] = [
     command: "muse",
     args: ["exec", "{{prompt}}"],
     timeout: "30m",
-    available: false,
-    diagnostic: "浏览器演示：没有检测本机 CLI。",
+    available: true,
+    version: "演示",
+    diagnostic: "浏览器演示：没有检测本机 CLI，这里当作检测到了。",
     isMock: false,
   },
   {
@@ -65,8 +66,9 @@ export const MOCK_AGENTS: AgentInfo[] = [
     command: "grok",
     args: ["-p", "{{prompt}}", "--output-format", "plain", "--no-auto-update"],
     timeout: "45m",
-    available: false,
-    diagnostic: "浏览器演示：没有检测本机 CLI。",
+    available: true,
+    version: "演示",
+    diagnostic: "浏览器演示：没有检测本机 CLI，这里当作检测到了。",
     isMock: false,
   },
   {
@@ -107,27 +109,22 @@ export const MOCK_MESSAGES: Record<string, Message[]> = {
   "task-11": [
     { id: "m-11-1", sessionId: "task-11", role: "user", content: "把界面里所有日期显示统一成 YYYY-MM-DD，用一个共用的格式化函数。", createdAt: NOW - 3 * HOUR },
     { id: "m-11-2", sessionId: "task-11", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-11", createdAt: NOW - 3 * HOUR + 2_000 },
-    { id: "m-11-3", sessionId: "task-11", role: "assistant", content: "完成：新增 formatDate，替换了 2 处日期显示。验证：pnpm check 通过。", createdAt: NOW - 3 * HOUR + 4 * MIN },
   ],
   "task-10": [
     { id: "m-10-1", sessionId: "task-10", role: "user", content: "导出 Markdown 的时候把笔记的标签写进文件头（YAML front matter）。", createdAt: NOW - 1 * DAY },
     { id: "m-10-2", sessionId: "task-10", role: "assistant", content: "交给 API 模式 · 单模型干活（DeepSeek Flash）。", runId: "run-10", createdAt: NOW - 1 * DAY + 2_000 },
-    { id: "m-10-3", sessionId: "task-10", role: "assistant", content: "完成：导出时写入 tags 字段，补了一个单元测试。验证：vitest 3 个用例通过。", createdAt: NOW - 1 * DAY + 9 * MIN },
   ],
   "task-9": [
     { id: "m-9-1", sessionId: "task-9", role: "user", content: "设置里加一个「通知」开关，默认开，关了以后任务完成不发 macOS 通知。", createdAt: NOW - 1 * HOUR - 30 * MIN },
     { id: "m-9-2", sessionId: "task-9", role: "assistant", content: "交给 API 模式 · 规划 + 实施（规划 Claude Opus 5.5，实施 DeepSeek Flash）。", runId: "run-9", createdAt: NOW - 1 * HOUR - 30 * MIN + 2_000 },
-    { id: "m-9-3", sessionId: "task-9", role: "assistant", content: "完成：规划拆成 1 个子任务，实施一次通过。改了设置存储和通知发送两处。验证：cargo test 通过。", createdAt: NOW - 1 * HOUR },
   ],
   "task-8": [
     { id: "m-8-1", sessionId: "task-8", role: "user", content: "有任务在跑的时候把菜单栏小图标换成带点的那个。", createdAt: NOW - 5 * HOUR },
     { id: "m-8-2", sessionId: "task-8", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-8", createdAt: NOW - 5 * HOUR + 2_000 },
-    { id: "m-8-3", sessionId: "task-8", role: "assistant", content: "失败：Grok 登录过期，没改任何文件。重新登录后可以重跑这一步。", createdAt: NOW - 5 * HOUR + 2 * MIN },
   ],
   "task-7": [
     { id: "m-7-1", sessionId: "task-7", role: "user", content: "限流中间件改成可以按路由单独配置阈值，没配的用全局默认。", createdAt: NOW - 2 * DAY },
     { id: "m-7-2", sessionId: "task-7", role: "assistant", content: "交给 Muse → Grok：Muse 先写规范，Grok 按规范实施。", runId: "run-7", createdAt: NOW - 2 * DAY + 2_000 },
-    { id: "m-7-3", sessionId: "task-7", role: "assistant", content: "完成：Muse 写了规范和 4 条任务，Grok 改了 3 个文件。验证：go test ./... 通过。", createdAt: NOW - 2 * DAY + 11 * MIN },
   ],
 };
 
@@ -743,4 +740,72 @@ export const MOCK_API_TASKS: Record<string, ApiTask[]> = {
       ],
     },
   ],
+};
+
+// ---------- 项目里的文件（右栏 FILES） ----------
+
+/** 每个项目的文件：路径 → 内容。任务新建的文件不在这里，从 Diff 里取。 */
+export const MOCK_FILES: Record<string, Record<string, string>> = {
+  "ws-notebook": {
+    "README.md": "# notebook\n\n本地笔记：Markdown、标签、导出。\n\n## 开发\n\npnpm install\npnpm dev\n",
+    "package.json": '{\n  "name": "notebook",\n  "version": "0.6.0",\n  "scripts": {\n    "dev": "vite",\n    "check": "tsc --noEmit",\n    "test": "vitest run"\n  }\n}\n',
+    "src/main.tsx": 'import { createRoot } from "react-dom/client";\nimport { App } from "./App";\n\ncreateRoot(document.getElementById("root")!).render(<App />);\n',
+    "src/App.tsx": 'import { NoteList } from "./pages/NoteList";\n\nexport function App() {\n  return <NoteList />;\n}\n',
+    "src/pages/NoteList.tsx": 'import { useNotes } from "../store/notes";\nimport { formatDate } from "../lib/date";\n\nexport function NoteList() {\n  const notes = useNotes();\n  return (\n    <ul>\n      {notes.map((note) => (\n        <li key={note.id}>\n          <b>{note.title}</b>\n          <span>{formatDate(note.updatedAt)}</span>\n        </li>\n      ))}\n    </ul>\n  );\n}\n',
+    "src/pages/NoteDetail.tsx": 'import { formatDate } from "../lib/date";\n\nexport function NoteDetail({ note }) {\n  return (\n    <article>\n      <h1>{note.title}</h1>\n      <time>{formatDate(note.updatedAt)}</time>\n      <p>{note.body}</p>\n    </article>\n  );\n}\n',
+    "src/lib/date.ts": "// 日期统一成 YYYY-MM-DD\nexport function formatDate(input: Date | number | string): string {\n  const d = new Date(input);\n  const pad = (n: number) => String(n).padStart(2, \"0\");\n  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;\n}\n",
+    "src/lib/export.ts": "export function exportMarkdown(note) {\n  const tags = note.tags.length ? `tags: [${note.tags.join(\", \")}]\\n` : \"\";\n  return `---\\n${tags}---\\n\\n# ${note.title}\\n\\n${note.body}\\n`;\n}\n",
+    "src/lib/export.test.ts": 'import { exportMarkdown } from "./export";\n\ntest("写入 tags", () => {\n  expect(exportMarkdown({ title: "a", body: "b", tags: ["x"] })).toContain("tags: [x]");\n});\n',
+    "src/store/notes.ts": "export function useNotes() {\n  return [];\n}\n",
+    "src/legacy/old-banner.ts": "// 旧的首页横幅，已经没人用了\nexport const banner = \"notebook 0.5\";\n",
+    "public/logo.png": "",
+  },
+  "ws-peck": {
+    "README.md": "# Peck\n\n只在我自己的 Mac 上用的本地 Coding Agent。\n",
+    "src-tauri/src/settings.rs": "pub struct Settings {\n    pub notifications: bool,\n}\n\nimpl Default for Settings {\n    fn default() -> Self {\n        Self { notifications: true }\n    }\n}\n",
+    "src-tauri/src/notify.rs": "pub fn notify(settings: &Settings, title: &str) {\n    if !settings.notifications {\n        return;\n    }\n    send(title);\n}\n",
+  },
+  "ws-gateway": {
+    "README.md": "# edge-gateway\n",
+    "go.mod": "module edge-gateway\n\ngo 1.23\n",
+    "internal/ratelimit/config.go": "package ratelimit\n\ntype Config struct {\n\tDefault  int\n\tPerRoute map[string]int\n}\n",
+    "internal/ratelimit/middleware.go": "package ratelimit\n\nfunc (c Config) limitFor(route string) int {\n\tif n, ok := c.PerRoute[route]; ok {\n\t\treturn n\n\t}\n\treturn c.Default\n}\n",
+    "internal/ratelimit/middleware_test.go": "package ratelimit\n",
+  },
+};
+/** 照忽略规则藏起来的文件夹（演示）。 */
+export const MOCK_HIDDEN: Record<string, number> = { "ws-notebook": 2, "ws-peck": 3, "ws-gateway": 1 };
+
+// ---------- 设置里的供应商、模型（演示） ----------
+
+export const MOCK_API_STATUS: ApiStatus = {
+  mode: "mock",
+  providers: [
+    { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com", protocol: "anthropic" },
+    { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", protocol: "chatCompletions" },
+    { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com", protocol: "responses" },
+    { id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com", protocol: "gemini" },
+    { id: "aliyun", name: "阿里云百炼", baseUrl: "https://dashscope.aliyuncs.com", protocol: "qwen" },
+  ],
+  config: {
+    models: [OPUS, DEEPSEEK],
+    agents: [
+      { role: "supervisor", modelId: "claude-opus-5-5", thinking: true, effort: "medium", maxOutputTokens: 16000 },
+      { role: "worker", modelId: "deepseek-flash", thinking: false, effort: null, maxOutputTokens: 8192 },
+    ],
+    aliyunRegion: "beijing",
+    aliyunWorkspaceId: "",
+  },
+  keys: [
+    { providerId: "anthropic", state: "saved" },
+    { providerId: "deepseek", state: "saved" },
+    { providerId: "openai", state: "missing" },
+    { providerId: "gemini", state: "missing" },
+    { providerId: "aliyun", state: "missing" },
+  ],
+  allowances: [
+    { providerId: "anthropic", apiModel: "claude-opus-5-5", limit: 20, used: 7 },
+    { providerId: "deepseek", apiModel: "deepseek-flash", limit: 100, used: 46 },
+  ],
+  calls: [],
 };

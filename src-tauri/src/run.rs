@@ -74,6 +74,7 @@ pub async fn execute_run_from_step(
         });
     }
 
+    let mut closing = String::new();
     for step in plan.steps.iter().skip(start_step_index) {
         sink.emit(RunEvent::StepStarted {
             run_id: run_id.clone(),
@@ -82,7 +83,7 @@ pub async fn execute_run_from_step(
             agent_id: step.agent_id.clone(),
         });
 
-        let step_result = execute_single_step(
+        let (step_result, tail) = execute_single_step(
             &run_id,
             &workspace_path,
             &handoff_rel,
@@ -94,6 +95,7 @@ pub async fn execute_run_from_step(
             mock_duration_override,
         )
         .await;
+        closing = tail;
 
         match step_result {
             StepStatus::Succeeded => {
@@ -103,7 +105,7 @@ pub async fn execute_run_from_step(
                 sink.emit(RunEvent::RunFinished {
                     run_id,
                     status: RunStatus::Cancelled,
-                    summary: format!("步骤「{}」已被用户中止。", step.title),
+                    summary: format!("已停止：「{}」这一步没跑完。", step.title),
                 });
                 return RunStatus::Cancelled;
             }
@@ -113,7 +115,7 @@ pub async fn execute_run_from_step(
                     run_id,
                     status: RunStatus::Failed,
                     summary: format!(
-                        "步骤「{}」执行失败，流水线已自动暂停。可点击「重试」继续。",
+                        "「{}」这一步失败了，后面的没跑。点开这一步看输出，修好以后可以重跑。",
                         step.title
                     ),
                 });
@@ -122,15 +124,32 @@ pub async fn execute_run_from_step(
         }
     }
 
+    // 跑完的总结：最后一步收尾时说的话（CLI 的最后一段输出）；没有就写一句。
     sink.emit(RunEvent::RunFinished {
         run_id,
         status: RunStatus::Succeeded,
-        summary: format!(
-            "「{}」执行器已结束，请核对任务清单、产物与验证结果。",
-            plan.flow_name
-        ),
+        summary: if closing.trim().is_empty() {
+            format!("{} 跑完了。", plan.flow_name)
+        } else {
+            closing
+        },
     });
     RunStatus::Succeeded
+}
+
+/// 一步收尾时最后说的话：标准输出的最后一段，最多 24 行、1600 个字。
+fn closing_words(lines: &std::collections::VecDeque<String>) -> String {
+    let mut picked: Vec<&str> = Vec::new();
+    let mut size = 0usize;
+    for line in lines.iter().rev() {
+        size += line.chars().count() + 1;
+        if size > 1600 {
+            break;
+        }
+        picked.push(line);
+    }
+    picked.reverse();
+    picked.join("\n").trim().to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -144,7 +163,7 @@ async fn execute_single_step(
     sink: &EventSink,
     cancel_rx: tokio::sync::watch::Receiver<bool>,
     mock_duration_override: Option<Duration>,
-) -> StepStatus {
+) -> (StepStatus, String) {
     // 1. Capture Shadow Git snapshot BEFORE step execution
     let before_tree = shadow_repo.and_then(|repo| {
         let tree = repo.create_snapshot(&format!("{}-before", step.id)).ok()?;
@@ -193,17 +212,17 @@ async fn execute_single_step(
     let mut spec = ProcessSpec::from_manifest(&manifest, &vars);
     spec.mock_duration = mock_duration_override;
 
-    let mut execution_notice = "内置模拟执行：仅验证流程与文件看板，不调用真实 AI。".to_string();
+    let mut execution_notice = "假 Agent：只走一遍流程、写演示文件，不调用真实 AI。".to_string();
     // Missing executables may be simulated; authentication failures are never hidden as success.
     if spec.command != "peck-mock" {
         let aug_path = build_augmented_path(&spec.extra_paths);
         if let Some(resolved) = resolve_command_path(&spec.command, &aug_path).await {
             spec.command = resolved.to_string_lossy().to_string();
             execution_notice =
-                "调用本地 CLI；认证、额度或权限不足会暂停任务，可修复后重试。".into();
+                "调用本机 CLI；登录、额度或权限出问题任务会停下，修好以后可以重跑这一步。".into();
         } else {
             execution_notice = format!(
-                "未安装 CLI '{}'，本步骤使用模拟执行，不会调用真实 AI。",
+                "没检测到 CLI '{}'，这一步用假 Agent 代跑，不调用真实 AI。",
                 spec.command
             );
             sink.emit(RunEvent::StepOutput {
@@ -211,7 +230,7 @@ async fn execute_single_step(
                 step_id: step.id.clone(),
                 stream: StreamType::Stderr,
                 chunk: format!(
-                    "[peck] 未在 PATH 中检测到 CLI '{}'，已自动切换至内置模拟执行器 (peck-mock)",
+                    "[peck] 没在 PATH 里找到 CLI '{}'，这一步改用假 Agent（peck-mock）",
                     spec.command
                 ),
             });
@@ -245,7 +264,14 @@ async fn execute_single_step(
 
     let forward_task = tokio::spawn(async move {
         let mut approval_blocked = false;
+        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         while let Some(chunk) = output_rx.recv().await {
+            if chunk.stream == StreamType::Stdout {
+                tail.push_back(chunk.chunk.clone());
+                if tail.len() > 24 {
+                    tail.pop_front();
+                }
+            }
             // Grok can exit 0 after refusing a tool in headless mode.
             if chunk.stream == StreamType::Stderr
                 && chunk.chunk.starts_with("permission required:")
@@ -260,7 +286,7 @@ async fn execute_single_step(
                 chunk: chunk.chunk,
             });
         }
-        approval_blocked
+        (approval_blocked, closing_words(&tail))
     });
 
     let outcome = match run_process_streaming(spec, output_tx, cancel_rx).await {
@@ -272,7 +298,7 @@ async fn execute_single_step(
                 run_id: run_id.to_string(),
                 step_id: step.id.clone(),
                 mode: execution_mode.into(),
-                notice: format!("无法启动执行器：{err}。请检查配置后重试。"),
+                notice: format!("这一步起不来：{err}。到设置的 CLI 检测里看看清单，再重跑。"),
             });
             sink.emit(RunEvent::StepOutput {
                 run_id: run_id.to_string(),
@@ -288,13 +314,13 @@ async fn execute_single_step(
                 duration_ms: 0,
                 changeset: ChangeSetSummary::default(),
             });
-            return StepStatus::Failed;
+            return (StepStatus::Failed, String::new());
         }
     };
 
     // 3. Stop watcher (runs a final flush pass to emit any last-millisecond FileTouched / TasksUpdated)
     let watcher_touched = watcher.stop_and_flush().await;
-    let approval_blocked = forward_task.await.unwrap_or(false);
+    let (approval_blocked, tail) = forward_task.await.unwrap_or((false, String::new()));
 
     let step_status = match outcome.status {
         ProcessStatus::Succeeded if approval_blocked => StepStatus::Failed,
@@ -306,7 +332,7 @@ async fn execute_single_step(
         sink.emit(RunEvent::StepExecution {
             run_id: run_id.to_string(), step_id: step.id.clone(),
             mode: execution_mode.into(),
-            notice: "执行失败：请展开原始输出检查认证、额度、参数或权限；修复后可重试，本次不会伪装成模拟成功。".into(),
+            notice: "这一步失败了：点开输出看是登录、额度、参数还是权限的问题；修好以后可以重跑，不会当成成功。".into(),
         });
     }
 
@@ -366,16 +392,14 @@ async fn execute_single_step(
                     step_id: step.id.clone(),
                     mode: execution_mode.into(),
                     notice: format!(
-                        "缺少预期产物 {expected_rel}，流水线已暂停，请检查 CLI 输出与权限后重试。"
+                        "这一步该写出 {expected_rel}，但没有。后面的先不跑，看看 CLI 的输出和权限再重跑。"
                     ),
                 });
                 sink.emit(RunEvent::StepOutput {
                     run_id: run_id.to_string(),
                     step_id: step.id.clone(),
                     stream: StreamType::Stderr,
-                    chunk: format!(
-                        "[peck:warn] 步骤已完成，但未检测到预期产物文件: {expected_rel}"
-                    ),
+                    chunk: format!("[peck:warn] 这一步结束了，但没找到该写出的文件：{expected_rel}"),
                 });
             }
         }
@@ -403,7 +427,7 @@ async fn execute_single_step(
         changeset,
     });
 
-    step_status
+    (step_status, tail)
 }
 
 #[cfg(test)]
@@ -445,7 +469,7 @@ mod tests {
         .await;
         assert_eq!(status, RunStatus::Succeeded);
         assert!(ws.join(".peck/handoff/950001/intent.md").exists());
-        assert!(events.lock().unwrap().iter().any(|e| matches!(e, RunEvent::StepExecution { mode, notice, .. } if mode == "mock" && notice.contains("未安装"))));
+        assert!(events.lock().unwrap().iter().any(|e| matches!(e, RunEvent::StepExecution { mode, notice, .. } if mode == "mock" && notice.contains("没检测到"))));
         agents[0].command = "/bin/sh".into();
         agents[0].args = vec!["-c".into(), "exit 0".into()];
         plan.steps[0].rendered_expects = vec!["missing-artifact.md".into()];
