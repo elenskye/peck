@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { mockIpc } from "@/dev/mockIpc";
+import type { AgentEvent, GatewayConfig, GatewaySettings, ModelEntry } from "@/lib/agentEvents";
 import type {
   Activity,
   AgentInfo,
@@ -197,5 +198,26 @@ export const ipc = {
   async notify(title: string, body: string): Promise<void> {
     if (isMockMode()) return mockIpc.notify(title, body);
     return invoke<void>("notify", { title, body });
+  },
+
+  // ── Model Gateway（v0.5 契约，src-tauri/src/gateway/）──
+  /** 模型列表：API 模型（配了 Key 的能用）、CLI 引擎（检测到的能用）、接力。 */
+  async gatewayModels(): Promise<ModelEntry[]> {
+    if (isMockMode()) return mockIpc.gatewayModels();
+    return invoke<ModelEntry[]>("gateway_models");
+  },
+  async gatewayConfigGet(): Promise<GatewaySettings> {
+    if (isMockMode()) return mockIpc.gatewayConfigGet();
+    return invoke<GatewaySettings>("gateway_config_get");
+  },
+  /** 存 Vertex 的 Project ID / Location、CLI 目录；格式不对会报错（中文一句）。 */
+  async gatewayConfigSet(config: GatewayConfig): Promise<GatewayConfig> {
+    if (isMockMode()) return mockIpc.gatewayConfigSet(config);
+    return invoke<GatewayConfig>("gateway_config_set", { config });
+  },
+  /** 一个任务的统一事件（事件日志）。旧任务为空。 */
+  async gatewayEvents(runId: string): Promise<AgentEvent[]> {
+    if (isMockMode()) return mockIpc.gatewayEvents(runId);
+    return invoke<AgentEvent[]>("gateway_events", { runId });
   },
 };

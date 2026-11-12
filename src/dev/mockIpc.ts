@@ -11,6 +11,8 @@ import {
   MOCK_SESSIONS,
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
+import { MOCK_MODEL_ENTRIES } from "@/dev/gatewayMock";
+import type { AgentEvent, GatewayConfig, GatewaySettings, ModelEntry } from "@/lib/agentEvents";
 import type { ApiConfig, ApiRole, ApiStatus, ApiTask } from "@/lib/api";
 import type {
   AgentInfo,
@@ -514,4 +516,25 @@ export const mockIpc = {
   async agentSaveConfig(agentId: string, content: string): Promise<void> {
     configState[agentId] = content;
   },
+
+  // ── Model Gateway（v0.5 契约）──
+  async gatewayModels(): Promise<ModelEntry[]> {
+    return structuredClone(MOCK_MODEL_ENTRIES);
+  },
+  async gatewayConfigGet(): Promise<GatewaySettings> {
+    return { config: structuredClone(gatewayConfigState), adc: false };
+  },
+  async gatewayConfigSet(config: GatewayConfig): Promise<GatewayConfig> {
+    const projectId = config.vertex.projectId.trim();
+    const location = config.vertex.location.trim().toLowerCase() || "global";
+    if (projectId && !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)) throw new Error("Project ID 不对：6–30 个字符，小写字母开头，只有小写字母、数字和连字符。");
+    if (location !== "global" && !/^[a-z]+(-[a-z0-9]+)+\d$/.test(location)) throw new Error("Location 不对：填 global，或 us-east5 这样的区域。");
+    gatewayConfigState = { vertex: { projectId, location }, cliDir: config.cliDir.trim() };
+    return structuredClone(gatewayConfigState);
+  },
+  async gatewayEvents(_runId: string): Promise<AgentEvent[]> {
+    return [];
+  },
 };
+
+let gatewayConfigState: GatewayConfig = { vertex: { projectId: "", location: "global" }, cliDir: "" };

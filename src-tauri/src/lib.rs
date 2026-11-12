@@ -5,6 +5,7 @@ pub mod events;
 pub mod export;
 pub mod files;
 pub mod flow;
+pub mod gateway;
 pub mod migrations;
 pub mod mock;
 pub mod mode;
@@ -99,6 +100,10 @@ pub fn run() {
             commands::term_state,
             commands::shell_set_activity,
             commands::notify,
+            gateway::gateway_models,
+            gateway::gateway_config_get,
+            gateway::gateway_config_set,
+            gateway::gateway_events,
         ])
         // 点红色关闭只把窗口藏起来：菜单栏图标和在跑的任务都留着；⌘Q 或菜单栏图标的「退出 Peck」才退出。
         .on_window_event(|window, event| {

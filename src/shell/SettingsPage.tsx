@@ -3,6 +3,7 @@ import { api, type ApiCall, type ApiConfig, type ApiEvent, type ApiMode, type Ap
 import { ipc, isMockMode } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import type { ThemeChoice } from "@/lib/theme";
+import type { GatewayConfig } from "@/lib/agentEvents";
 import type { AgentInfo, Permission } from "@/lib/types";
 import { PERMISSIONS, agentDot, agentName, clock, cn } from "@/lib/utils";
 import { Btn, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
@@ -136,6 +137,7 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
         })}
       </div>
       <div className="set-inline"><Btn sm disabled={busy} onClick={() => void act(async () => { await api.loadKeys(); await onRefreshApi(); })}>READ KEYS</Btn><span className="hint">看状态不读 Key 的内容；点这里才去读钥匙串。</span></div>
+      <Vertex say={say} />
 
       <p className="lbl">MODELS</p>
       <div className="set-rows">
@@ -329,11 +331,82 @@ const Cli: React.FC<Props> = ({ agents, onRefreshAgents, say }) => {
   return (
     <Pane title="CLI 检测" lead="只跑 version 看能不能启动。检测到不等于登录了、有额度；认证、额度、超时出错会让任务停下，不当成成功。">
       <div className="set-rows">
+        <CliDir say={say} />
         {agents.filter((a) => !a.isMock).map((a) => <AgentRow key={a.id} agent={a} onRefresh={onRefreshAgents} say={say} />)}
         <Row name="第三家 CLI" off desc="v1.0 以后接；加一家只加一份清单"><Tag>LATER</Tag></Row>
       </div>
       <div className="set-inline"><Btn icon="undo" disabled={busy} onClick={() => { setBusy(true); void onRefreshAgents().then(() => say("重新检测过了")).finally(() => setBusy(false)); }}>RECHECK</Btn></div>
     </Pane>
+  );
+};
+
+// ---------- Model Gateway 的设置（v0.5）：Vertex AI、CLI 目录 ----------
+
+/** 读、改、存 Gateway 的设置。两处用：Vertex（供应商和 Key）、CLI 目录（CLI 检测）。 */
+function useGatewayConfig(say: (m: unknown) => void) {
+  const [saved, setSaved] = useState<GatewayConfig | null>(null);
+  const [draft, setDraft] = useState<GatewayConfig | null>(null);
+  const [adc, setAdc] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    ipc.gatewayConfigGet().then((s) => { if (live) { setSaved(s.config); setDraft(s.config); setAdc(s.adc); } }).catch(say);
+    return () => { live = false; };
+    // 只在打开时读一次：say 每次渲染可能是新的，跟着它重读会冲掉正在填的内容。
+  }, []);
+  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
+  const save = async (message: string) => {
+    if (!draft) return;
+    setBusy(true);
+    try {
+      const next = await ipc.gatewayConfigSet(draft);
+      setSaved(next); setDraft(next); say(message);
+    } catch (e) { say(e); } finally { setBusy(false); }
+  };
+  return { draft, setDraft, adc, busy, dirty, save };
+}
+
+const Vertex: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
+  const { draft, setDraft, adc, busy, dirty, save } = useGatewayConfig(say);
+  if (!draft) return null;
+  const project = draft.vertex.projectId;
+  const desc = !adc
+    ? "先在终端跑一次 gcloud auth application-default login，Peck 用它的登录，不要 Key"
+    : project
+      ? "用 gcloud 的登录；项目要开计费、启用 Vertex AI，Claude 还要在 Model Garden 里启用"
+      : "填了 Project ID，Vertex 上的 Claude 和 Gemini 才出现在模型列表里";
+  const set = (vertex: Partial<GatewayConfig["vertex"]>) => setDraft({ ...draft, vertex: { ...draft.vertex, ...vertex } });
+  return (
+    <>
+      <p className="lbl">VERTEX AI</p>
+      <div className="set-rows">
+        <div className="set-block">
+          <Row name="Vertex AI · Claude 和 Gemini" off={!adc || !project} desc={desc}>
+            {adc ? <Tag v="ok">GCLOUD OK</Tag> : <Tag>NO GCLOUD</Tag>}
+          </Row>
+          <div className="set-inline">
+            <Field aria-label="Vertex AI 的 Project ID" placeholder="Project ID" value={project} off={busy} onChange={(e) => set({ projectId: e.target.value })} />
+            <Field width={150} aria-label="Vertex AI 的 Location" placeholder="global" value={draft.vertex.location} off={busy} onChange={(e) => set({ location: e.target.value })} />
+            <Btn sm disabled={busy || !dirty} onClick={() => void save("Vertex AI 的设置存好了")}>SAVE</Btn>
+          </div>
+          <span className="hint">Location 不填就是 global；指定区域写 us-east5 这样的。</span>
+        </div>
+      </div>
+    </>
+  );
+};
+
+const CliDir: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
+  const { draft, setDraft, busy, dirty, save } = useGatewayConfig(say);
+  if (!draft) return null;
+  return (
+    <div className="set-block">
+      <Row name="CLI 目录" desc="Claude Code、Codex、Antigravity 这些先在这个目录里找；空着就照 PATH 找">{draft.cliDir ? <Tag v="ok">SET</Tag> : <Tag>PATH</Tag>}</Row>
+      <div className="set-inline">
+        <Field aria-label="CLI 目录" placeholder="~/…/cli/bin" value={draft.cliDir} off={busy} onChange={(e) => setDraft({ ...draft, cliDir: e.target.value })} />
+        <Btn sm disabled={busy || !dirty} onClick={() => void save("CLI 目录存好了，下次检测生效")}>SAVE</Btn>
+      </div>
+    </div>
   );
 };
 

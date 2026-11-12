@@ -35,8 +35,8 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/peck.icns",
-      "icons/peck.png"
+      "icons/j2.icns",
+      "icons/j2.png"
     ],
     "resources": [
       "defaults/**/*",

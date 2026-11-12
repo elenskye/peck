@@ -1,0 +1,40 @@
+{
+  "events": [
+    {
+      "callId": "toolu_01UP9e1rBU1ivMJw1xWyueCn",
+      "name": "read_file",
+      "type": "tool_call_started"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.00007609999999999999
+    },
+    "message": {
+      "parts": [
+        {
+          "callId": "toolu_01UP9e1rBU1ivMJw1xWyueCn",
+          "input": {
+            "path": "notes.txt"
+          },
+          "name": "read_file",
+          "signature": null,
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "claude-haiku-5-5",
+    "stop": "tool_use",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 506,
+      "output": 51,
+      "reasoning": 0
+    }
+  }
+}

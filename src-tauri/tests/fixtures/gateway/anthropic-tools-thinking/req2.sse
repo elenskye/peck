@@ -1,0 +1,123 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgxNShW1QFgwEZ29oGbmf","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":599,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I'm counting the entries"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" begin with a"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" dash, which g"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ives three."}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" The last entry,"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \"测试通过\", has four"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" characters, so the square term"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is 16 and "}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"3 times"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 17 is"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 51, b"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ringing the total to 67."}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" The"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" word-"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"count question is also"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about characters here"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", which"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" four, and"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the answer st"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ays at 67 "}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"under the"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" one-sentence formula."}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS3AYKEAgTGAI4AUIIdGhpbmtpbmcSDGGwYHZn2RY2rOF1yxoM5P/68Z8jFkgYHS62IjCClpGAaRWJNscTWz0g7dfHiLT60ne9iGuI/pNj33BnPoY/UV6cTerEv3stH6cHu7oq+QUKVTww4ZMHwjMkzozIFTBJ1MvUzUtwk14aX2/Gz9caoOsWdil+rtZL623UDYIaYUwEEfU3pto63PWnJktvTGIkYLPH2ugnpzfitmctE+ZDJ/+9jkB3ws+Fj40Y7Ipl9X2N8k6RijB3UZ9Nc2GHjDEAMtQKTDk8lkk/z81yuKu8um8FjvKdCProhCZDND03DNbqOo9op+y6cWCbHvQAPak26+jsg1+1jtY/ZlC1lcwdQi69yHYpc75ym0p6+GjYOHRR7AQTwpSRYo/aG0j8Gt+GgGaU1TVai6WmH5DnuBIekcL0j64EPASb4SBqeUHo1nEs8VCzo1f1id+cnsATq52IbOoZdhDWHJfJYiDqhigzYTM95n6U0yncAcx3K5KdaNEH+h8JH81VR71u01LaP9JEoO7Rf1mUvh90MDP/3GWoMKVWvlZg7kYc5c2gdHCwrJHNwx8D1+mDn3/AbmlOlTXdzZ05XDX52QIyOdnPxF99DM+hh5Rg7Fh3NryfoxVowSWguB7tkx+4HBLQW0Y+s4sJX3y56pK9xUgUzNmv8R60G6QlbwtO6dA73emxXEAH9YsPgD2ePffbkK47pCT45cnva4KW1GYqtrWRSWBK1jq30Ugnn7Dm4apfgA1EMvsBaQbAuW/HmlKUV2/yKbQC+QLpCFxOcGiFX6To9AvnNQojoHxntmAefuljIqCcK1A2AFmDktDGK558AqUNWSbOdZ+9biRjPCi7irtkTc8QFLO/dTRVrCvvRYoYPFN7GophPZbjAGmkKgGpWB3AgfQDcZTfGC/jrByjiEIHbVRNlTJkjX9rvnd+9OwT5JcsprMZA244PE3UeQ+os4s52kUvPYyge9t77DlyOX8xQ07otqI9fdI72FCXUgDPJFa6DURVh09gp3gxdMImJmZO/WJ03jiZ9dDxE9gRFn+cCTdP8KJRX8Xs2MP6LIA91n6KPk1CaA2gKftBl9l2ycaUSLSxManE80mSlMSmmh58ABZi+8x6iVe2ZX+hRC2QeBgB"}               }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0    }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"结"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"果是"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **67**。"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n算式：3 × 17"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + "}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"4² = 51"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + 16 = 67"}          }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1  }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":599,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":143,"output_tokens_details":{"thinking_tokens":108}}       }
+
+event: message_stop
+data: {"type":"message_stop"}
+

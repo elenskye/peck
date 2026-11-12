@@ -1,8 +1,8 @@
 # Peck
 
-只在我自己的 Mac 上用的本地 Coding Agent：给它一个项目文件夹和一句话，它调本机装好的 CLI（Muse Code、Grok Build）或 API 模型（Anthropic、DeepSeek、OpenAI、Google Gemini、阿里云百炼）去改代码。改动看得见，整个任务能一键撤回。不跑本地模型，不联网同步。
+只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、阿里云百炼、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok、Antigravity）接进来；Peck 自己的循环带工具箱和上下文管理去改代码；后台替模型盯着测试和检查。改动看得见，整个任务能一键撤回。不跑本地模型，不联网同步。
 
-Tauri 2 + React + TypeScript + Rust + SQLite。正在重构，做到哪了见[开发路线](docs/roadmap.md)。v0.4 起由另一个 Claude 账号在云端的分支上开发，我在本地验收、合并（规则在 [CLAUDE.md](CLAUDE.md)「两个账号」）。
+Tauri 2 + React + TypeScript + Rust + SQLite。正在从 GUI 转成 Harness，做到哪了见[开发路线](docs/roadmap.md)，这个版本的计划见 [v0.5 开发计划](docs/v0.5.md)。另一个 Claude 账号在云端的分支上开发，我指定的 Phase 由本地账号在 `main` 上开发；本地验收、合并（规则在 [CLAUDE.md](CLAUDE.md)「两个账号」）。
 
 ## 模块
 
@@ -13,12 +13,12 @@ Tauri 2 + React + TypeScript + Rust + SQLite。正在重构，做到哪了见[�
 | 看任务 | 折叠的步骤（点开看输出）、提问和回答、跑完的总结和验证结果 |
 | 右栏 | 四个页签：CHANGES（文件列表、Diff、任务前快照、「撤销整个任务」）、ONE SHOT（边干活边问，不改文件）、FILES（看项目文件）、TERM（我自己的终端，模型跑任务时锁着） |
 | 设置 | 供应商和 Key、花费上限、通知、权限、CLI 检测，都在一个面板里 |
-| 额度与花费 | 其他 AI 客户端的订阅额度、API 平台余额、本机花费。由我用 Peck 自己开发（v0.5 起） |
+| 额度与花费 | 其他 AI 客户端的订阅额度、API 平台余额、本机花费。由我用 Peck 自己开发（v0.6 起） |
 
 ## 怎么用
 
 - **安装或更新**：`pnpm app:install`，装进「应用程序」，旧包自动备份。新版第一次打开先备份、再升级数据库。
-- **CLI**：Muse、Grok 装在仓库根目录的 `cli/`，用订阅账号登录（命令见[技术架构](docs/architecture.md#cli-接入)），在设置里检测一下就能选。没登录的那家只是不能选，不影响别的。
+- **CLI**：Claude Code、Codex、Antigravity、Muse、Grok 和 gcloud 都装在仓库根目录的 `cli/`（`cli/bin/` 是统一入口，怎么更新看 `cli/README.md`），用订阅账号登录；设置 →「CLI 检测」里把「CLI 目录」填成 `cli/bin` 的完整路径，检测一下就能选。没登录的那家只是不能选，不影响别的。
 - **API**：在设置里填 Key（存在 macOS 钥匙串），只显示配了 Key 的供应商。真实请求有授权次数，见[开发路线](docs/roadmap.md#现行授权)。
 - **开发**：`pnpm dev` 后开 `http://localhost:1430/?mock` 看假数据；`pnpm app:dev` 是原生窗口，用开发数据目录。怎么测见[验证方法](docs/testing.md)。
 
@@ -27,6 +27,7 @@ Tauri 2 + React + TypeScript + Rust + SQLite。正在重构，做到哪了见[�
 | 文档 | 内容 |
 |---|---|
 | [开发路线](docs/roadmap.md) | 现在在哪个 Phase、每个 Phase 做什么、验收清单、授权账本 |
+| [v0.5 开发计划](docs/v0.5.md) | 这个版本的范围、分工和文件归属、设计、验收点 |
 | [技术架构](docs/architecture.md) | 选型、数据存放、CLI 和 API 的接入层、代码位置 |
 | [界面](docs/design.md) | 用词对照、布局、各处的样子 |
 | [验证方法](docs/testing.md) | `?mock`、原生、升级测试、真 CLI 和真接口的命令 |
