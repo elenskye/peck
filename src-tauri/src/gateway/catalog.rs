@@ -230,6 +230,29 @@ pub struct ModelEntry {
     /// CLI 引擎当前用的账号（设置里起的名字，比如「工作」）。API 和没配账号的为空。
     #[serde(default)]
     pub account: Option<String>,
+    /// 转换器按哪个版本的 CLI 写的（录夹具时的版本）。和 `version` 里的版本号不一样就提示「格式可能变了」。
+    #[serde(default)]
+    pub tested_version: Option<String>,
+}
+
+/// 录夹具时各家 CLI 的版本（2026-11-12）。升级 CLI 后重录夹具、确认转换器没问题再改这里。
+pub const TESTED_VERSIONS: [(&str, &str); 5] = [
+    ("claude-code", "2.1.322"),
+    ("codex", "0.167.2"),
+    ("muse", "1.4.15"),
+    ("grok", "1.0.77"),
+    ("antigravity", "1.5.6"),
+];
+
+pub fn tested_version(engine: &str) -> Option<String> {
+    TESTED_VERSIONS.iter().find(|(e, _)| *e == engine).map(|(_, v)| v.to_string())
+}
+
+/// `codex-cli 0.167.2`、`Muse Code 1.4.15 (…)` 这类 → 第一个 `x.y.z`。
+pub fn version_number(raw: &str) -> Option<String> {
+    raw.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|w| w.split('.').filter(|p| !p.is_empty()).count() >= 2 && w.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(|w| w.trim_end_matches('.').to_string())
 }
 
 /// 哪些东西能用。
@@ -333,6 +356,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             caps: AgentCaps::peck_loop(),
             version: None,
             account: None,
+            tested_version: None,
         });
     }
     for engine in &catalog.engines {
@@ -355,6 +379,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             caps,
             version: probe.and_then(|p| p.version.clone()),
             account: None,
+            tested_version: tested_version(&engine.id),
         });
     }
     // 现有的接力：两家 CLI 都在才能用。规划 + 实施要 API（用现有的「API 设置」里的两个角色）。
@@ -386,6 +411,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             caps: AgentCaps::for_engine(a),
             version: None,
             account: None,
+            tested_version: None,
         });
     }
     out.push(ModelEntry {
@@ -404,8 +430,24 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
         caps: AgentCaps::peck_loop(),
         version: None,
         account: None,
+        tested_version: None,
     });
     out
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn version_numbers_come_out_of_cli_banners() {
+        assert_eq!(version_number("codex-cli 0.167.2").as_deref(), Some("0.167.2"));
+        assert_eq!(version_number("Muse Code 1.4.15 (1.4.15-R8339.1)").as_deref(), Some("1.4.15"));
+        assert_eq!(version_number("grok 1.0.77 (50ca579fa996)").as_deref(), Some("1.0.77"));
+        assert_eq!(version_number("2.1.322 (Claude Code)").as_deref(), Some("2.1.322"));
+        assert_eq!(version_number("no version"), None);
+        assert_eq!(tested_version("antigravity").as_deref(), Some("1.5.6"));
+    }
 }
 
 #[cfg(test)]
@@ -533,6 +575,8 @@ mod tests {
         );
         assert!(get("cli:codex").available);
         assert_eq!(get("cli:codex").version.as_deref(), Some("0.167.2"));
+        assert_eq!(get("cli:codex").tested_version.as_deref(), Some("0.167.2"));
+        assert_eq!(get("api:anthropic/claude-haiku-5-5").tested_version, None);
         assert!(!get("cli:grok").available);
         assert!(get("cli:antigravity").direct_only);
         assert!(!get("flow:muse>grok").available);

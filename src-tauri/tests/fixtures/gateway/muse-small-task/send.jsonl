@@ -1,0 +1,6 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "peck", "title": "Peck", "version": "0.5.0"}, "capabilities": {"userInputDialogs": true}}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "model/list", "params": {}}
+{"jsonrpc": "2.0", "id": 3, "method": "usage/read", "params": {}}
+{"jsonrpc": "2.0", "id": 4, "method": "session/start", "params": {"commandId": "01a1ceac-670e-7339-a387-453ea0ae9200", "workspaceRoots": ["{{WORKSPACE}}"], "approvalMode": "promptUnmatched"}}
+{"jsonrpc": "2.0", "id": 5, "method": "turn/start", "params": {"commandId": "01a1ceac-6823-7ae9-a810-c77959bc8ccb", "sessionId": "01a1ceac-6748-7e00-8eb8-58b6d4890349", "input": [{"type": "text", "text": "Read notes.txt, then run exactly `echo muse > stamp.txt` in this folder, then reply with one short sentence. Do nothing else."}], "reasoningEffort": "low"}}

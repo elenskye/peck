@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v0.5 进行中**（2026-11-12）：v0.4 验收通过、合进 `main`（tag `peck-v0.4.0`）。站主填完「[Peck Harness 问卷](https://claude.ai/artifact/1tXsLfFDZmfBB6WMCuVhF3)」，Peck 从 GUI 转成个人 Harness，计划按问卷重写成下面的 Phase 5–14。v0.5 = Model Gateway（**本地开发**）+ 工具箱和 Peck 循环（云端开发），细节在 [v0.5 开发计划](./v0.5.md)。本地做好了 Phase 5 的「契约」，站主提交、推送以后云端开工 Phase 6（表里已经是 `进行中`，云端看到 `main` 上有契约就开工）。
+**v0.5 进行中**（2026-11-12）：v0.4 验收通过、合进 `main`（tag `peck-v0.4.0`）。站主填完「[Peck Harness 问卷](https://claude.ai/artifact/1tXsLfFDZmfBB6WMCuVhF3)」，Peck 从 GUI 转成个人 Harness，计划按问卷重写成下面的 Phase 5–14。v0.5 = Model Gateway（**本地开发**）+ 工具箱和 Peck 循环（云端开发），细节在 [v0.5 开发计划](./v0.5.md)。本地做好了 Phase 5 的「契约」（站主已提交，推送以后云端开工 Phase 6：表里已经是 `进行中`，云端看到 `main` 上有契约就开工）；**Phase 5 本地做完了**（七家 API、五家 CLI、CLI 账号、本机 MCP、额度、Gateway 版发任务；Vertex 两家等站主开项目再真跑），等站主提交、推送，云端接着把界面换上真 Gateway。
 
 ## 定位
 
@@ -32,7 +32,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | 2 视觉基线 | v0.3 | 本地 | 云端画布「[Peck Explore](https://claude.ai/artifact/2YJB1WKiiC6q7s6VmryCaR)」四步定稿，Design System「[Peck](https://claude.ai/artifact/KpUihg5AHn6cw1ggNTx6s1)」；方案 `peck` 0.1.0 同步进 `src/vendor/peck/` | 已验 | 完成 |
 | 3 三栏外壳 | v0.4 | 云端 | 三栏新外壳、右栏四个页签、一个设置面板、跟随系统明暗 | 已验（19/19） | 完成 |
 | 4 发任务与看任务 | v0.4 | 云端 | 发任务、看任务、撤销整个任务、TERM、菜单栏图标和通知 | 已验（19/19） | 完成 |
-| 5 Model Gateway | v0.5 | **本地** | 统一事件模型和事件日志、能力标记、模型目录和价格表；API 七家：Anthropic、OpenAI（Responses）、DeepSeek、阿里云百炼、Gemini（原生接口）、Vertex 上的 Claude 和 Gemini（gcloud ADC）；CLI 五家结构化接入：Codex（app-server）、Claude Code（stream-json，站主的订阅）、Muse（--json）、Grok（ACP）、Antigravity（ACP，只直接调用）；CLI 的权限三档和审批；Peck 给 CLI 的本机 MCP 入口（审批、ASK）；订阅余量写进顶栏 QUOTA 的数据；CLI 多账号（设置里切换登录、重新验权，和客户端、浏览器的登录互不干扰）。第一步先出「契约」（事件类型、接口、夹具、假的 Gateway）给云端用。细节见 [v0.5 开发计划](./v0.5.md) | 夹具回放测试全过；本地真跑：每家 API 一次带工具的请求，每家 CLI 一个小任务，事件、Diff、审批卡片、花费都对 | 进行中 |
+| 5 Model Gateway | v0.5 | **本地** | 统一事件模型和事件日志、能力标记、模型目录和价格表；API 七家：Anthropic、OpenAI（Responses）、DeepSeek、阿里云百炼、Gemini（原生接口）、Vertex 上的 Claude 和 Gemini（gcloud ADC）；CLI 五家结构化接入：Codex（app-server）、Claude Code（stream-json，站主的订阅）、Muse（--json）、Grok（ACP）、Antigravity（ACP，只直接调用）；CLI 的权限三档和审批；Peck 给 CLI 的本机 MCP 入口（审批、ASK）；订阅余量写进顶栏 QUOTA 的数据；CLI 多账号（设置里切换登录、重新验权，和客户端、浏览器的登录互不干扰）。第一步先出「契约」（事件类型、接口、夹具、假的 Gateway）给云端用。细节见 [v0.5 开发计划](./v0.5.md) | 夹具回放测试全过；本地真跑：每家 API 一次带工具的请求，每家 CLI 一个小任务，事件、Diff、审批卡片、花费都对 | 完成 |
 | 6 工具箱和 Peck 循环 | v0.5 | 云端 | Peck 循环接 Gateway；9 个工具（`list_directory`、`read_file`、`search_text`、`find_files`、`write_file`、`write_patch`、`bash_run`、`update_plan`、`ask_user`），补丁原子、大输出落盘；权限三档真正生效（命令默认联网、只限制写到项目外）、高危和 ASK 卡片；「谁来干」改成一个模型列表（去掉顶栏 CLI / API）；Peck 循环和 CLI 的过程用同一套显示，工具调用折叠成一行；Markdown（回答渲染、输入框边打边渲染）；花费（每轮一行、输入框旁、顶栏 QUOTA）和花费上限生效；ONE SHOT；App 图标换 J2（设置里能切回 A3）。版本号 `0.5.0`。**等 Phase 5 的契约推到 `main` 以后**才开工 | `?mock` 走完发、看、批、问、撤；本地验收：真实 DeepSeek 一个任务、真实 Claude Code 和 Codex 各一个任务 | 进行中 |
 | 7 上下文 | v0.6 | 云端 | 项目说明 AGENTS.md（没有就读 CLAUDE.md）；分层和缓存断点；每次自动带上环境、git、任务清单、改过的文件；输入框旁的用量小环（点开看分类和压缩线）；自动压缩三步（落盘、清旧工具输出、交接摘要）；`memory` 工具 + 任务结束「想记住这几条」由站主批；@ 旧任务、模型能搜历史任务 | `?mock` 长任务压缩后接着做；本地：真实长任务一次 | 未开始 |
 | 8 后台和 Monitor | v0.6 | 云端 | `.peck/verify.toml`（第一次打开项目自动猜、站主确认）；规则为主 + 模型自己起后台命令；后台命令通道（不再 180 秒一刀切）；失败自动修 3 次（同一失败连续 2 次、两次之间没改文件就停）；通过不再叫模型、挂 ✓；结果只显示成对话卡片；常驻 dev server；目标模式。版本号 `0.6.0`。**额度监测器作业从这个版本开始** | `?mock` 失败修好、反复失败停下、并发过期三个场景；本地：真实 Rust 项目 check 失败到修好 | 未开始 |
@@ -74,5 +74,12 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | 版本 | 对象 | 模型 API ID | 用了 |
 | --- | --- | --- | ---: |
 | v0.5 | Anthropic（契约的夹具：一次带工具、一次带思考；第一对 `medium` 没出思考，换 `high` 重录） | `claude-haiku-5-5` | 4/5 |
-| v0.5 | Codex（契约的夹具：读、追加一行、跑一条命令，3 次审批） | 订阅（`gpt-6.1-sol`） | 1/3 |
-| v0.5 | Claude Code（契约的夹具：同一个小任务，在 `projects/gateway-smoke`） | 订阅（`claude-haiku-5-5`） | 1/3 |
+| v0.5 | Codex（契约的夹具：读、追加一行、跑一条命令，3 次审批；M2 真引擎：跑一条命令、1 次审批，`gpt-6-luna`） | 订阅（`gpt-6.1-sol`、`gpt-6-luna`） | 2/3 |
+| v0.5 | Claude Code（契约的夹具：同一个小任务，在 `projects/gateway-smoke`；M2 真引擎：跑一条命令，审批走 stdio） | 订阅（`claude-haiku-5-5`） | 2/3 |
+| v0.5 | Muse（M2 的夹具：会话协议 `muse serve`，读一个文件、跑一条命令、1 次审批） | 订阅（默认模型，`low`） | 1/3 |
+| v0.5 | Grok（M2 的夹具：ACP，读一个文件、跑一条命令；第 2 个：经 Peck 的本机 MCP 调 `ask_user`） | 订阅（`grok-4.5`，`low`） | 2/3 |
+| v0.5 | Antigravity（M2 的夹具：ACP，直接调用，读一个文件、跑一条命令） | 个人订阅（`gemini-3.8-flash`，`low`） | 1/3 |
+| v0.5 | OpenAI（M2 的夹具：一次带工具和思考、一次回放；第一对 `low` 没出思考，换 `high` 也没出，停下；思考的回放只有离线单测） | `gpt-6-luna` | 4/5 |
+| v0.5 | DeepSeek（同上；第一次没出思考，第二次出了） | `deepseek-flash` | 2/5 |
+| v0.5 | 阿里云百炼（同上，北京） | `qwen3.8-flash` | 2/5 |
+| v0.5 | Gemini（同上；新格式 Key 能用） | `gemini-3.5-flash-lite` | 2/5 |

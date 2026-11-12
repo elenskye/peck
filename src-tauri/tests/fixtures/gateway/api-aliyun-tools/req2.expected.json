@@ -1,0 +1,208 @@
+{
+  "events": [
+    {
+      "text": "The",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " question",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": ":",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " lines starting with \"-",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " \".",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " Lines 2,",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "3",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": ",4 all start",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " with \"- \".",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " So 3条",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": ".\n\nWait,",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " line ",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "4 is \"- ",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "测试通过",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "\" — yes starts",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " with \"- \". So",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " 3.",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "`",
+      "type": "text_delta"
+    },
+    {
+      "text": "notes.txt` ",
+      "type": "text_delta"
+    },
+    {
+      "text": "中有",
+      "type": "text_delta"
+    },
+    {
+      "text": " **3 条",
+      "type": "text_delta"
+    },
+    {
+      "text": "**以",
+      "type": "text_delta"
+    },
+    {
+      "text": "「- 」开头的",
+      "type": "text_delta"
+    },
+    {
+      "text": "条目：\n\n-",
+      "type": "text_delta"
+    },
+    {
+      "text": " 第 2",
+      "type": "text_delta"
+    },
+    {
+      "text": " 行：`",
+      "type": "text_delta"
+    },
+    {
+      "text": "- 第一行",
+      "type": "text_delta"
+    },
+    {
+      "text": "`\n- ",
+      "type": "text_delta"
+    },
+    {
+      "text": "第 3 ",
+      "type": "text_delta"
+    },
+    {
+      "text": "行：`",
+      "type": "text_delta"
+    },
+    {
+      "text": "- 第二行",
+      "type": "text_delta"
+    },
+    {
+      "text": "`\n-",
+      "type": "text_delta"
+    },
+    {
+      "text": " 第 4",
+      "type": "text_delta"
+    },
+    {
+      "text": " 行：`",
+      "type": "text_delta"
+    },
+    {
+      "text": "- 测试通过",
+      "type": "text_delta"
+    },
+    {
+      "text": "`\n\n（第",
+      "type": "text_delta"
+    },
+    {
+      "text": " 1",
+      "type": "text_delta"
+    },
+    {
+      "text": " 行是 `",
+      "type": "text_delta"
+    },
+    {
+      "text": "# 笔记`",
+      "type": "text_delta"
+    },
+    {
+      "text": " 标题，",
+      "type": "text_delta"
+    },
+    {
+      "text": "不计入。）",
+      "type": "text_delta"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.00010538386
+    },
+    "message": {
+      "parts": [
+        {
+          "opaque": {
+            "data": {
+              "type": "reasoning_content"
+            },
+            "origin": {
+              "model": "qwen3.8-flash",
+              "provider": "aliyun",
+              "wire": "chat"
+            }
+          },
+          "text": "The question: lines starting with \"- \". Lines 2,3,4 all start with \"- \". So 3条.\n\nWait, line 4 is \"- 测试通过\" — yes starts with \"- \". So 3.",
+          "type": "reasoning"
+        },
+        {
+          "text": "`notes.txt` 中有 **3 条**以「- 」开头的条目：\n\n- 第 2 行：`- 第一行`\n- 第 3 行：`- 第二行`\n- 第 4 行：`- 测试通过`\n\n（第 1 行是 `# 笔记` 标题，不计入。）",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "qwen3.8-flash",
+    "stop": "end_turn",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": null,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 442,
+      "output": 132,
+      "reasoning": 47
+    }
+  }
+}

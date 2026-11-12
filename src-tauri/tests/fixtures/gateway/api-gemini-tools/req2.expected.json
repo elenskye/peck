@@ -1,0 +1,57 @@
+{
+  "events": [
+    {
+      "text": "`notes",
+      "type": "text_delta"
+    },
+    {
+      "text": ".txt` 里有 3 条以「- 」开头的条目（第",
+      "type": "text_delta"
+    },
+    {
+      "text": " 2、3、4 行）。",
+      "type": "text_delta"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.0001186
+    },
+    "message": {
+      "parts": [
+        {
+          "text": "`notes.txt` 里有 3 条以「- 」开头的条目（第 2、3、4 行）。",
+          "type": "text"
+        },
+        {
+          "opaque": {
+            "data": {
+              "on": "previous",
+              "thoughtSignature": "EmAKXgFpFH0Tk9Qq8Ctm4Ot2bb2qNVBcjVTkMkfZDfgsU26MyvFJVA/H2Rz6dcyFhdOqcNnMMcYvxc0Ddr0KVADVDkCkPkqRh4/KPjRA9rh3WG12nbTNHOcerC5HZ6t5aHg="
+            },
+            "origin": {
+              "model": "gemini-3.5-flash-lite",
+              "provider": "google",
+              "wire": "gemini"
+            }
+          },
+          "text": "",
+          "type": "reasoning"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "gemini-3.5-flash-lite",
+    "stop": "end_turn",
+    "usage": {
+      "cacheRead": null,
+      "cacheWrite": null,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 162,
+      "output": 28,
+      "reasoning": null
+    }
+  }
+}

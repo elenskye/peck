@@ -127,19 +127,19 @@ impl AgentCaps {
         }
     }
 
-    /// `muse exec --json`：没有审批回调，高危拦不住。
+    /// Muse 走会话协议（`muse serve`）：它的 LLM 审查员先看，拿不准的交给 Peck，所以审批是实时的。
     pub fn muse() -> Self {
         Self {
             streaming: true,
             reasoning_replay: false,
             tools: ToolOwner::Engine,
-            approvals: ApprovalMode::Preset,
+            approvals: ApprovalMode::Live,
             ask_user: true,
-            steer: false,
-            interrupt: false,
+            steer: true,
+            interrupt: true,
             resume: true,
             mcp_inject: true,
-            usage: UsageGranularity::PerTurn,
+            usage: UsageGranularity::Cumulative,
             cost: CostSource::Unknown,
             quota: true,
             switch_model: false,
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn muse_cannot_block_high_risk() {
-        assert_ne!(AgentCaps::muse().approvals, ApprovalMode::Live);
+    fn muse_approvals_reach_peck_through_its_session_protocol() {
+        assert_eq!(AgentCaps::muse().approvals, ApprovalMode::Live);
     }
 }

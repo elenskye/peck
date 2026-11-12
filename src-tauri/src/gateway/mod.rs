@@ -11,13 +11,18 @@
 //!
 //! 这一层不认识界面，也不认识任务表；事件写进事件日志和发给界面由 [`log::EventSink`] 做。
 
+pub mod accounts;
 pub mod caps;
 pub mod catalog;
 pub mod config;
 pub mod convert;
+pub mod engines;
 pub mod event;
 pub mod log;
+pub mod mcp;
 pub mod mock;
+pub mod providers;
+pub mod runner;
 
 use event::{
     ApprovalDecision, Cost, OpaqueReasoning, PermissionLevel, TokenUsage, TurnEndReason, Wire,
@@ -323,7 +328,11 @@ pub async fn gateway_models(
             .await
             .unwrap_or(false)
     };
-    Ok(catalog::model_entries(
+    let book = {
+        let store = state.store.lock().map_err(|_| "读不到设置。")?;
+        accounts::AccountBook::load(&store)
+    };
+    let mut entries = catalog::model_entries(
         catalog::catalog(),
         &catalog::Availability {
             all: mock,
@@ -332,7 +341,14 @@ pub async fn gateway_models(
             vertex_adc: adc,
             engines,
         },
-    ))
+    );
+    // CLI 引擎后面显示当前账号（默认账号不写）。
+    for entry in &mut entries {
+        if let Some(engine) = entry.id.strip_prefix("cli:") {
+            entry.account = accounts::current_label(&book, engine);
+        }
+    }
+    Ok(entries)
 }
 
 /// 设置页用：Gateway 的设置，和 gcloud 的 ADC 在不在（只看文件，不读内容）。

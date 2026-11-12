@@ -104,6 +104,17 @@ pub fn run() {
             gateway::gateway_config_get,
             gateway::gateway_config_set,
             gateway::gateway_events,
+            gateway::accounts::cli_accounts_list,
+            gateway::accounts::cli_account_add,
+            gateway::accounts::cli_account_use,
+            gateway::accounts::cli_account_remove,
+            gateway::accounts::cli_account_check,
+            gateway::accounts::cli_account_login,
+            gateway::accounts::cli_account_login_state,
+            gateway::accounts::cli_account_login_input,
+            gateway::accounts::cli_account_login_cancel,
+            gateway::runner::gateway_run_start,
+            gateway::runner::gateway_control,
         ])
         // 点红色关闭只把窗口藏起来：菜单栏图标和在跑的任务都留着；⌘Q 或菜单栏图标的「退出 Peck」才退出。
         .on_window_event(|window, event| {

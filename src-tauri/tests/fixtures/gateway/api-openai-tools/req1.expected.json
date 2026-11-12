@@ -1,0 +1,40 @@
+{
+  "events": [
+    {
+      "callId": "call_bYQ3qrby0JHcazTpgWeRzF5r",
+      "name": "read_file",
+      "type": "tool_call_started"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.0000198
+    },
+    "message": {
+      "parts": [
+        {
+          "callId": "call_bYQ3qrby0JHcazTpgWeRzF5r",
+          "input": {
+            "path": "notes.txt"
+          },
+          "name": "read_file",
+          "signature": null,
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "gpt-6-luna",
+    "stop": "tool_use",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 103,
+      "output": 19,
+      "reasoning": 0
+    }
+  }
+}

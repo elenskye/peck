@@ -1,0 +1,38 @@
+{"type":"session.started","engine":"grok","model":"grok-4.7","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":false,"interrupt":true,"resume":true,"mcpInject":true,"usage":"cumulative","cost":"estimated","quota":true,"switchModel":true,"needsTty":false,"directOnly":false},"tools":[],"mcp":[],"sessionRef":"01a1ceb2-0668-7242-88f9-7cf66104da13","version":null}
+{"type":"session.config_changed","model":"grok-4.5","permission":null,"effort":null}
+{"type":"turn.started","turnId":"turn-1"}
+{"type":"message.delta","itemId":"grok-msg-1","text":"I'll"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" read"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" `"}
+{"type":"message.delta","itemId":"grok-msg-1","text":"notes"}
+{"type":"message.delta","itemId":"grok-msg-1","text":".txt"}
+{"type":"message.delta","itemId":"grok-msg-1","text":"`,"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" then"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" run"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" the"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" exact"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" stamp"}
+{"type":"message.delta","itemId":"grok-msg-1","text":" command"}
+{"type":"message.delta","itemId":"grok-msg-1","text":"."}
+{"type":"message.completed","itemId":"grok-msg-1","text":"I'll read `notes.txt`, then run the exact stamp command."}
+{"type":"tool_call.started","callId":"call-fcb856d0-2ab2-4549-bf59-c5480f49a111-0","name":"read_file","kind":"read","title":"读 notes.txt","input":{"target_file":"notes.txt"}}
+{"type":"tool_call.started","callId":"call-fcb856d0-2ab2-4549-bf59-c5480f49a111-1","name":"run_terminal_command","kind":"run","title":"跑 echo grok > stamp.txt","input":{"command":"echo grok > stamp.txt","description":"Write grok into stamp.txt"}}
+{"type":"approval.requested","requestId":"grok-0","callId":"call-fcb856d0-2ab2-4549-bf59-c5480f49a111-1","kind":"run","title":"跑 echo grok > stamp.txt","detail":"echo grok > stamp.txt","highRisk":false,"options":["allow_once","allow_always","deny_once","deny_always"]}
+{"type":"tool_call.completed","callId":"call-fcb856d0-2ab2-4549-bf59-c5480f49a111-0","status":"ok","output":"1→# 笔记\n- 第一行\n- 第二行\n- 测试通过\n","exitCode":null,"durationMs":null}
+{"type":"tool_call.completed","callId":"call-fcb856d0-2ab2-4549-bf59-c5480f49a111-1","status":"ok","output":"exit: 0\n","exitCode":0,"durationMs":null}
+{"type":"message.delta","itemId":"grok-msg-2","text":"Read"}
+{"type":"message.delta","itemId":"grok-msg-2","text":" notes"}
+{"type":"message.delta","itemId":"grok-msg-2","text":".txt"}
+{"type":"message.delta","itemId":"grok-msg-2","text":" and"}
+{"type":"message.delta","itemId":"grok-msg-2","text":" wrote"}
+{"type":"message.delta","itemId":"grok-msg-2","text":" `"}
+{"type":"message.delta","itemId":"grok-msg-2","text":"gro"}
+{"type":"message.delta","itemId":"grok-msg-2","text":"k"}
+{"type":"message.delta","itemId":"grok-msg-2","text":"`"}
+{"type":"message.delta","itemId":"grok-msg-2","text":" to"}
+{"type":"message.delta","itemId":"grok-msg-2","text":" stamp"}
+{"type":"message.delta","itemId":"grok-msg-2","text":".txt"}
+{"type":"message.delta","itemId":"grok-msg-2","text":"."}
+{"type":"message.completed","itemId":"grok-msg-2","text":"Read notes.txt and wrote `grok` to stamp.txt."}
+{"type":"usage.updated","usage":{"input":16748,"output":162,"cacheRead":17664,"cacheWrite":0,"reasoning":72,"contextUsed":null,"contextWindow":null},"cost":{"usd":0.0397672,"source":"estimated"},"scope":"turn"}
+{"type":"turn.completed","turnId":"turn-1","reason":"done","error":null}

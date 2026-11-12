@@ -1,0 +1,78 @@
+{
+  "events": [
+    {
+      "text": "I",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "'m",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " checking",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " the notes.txt file",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " to see what",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "'s there.\n",
+      "type": "reasoning_delta"
+    },
+    {
+      "callId": "call_ff9e18cc61734bf395f4d719",
+      "name": "read_file",
+      "type": "tool_call_started"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.00006001118
+    },
+    "message": {
+      "parts": [
+        {
+          "opaque": {
+            "data": {
+              "type": "reasoning_content"
+            },
+            "origin": {
+              "model": "qwen3.8-flash",
+              "provider": "aliyun",
+              "wire": "chat"
+            }
+          },
+          "text": "I'm checking the notes.txt file to see what's there.\n",
+          "type": "reasoning"
+        },
+        {
+          "callId": "call_ff9e18cc61734bf395f4d719",
+          "input": {
+            "path": "notes.txt"
+          },
+          "name": "read_file",
+          "signature": null,
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "qwen3.8-flash",
+    "stop": "tool_use",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": null,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 367,
+      "output": 41,
+      "reasoning": 13
+    }
+  }
+}

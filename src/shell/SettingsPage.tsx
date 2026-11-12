@@ -3,7 +3,7 @@ import { api, type ApiCall, type ApiConfig, type ApiEvent, type ApiMode, type Ap
 import { ipc, isMockMode } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import type { ThemeChoice } from "@/lib/theme";
-import type { GatewayConfig } from "@/lib/agentEvents";
+import type { CliAccount, CliAccountStatus, CliLoginState, EngineAccounts, GatewayConfig, ModelEntry } from "@/lib/agentEvents";
 import type { AgentInfo, Permission } from "@/lib/types";
 import { PERMISSIONS, agentDot, agentName, clock, cn } from "@/lib/utils";
 import { Btn, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
@@ -336,7 +336,159 @@ const Cli: React.FC<Props> = ({ agents, onRefreshAgents, say }) => {
         <Row name="第三家 CLI" off desc="v1.0 以后接；加一家只加一份清单"><Tag>LATER</Tag></Row>
       </div>
       <div className="set-inline"><Btn icon="undo" disabled={busy} onClick={() => { setBusy(true); void onRefreshAgents().then(() => say("重新检测过了")).finally(() => setBusy(false)); }}>RECHECK</Btn></div>
+      <Engines say={say} />
+      <CliAccounts say={say} />
     </Pane>
+  );
+};
+
+// ---------- 引擎（v0.5）：模型列表里的五家 CLI，版本和录夹具时不一样就提示 ----------
+
+const versionNumber = (raw?: string | null) => raw?.match(/\d+\.\d+(\.\d+)?/)?.[0] ?? "";
+
+const Engines: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
+  const [entries, setEntries] = useState<ModelEntry[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    ipc.gatewayModels().then((m) => { if (live) setEntries(m.filter((e) => e.group === "cli")); }).catch(say);
+    return () => { live = false; };
+  }, []);
+  if (!entries) return null;
+  return (
+    <>
+      <p className="lbl">引擎</p>
+      <div className="set-rows">
+        {entries.map((e) => {
+          const found = versionNumber(e.version);
+          const changed = !!found && !!e.testedVersion && found !== e.testedVersion;
+          const desc = !e.available
+            ? "没检测到：装好以后在上面填 CLI 目录"
+            : changed
+              ? `这台是 ${found}，Peck 按 ${e.testedVersion} 测过：格式可能变了，过程显示不对就告诉本地重录`
+              : [e.directOnly ? "只做直接调用" : null, e.account ? `账号：${e.account}` : null].filter(Boolean).join(" · ") || undefined;
+          return (
+            <Row key={e.id} name={<>{e.label}{found && <span className="t-code set-ver">{found}</span>}</>} off={!e.available} desc={desc}>
+              {!e.available ? <Tag>NOT FOUND</Tag> : changed ? <Tag v="wait">CHANGED</Tag> : <Tag v="ok">OK</Tag>}
+            </Row>
+          );
+        })}
+      </div>
+    </>
+  );
+};
+
+// ---------- CLI 账号（v0.5）：一个账号一个配置目录，登录互不干扰 ----------
+
+const CliAccounts: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
+  const [groups, setGroups] = useState<EngineAccounts[] | null>(null);
+  const [checking, setChecking] = useState(false);
+  const recheck = async () => {
+    setChecking(true);
+    try { setGroups(await ipc.cliAccountsList(true)); } catch (e) { say(e); } finally { setChecking(false); }
+  };
+  useEffect(() => {
+    let live = true;
+    ipc.cliAccountsList(false).then((g) => { if (live) setGroups(g); }).catch(say);
+    // 只在打开时读一次（同 useGatewayConfig）。
+    return () => { live = false; };
+  }, []);
+  if (!groups) return null;
+  return (
+    <>
+      <p className="lbl">CLI 账号</p>
+      <p className="hint">一个账号一个独立的配置目录：不同账号的登录互不干扰，也不碰客户端和浏览器里的登录。登录时 Peck 不自动开浏览器，给你链接，自己挑浏览器或隐身窗口去登。</p>
+      {groups.map((g) => <EngineAccountGroup key={g.engine} group={g} onGroups={setGroups} say={say} />)}
+      <div className="set-inline"><Btn icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("账号都验过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn><span className="hint">只跑各家的登录状态命令，不发模型请求、不花额度。</span></div>
+    </>
+  );
+};
+
+const EngineAccountGroup: React.FC<{ group: EngineAccounts; onGroups: (g: EngineAccounts[]) => void; say: (m: unknown) => void }> = ({ group, onGroups, say }) => {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    setBusy(true);
+    try { onGroups(await ipc.cliAccountAdd(group.engine, name)); setName(""); say(`${group.label} 加了账号「${name.trim()}」，点 LOGIN 登录`); } catch (e) { say(e); } finally { setBusy(false); }
+  };
+  return (
+    <div className="set-rows">
+      {group.accounts.map((a) => <AccountRow key={a.id} engine={group.engine} engineLabel={group.label} note={group.defaultNote} account={a} onGroups={onGroups} say={say} />)}
+      <div className="set-block">
+        <div className="set-inline">
+          <Field aria-label={`${group.label} 新账号的名字`} placeholder={`给 ${group.label} 的新账号起个名字，比如「工作」`} value={name} off={busy} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) void add(); }} />
+          <Btn sm disabled={busy || !name.trim()} onClick={() => void add()}>ADD</Btn>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; account: CliAccount; onGroups: (g: EngineAccounts[]) => void; say: (m: unknown) => void }> = ({ engine, engineLabel, note, account, onGroups, say }) => {
+  const [status, setStatus] = useState<CliAccountStatus | null>(account.status ?? null);
+  const [login, setLogin] = useState<CliLoginState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmDrop, setConfirmDrop] = useState(false);
+  const [code, setCode] = useState("");
+  useEffect(() => { if (account.status) setStatus(account.status); }, [account.status]);
+  // 登录中每秒看一次；结束了自动验一次权。
+  useEffect(() => {
+    if (!login?.running) return;
+    const timer = window.setInterval(() => {
+      ipc.cliAccountLoginState(engine, account.id).then(async (s) => {
+        setLogin(s);
+        if (!s.running) {
+          const st = await ipc.cliAccountCheck(engine, account.id);
+          setStatus(st);
+          say(st.loggedIn ? `${engineLabel} 的「${account.label}」登录好了` : `${engineLabel} 的「${account.label}」还没登录上，看看下面的输出`);
+        }
+      }).catch(say);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [login?.running]);
+  const run = async (f: () => Promise<void>) => { setBusy(true); try { await f(); } catch (e) { say(e); } finally { setBusy(false); } };
+  const check = () => run(async () => { setStatus(await ipc.cliAccountCheck(engine, account.id)); });
+  const startLogin = () => run(async () => { setLogin(await ipc.cliAccountLogin(engine, account.id)); });
+  const cancel = () => run(async () => { await ipc.cliAccountLoginCancel(engine, account.id); setLogin(null); });
+  const copy = (url: string) => { void navigator.clipboard?.writeText(url).then(() => say("登录链接复制好了：到你要用的浏览器（或隐身窗口）里打开")).catch(say); };
+  const tag = status == null ? <Tag>NOT CHECKED</Tag> : status.loggedIn ? <Tag v="ok">SIGNED IN</Tag> : <Tag v="high">SIGNED OUT</Tag>;
+  const who = status?.loggedIn ? [status.email, status.plan].filter(Boolean).join(" · ") : status?.detail;
+  return (
+    <div className="set-block">
+      <Row
+        name={<>{engineLabel} · {account.label}{account.current && <span className="t-code set-ver">当前</span>}</>}
+        desc={[who, account.isDefault ? note : null].filter(Boolean).join(" · ") || undefined}
+      >
+        {tag}
+        {!account.current && <Btn sm disabled={busy} onClick={() => void run(async () => { onGroups(await ipc.cliAccountUse(engine, account.id)); say(`${engineLabel} 换成「${account.label}」了，下一个任务生效`); })}>USE</Btn>}
+        <Btn sm disabled={busy || !!login?.running} onClick={() => void startLogin()}>{status?.loggedIn ? "RELOGIN" : "LOGIN"}</Btn>
+        <Btn sm disabled={busy} onClick={() => void check()}>CHECK</Btn>
+        {!account.isDefault && <Btn sm v={confirmDrop ? "danger" : undefined} disabled={busy} onClick={() => {
+          if (!confirmDrop) { setConfirmDrop(true); return; }
+          void run(async () => { onGroups(await ipc.cliAccountRemove(engine, account.id)); say(`删掉了「${account.label}」和它的登录`); });
+        }}>{confirmDrop ? "CONFIRM" : "DELETE"}</Btn>}
+      </Row>
+      {confirmDrop && <p className="hint">再点一次 CONFIRM：删掉这个账号的配置目录，里面的登录一起没了。</p>}
+      {login && (
+        <div className="set-login">
+          {login.url ? (
+            <div className="set-inline">
+              <span className="t-code set-cmd" title={login.url}>{login.url}</span>
+              <Btn sm v="primary" onClick={() => copy(login.url!)}>COPY</Btn>
+              {login.running && <Btn sm onClick={() => void cancel()}>CANCEL</Btn>}
+            </div>
+          ) : login.running ? <p className="hint">在等登录链接……</p> : null}
+          {login.running && <p className="hint">把链接复制到你要用的浏览器（或另一个浏览器用户、隐身窗口）里打开、登录，登好以后这里自动验一次。{engine === "codex" ? "Codex 要输下面输出里的一次性代码。" : ""}</p>}
+          {login.output.trim() && <pre className="t-code set-out">{login.output.trim().split("\n").slice(-8).join("\n")}</pre>}
+          {login.running && engine === "claude-code" && (
+            <div className="set-inline">
+              <Field aria-label="粘回登录页给的 code" placeholder="登录页要你粘 code 时贴在这里（多半用不上）" value={code} onChange={(e) => setCode(e.target.value)} />
+              <Btn sm disabled={!code.trim()} onClick={() => void run(async () => { await ipc.cliAccountLoginInput(engine, account.id, code); setCode(""); })}>SEND</Btn>
+            </div>
+          )}
+          {!login.running && login.ok != null && <p className="hint">{login.ok ? "登录命令结束了。" : "登录没成功：看看上面的输出，再点一次 LOGIN。"}</p>}
+        </div>
+      )}
+    </div>
   );
 };
 

@@ -1,0 +1,14 @@
+{"type":"session.started","engine":"muse","model":"muse-wonder-1.0","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":true,"interrupt":true,"resume":true,"mcpInject":true,"usage":"cumulative","cost":"unknown","quota":true,"switchModel":false,"needsTty":false,"directOnly":false},"tools":[],"mcp":[],"sessionRef":"01a1ceac-6748-7e00-8eb8-58b6d4890349","version":null}
+{"type":"turn.started","turnId":"01a1ceac-6823-7ae9-a810-c77959bc8ccb"}
+{"type":"usage.updated","usage":{"input":31931,"output":143,"cacheRead":null,"cacheWrite":null,"reasoning":null,"contextUsed":null,"contextWindow":null},"cost":{"usd":null,"source":"unknown"},"scope":"cumulative"}
+{"type":"tool_call.started","callId":"01a1ceac-7c1c-7ec2-ac1f-eacc35c3d906","name":"read_file","kind":"read","title":"读 notes.txt","input":{"path":"notes.txt"}}
+{"type":"tool_call.completed","callId":"01a1ceac-7c1c-7ec2-ac1f-eacc35c3d906","status":"ok","output":"Read text file `notes.txt`.\n1|# 笔记\n2|- 第一行\n3|- 第二行\n4|- 测试通过","exitCode":null,"durationMs":null}
+{"type":"usage.updated","usage":{"input":64067,"output":237,"cacheRead":null,"cacheWrite":null,"reasoning":null,"contextUsed":32502,"contextWindow":1007997},"cost":{"usd":null,"source":"unknown"},"scope":"cumulative"}
+{"type":"notice","level":"info","text":"Muse 的审查员放行了一次操作"}
+{"type":"tool_call.started","callId":"01a1ceac-8661-7372-8477-47a300269fa9","name":"bash","kind":"run","title":"跑 echo muse > stamp.txt","input":{"command":"echo muse > stamp.txt","description":"Create stamp file as requested"}}
+{"type":"tool_call.completed","callId":"01a1ceac-8661-7372-8477-47a300269fa9","status":"ok","output":"{\n  \"chunk_id\": \"exec-1-1\",\n  \"command\": \"echo muse > stamp.txt\",\n  \"description\": \"Create stamp file as requested\",\n  \"exit_code\": 0,\n  \"terminal_status\": \"completed\",\n  \"output\": \"\",\n  \"original_output_bytes\": 0,\n  \"original_output_tokens\": 0,\n  \"truncated\": false\n}","exitCode":0,"durationMs":null}
+{"type":"message.delta","itemId":"fc58b11f-61e7-47ee-8ccc-fe1ac9a5fd37","text":"Done."}
+{"type":"message.completed","itemId":"fc58b11f-61e7-47ee-8ccc-fe1ac9a5fd37","text":"Done."}
+{"type":"usage.updated","usage":{"input":64265,"output":253,"cacheRead":32116,"cacheWrite":null,"reasoning":null,"contextUsed":32489,"contextWindow":1007997},"cost":{"usd":null,"source":"unknown"},"scope":"cumulative"}
+{"type":"quota.updated","provider":"muse","windows":[{"label":"5 小时","usedPercent":6.0,"resetsAt":1794486769000},{"label":"每周","usedPercent":2.0,"resetsAt":1794787200000}]}
+{"type":"turn.completed","turnId":"01a1ceac-6823-7ae9-a810-c77959bc8ccb","reason":"done","error":null}

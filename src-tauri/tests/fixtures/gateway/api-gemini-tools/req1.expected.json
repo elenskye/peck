@@ -1,0 +1,49 @@
+{
+  "events": [
+    {
+      "callId": "call_4919040225842081706",
+      "name": "read_file",
+      "type": "tool_call_started"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.0000759
+    },
+    "message": {
+      "parts": [
+        {
+          "callId": "call_4919040225842081706",
+          "input": {
+            "path": "notes.txt"
+          },
+          "name": "read_file",
+          "signature": {
+            "data": {
+              "thoughtSignature": "EmAKXgFpFH0Tq+zNCDSRoVE5gaHiDPqdvv51I/1ec0g0aiDldWzBkWktunmZ2eht773NDUQzL4ovLUoxj9KXRZ99vDTJ9SjfmyLzypu5QQOeO+B6d49lTXp3by1PcpErTOU="
+            },
+            "origin": {
+              "model": "gemini-3.5-flash-lite",
+              "provider": "google",
+              "wire": "gemini"
+            }
+          },
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "gemini-3.5-flash-lite",
+    "stop": "tool_use",
+    "usage": {
+      "cacheRead": null,
+      "cacheWrite": null,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 103,
+      "output": 18,
+      "reasoning": null
+    }
+  }
+}

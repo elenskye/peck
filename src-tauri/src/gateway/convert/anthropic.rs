@@ -3,9 +3,9 @@
 //! 思考块（`thinking` 带 `signature`、`redacted_thinking`）原样挂进 `OpaqueReasoning`，
 //! 回放时 [`assistant_blocks`] 只在来源一样时放回去，换了就丢。
 
-use crate::gateway::catalog::catalog;
+use crate::gateway::catalog::{catalog, ModelSpec, Thinking};
 use crate::gateway::event::{OpaqueReasoning, Origin, TokenUsage, Wire};
-use crate::gateway::{Message, ModelEvent, ModelResponse, Part, Role, StopReason};
+use crate::gateway::{Message, ModelEvent, ModelRequest, ModelResponse, Part, Role, StopReason};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -35,6 +35,7 @@ pub struct AnthropicStream {
     stop: Option<StopReason>,
     response_model: Option<String>,
     error: Option<String>,
+    stopped: bool,
 }
 
 impl AnthropicStream {
@@ -47,6 +48,7 @@ impl AnthropicStream {
             stop: None,
             response_model: None,
             error: None,
+            stopped: false,
         }
     }
 
@@ -140,8 +142,17 @@ impl AnthropicStream {
                 self.stop = data["delta"]["stop_reason"].as_str().map(stop_reason);
                 vec![]
             }
+            "message_stop" => {
+                self.stopped = true;
+                vec![]
+            }
             "error" => {
-                self.error = data["error"]["message"].as_str().map(str::to_string);
+                self.error = Some(
+                    data["error"]["message"]
+                        .as_str()
+                        .map(|m| format!("供应商在回答中途报错：{}", crate::gateway::convert::short(m, 160)))
+                        .unwrap_or_else(|| "供应商在回答中途报错。".into()),
+                );
                 vec![]
             }
             _ => vec![],
@@ -249,6 +260,113 @@ pub fn assistant_blocks(message: &Message, target: &Origin) -> Vec<Value> {
         }
     }
     out
+}
+
+impl super::WireStream for AnthropicStream {
+    fn feed(&mut self, data: &Value) -> Vec<ModelEvent> {
+        AnthropicStream::feed(self, data)
+    }
+
+    fn done(&self) -> bool {
+        self.stopped
+    }
+
+    fn finish(self: Box<Self>) -> Result<ModelResponse, String> {
+        if self.error.is_none() && self.stop.is_none() {
+            return Err("回答在结束前断开了，没自动重发。".into());
+        }
+        AnthropicStream::finish(*self)
+    }
+}
+
+/// Vertex 上的 Claude 的 body 里要带的版本（模型名在 URL 里，body 不放 `model`）。
+pub const VERTEX_VERSION: &str = "vertex-2023-10-16";
+
+/// 统一的请求 → Messages 的 body。`vertex` 为真：不放 `model`、加 `anthropic_version`、不开
+/// `eager_input_streaming`（Vertex 不一定认）。思考只回放来源和 `origin` 一样的。
+pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, vertex: bool) -> Value {
+    let mut body = json!({"max_tokens": request.max_output_tokens, "stream": true});
+    if vertex {
+        body["anthropic_version"] = json!(VERTEX_VERSION);
+    } else {
+        body["model"] = json!(model.api_model);
+    }
+    if !request.system.is_empty() {
+        let blocks: Vec<Value> = request
+            .system
+            .iter()
+            .map(|b| {
+                let mut v = json!({"type": "text", "text": b.text});
+                if b.cache {
+                    v["cache_control"] = json!({"type": "ephemeral"});
+                }
+                v
+            })
+            .collect();
+        body["system"] = Value::Array(blocks);
+    }
+    let messages: Vec<Value> = request
+        .messages
+        .iter()
+        .filter_map(|m| {
+            let (role, content) = match m.role {
+                Role::Assistant => ("assistant", assistant_blocks(m, origin)),
+                Role::User => ("user", user_blocks(m)),
+            };
+            (!content.is_empty()).then(|| json!({"role": role, "content": content}))
+        })
+        .collect();
+    body["messages"] = Value::Array(messages);
+    if !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                let mut v = json!({"name": t.name, "description": t.description, "input_schema": t.input_schema});
+                if !vertex {
+                    v["eager_input_streaming"] = json!(true);
+                }
+                v
+            })
+            .collect();
+        body["tools"] = Value::Array(tools);
+    }
+    match (model.thinking, request.thinking) {
+        (Thinking::Always, _) | (Thinking::Switch, true) => {
+            body["thinking"] = json!({"type": "adaptive", "display": "summarized"})
+        }
+        (Thinking::Switch, false) => body["thinking"] = json!({"type": "disabled"}),
+        (Thinking::Never, _) => {}
+    }
+    if let Some(effort) = &request.effort {
+        body["output_config"] = json!({"effort": effort});
+    }
+    body
+}
+
+/// 站主这一条 → content 块：工具结果放前面（Messages 要求），再放文字。
+fn user_blocks(message: &Message) -> Vec<Value> {
+    let mut results = Vec::new();
+    let mut texts = Vec::new();
+    for part in &message.parts {
+        match part {
+            Part::ToolResult { .. } => results.extend(assistant_blocks(
+                &Message {
+                    role: Role::User,
+                    parts: vec![part.clone()],
+                },
+                &Origin {
+                    provider: String::new(),
+                    wire: Wire::Messages,
+                    model: String::new(),
+                },
+            )),
+            Part::Text { text } => texts.push(json!({"type": "text", "text": text})),
+            Part::Reasoning { .. } | Part::ToolCall { .. } => {}
+        }
+    }
+    results.extend(texts);
+    results
 }
 
 /// 目录里的模型 → 回放来源（供应商 + Messages + 发给供应商的名字）。

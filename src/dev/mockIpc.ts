@@ -11,8 +11,8 @@ import {
   MOCK_SESSIONS,
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
-import { MOCK_MODEL_ENTRIES } from "@/dev/gatewayMock";
-import type { AgentEvent, GatewayConfig, GatewaySettings, ModelEntry } from "@/lib/agentEvents";
+import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES } from "@/dev/gatewayMock";
+import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry } from "@/lib/agentEvents";
 import type { ApiConfig, ApiRole, ApiStatus, ApiTask } from "@/lib/api";
 import type {
   AgentInfo,
@@ -535,6 +535,114 @@ export const mockIpc = {
   async gatewayEvents(_runId: string): Promise<AgentEvent[]> {
     return [];
   },
+
+  // ── CLI 账号（假的：登录几秒后自动成功）──
+  async cliAccountsList(checkAll: boolean): Promise<EngineAccounts[]> {
+    if (checkAll) for (const g of accountState) for (const a of g.accounts) a.status = mockAccountStatus(g.engine, a.id);
+    return structuredClone(accountState);
+  },
+  async cliAccountAdd(engine: string, name: string): Promise<EngineAccounts[]> {
+    const g = accountGroup(engine);
+    const n = name.trim();
+    if (!n || n.length > 32 || /[/\\:]/.test(n) || n === "默认" || n === "default") throw new Error("账号名 1–32 个字，不能带 / \\ :，不能叫「默认」。");
+    if (g.accounts.some((a) => a.id === n)) throw new Error(`已经有叫「${n}」的账号了。`);
+    g.accounts.push({ id: n, label: n, isDefault: false, current: false, status: null });
+    return structuredClone(accountState);
+  },
+  async cliAccountUse(engine: string, id: string): Promise<EngineAccounts[]> {
+    for (const a of accountGroup(engine).accounts) a.current = a.id === id;
+    return structuredClone(accountState);
+  },
+  async cliAccountRemove(engine: string, id: string): Promise<EngineAccounts[]> {
+    if (id === "default") throw new Error("默认账号不能删。");
+    const g = accountGroup(engine);
+    const wasCurrent = g.accounts.find((a) => a.id === id)?.current;
+    g.accounts = g.accounts.filter((a) => a.id !== id);
+    if (wasCurrent) g.accounts[0].current = true;
+    loggedIn.delete(`${engine}/${id}`);
+    return structuredClone(accountState);
+  },
+  async cliAccountCheck(engine: string, id: string): Promise<CliAccountStatus> {
+    const status = mockAccountStatus(engine, id);
+    const a = accountGroup(engine).accounts.find((x) => x.id === id);
+    if (a) a.status = status;
+    return status;
+  },
+  async cliAccountLogin(engine: string, id: string): Promise<CliLoginState> {
+    loginStarted.set(`${engine}/${id}`, Date.now());
+    return this.cliAccountLoginState(engine, id);
+  },
+  async cliAccountLoginState(engine: string, id: string): Promise<CliLoginState> {
+    const key = `${engine}/${id}`;
+    const at = loginStarted.get(key);
+    if (at == null) return { running: false, output: "" };
+    const url = engine === "codex" ? "https://auth.openai.com/codex/device" : "https://claude.com/cai/oauth/authorize?code=true&client_id=mock";
+    const output = engine === "codex" ? "在浏览器里打开链接，输入一次性代码：MOCK-1234\n" : "Opening browser to sign in…\n";
+    if (Date.now() - at < 4000) return { running: true, url, output };
+    loggedIn.add(key);
+    return { running: false, url, output: output + "Login successful.\n", ok: true };
+  },
+  async cliAccountLoginInput(_engine: string, _id: string, _text: string): Promise<void> {},
+  async cliAccountLoginCancel(engine: string, id: string): Promise<void> {
+    loginStarted.delete(`${engine}/${id}`);
+  },
+
+  // ── 发任务（Gateway 版）：回放这个引擎录下来的过程；碰到审批、提问停下，等 gatewayControl ──
+  async gatewayRunStart(args: GatewayRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    const engine = args.who.replace(/^cli:/, "");
+    const replay = MOCK_ENGINE_REPLAYS[engine];
+    if (!args.who.startsWith("cli:") || !replay) throw new Error("这个入口只跑 CLI 引擎（cli:…）。");
+    if (!args.prompt.trim()) throw new Error("先写一句话。");
+    const runId = `mock-gw-${++gatewayRunCounter}`;
+    const run = { waiting: null as null | ((c: Control) => void), stopped: false };
+    gatewayRuns.set(runId, run);
+    let seq = 0;
+    const send = (body: object) => onEvent({ ...(body as AgentEvent), seq: seq++, at: Date.now() });
+    void (async () => {
+      for (const event of replay) {
+        if (run.stopped) break;
+        await new Promise((r) => setTimeout(r, 120));
+        send(event);
+        if (event.type === "approval.requested" || event.type === "user_input.requested") {
+          const control = await new Promise<Control>((resolve) => { run.waiting = resolve; });
+          run.waiting = null;
+          if (control.type === "interrupt") { run.stopped = true; break; }
+          if (control.type === "approve") send({ type: "approval.resolved", requestId: control.requestId, decision: control.decision, by: "user" });
+          if (control.type === "answer") send({ type: "user_input.resolved", requestId: control.requestId, answer: control.answer });
+        }
+      }
+      if (run.stopped) send({ type: "turn.completed", turnId: "turn-1", reason: "interrupted", error: null });
+      gatewayRuns.delete(runId);
+    })();
+    return runId;
+  },
+  async gatewayControl(runId: string, control: Control): Promise<void> {
+    const run = gatewayRuns.get(runId);
+    if (!run) throw new Error("这个任务已经结束了。");
+    if (control.type === "interrupt") run.stopped = true;
+    run.waiting?.(control);
+  },
 };
+
+let gatewayRunCounter = 0;
+const gatewayRuns = new Map<string, { waiting: null | ((c: Control) => void); stopped: boolean }>();
+
+const loginStarted = new Map<string, number>();
+const loggedIn = new Set<string>(["claude-code/default", "codex/default"]);
+let accountState: EngineAccounts[] = [
+  { engine: "claude-code", label: "Claude Code", defaultNote: "默认账号用 ~/.claude，和 Claude 客户端的 Code 页共用设置", accounts: [{ id: "default", label: "默认", isDefault: true, current: true, status: null }] },
+  { engine: "codex", label: "Codex", defaultNote: "默认账号用 ~/.codex，和 ChatGPT 客户端共用登录", accounts: [{ id: "default", label: "默认", isDefault: true, current: true, status: null }] },
+];
+function accountGroup(engine: string): EngineAccounts {
+  const g = accountState.find((x) => x.engine === engine);
+  if (!g) throw new Error(`${engine} 还不支持多账号。`);
+  return g;
+}
+function mockAccountStatus(engine: string, id: string): CliAccountStatus {
+  if (!loggedIn.has(`${engine}/${id}`)) return { loggedIn: false, detail: "没登录" };
+  return engine === "codex"
+    ? { loggedIn: true, plan: "ChatGPT", detail: "已登录（ChatGPT）" }
+    : { loggedIn: true, plan: "max", email: "you@example.com", detail: "已登录（Claude 订阅）" };
+}
 
 let gatewayConfigState: GatewayConfig = { vertex: { projectId: "", location: "global" }, cliDir: "" };

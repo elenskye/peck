@@ -41,7 +41,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:anthropic/claude-opus-5-5",
@@ -85,7 +86,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:anthropic/claude-sonnet-5-5",
@@ -129,7 +131,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:anthropic/claude-haiku-5-5",
@@ -182,7 +185,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:openai/gpt-6.1-sol",
@@ -235,7 +239,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:openai/gpt-6.1-terra",
@@ -288,7 +293,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:openai/gpt-6-astra",
@@ -341,7 +347,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:openai/gpt-6-luna",
@@ -394,7 +401,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:deepseek/deepseek-v4-pro",
@@ -436,7 +444,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:deepseek/deepseek-flash",
@@ -478,7 +487,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:aliyun/qwen3.8-max",
@@ -520,7 +530,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:aliyun/qwen3.8-flash",
@@ -562,7 +573,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:aliyun/qwen3.7-plus",
@@ -609,7 +621,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:google/gemini-4-carbon",
@@ -651,7 +664,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:google/gemini-4-argon",
@@ -693,7 +707,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:google/gemini-3.8-flash",
@@ -735,7 +750,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:google/gemini-3.5-flash-lite",
@@ -778,7 +794,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:vertex-anthropic/claude-opus-5-5@default",
@@ -822,7 +839,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:vertex-anthropic/claude-sonnet-5-5@default",
@@ -866,7 +884,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:vertex-anthropic/claude-haiku-5-5@default",
@@ -919,7 +938,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:vertex-google/gemini-4-carbon",
@@ -961,7 +981,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "api:vertex-google/gemini-3.8-flash",
@@ -1003,7 +1024,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "cli:claude-code",
@@ -1036,7 +1058,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": "2.1.322"
   },
   {
     "id": "cli:codex",
@@ -1069,7 +1092,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": "0.167.2"
   },
   {
     "id": "cli:muse",
@@ -1088,13 +1112,13 @@
       "streaming": true,
       "reasoningReplay": false,
       "tools": "engine",
-      "approvals": "preset",
+      "approvals": "live",
       "askUser": true,
-      "steer": false,
-      "interrupt": false,
+      "steer": true,
+      "interrupt": true,
       "resume": true,
       "mcpInject": true,
-      "usage": "per_turn",
+      "usage": "cumulative",
       "cost": "unknown",
       "quota": true,
       "switchModel": false,
@@ -1102,7 +1126,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": "1.4.15"
   },
   {
     "id": "cli:grok",
@@ -1135,7 +1160,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": "1.0.77"
   },
   {
     "id": "cli:antigravity",
@@ -1168,7 +1194,8 @@
       "directOnly": true
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": "1.5.6"
   },
   {
     "id": "flow:muse>grok",
@@ -1187,13 +1214,13 @@
       "streaming": true,
       "reasoningReplay": false,
       "tools": "engine",
-      "approvals": "preset",
+      "approvals": "live",
       "askUser": true,
-      "steer": false,
-      "interrupt": false,
+      "steer": true,
+      "interrupt": true,
       "resume": true,
       "mcpInject": true,
-      "usage": "per_turn",
+      "usage": "cumulative",
       "cost": "unknown",
       "quota": true,
       "switchModel": false,
@@ -1201,7 +1228,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "flow:grok>muse",
@@ -1234,7 +1262,8 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   },
   {
     "id": "flow:plan-implement",
@@ -1267,6 +1296,7 @@
       "directOnly": false
     },
     "version": null,
-    "account": null
+    "account": null,
+    "testedVersion": null
   }
 ]

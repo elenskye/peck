@@ -1016,6 +1016,79 @@ impl Store {
     }
 }
 
+// ── Gateway 的引擎报的额度（v0.5，只加写入口）──
+
+/// 统一事件里的引擎 id → 额度卡片的客户端 id。
+fn gateway_client(provider: &str) -> Option<&'static str> {
+    match provider {
+        "codex" => Some("codex"),
+        "claude-code" => Some("claude-code"),
+        "muse" => Some("muse-code"),
+        "grok" => Some("grok"),
+        "antigravity" => Some("antigravity"),
+        _ => None,
+    }
+}
+
+/// 引擎在任务里报的订阅窗口（统一事件 `quota.updated`）→ 这个客户端的额度卡片。账号沿用旧卡片的
+/// （引擎没报账号；用非默认账号跑的不会走到这里，见 `EventSink::without_quota_sync`）。
+pub fn gateway_quota_card(
+    provider: &str,
+    windows: &[crate::gateway::event::QuotaWindow],
+    old: Option<&ClientCard>,
+    collected_at: i64,
+) -> Option<ClientCard> {
+    let client = gateway_client(provider)?;
+    if windows.is_empty() {
+        return None;
+    }
+    let mut card = ClientCard::base(client);
+    card.installed = true;
+    card.running = true;
+    card.collected_at = collected_at;
+    card.account_id = old.and_then(|o| o.account_id.clone());
+    card.account_label = old.and_then(|o| o.account_label.clone());
+    card.tier = old.and_then(|o| o.tier.clone());
+    card.windows = windows
+        .iter()
+        .map(|w| QuotaWindow {
+            label: w.label.clone(),
+            used_percent: w.used_percent,
+            remaining_amount: None,
+            reset_at_ms: w.resets_at,
+            window_duration_mins: match w.label.as_str() {
+                "5 小时" => Some(300),
+                "每周" => Some(10080),
+                "每天" => Some(1440),
+                _ => None,
+            },
+        })
+        .collect();
+    card.status = "ok".into();
+    card.fresh = true;
+    card.last_success_at = Some(collected_at);
+    card.source = "Peck 任务里引擎报的（Gateway）".into();
+    card.raw_label = "Peck 跑任务时引擎随结果报的订阅窗口（统一事件 quota.updated）".into();
+    Some(apply_success(old, card))
+}
+
+impl Store {
+    pub fn usage_record_gateway_quota(
+        &self,
+        provider: &str,
+        windows: &[crate::gateway::event::QuotaWindow],
+    ) -> StoreResult<()> {
+        let Some(client) = gateway_client(provider) else {
+            return Ok(());
+        };
+        let old = self.usage_snapshots()?.remove(client);
+        if let Some(card) = gateway_quota_card(provider, windows, old.as_ref(), now_ms()) {
+            self.usage_save_snapshot(&card)?;
+        }
+        Ok(())
+    }
+}
+
 // Account change: a successful card with a different non-null account replaces the old pool entirely.
 pub fn apply_success(old: Option<&ClientCard>, mut new_card: ClientCard) -> ClientCard {
     if let Some(old) = old {

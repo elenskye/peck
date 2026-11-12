@@ -248,6 +248,8 @@ export interface ModelEntry {
   version?: string | null;
   /** CLI 引擎当前用的账号（设置里起的名字）。API 和没配账号的为空。 */
   account?: string | null;
+  /** 转换器按哪个版本的 CLI 写的；和 version 里的版本号不一样就提示「格式可能变了」。 */
+  testedVersion?: string | null;
 }
 
 // ── Gateway 设置（config.rs，IPC gateway_config_get / gateway_config_set）──
@@ -273,4 +275,62 @@ export interface GatewaySettings {
 /** 列表里的「CLI 引擎」能不能进自动化（ONE SHOT、接力、委派……）。 */
 export function canAutomate(entry: Pick<ModelEntry, "directOnly">): boolean {
   return !entry.directOnly;
+}
+
+// ── CLI 账号（accounts.rs，IPC cli_account_*）──
+// 一个账号 = 一个独立的配置目录（Claude Code 的 CLAUDE_CONFIG_DIR、Codex 的 CODEX_HOME）。
+// 「默认」账号是 CLI 自己的默认位置，和客户端共用；新增的放在 CLI 目录旁边的 accounts/。
+
+export interface CliAccountStatus {
+  loggedIn: boolean;
+  /** Claude Code 的 max、pro；Codex 是 ChatGPT。 */
+  plan?: string | null;
+  email?: string | null;
+  /** 一句话：已登录（Claude 订阅）、没登录、状态命令超时了…… */
+  detail: string;
+}
+
+export interface CliAccount {
+  /** default 是默认账号。 */
+  id: string;
+  label: string;
+  isDefault: boolean;
+  current: boolean;
+  /** 没验过为空。 */
+  status?: CliAccountStatus | null;
+}
+
+export interface EngineAccounts {
+  /** claude-code、codex */
+  engine: string;
+  label: string;
+  /** 默认账号和谁共用登录（界面写明）。 */
+  defaultNote: string;
+  accounts: CliAccount[];
+}
+
+export interface CliLoginState {
+  running: boolean;
+  /** 登录链接：站主复制到自己挑的浏览器里打开（Peck 不自动开浏览器）。 */
+  url?: string | null;
+  /** 登录命令的输出（Codex 的一次性代码在这里）。 */
+  output: string;
+  /** 结束了：成功为 true。 */
+  ok?: boolean | null;
+}
+
+// ── 发任务（Gateway 版，runner.rs，IPC gateway_run_start / gateway_control）──
+
+export interface GatewayRunArgs {
+  sessionId: string;
+  prompt: string;
+  /** 模型列表里的 id：cli:codex、cli:claude-code、cli:muse、cli:grok、cli:antigravity。 */
+  who: string;
+  /** plan | edit | auto，不填是 edit。 */
+  permission?: "plan" | "edit" | "auto";
+  /** 引擎里的模型名（不填用引擎默认）。 */
+  model?: string;
+  effort?: string;
+  /** 上一次的会话号（session.started 的 sessionRef），续接用。 */
+  resume?: string;
 }

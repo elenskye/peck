@@ -1,6 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { mockIpc } from "@/dev/mockIpc";
-import type { AgentEvent, GatewayConfig, GatewaySettings, ModelEntry } from "@/lib/agentEvents";
+import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry } from "@/lib/agentEvents";
 import type {
   Activity,
   AgentInfo,
@@ -219,5 +219,57 @@ export const ipc = {
   async gatewayEvents(runId: string): Promise<AgentEvent[]> {
     if (isMockMode()) return mockIpc.gatewayEvents(runId);
     return invoke<AgentEvent[]>("gateway_events", { runId });
+  },
+
+  // ── CLI 账号（v0.5，src-tauri/src/gateway/accounts.rs）──
+  async cliAccountsList(checkAll: boolean): Promise<EngineAccounts[]> {
+    if (isMockMode()) return mockIpc.cliAccountsList(checkAll);
+    return invoke<EngineAccounts[]>("cli_accounts_list", { checkAll });
+  },
+  async cliAccountAdd(engine: string, name: string): Promise<EngineAccounts[]> {
+    if (isMockMode()) return mockIpc.cliAccountAdd(engine, name);
+    return invoke<EngineAccounts[]>("cli_account_add", { engine, name });
+  },
+  async cliAccountUse(engine: string, id: string): Promise<EngineAccounts[]> {
+    if (isMockMode()) return mockIpc.cliAccountUse(engine, id);
+    return invoke<EngineAccounts[]>("cli_account_use", { engine, id });
+  },
+  async cliAccountRemove(engine: string, id: string): Promise<EngineAccounts[]> {
+    if (isMockMode()) return mockIpc.cliAccountRemove(engine, id);
+    return invoke<EngineAccounts[]>("cli_account_remove", { engine, id });
+  },
+  async cliAccountCheck(engine: string, id: string): Promise<CliAccountStatus> {
+    if (isMockMode()) return mockIpc.cliAccountCheck(engine, id);
+    return invoke<CliAccountStatus>("cli_account_check", { engine, id });
+  },
+  async cliAccountLogin(engine: string, id: string): Promise<CliLoginState> {
+    if (isMockMode()) return mockIpc.cliAccountLogin(engine, id);
+    return invoke<CliLoginState>("cli_account_login", { engine, id });
+  },
+  async cliAccountLoginState(engine: string, id: string): Promise<CliLoginState> {
+    if (isMockMode()) return mockIpc.cliAccountLoginState(engine, id);
+    return invoke<CliLoginState>("cli_account_login_state", { engine, id });
+  },
+  async cliAccountLoginInput(engine: string, id: string, text: string): Promise<void> {
+    if (isMockMode()) return mockIpc.cliAccountLoginInput(engine, id, text);
+    return invoke<void>("cli_account_login_input", { engine, id, text });
+  },
+  async cliAccountLoginCancel(engine: string, id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.cliAccountLoginCancel(engine, id);
+    return invoke<void>("cli_account_login_cancel", { engine, id });
+  },
+
+  // ── 发任务（Gateway 版，src-tauri/src/gateway/runner.rs）：「谁来干」是 cli:<引擎> 的走这里 ──
+  /** 返回任务 id；过程是统一事件，经 onEvent 来（第一条 session.started，最后一条 turn.completed）。 */
+  async gatewayRunStart(args: GatewayRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.gatewayRunStart(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("gateway_run_start", { ...args, channel });
+  },
+  /** 审批、回答、追加、打断。任务已经结束会报错。 */
+  async gatewayControl(runId: string, control: Control): Promise<void> {
+    if (isMockMode()) return mockIpc.gatewayControl(runId, control);
+    return invoke<void>("gateway_control", { runId, control });
   },
 };

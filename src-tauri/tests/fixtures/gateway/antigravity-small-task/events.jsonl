@@ -1,0 +1,16 @@
+{"type":"session.started","engine":"antigravity","model":"gemini-4-argon-medium","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":false,"interrupt":true,"resume":false,"mcpInject":true,"usage":"cumulative","cost":"unknown","quota":false,"switchModel":true,"needsTty":true,"directOnly":true},"tools":[],"mcp":[],"sessionRef":"064da5cc-a95d-4c18-8f42-c95a555f78b2","version":null}
+{"type":"session.config_changed","model":"gemini-3.8-flash","permission":null,"effort":null}
+{"type":"turn.started","turnId":"turn-1"}
+{"type":"tool_call.started","callId":"call_2832182991809106046","name":"read_file","kind":"read","title":"读 notes.txt","input":{"Path":"notes.txt"}}
+{"type":"tool_call.completed","callId":"call_2832182991809106046","status":"ok","output":null,"exitCode":null,"durationMs":null}
+{"type":"tool_call.started","callId":"call_4032065575838088763","name":"run_command","kind":"run","title":"跑 echo agy > stamp.txt","input":{"CommandLine":"echo agy > stamp.txt","WaitMsBeforeAsync":5000,"toolSummary":"Write stamp file"}}
+{"type":"approval.requested","requestId":"antigravity-1","callId":"call_4032065575838088763","kind":"run","title":"跑 echo agy > stamp.txt","detail":"echo agy > stamp.txt","highRisk":false,"options":["allow_once","deny_once"]}
+{"type":"tool_call.completed","callId":"call_4032065575838088763","status":"ok","output":"Created At: 2026-11-12T15:39:28+08:00\nCompleted At: 2026-11-12T15:39:28+08:00\nCommand exited with code 0.\n\nNo output from the command.","exitCode":0,"durationMs":null}
+{"type":"message.delta","itemId":"antigravity-msg-1","text":"I have"}
+{"type":"message.delta","itemId":"antigravity-msg-1","text":" read [notes.txt](file://{{WORKSPACE}}/"}
+{"type":"message.delta","itemId":"antigravity-msg-1","text":"notes.txt) and created [stamp.txt](file"}
+{"type":"message.delta","itemId":"antigravity-msg-1","text":"://{{WORKSPACE}}/stamp"}
+{"type":"message.delta","itemId":"antigravity-msg-1","text":".txt)."}
+{"type":"message.completed","itemId":"antigravity-msg-1","text":"I have read [notes.txt](file://{{WORKSPACE}}/notes.txt) and created [stamp.txt](file://{{WORKSPACE}}/stamp.txt)."}
+{"type":"usage.updated","usage":{"input":25971,"output":153,"cacheRead":39233,"cacheWrite":0,"reasoning":0,"contextUsed":null,"contextWindow":null},"cost":{"usd":null,"source":"unknown"},"scope":"turn"}
+{"type":"turn.completed","turnId":"turn-1","reason":"done","error":null}

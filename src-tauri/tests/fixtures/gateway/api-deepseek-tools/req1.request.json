@@ -1,0 +1,44 @@
+{
+  "max_tokens": 2000,
+  "messages": [
+    {
+      "content": "You are a coding agent in a small project. Read files with the tool before answering. Answer briefly in Chinese.",
+      "role": "system"
+    },
+    {
+      "content": "notes.txt 里有几条以「- 」开头的条目？",
+      "role": "user"
+    }
+  ],
+  "model": "deepseek-flash",
+  "reasoning_effort": "high",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "thinking": {
+    "type": "enabled"
+  },
+  "tools": [
+    {
+      "function": {
+        "description": "Read a text file in the project. Returns its lines with line numbers.",
+        "name": "read_file",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Path relative to the project root",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

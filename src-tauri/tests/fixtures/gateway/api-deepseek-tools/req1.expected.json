@@ -1,0 +1,40 @@
+{
+  "events": [
+    {
+      "callId": "call_00_ET_gjfQtm6evWu3j9Mhb9Wf6667",
+      "name": "read_file",
+      "type": "tool_call_started"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.00007575
+    },
+    "message": {
+      "parts": [
+        {
+          "callId": "call_00_ET_gjfQtm6evWu3j9Mhb9Wf6667",
+          "input": {
+            "path": "notes.txt"
+          },
+          "name": "read_file",
+          "signature": null,
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "deepseek-flash",
+    "stop": "tool_use",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": null,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 349,
+      "output": 39,
+      "reasoning": 0
+    }
+  }
+}

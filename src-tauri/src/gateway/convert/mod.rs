@@ -149,9 +149,67 @@ pub fn short(text: &str, max: usize) -> String {
     }
 }
 
+pub mod acp;
 pub mod anthropic;
+pub mod chat;
 pub mod claude_code;
 pub mod codex;
+pub mod gemini;
+pub mod muse;
+pub mod responses;
+
+// ───────────────────────── 裸模型的流 ─────────────────────────
+
+use super::event::{Cost, TokenUsage};
+use super::{ModelEvent, ModelRequest, ModelResponse, Part};
+
+/// 一家 API 的一次流式回答：一条一条喂 SSE 的 `data:`（已解析成 JSON），`finish` 拿整条回答。
+/// 四种线协议各一个（`anthropic`、`responses`、`chat`、`gemini`），夹具测试和真请求用同一份。
+pub trait WireStream: Send {
+    fn feed(&mut self, data: &Value) -> Vec<ModelEvent>;
+    /// 见到结束标记了，可以不再读（Gemini 没有结束标记，读到流尾为止）。
+    fn done(&self) -> bool {
+        false
+    }
+    /// 流读完：整条回答。流里报过错、没有完成原因（中途断了）、工具参数不完整，返回 `Err`（一句中文）。
+    fn finish(self: Box<Self>) -> Result<ModelResponse, String>;
+}
+
+/// 按目录里的价格算花费；没这个模型或没价格：未知。
+pub(crate) fn priced(catalog_id: Option<&str>, region: Option<&str>, usage: &TokenUsage) -> Cost {
+    catalog_id
+        .and_then(|id| super::catalog::catalog().model(id))
+        .map(|m| m.cost(usage, region))
+        .unwrap_or_else(Cost::unknown)
+}
+
+/// 系统提示拼成一段（不分块的线协议用）。
+pub(crate) fn system_text(request: &ModelRequest) -> String {
+    request
+        .system
+        .iter()
+        .map(|b| b.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// 工具调用 id → 工具名（Gemini 的 `functionResponse` 要带名字）。
+pub(crate) fn tool_names(request: &ModelRequest) -> std::collections::HashMap<String, String> {
+    request
+        .messages
+        .iter()
+        .flat_map(|m| &m.parts)
+        .filter_map(|p| match p {
+            Part::ToolCall { call_id, name, .. } => Some((call_id.clone(), name.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `a - b`，两个都有才算；结果不为负。
+pub(crate) fn minus(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    a.map(|a| a.saturating_sub(b.unwrap_or(0)))
+}
 
 #[cfg(test)]
 pub(crate) mod fixtures {

@@ -1,0 +1,50 @@
+{
+  "events": [
+    {
+      "text": "有",
+      "type": "text_delta"
+    },
+    {
+      "text": " ",
+      "type": "text_delta"
+    },
+    {
+      "text": "3",
+      "type": "text_delta"
+    },
+    {
+      "text": " 条",
+      "type": "text_delta"
+    },
+    {
+      "text": "。",
+      "type": "text_delta"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.000021400000000000002
+    },
+    "message": {
+      "parts": [
+        {
+          "text": "有 3 条。",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "gpt-6-luna",
+    "stop": "end_turn",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 169,
+      "output": 9,
+      "reasoning": 0
+    }
+  }
+}

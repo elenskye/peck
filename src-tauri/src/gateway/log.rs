@@ -25,6 +25,8 @@ struct Inner {
     out: Out,
     /// 存日志失败只报一次，事件照常发给界面。
     store_failed: std::sync::atomic::AtomicBool,
+    /// `quota.updated` 顺手写进顶栏 QUOTA 的额度卡片（用非默认账号跑时关掉，免得两个账号的额度混在一起）。
+    quota_sync: std::sync::atomic::AtomicBool,
 }
 
 impl EventSink {
@@ -50,6 +52,7 @@ impl EventSink {
                 store,
                 out: Box::new(out),
                 store_failed: Default::default(),
+                quota_sync: std::sync::atomic::AtomicBool::new(true),
             }),
             subagent_id: None,
         }
@@ -83,6 +86,12 @@ impl EventSink {
         &self.inner.engine
     }
 
+    /// 这次用的不是 CLI 的默认账号：引擎报的额度不写进顶栏 QUOTA 的卡片（卡片只认默认账号）。
+    pub fn without_quota_sync(self) -> Self {
+        self.inner.quota_sync.store(false, Ordering::SeqCst);
+        self
+    }
+
     pub fn emit(&self, body: EventBody) -> AgentEvent {
         self.emit_raw(body, None)
     }
@@ -112,6 +121,13 @@ impl EventSink {
             if let Err(error) = saved {
                 if !self.inner.store_failed.swap(true, Ordering::SeqCst) {
                     eprintln!("Peck 事件日志写不进去（{}）：{error}", self.inner.run_id);
+                }
+            }
+            if let EventBody::QuotaUpdated { provider, windows } = &event.body {
+                if self.inner.quota_sync.load(Ordering::SeqCst) {
+                    if let Ok(s) = store.lock() {
+                        let _ = s.usage_record_gateway_quota(provider, windows);
+                    }
                 }
             }
         }
@@ -213,6 +229,28 @@ mod tests {
         let root = std::env::temp_dir().join(format!("peck-gw-log-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         Arc::new(Mutex::new(Store::open(&root.join("peck.db")).unwrap()))
+    }
+
+    #[test]
+    fn engine_quota_reaches_the_quota_cards_only_for_the_default_account() {
+        use crate::gateway::event::QuotaWindow;
+        let store = temp_store();
+        let windows = vec![
+            QuotaWindow { label: "5 小时".into(), used_percent: Some(6.0), resets_at: Some(1) },
+            QuotaWindow { label: "每周".into(), used_percent: Some(2.0), resets_at: Some(2) },
+        ];
+        let other = EventSink::new("r-other", None, "muse", Some(store.clone()), |_| {}).without_quota_sync();
+        other.emit(EventBody::QuotaUpdated { provider: "muse".into(), windows: windows.clone() });
+        assert!(store.lock().unwrap().usage_snapshots().unwrap().get("muse-code").is_none(), "非默认账号不写");
+
+        let sink = EventSink::new("r-default", None, "muse", Some(store.clone()), |_| {});
+        sink.emit(EventBody::QuotaUpdated { provider: "muse".into(), windows });
+        let cards = store.lock().unwrap().usage_snapshots().unwrap();
+        let card = cards.get("muse-code").expect("Muse 的卡片");
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.windows.len(), 2);
+        assert_eq!(card.windows[0].window_duration_mins, Some(300));
+        assert_eq!(card.windows[1].used_percent, Some(2.0));
     }
 
     #[test]

@@ -52,6 +52,25 @@ impl ClaudeCodeConverter {
         json!({"type": "control_response", "response": {"subtype": "success", "request_id": request_id, "response": response}})
     }
 
+    /// 回答 `AskUserQuestion`：允许这次调用，答案按问题原文放进 `answers`。
+    pub fn answer_reply(request_id: &str, input: &Value, answer: &str) -> Value {
+        let mut updated = input.clone();
+        let answers: serde_json::Map<String, Value> = input["questions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|q| q["question"].as_str())
+            .map(|q| (q.to_string(), json!(answer)))
+            .collect();
+        updated["answers"] = Value::Object(answers);
+        Self::approval_reply(request_id, ApprovalDecision::AllowOnce, &updated)
+    }
+
+    /// 打断这一回合（stream-json 的控制请求）。
+    pub fn interrupt_request(request_id: &str) -> Value {
+        json!({"type": "control_request", "request_id": request_id, "request": {"subtype": "interrupt"}})
+    }
+
     fn rel(&self, path: &str) -> String {
         relative(path, self.cwd.as_deref())
     }
@@ -447,6 +466,27 @@ impl LineConverter for ClaudeCodeConverter {
             "control_request" => {
                 let request = &raw["request"];
                 match request["subtype"].as_str() {
+                    Some("can_use_tool") if request["tool_name"] == "AskUserQuestion" => {
+                        // 模型要问站主：ASK 卡片。回答由引擎那一层放进这次审批的 `updatedInput`。
+                        let questions = request["input"]["questions"].as_array().cloned().unwrap_or_default();
+                        let first = questions.first().cloned().unwrap_or(Value::Null);
+                        out.push(
+                            EventBody::UserInputRequested {
+                                request_id: raw["request_id"].as_str().unwrap_or("").into(),
+                                question: questions
+                                    .iter()
+                                    .filter_map(|q| q["question"].as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                                options: first["options"]
+                                    .as_array()
+                                    .map(|o| o.iter().filter_map(|x| x["label"].as_str().map(str::to_string)).collect())
+                                    .unwrap_or_default(),
+                                free_text: true,
+                            }
+                            .into(),
+                        );
+                    }
                     Some("can_use_tool") => {
                         let tool = request["tool_name"].as_str().unwrap_or("");
                         let input = &request["input"];
