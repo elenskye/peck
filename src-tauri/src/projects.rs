@@ -116,6 +116,7 @@ impl Store {
             params![from.id, to.id],
         )?;
         tx.execute("DELETE FROM harness_allow WHERE workspace_id=?1", [&from.id])?;
+        tx.execute("UPDATE memories SET workspace_id=?2 WHERE workspace_id=?1", params![from.id, to.id])?;
         tx.execute("DELETE FROM workspaces WHERE id=?1", [&from.id])?;
         tx.commit()?;
         Ok(())
@@ -143,7 +144,10 @@ pub fn workspace_update(
         }
         ws.name = name.chars().take(80).collect();
     }
-    if let Some(settings) = settings {
+    if let Some(mut settings) = settings {
+        // 验证命令的两样只由 verify_save / verify_dismiss 改；界面改别的设置时手里那份可能是旧的。
+        settings.verify_dismissed = ws.settings.verify_dismissed;
+        settings.verify_approved = ws.settings.verify_approved.clone();
         ws.settings = settings;
     }
     db.save_workspace(&ws).map_err(|e| e.to_string())?;

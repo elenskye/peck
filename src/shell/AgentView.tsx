@@ -1,7 +1,7 @@
 // 一次任务的过程（Peck 循环和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, Control } from "@/lib/agentEvents";
-import { foldEvents, groupSpan, groupSummary, spillPath, usageText, type ApprovalView, type AskView, type ToolView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, foldEvents, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type ToolView, type VerifyCheckView, type VerifyRoundView, type ViewItem } from "@/lib/agentView";
 import { ipc } from "@/lib/ipc";
 import { cn, span } from "@/lib/utils";
 import { Btn, Icon, ModHead, useNow } from "@/ui";
@@ -15,9 +15,13 @@ interface Props {
   onControl: (control: Control) => Promise<void>;
   onShowFile: (path: string) => void;
   say: (message: unknown) => void;
+  /** 这一次的任务 id（「想记住这几条」批完往事件里追加一条用）。 */
+  runId?: string;
+  /** 往这次的事件里追加一条（批完记忆）。 */
+  onAppend?: (event: AgentEvent) => void;
 }
 
-export const AgentView: React.FC<Props> = ({ events, running, who, onControl, onShowFile, say }) => {
+export const AgentView: React.FC<Props> = ({ events, running, who, onControl, onShowFile, say, runId, onAppend }) => {
   // 任务已经不在跑（App 退出过、引擎没起来）却没有收尾事件：照收尾看，卡片不再能点、工具不再转。
   const view = useMemo(() => foldEvents(events, !running), [events, running]);
   const now = useNow(running);
@@ -30,6 +34,7 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
       {view.items.map((item) => <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} />)}
       {view.approvals.map((a) => <ApprovalCard key={a.requestId} approval={a} who={who} onControl={onControl} say={say} />)}
       {view.asks.map((a) => <AskCard key={a.requestId} ask={a} who={who} onControl={onControl} say={say} />)}
+      {view.memory && view.ended && !running && runId && <MemoryCard runId={runId} notes={view.memory.notes} reviewed={view.memory.reviewed} onAppend={onAppend} say={say} />}
       {view.usage && <p className="agent-usage t-code">{usageText(view.usage)}</p>}
     </div>
   );
@@ -56,7 +61,158 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
       return <p className={cn("agent-line", item.level === "warn" && "is-warn")}><Icon name="bang" size={12} />{item.text}</p>;
     case "error":
       return <div className="pk-bar pk-bar--bad task-bar sel"><Icon name="x" /><span className="pk-bar-text">{item.text}</span></div>;
+    case "compacted":
+      return <Compacted item={item} />;
+    case "verify":
+      return <VerifyCard checks={item.checks} round={item.round} reused={item.reused} now={now} />;
+    case "background":
+      return <BackgroundLine bg={item.bg} />;
   }
+};
+
+/** 自动压缩的一步：一行；交接摘要能点开看原文。 */
+const Compacted: React.FC<{ item: Extract<ViewItem, { kind: "compacted" }> }> = ({ item }) => {
+  const [open, setOpen] = useState(false);
+  const line = <>压缩上下文 · {COMPACT_STEP[item.step] ?? item.step}：{item.text} · {tokens(item.before)} → {tokens(item.after)}</>;
+  if (!item.summary) return <p className="agent-line agent-compact"><Icon name="collapse" size={12} />{line}</p>;
+  return (
+    <div className="fold agent-compact">
+      <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name={open ? "triD" : "triR"} size={12} />
+        <span>{line}</span>
+      </button>
+      {open && <Md text={item.summary} className="agent-summary sel" />}
+    </div>
+  );
+};
+
+const VERIFY_ICON: Record<VerifyCheckView["status"], React.ReactNode> = {
+  running: <span className="pk-run" />,
+  passed: <Icon name="check" size={12} />,
+  failed: <Icon name="x" size={12} />,
+  stale: <Icon name="undo" size={12} />,
+  cancelled: <Icon name="stop" size={12} />,
+};
+
+const VERIFY_WORD: Record<VerifyCheckView["status"], string> = { running: "在跑", passed: "过了", failed: "没过", stale: "过期了", cancelled: "停了" };
+
+function roundLine(r: VerifyRoundView): { text: string; cls: string } {
+  if (r.outcome === "passed") return { text: r.goal ? "目标达到了，不再叫模型" : "都过了，不再叫模型", cls: "is-ok" };
+  if (r.outcome === "fixing") return { text: `没过，交回模型修（第 ${r.attempt}/${r.maxAttempts} 次）`, cls: "is-warn" };
+  return { text: r.reason ?? "停下了", cls: "is-bad" };
+}
+
+/** 验证卡片：Peck 替模型跑的验证命令（改了文件后台跑的、模型停下后收尾跑的）。 */
+const VerifyCard: React.FC<{ checks: VerifyCheckView[]; round?: VerifyRoundView; reused?: boolean; now: number }> = ({ checks, round, reused, now }) => {
+  const live = checks.some((c) => c.status === "running");
+  // 收尾时结果是现成的（上面后台已经跑过）：只写一行结论，不再把同一条列一遍。
+  if (round && reused && round.outcome === "passed") {
+    return (
+      <p className="agent-line agent-verify-line is-ok">
+        <Icon name="check" size={12} />
+        <span className="t-label">{round.goal ? "GOAL" : "VERIFY"}</span>
+        {roundLine(round).text} · {checks.map((c) => c.name).join("、")}
+      </p>
+    );
+  }
+  const failed = checks.some((c) => c.status === "failed");
+  const background = !round && checks.every((c) => c.trigger === "edit");
+  const head = round ? roundLine(round) : null;
+  return (
+    <section className={cn("pk-mod pk-mod--sunk agent-verify", round?.outcome === "passed" && "is-ok", (round?.outcome === "stopped" || (failed && !live)) && "is-bad")} aria-label="验证">
+      <div className="agent-verify-head">
+        <span className="t-label">{round?.goal ? "GOAL" : "VERIFY"}</span>
+        <span className="agent-verify-note">{background ? "改了文件，后台先跑一遍" : head ? head.text : "模型停下了，收尾前看一遍"}</span>
+        {head && <Icon name={round!.outcome === "passed" ? "check" : round!.outcome === "fixing" ? "undo" : "bang"} size={12} className={head.cls} />}
+      </div>
+      <ol className="agent-calls">{checks.map((c) => <VerifyRow key={c.checkId} check={c} now={now} />)}</ol>
+    </section>
+  );
+};
+
+const VerifyRow: React.FC<{ check: VerifyCheckView; now: number }> = ({ check, now }) => {
+  const [open, setOpen] = useState(check.status === "failed");
+  // 在跑时挂上的一行，跑完没过也自己展开。
+  useEffect(() => { if (check.status === "failed") setOpen(true); }, [check.status]);
+  const kind = check.status === "passed" ? "ok" : check.status === "running" ? "run" : check.status === "failed" ? "fail" : "todo";
+  const time = check.status === "running" ? span(now - check.startedAt) : check.durationMs != null ? span(check.durationMs) : "";
+  return (
+    <li className={cn("pk-step", `pk-step--${kind}`, "agent-call")}>
+      <span className="pk-step-node">{VERIFY_ICON[check.status]}</span>
+      <div className="step-body">
+        <button type="button" className="step-head" aria-expanded={open} onClick={() => setOpen(!open)} disabled={!check.output}>
+          <b className="pk-step-name agent-call-title">{check.name}</b>
+          <span className="pk-step-time">{time}</span>
+        </button>
+        <p className="pk-step-desc">
+          <span className="t-code">{check.command}</span>
+          <span className={cn(check.status === "failed" && "is-bad")}>{VERIFY_WORD[check.status]}{check.exitCode != null && check.status === "failed" ? ` · 退出码 ${check.exitCode}` : ""}</span>
+        </p>
+        {open && check.output && (
+          <div className="pk-mod pk-mod--sunk out out--full sel">
+            <pre className="out-lines scroll t-code">{check.output}</pre>
+          </div>
+        )}
+      </div>
+    </li>
+  );
+};
+
+const BackgroundLine: React.FC<{ bg: BackgroundView }> = ({ bg }) => {
+  const who = bg.kind === "server" ? "dev server" : "后台命令";
+  const live = bg.status === "running" && !bg.past;
+  const state = bg.past ? "起过（跨任务在跑，现状看 DEV）" : bg.status === "running" ? "在跑" : bg.status === "stopped" ? "已停" : `结束了${bg.exitCode != null ? ` · 退出码 ${bg.exitCode}` : ""}`;
+  return (
+    <p className={cn("agent-line", bg.status === "exited" && bg.exitCode !== 0 && "is-warn")}>
+      {live ? <span className="pk-run" /> : <Icon name={bg.status === "stopped" ? "stop" : "term"} size={12} />}
+      {who}「{bg.name}」{state} · <span className="t-code">{bg.command}</span>
+    </p>
+  );
+};
+
+/** 任务结束：模型想记住的几条，站主勾了 SAVE 才存进这个项目的记忆。 */
+const MemoryCard: React.FC<{ runId: string; notes: string[]; reviewed: { saved: string[]; skipped: string[] } | null; onAppend?: (e: AgentEvent) => void; say: (m: unknown) => void }> = ({ runId, notes, reviewed, onAppend, say }) => {
+  const [keep, setKeep] = useState<Set<number>>(() => new Set(notes.map((_, i) => i)));
+  const [sent, setSent] = useState(false);
+  if (reviewed) {
+    return (
+      <p className="agent-line">
+        <Icon name={reviewed.saved.length ? "check" : "x"} size={12} />
+        {reviewed.saved.length ? `记住了 ${reviewed.saved.length} 条（项目设置里能看、能删）` : "这次没记"}
+      </p>
+    );
+  }
+  const decide = async (all: boolean) => {
+    setSent(true);
+    const kept = all ? notes.filter((_, i) => keep.has(i)) : [];
+    const skipped = notes.filter((n) => !kept.includes(n));
+    try { onAppend?.(await ipc.memoryReview(runId, kept, skipped)); } catch (e) { setSent(false); say(e); }
+  };
+  return (
+    <section className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="想记住这几条">
+      <Edge />
+      <div className="pk-anim-reveal">
+        <ModHead label="MEMORY" note="想记住这几条" />
+        <ul className="checklist agent-memory sel">
+          {notes.map((n, i) => (
+            <li key={i}>
+              <button type="button" className={cn("pk-check", keep.has(i) && "is-on")} role="checkbox" aria-checked={keep.has(i)} aria-label={n}
+                onClick={() => setKeep((prev) => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next; })}>
+                <Icon name="check" size={12} />
+              </button>
+              <span>{n}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="pk-ask-d">勾了的存进这个项目的记忆，以后每次发任务都带上；不要的不记。</p>
+        <div className="pk-ask-foot">
+          <Btn v="ghost" disabled={sent} onClick={() => void decide(false)}>SKIP</Btn>
+          <span className="grow" />
+          <Btn v="primary" disabled={sent || keep.size === 0} onClick={() => void decide(true)}>SAVE {keep.size}</Btn>
+        </div>
+      </div>
+    </section>
+  );
 };
 
 function decisionWord(d?: ApprovalDecision, by?: string): string {

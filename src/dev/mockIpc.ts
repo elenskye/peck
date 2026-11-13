@@ -12,9 +12,9 @@ import {
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
-import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
+import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type DemoCheck, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, HarnessRunArgs, OneshotArgs, SpendOverview, SpendPoint } from "@/lib/ipc";
+import type { AllowRule, BgInfo, HarnessRunArgs, MemoryNote, OneshotArgs, SpendOverview, SpendPoint, VerifyConfig, VerifyState } from "@/lib/ipc";
 import type { ApiConfig, ApiRole, ApiStatus, ApiTask } from "@/lib/api";
 import type {
   AgentInfo,
@@ -655,7 +655,10 @@ export const mockIpc = {
     const label = `Peck · ${entry?.label ?? model}`;
     const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", "peck", label);
     const files = (filesState[workspaceId] ??= {});
-    const demo = peckDemo(runId, files);
+    const verify = mockVerify(workspaceId);
+    const checks: DemoCheck[] = verify.config?.check.map((c) => ({ name: c.name, run: c.run })) ?? [];
+    const project = (memoryState[workspaceId]?.length ?? 0) > 0 || "AGENTS.md" in files || "CLAUDE.md" in files;
+    const demo = peckDemo(runId, files, args.prompt, { window: entry?.contextWindow ?? 1_000_000, checks, goal: args.goal?.[0] ?? null, project });
     const header: ReplayEvent[] = [
       { type: "session.started", engine: "peck", model, caps: PECK_CAPS, tools: ["list_directory", "read_file", "search_text", "find_files", "write_file", "write_patch", "bash_run", "update_plan", "ask_user"], mcp: [], sessionRef: `peck-${args.sessionId}`, version: null },
       { type: "turn.started", turnId: `turn-${runId}` },
@@ -697,7 +700,144 @@ export const mockIpc = {
     const now = new Date();
     return { monthUsd: mockMonthSpend, since: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) };
   },
+
+  // ── 记忆（v0.6）──
+  async memoryList(workspaceId: string): Promise<MemoryNote[]> {
+    return structuredClone(memoryState[workspaceId] ?? []);
+  },
+  async memoryDelete(workspaceId: string, id: string): Promise<MemoryNote[]> {
+    memoryState[workspaceId] = (memoryState[workspaceId] ?? []).filter((m) => m.id !== id);
+    return structuredClone(memoryState[workspaceId]);
+  },
+  async memoryReview(runId: string, keep: string[], skip: string[]): Promise<AgentEvent> {
+    const log = agentEventsState[runId];
+    if (!log) throw new Error("没找到这个任务。");
+    if (log.some((e) => e.type === "memory.reviewed")) throw new Error("这几条已经批过了。");
+    const sessionId = Object.keys(runsState).find((sid) => runsState[sid].some((r) => r.id === runId));
+    const workspaceId = sessionId ? workspaceOfSession(sessionId) : "";
+    const list = (memoryState[workspaceId] ??= []);
+    const saved: string[] = [];
+    for (const text of keep.map((t) => t.trim()).filter(Boolean)) {
+      if (list.some((m) => m.text === text)) continue;
+      list.push({ id: `mem-${++memoryCounter}`, text, sourceRun: runId, createdAt: Date.now() });
+      saved.push(text);
+    }
+    const event = { type: "memory.reviewed", saved, skipped: skip, seq: log.length, at: Date.now() } as AgentEvent;
+    log.push(event);
+    return structuredClone(event);
+  },
+
+  // ── 验证和后台（v0.6）──
+  async verifyGet(workspaceId: string): Promise<VerifyState> {
+    return structuredClone(mockVerify(workspaceId));
+  },
+  async verifySave(workspaceId: string, text: string): Promise<VerifyState> {
+    const config = parseVerifyToml(text);
+    verifyState[workspaceId] = { exists: true, text, config, error: null, guessed: null, dismissed: verifyState[workspaceId]?.dismissed ?? false, approved: true };
+    filesState[workspaceId] = { ...(filesState[workspaceId] ?? {}), ".peck/verify.toml": text };
+    return structuredClone(verifyState[workspaceId]);
+  },
+  async verifyDismiss(workspaceId: string): Promise<VerifyState> {
+    const v = mockVerify(workspaceId);
+    v.dismissed = true;
+    return structuredClone(v);
+  },
+  async backgroundList(workspaceId: string): Promise<BgInfo[]> {
+    return structuredClone(Object.values(serverState[workspaceId] ?? {}));
+  },
+  async backgroundOutput(id: string): Promise<string> {
+    const s = Object.values(serverState).flatMap((m) => Object.values(m)).find((b) => b.id === id);
+    if (!s) throw new Error("这个后台命令不在了。");
+    return `  VITE v6.4.5  ready in 312 ms\n\n  ➜  Local:   http://localhost:5173/\n`;
+  },
+  async backgroundStop(id: string): Promise<void> {
+    for (const m of Object.values(serverState)) for (const b of Object.values(m)) if (b.id === id && b.status === "running") { b.status = "stopped"; b.endedAt = Date.now(); }
+  },
+  async serverStart(workspaceId: string, name: string): Promise<BgInfo> {
+    const server = mockVerify(workspaceId).config?.server.find((x) => x.name === name);
+    if (!server) throw new Error(`verify.toml 里没有叫「${name}」的 server。`);
+    const running = serverState[workspaceId]?.[name];
+    if (running?.status === "running") return structuredClone(running);
+    const info: BgInfo = { id: `srv-${name}-${++memoryCounter}`, name, command: server.run, kind: "server", status: "running", exitCode: null, ready: false, startedAt: Date.now(), endedAt: null, owner: null, log: `/mock/harness-output/servers/${name}.log` };
+    (serverState[workspaceId] ??= {})[name] = info;
+    window.setTimeout(() => { info.ready = true; }, 1500);
+    return structuredClone(info);
+  },
 };
+
+// ── 记忆、验证命令、dev server（v0.6，演示）──
+let memoryCounter = 0;
+const memoryState: Record<string, MemoryNote[]> = {
+  "ws-peck": [
+    { id: "mem-a", text: "提交说明照站主的写法：v<版本>: <一句小写英文>", sourceRun: "run-14", createdAt: Date.now() - 5 * 86_400_000 },
+    { id: "mem-b", text: "界面文案用中文，专有名词保留英文（Muse、Grok、API、Key）", sourceRun: null, createdAt: Date.now() - 2 * 86_400_000 },
+  ],
+};
+const PECK_VERIFY = `# Peck 的验证命令：模型改了文件，Peck 在后台替它跑；模型停下时没过就把失败交回去修（最多 3 次）。
+
+[[check]]
+name = "check"
+run = "pnpm check"
+when = ["**/*.{ts,tsx}"]
+
+[[check]]
+name = "cargo-test"
+run = "cargo test --manifest-path src-tauri/Cargo.toml"
+when = ["**/*.rs", "**/Cargo.toml"]
+timeout = 600
+
+[[server]]
+name = "dev"
+run = "pnpm dev"
+ready = "Local:"
+autostart = false
+`;
+const NOTEBOOK_GUESS = `# Peck 的验证命令：模型改了文件，Peck 在后台替它跑；模型停下时没过就把失败交回去修（最多 3 次）。
+
+[[check]]
+name = "check"
+run = "pnpm check"
+when = ["**/*.{ts,tsx,js,jsx,mjs,cjs,vue,svelte,css}"]
+
+[[check]]
+name = "test"
+run = "pnpm test"
+when = ["**/*.{ts,tsx,js,jsx,mjs,cjs,vue,svelte,css}"]
+
+[[server]]
+name = "dev"
+run = "pnpm dev"
+autostart = false
+`;
+const verifyState: Record<string, VerifyState> = {
+  "ws-peck": { exists: true, text: PECK_VERIFY, config: parseVerifyToml(PECK_VERIFY), error: null, guessed: null, dismissed: false, approved: true },
+  "ws-notebook": { exists: false, text: null, config: null, error: null, guessed: NOTEBOOK_GUESS, dismissed: false, approved: false },
+};
+const serverState: Record<string, Record<string, BgInfo>> = {};
+
+function mockVerify(workspaceId: string): VerifyState {
+  return (verifyState[workspaceId] ??= { exists: false, text: null, config: null, error: null, guessed: null, dismissed: false, approved: false });
+}
+
+/** 演示用的极简 TOML：[[check]]、[[server]]，值是字符串、字符串数组、数字、true / false。 */
+function parseVerifyToml(text: string): VerifyConfig {
+  const config: VerifyConfig = { check: [], server: [] };
+  let cur: Record<string, unknown> | null = null;
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) return;
+    if (line === "[[check]]") { cur = { name: "", run: "" }; config.check.push(cur as never); return; }
+    if (line === "[[server]]") { cur = { name: "", run: "", autostart: false }; config.server.push(cur as never); return; }
+    const m = line.match(/^(\w+)\s*=\s*(.+)$/);
+    if (!m || !cur) throw new Error(`verify.toml 写得不对：第 ${i + 1} 行看不懂。`);
+    try { cur[m[1]] = JSON.parse(m[2]); } catch { throw new Error(`verify.toml 写得不对：第 ${i + 1} 行的值看不懂。`); }
+  });
+  for (const c of [...config.check, ...config.server]) {
+    if (!c.name?.trim()) throw new Error("每一条都要有名字。");
+    if (!c.run?.trim()) throw new Error(`「${c.name}」没写 run（要跑的命令）。`);
+  }
+  return config;
+}
 
 // ── 统一事件的任务（CLI 引擎、Peck 循环、ONE SHOT）：回放 ──
 const agentRuns = new Map<string, { waiting: null | ((c: Control) => void); stopped: boolean }>();
@@ -769,8 +909,10 @@ async function replayAgent(
   let spent = 0;
   let text = "";
   let limit: string | null = null;
+  // 剧本自己写了收尾（验证反复失败停下这类）：照它的原因结束。
+  let scripted: { reason: TurnEndReason; error: string | null } | null = null;
   for (const e of header) send(e);
-  for (let i = 0; i < rounds.length && !run.stopped; i++) {
+  for (let i = 0; i < rounds.length && !run.stopped && !scripted; i++) {
     const cap = opts.costCap;
     if (opts.countSpend && cap != null && cap > 0 && mockMonthSpend + spent >= cap) {
       limit = `这个月的 API 花费到了上限（$${cap.toFixed(2)}，已用 $${(mockMonthSpend + spent).toFixed(2)}），没发下一次请求。在设置里调高上限再接着做。`;
@@ -786,6 +928,7 @@ async function replayAgent(
         continue;
       }
       send(ev);
+      if (ev.type === "turn.completed") { scripted = { reason: ev.reason, error: ev.error ?? null }; break; }
       if (ev.type === "usage.updated" && ev.cost.usd != null) spent += ev.cost.usd;
       if (ev.type === "message.completed") text = ev.text;
       if (ev.type === "tool_call.completed") for (const d of ev.diff ?? []) diffs.set(d.path, d);
@@ -807,7 +950,8 @@ async function replayAgent(
       }
     }
   }
-  const reason: TurnEndReason = run.stopped ? "interrupted" : limit ? "limit" : "done";
+  const reason: TurnEndReason = run.stopped ? "interrupted" : scripted ? scripted.reason : limit ? "limit" : "done";
+  if (scripted && !limit) limit = scripted.error;
   if (!ended || run.stopped) send({ type: "turn.completed", turnId: `turn-${runId}`, reason, error: limit });
   if (opts.countSpend) mockMonthSpend += spent;
   agentRuns.delete(runId);

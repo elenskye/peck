@@ -27,6 +27,12 @@ pub struct Workspace {
 pub struct ProjectSettings {
     pub who: Option<String>,
     pub permission: Option<String>,
+    /// 站主不要 Peck 猜的验证命令（v0.6）：中栏不再问；项目设置里照样能写 `.peck/verify.toml`。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub verify_dismissed: bool,
+    /// 站主确认过的 `.peck/verify.toml`（原文的 md5）。项目自带的、模型改过的，确认前不替模型跑、不起 server。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify_approved: Option<String>,
 }
 
 /// Normalize a workspace path string (canonicalizing when possible, stripping `/private` prefix on macOS tmp if needed for display consistency).

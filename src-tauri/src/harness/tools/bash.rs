@@ -187,15 +187,40 @@ pub async fn run(
     ctx: &ToolContext,
     input: &serde_json::Value,
     sandbox: Sandbox,
-    mut cancel: watch::Receiver<bool>,
-    mut on_output: impl FnMut(String),
+    cancel: watch::Receiver<bool>,
+    on_output: impl FnMut(String),
 ) -> Result<BashOutcome, String> {
     let command = str_arg(input, "command").map(str::trim).filter(|c| !c.is_empty()).ok_or("缺 command。")?.to_string();
     let cwd = resolve(&ctx.root, str_arg(input, "cwd").unwrap_or("."))?;
-    if !cwd.is_dir() {
-        return Err(format!("{} 不是文件夹。", ctx.rel(&cwd)));
-    }
     let timeout = Duration::from_secs(u64_arg(input, "timeout_sec").unwrap_or(DEFAULT_TIMEOUT).clamp(1, MAX_TIMEOUT));
+    run_command(ctx, Exec { command: &command, cwd: &cwd, timeout, sandbox, keep_bytes: KEEP_BYTES, stream_bytes: STREAM_BYTES }, cancel, on_output).await
+}
+
+/// 一次命令怎么跑：`bash_run` 是 120 秒、收进内存；后台命令（v0.6）不限时、只往外流（Peck 自己存）。
+pub struct Exec<'a> {
+    pub command: &'a str,
+    /// 已经解析过、在项目里的绝对路径。
+    pub cwd: &'a Path,
+    pub timeout: Duration,
+    pub sandbox: Sandbox,
+    /// 内存里最多收多少（`BashOutcome::output`）。
+    pub keep_bytes: usize,
+    /// 经 `on_output` 往外流的最多多少。
+    pub stream_bytes: usize,
+}
+
+/// 跑一条命令（`bash_run`、后台命令、验证命令共用）：沙箱、环境、进程组都一样。
+pub async fn run_command(
+    ctx: &ToolContext,
+    exec: Exec<'_>,
+    mut cancel: watch::Receiver<bool>,
+    mut on_output: impl FnMut(String),
+) -> Result<BashOutcome, String> {
+    let Exec { command, cwd, timeout, sandbox, keep_bytes, stream_bytes } = exec;
+    let command = command.to_string();
+    if !cwd.is_dir() {
+        return Err(format!("{} 不是文件夹。", ctx.rel(cwd)));
+    }
     std::fs::create_dir_all(ctx.runtime_dir.join("home")).map_err(|e| format!("建不了命令的 HOME：{e}"))?;
     let runtime = ctx.runtime_dir.canonicalize().map_err(|e| e.to_string())?;
     let home = runtime.join("home");
@@ -212,7 +237,7 @@ pub async fn run(
         c.args(["-c", &command]);
         c
     };
-    cmd.current_dir(&cwd)
+    cmd.current_dir(cwd)
         .env_clear()
         .envs(ctx.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .env("HOME", &home)
@@ -242,6 +267,7 @@ pub async fn run(
     let started = Instant::now();
     let mut child = cmd.spawn().map_err(|e| format!("命令起不来：{e}"))?;
     let pgid = child.id();
+    let mut group = crate::process::GroupGuard::new(pgid);
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
     if let Some(out) = child.stdout.take() {
         pump(out, tx.clone());
@@ -258,14 +284,14 @@ pub async fn run(
     let mut pending = String::new();
     let mut last_flush = Instant::now();
     let mut take = |bytes: Vec<u8>, kept: &mut Vec<u8>, dropped: &mut usize, pending: &mut String, streamed: &mut usize| {
-        if kept.len() < KEEP_BYTES {
-            let room = KEEP_BYTES - kept.len();
+        if kept.len() < keep_bytes {
+            let room = keep_bytes - kept.len();
             kept.extend_from_slice(&bytes[..bytes.len().min(room)]);
             *dropped += bytes.len().saturating_sub(room);
         } else {
             *dropped += bytes.len();
         }
-        if *streamed < STREAM_BYTES {
+        if *streamed < stream_bytes {
             let text = decoder.push(&bytes);
             *streamed += text.len();
             pending.push_str(&text);
@@ -286,6 +312,8 @@ pub async fn run(
         }
         tokio::select! {
             biased;
+            // 攒着的输出没人催也按时送出去（安静的常驻进程，第一行不能等到它退出）。
+            _ = tokio::time::sleep(Duration::from_millis(120)), if !pending.is_empty() => {}
             changed = cancel.changed(), if !cancelled => {
                 if changed.is_err() || *cancel.borrow() {
                     cancelled = true;
@@ -316,6 +344,7 @@ pub async fn run(
         }
     }
     crate::process::terminate_process_group(pgid).await;
+    group.disarm();
     let _ = child.kill().await;
     if exit.is_none() {
         exit = child.wait().await.ok();
@@ -446,6 +475,21 @@ mod tests {
         let out = run(&ctx, &json!({"command":"sleep 30 & echo started"}), Sandbox::Project, never(), |_| {}).await.unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn dropping_the_command_future_ends_the_whole_group() {
+        // 验证命令被作废时是直接丢掉 future（abort）：孙进程也不能留下。
+        let p = TempProject::new();
+        let ctx = p.ctx(PermissionLevel::Edit);
+        let task = tokio::spawn(async move {
+            run(&ctx, &json!({"command":"(sleep 2; echo late > late.txt) & sleep 30"}), Sandbox::Project, never(), |_| {}).await
+        });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        task.abort();
+        let _ = task.await;
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        assert!(!p.dir.join("late.txt").exists(), "后台子进程跟着结束了");
     }
 
     #[cfg(target_os = "macos")]

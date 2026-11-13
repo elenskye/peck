@@ -316,6 +316,16 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, vertex
             (!content.is_empty()).then(|| json!({"role": role, "content": content}))
         })
         .collect();
+    // 对话的缓存断点（v0.6）：系统提示打了断点时，最后一条站主消息的最后一块也打一个，下一次请求接着它命中缓存。
+    // 系统提示两块 + 这一个，不超过 Messages 的 4 个。
+    let mut messages = messages;
+    if request.system.iter().any(|b| b.cache) {
+        if let Some(last) = messages.last_mut().filter(|m| m["role"] == "user") {
+            if let Some(block) = last["content"].as_array_mut().and_then(|c| c.last_mut()) {
+                block["cache_control"] = json!({"type": "ephemeral"});
+            }
+        }
+    }
     body["messages"] = Value::Array(messages);
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request
@@ -432,6 +442,34 @@ mod tests {
         // 0.10 / 0.50 每百万：599 进、143 出
         let usd = response.cost.usd.unwrap();
         assert!((usd - (599.0 * 0.1 + 143.0 * 0.5) / 1e6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cached_system_also_caches_the_tail_of_the_conversation() {
+        use crate::gateway::{Message, ModelRequest, Role, SystemBlock};
+        let model = catalog().model(MODEL).unwrap();
+        let origin = origin_for(MODEL).unwrap();
+        let mut request = ModelRequest {
+            model: MODEL.into(),
+            system: vec![SystemBlock { text: "a".into(), cache: true }, SystemBlock { text: "b".into(), cache: true }],
+            messages: vec![
+                Message { role: Role::User, parts: vec![Part::Text { text: "一".into() }] },
+                Message { role: Role::Assistant, parts: vec![Part::Text { text: "二".into() }] },
+                Message { role: Role::User, parts: vec![Part::Text { text: "环境".into() }, Part::Text { text: "三".into() }] },
+            ],
+            tools: vec![],
+            thinking: false,
+            effort: None,
+            max_output_tokens: 1024,
+        };
+        let body = encode(&request, model, &origin, false);
+        let marks = body.to_string().matches("cache_control").count();
+        assert_eq!(marks, 3, "系统两块 + 对话最后一块");
+        assert_eq!(body["messages"][2]["content"][1]["cache_control"], json!({"type": "ephemeral"}));
+        assert!(body["messages"][2]["content"][0].get("cache_control").is_none());
+        request.system[0].cache = false;
+        request.system[1].cache = false;
+        assert!(!encode(&request, model, &origin, false).to_string().contains("cache_control"));
     }
 
     #[test]

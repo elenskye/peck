@@ -1,5 +1,5 @@
 // 统一事件（v0.5 Model Gateway 的契约）：和 src-tauri/src/gateway/event.rs、caps.rs、catalog.rs 一一对应。
-// 本地写；云端要加字段先写进 HANDOFF，由本地改两边（Rust 测试会查这里有没有漏掉事件类型）。
+// 改一边就改另一边（Rust 测试会查这里有没有漏掉事件类型）。v0.6 云端加了上下文、记忆、验证、后台几类（两个 Phase 都是云端的）。
 //
 // 用量的口径：input 是没走缓存的输入，cacheRead / cacheWrite 另算，三者相加才是整个提示；
 // output 包括思考，reasoning 只是其中思考的那部分。
@@ -87,6 +87,29 @@ export interface McpServer {
   name: string;
   status: string;
 }
+
+// ── 上下文、验证、后台（v0.6）──
+
+/** system：Peck 的说明和工具；project：项目说明和记忆；conversation：对话和思考；tools：工具的输出。 */
+export interface ContextPart {
+  key: "system" | "project" | "conversation" | "tools" | string;
+  tokens: number;
+}
+
+/** 自动压缩三步：落盘、清旧工具输出、交接摘要。 */
+export type CompactStep = "spill" | "clear" | "summary";
+
+/** edit：改了文件后台先跑；end：模型停下后收尾前跑；goal：目标模式。 */
+export type VerifyTrigger = "edit" | "end" | "goal";
+
+/** stale：跑的时候文件又变了，结果不算。 */
+export type VerifyStatus = "passed" | "failed" | "stale" | "cancelled";
+
+/** passed：都过了不再叫模型；fixing：交回模型修；stopped：停下。 */
+export type VerifyOutcome = "passed" | "fixing" | "stopped";
+
+export type BackgroundKind = "command" | "server";
+export type BackgroundStatus = "running" | "exited" | "stopped";
 
 // ── 能力标记（caps.rs）──
 
@@ -184,6 +207,16 @@ export type EventBody =
   | { type: "subagent.completed"; subagentId: string; status: ToolStatus }
   | { type: "usage.updated"; usage: TokenUsage; cost: Cost; scope: UsageScope }
   | { type: "quota.updated"; provider: string; windows: QuotaWindow[] }
+  // ── 上下文（v0.6）──
+  | { type: "context.updated"; used: number; window?: number | null; compactAt?: number | null; parts: ContextPart[] }
+  | { type: "context.compacted"; step: CompactStep; before: number; after: number; text: string; summary?: string | null }
+  | { type: "memory.proposed"; notes: string[] }
+  | { type: "memory.reviewed"; saved: string[]; skipped: string[] }
+  // ── 验证和后台（v0.6）──
+  | { type: "verify.started"; checkId: string; name: string; command: string; trigger: VerifyTrigger; attempt: number }
+  | { type: "verify.completed"; checkId: string; name: string; status: VerifyStatus; exitCode?: number | null; durationMs?: number | null; output?: string | null }
+  | { type: "verify.round"; attempt: number; maxAttempts: number; outcome: VerifyOutcome; reason?: string | null; goal: boolean }
+  | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
   | { type: "notice"; level: NoticeLevel; text: string }
   | { type: "retry"; attempt: number; delayMs: number; reason: string }
   | { type: "error"; message: string; fatal: boolean }

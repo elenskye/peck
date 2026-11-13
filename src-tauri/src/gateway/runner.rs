@@ -132,10 +132,12 @@ pub(crate) fn start_engine_run(
     } = run;
 
     // 任务记录：和旧的发任务一样占一个号、一个项目一次一个。
-    let (run_id, step_id, workspace, cancel_rx) = {
+    let (run_id, step_id, workspace, cancel_rx, refs) = {
         let mut active = active_runs.lock().map_err(|e| e.to_string())?;
         let mut db = store.lock().map_err(|e| e.to_string())?;
         let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
+        // `@` 进来的旧任务（v0.6）：引擎看到的这一句前面带上那几个任务的经过；任务记录里照旧是站主写的原话。
+        let refs = crate::harness::history::task_refs(&db, &ws.id, &prompt);
         let workspace = PathBuf::from(&ws.path);
         if !workspace.is_dir() {
             return Err("项目文件夹不在了，重新打开一次。".into());
@@ -178,8 +180,9 @@ pub(crate) fn start_engine_run(
                 cancel_handle,
             },
         );
-        (run_id, step_id, workspace, cancel_rx)
+        (run_id, step_id, workspace, cancel_rx, refs)
     };
+    let engine_prompt = if refs.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", refs.join("\n\n")) };
 
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     if let Ok(mut c) = controls().lock() {
@@ -262,7 +265,7 @@ pub(crate) fn start_engine_run(
         let token = peck_mcp.as_ref().map(|m| m.token.clone());
         let task = AgentTask {
             run_id: id.clone(),
-            prompt,
+            prompt: engine_prompt,
             cwd: workspace.clone(),
             permission: level,
             model,

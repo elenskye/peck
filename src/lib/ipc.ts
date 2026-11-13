@@ -341,6 +341,57 @@ export const ipc = {
     if (isMockMode()) return mockIpc.harnessAllowRemove(workspaceId, rule);
     return invoke<AllowRule[]>("harness_allow_remove", { workspaceId, rule });
   },
+  // ── 上下文（v0.6 Phase 7）：记忆 ──
+  /** 这个项目站主批过的记忆。 */
+  async memoryList(workspaceId: string): Promise<MemoryNote[]> {
+    if (isMockMode()) return mockIpc.memoryList(workspaceId);
+    return invoke<MemoryNote[]>("memory_list", { workspaceId });
+  },
+  async memoryDelete(workspaceId: string, id: string): Promise<MemoryNote[]> {
+    if (isMockMode()) return mockIpc.memoryDelete(workspaceId, id);
+    return invoke<MemoryNote[]>("memory_delete", { workspaceId, id });
+  },
+  /** 「想记住这几条」：keep 存进项目记忆，skip 不要；返回追加进事件日志的那条 memory.reviewed。 */
+  async memoryReview(runId: string, keep: string[], skip: string[]): Promise<AgentEvent> {
+    if (isMockMode()) return mockIpc.memoryReview(runId, keep, skip);
+    return invoke<AgentEvent>("memory_review", { runId, keep, skip });
+  },
+
+  // ── 验证和后台（v0.6 Phase 8）──
+  /** .peck/verify.toml：有没有、内容、写错了没有、猜的、站主说过不要没有。 */
+  async verifyGet(workspaceId: string): Promise<VerifyState> {
+    if (isMockMode()) return mockIpc.verifyGet(workspaceId);
+    return invoke<VerifyState>("verify_get", { workspaceId });
+  },
+  /** 校验后写进 .peck/verify.toml。 */
+  async verifySave(workspaceId: string, text: string): Promise<VerifyState> {
+    if (isMockMode()) return mockIpc.verifySave(workspaceId, text);
+    return invoke<VerifyState>("verify_save", { workspaceId, text });
+  },
+  /** 不要猜的那几条：中栏不再问。 */
+  async verifyDismiss(workspaceId: string): Promise<VerifyState> {
+    if (isMockMode()) return mockIpc.verifyDismiss(workspaceId);
+    return invoke<VerifyState>("verify_dismiss", { workspaceId });
+  },
+  /** 这个项目的后台命令和常驻 dev server。 */
+  async backgroundList(workspaceId: string): Promise<BgInfo[]> {
+    if (isMockMode()) return mockIpc.backgroundList(workspaceId);
+    return invoke<BgInfo[]>("background_list", { workspaceId });
+  },
+  async backgroundOutput(id: string): Promise<string> {
+    if (isMockMode()) return mockIpc.backgroundOutput(id);
+    return invoke<string>("background_output", { id });
+  },
+  async backgroundStop(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.backgroundStop(id);
+    return invoke<void>("background_stop", { id });
+  },
+  /** 起 verify.toml 里的一个 dev server（已经在跑就返回它）。 */
+  async serverStart(workspaceId: string, name: string): Promise<BgInfo> {
+    if (isMockMode()) return mockIpc.serverStart(workspaceId, name);
+    return invoke<BgInfo>("server_start", { workspaceId, name });
+  },
+
   /** 换 Dock 里的 App 图标（j2 / a3）。浏览器里不做事。 */
   async appIconSet(icon: "j2" | "a3"): Promise<void> {
     if (isMockMode()) return;
@@ -357,6 +408,43 @@ export interface HarnessRunArgs {
   effort?: string;
   /** 每月花费上限（美元）；空着不管。 */
   costCap?: number | null;
+  /** 目标模式：要过的验证命令的名字（* 是全部）。 */
+  goal?: string[];
+}
+
+/** 站主批过的一条记忆（harness/history.rs）。 */
+export interface MemoryNote { id: string; text: string; sourceRun?: string | null; createdAt: number }
+
+/** .peck/verify.toml（harness/verify.rs）。TOML 里是 [[check]]、[[server]]。 */
+export interface VerifyCheck { name: string; run: string; when?: string[]; timeout?: number | null }
+export interface VerifyServer { name: string; run: string; ready?: string | null; autostart: boolean }
+export interface VerifyConfig { check: VerifyCheck[]; server: VerifyServer[] }
+export interface VerifyState {
+  exists: boolean;
+  text?: string | null;
+  config?: VerifyConfig | null;
+  /** 写错了：原因。 */
+  error?: string | null;
+  /** 没有文件时猜的（TOML 原文）。 */
+  guessed?: string | null;
+  dismissed: boolean;
+  /** 文件和站主确认过的那一份一样；不一样（项目自带的、改过的）就不替模型跑、不起 server。 */
+  approved: boolean;
+}
+
+/** 后台命令（harness/background.rs）。 */
+export interface BgInfo {
+  id: string;
+  name: string;
+  command: string;
+  kind: "command" | "server";
+  status: "running" | "exited" | "stopped";
+  exitCode?: number | null;
+  ready: boolean;
+  startedAt: number;
+  endedAt?: number | null;
+  owner?: string | null;
+  log: string;
 }
 
 export interface OneshotArgs {

@@ -164,7 +164,15 @@ export const App: React.FC = () => {
       // Peck 循环、CLI 引擎的任务：过程在事件日志里（这次打开 App 以后正在收的不重读）。
       const agentRuns = loadedRuns.filter((r) => isAgentRun(r) && !liveRef.current[r.id]);
       const loaded = await Promise.all(agentRuns.map(async (r) => [r.id, await ipc.gatewayEvents(r.id).catch(() => [] as AgentEvent[])] as const));
-      if (loaded.length) setAgentEvents((prev) => ({ ...prev, ...Object.fromEntries(loaded) }));
+      if (loaded.length) setAgentEvents((prev) => {
+        const next = { ...prev };
+        for (const [rid, evs] of loaded) {
+          // 读的时候本地又追加过（比如刚批完记忆）：比读回来的新的那几条留着。
+          const last = evs.length ? evs[evs.length - 1].seq : -1;
+          next[rid] = [...evs, ...(prev[rid] ?? []).filter((e) => e.seq > last)];
+        }
+        return next;
+      });
     } catch (e) { say(e); }
   }, [say]);
   useEffect(() => {
@@ -240,7 +248,7 @@ export const App: React.FC = () => {
   }, [refreshProjects, queueAgentEvent]);
 
   /** 发任务：没选任务就新开一个（任务名是这句话），选着任务就接着在里面发。 */
-  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string) => {
+  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, goal?: string[]) => {
     if (!project) return;
     if (project.missing) { say("这个项目的文件夹不在了：先重新找文件夹"); return; }
     if (busy) { say("同一个项目一次跑一个任务"); return; }
@@ -259,7 +267,7 @@ export const App: React.FC = () => {
         const early: AgentEvent[] = [];
         const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
         id = who.startsWith("api:")
-          ? await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap }, onEvent)
+          ? await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap, goal }, onEvent)
           : await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined }, onEvent);
         runId = id;
         setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
@@ -480,6 +488,7 @@ export const App: React.FC = () => {
         />
         {page === "project" && project ? (
           <ProjectPage
+            key={project.workspace.id}
             project={project}
             entries={entries}
             fakeAgent={settings.fakeAgent}
@@ -524,6 +533,7 @@ export const App: React.FC = () => {
                 draft={draft}
                 onDraft={setDraft}
                 onSend={send}
+                onAppendEvent={(runId, event) => setAgentEvents((prev) => ({ ...prev, [runId]: [...(prev[runId] ?? []), event] }))}
                 onStop={stop}
                 onRetryStep={retryStep}
                 onOpen={openProject}
@@ -531,6 +541,7 @@ export const App: React.FC = () => {
                 onShowAgents={() => { if (settingsRef.current.fold.agents) updateSettings({ fold: { ...settingsRef.current.fold, agents: false } }); setAgentsFlash((n) => n + 1); }}
                 onRelocate={relocateProject}
                 onRemoveProject={removeProject}
+                onProjectsChanged={() => void refreshProjects()}
                 shownRunId={run?.id ?? null}
                 onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("changes"); }}
                 native={native}

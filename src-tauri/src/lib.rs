@@ -147,6 +147,16 @@ pub fn run() {
             projects::layout_save,
             spend::spend_overview,
             harness::run::harness_allow_remove,
+            harness::history::memory_list,
+            harness::history::memory_delete,
+            harness::history::memory_review,
+            harness::verify::verify_get,
+            harness::verify::verify_save,
+            harness::verify::verify_dismiss,
+            harness::background::background_list,
+            harness::background::background_output,
+            harness::background::background_stop,
+            harness::background::server_start,
             app_icon::app_icon_set,
         ])
         // 点红色关闭只把窗口藏起来：菜单栏图标和在跑的任务都留着；⌘Q 或菜单栏图标的「退出 Peck」才退出。
@@ -161,6 +171,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Peck tauri application")
         .run(|app, event| {
+            // 退出 Peck：后台命令和常驻的 dev server 都停掉（整个进程组）。
+            if let tauri::RunEvent::Exit = event {
+                harness::background::stop_all();
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
             // 窗口藏起来以后点 Dock 里的图标，把窗口叫回来。
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {

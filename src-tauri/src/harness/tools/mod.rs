@@ -1,4 +1,5 @@
-//! Peck 循环的九个工具（`update_plan`、`ask_user` 要等站主，由循环自己处理）。
+//! Peck 循环的十二个工具（`update_plan`、`ask_user`、`memory`、`search_tasks`、`bash_background` 由循环自己处理：
+//! 要等站主、要发事件、要读任务记录或者要起后台进程）。v0.6 加了后三个。
 //!
 //! 读的工具只看项目里（外加这个任务落盘的命令输出）；改的工具只改项目里、不碰 `.git`；
 //! 跑命令在沙箱里：默认联网，只能写项目、临时目录和 Peck 给的 HOME（[`bash`]）。
@@ -25,8 +26,11 @@ pub const WRITE_PATCH: &str = "write_patch";
 pub const BASH_RUN: &str = "bash_run";
 pub const UPDATE_PLAN: &str = "update_plan";
 pub const ASK_USER: &str = "ask_user";
+pub const MEMORY: &str = "memory";
+pub const SEARCH_TASKS: &str = "search_tasks";
+pub const BASH_BACKGROUND: &str = "bash_background";
 
-pub const ALL: [&str; 9] = [
+pub const ALL: [&str; 12] = [
     LIST_DIRECTORY,
     READ_FILE,
     SEARCH_TEXT,
@@ -34,8 +38,11 @@ pub const ALL: [&str; 9] = [
     WRITE_FILE,
     WRITE_PATCH,
     BASH_RUN,
+    BASH_BACKGROUND,
     UPDATE_PLAN,
     ASK_USER,
+    MEMORY,
+    SEARCH_TASKS,
 ];
 
 /// 一个文件读到时的样子：覆盖前要它没变过。
@@ -272,9 +279,9 @@ pub fn tail_bytes(text: &str, limit: usize) -> &str {
 pub fn kind_of(name: &str) -> ToolKind {
     match name {
         LIST_DIRECTORY | READ_FILE => ToolKind::Read,
-        SEARCH_TEXT | FIND_FILES => ToolKind::Search,
+        SEARCH_TEXT | FIND_FILES | SEARCH_TASKS => ToolKind::Search,
         WRITE_FILE | WRITE_PATCH => ToolKind::Edit,
-        BASH_RUN => ToolKind::Run,
+        BASH_RUN | BASH_BACKGROUND => ToolKind::Run,
         _ => ToolKind::Other,
     }
 }
@@ -319,22 +326,34 @@ pub fn title_of(name: &str, input: &Value) -> String {
             }
         }
         BASH_RUN => format!("跑 {}", short(s("command"))),
+        BASH_BACKGROUND => match s("action").as_str() {
+            "start" => format!("后台跑 {}", short(s("command"))),
+            "stop" => format!("停后台命令 {}", s("id")),
+            "read" => format!("看后台命令 {}", s("id")),
+            _ => "看后台命令".into(),
+        },
         UPDATE_PLAN => "更新任务清单".into(),
         ASK_USER => "问你".into(),
+        MEMORY => "想记住几条".into(),
+        SEARCH_TASKS => match (s("query"), input.get("number").and_then(Value::as_u64)) {
+            (_, Some(n)) => format!("看任务 {n}"),
+            (q, None) if !q.is_empty() => format!("搜旧任务「{}」", short(q)),
+            _ => "看最近的任务".into(),
+        },
         other => other.to_string(),
     }
 }
 
-/// 这一档能用哪些工具。ONE SHOT 只读、不弹卡片，去掉清单和提问。
+/// 这一档能用哪些工具。ONE SHOT 只读、不弹卡片，去掉清单、提问、记忆和后台命令。
 pub fn names_for(level: PermissionLevel, oneshot: bool) -> Vec<&'static str> {
-    let read_only = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, BASH_RUN];
+    let read_only = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, BASH_RUN, SEARCH_TASKS];
     if oneshot {
         return read_only.to_vec();
     }
     match level {
         PermissionLevel::Plan => {
             let mut v = read_only.to_vec();
-            v.extend([UPDATE_PLAN, ASK_USER]);
+            v.extend([BASH_BACKGROUND, UPDATE_PLAN, ASK_USER, MEMORY]);
             v
         }
         PermissionLevel::Edit | PermissionLevel::Auto => ALL.to_vec(),
@@ -407,6 +426,30 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "cwd":{"type":"string","description":"Relative to the project root. Default: the root."},
                 "timeout_sec":{"type":"integer","minimum":1,"maximum":600,"description":"Default 120."}
             },"required":["command"]}),
+        ),
+        BASH_BACKGROUND => (
+            "Run a long-running command in the background (dev server, watcher, long test suite) without blocking, then check on it. action=start (command, cwd?, name?) returns an id and the first output; action=read (id, wait_sec? up to 60) returns the new output since your last read and whether it is still running; action=stop (id); action=list. Same sandbox and approval rules as bash_run, no timeout. Your background commands are stopped when the task ends. The project's dev servers (from .peck/verify.toml) are listed too: you can read them but not stop them.",
+            json!({"type":"object","properties":{
+                "action":{"type":"string","enum":["start","read","stop","list"]},
+                "command":{"type":"string","description":"start: the shell command."},
+                "cwd":{"type":"string","description":"start: relative to the project root. Default: the root."},
+                "name":{"type":"string","description":"start: a short label."},
+                "id":{"type":"string","description":"read / stop: the id from start or list."},
+                "wait_sec":{"type":"integer","minimum":0,"maximum":60,"description":"read: wait up to this long for new output or exit. Default 0."}
+            },"required":["action"]}),
+        ),
+        MEMORY => (
+            "Propose notes worth remembering for future tasks in this project: conventions, commands, pitfalls, the user's stated preferences. They are saved only if the user approves them when the task ends. Keep each note one short sentence; don't propose trivia or things already in the project instructions.",
+            json!({"type":"object","properties":{
+                "notes":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string"}}
+            },"required":["notes"]}),
+        ),
+        SEARCH_TASKS => (
+            "Look up earlier tasks in this project: what was asked, how it ended, which files changed. query: words that must all appear (in the title, request, result or file paths); number: the full record of one task. Neither: the 10 most recent.",
+            json!({"type":"object","properties":{
+                "query":{"type":"string"},
+                "number":{"type":"integer","minimum":1}
+            }}),
         ),
         UPDATE_PLAN => (
             "Replace the task checklist shown to the user. At most one step may be in_progress.",
@@ -542,11 +585,13 @@ mod tests {
         assert!(!names_for(PermissionLevel::Plan, false).contains(&WRITE_FILE));
         assert!(!names_for(PermissionLevel::Plan, false).contains(&WRITE_PATCH));
         assert!(names_for(PermissionLevel::Plan, false).contains(&ASK_USER));
-        assert_eq!(names_for(PermissionLevel::Edit, false).len(), 9);
-        assert_eq!(names_for(PermissionLevel::Auto, false).len(), 9);
+        assert!(names_for(PermissionLevel::Plan, false).contains(&MEMORY));
+        assert_eq!(names_for(PermissionLevel::Edit, false).len(), 12);
+        assert_eq!(names_for(PermissionLevel::Auto, false).len(), 12);
         let oneshot = names_for(PermissionLevel::Plan, true);
-        assert!(!oneshot.contains(&ASK_USER) && !oneshot.contains(&WRITE_PATCH));
-        assert_eq!(specs_for(&ALL).len(), 9);
+        assert!(!oneshot.contains(&ASK_USER) && !oneshot.contains(&WRITE_PATCH) && !oneshot.contains(&MEMORY) && !oneshot.contains(&BASH_BACKGROUND));
+        assert!(oneshot.contains(&SEARCH_TASKS));
+        assert_eq!(specs_for(&ALL).len(), 12);
     }
 
     #[test]

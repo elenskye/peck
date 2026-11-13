@@ -38,18 +38,20 @@ interface Props {
   value: string;
   onChange: (text: string) => void;
   onSubmit: () => void;
+  /** ↑ ↓ Esc 先问外面要不要（比如 @ 弹层开着）；回 true 就不交给编辑器。 */
+  onKey?: (key: "up" | "down" | "escape") => boolean;
   placeholder: string;
   disabled?: boolean;
   ariaLabel: string;
 }
 
-export const MarkdownEditor: React.FC<Props> = ({ value, onChange, onSubmit, placeholder, disabled, ariaLabel }) => {
+export const MarkdownEditor: React.FC<Props> = ({ value, onChange, onSubmit, onKey, placeholder, disabled, ariaLabel }) => {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const editable = useRef(new Compartment());
   const hint = useRef(new Compartment());
-  const latest = useRef({ onChange, onSubmit });
-  latest.current = { onChange, onSubmit };
+  const latest = useRef({ onChange, onSubmit, onKey });
+  latest.current = { onChange, onSubmit, onKey };
 
   useEffect(() => {
     if (!host.current) return;
@@ -62,6 +64,8 @@ export const MarkdownEditor: React.FC<Props> = ({ value, onChange, onSubmit, pla
           // 回车自己接：比 Markdown 和默认按键都先。输入法组字时（isComposing、keyCode 229）交给输入法。
           Prec.highest(EditorView.domEventHandlers({
             keydown: (e, v) => {
+              const nav = e.key === "ArrowUp" ? "up" : e.key === "ArrowDown" ? "down" : e.key === "Escape" ? "escape" : null;
+              if (nav && !e.isComposing && !v.composing && latest.current.onKey?.(nav)) { e.preventDefault(); return true; }
               if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || v.composing) return false;
               e.preventDefault();
               if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) {

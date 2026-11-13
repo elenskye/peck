@@ -19,6 +19,8 @@ export interface Workspace {
 export interface ProjectSettings {
   who?: string | null;
   permission?: string | null;
+  /** 站主不要 Peck 猜的验证命令（v0.6）：中栏不再问。 */
+  verifyDismissed?: boolean;
 }
 
 export interface Session {

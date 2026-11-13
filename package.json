@@ -1,7 +1,7 @@
 {
   "name": "peck",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Peck — 只在自己 Mac 上用的本地 Coding Agent（macOS，Tauri 2）",
   "type": "module",
   "scripts": {

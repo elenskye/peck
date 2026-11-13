@@ -2,7 +2,7 @@ use crate::store::{now_ms, StoreResult};
 use rusqlite::Connection;
 use std::path::Path;
 
-pub const VERSION: i64 = 8;
+pub const VERSION: i64 = 9;
 const BASELINE: &str = include_str!("../migrations/0001_history.sql");
 const API: &str = include_str!("../migrations/0002_api.sql");
 const WORKER: &str = include_str!("../migrations/0003_worker.sql");
@@ -11,6 +11,7 @@ const USAGE: &str = include_str!("../migrations/0005_usage.sql");
 const SETTINGS: &str = include_str!("../migrations/0006_settings.sql");
 const GATEWAY: &str = include_str!("../migrations/0007_gateway.sql");
 const HARNESS: &str = include_str!("../migrations/0008_harness.sql");
+const CONTEXT: &str = include_str!("../migrations/0009_context.sql");
 
 pub fn migrate(conn: &mut Connection, path: &Path) -> StoreResult<()> {
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -43,6 +44,7 @@ pub fn migrate(conn: &mut Connection, path: &Path) -> StoreResult<()> {
         (6, SETTINGS),
         (7, GATEWAY),
         (8, HARNESS),
+        (9, CONTEXT),
     ] {
         if version <= current {
             continue;

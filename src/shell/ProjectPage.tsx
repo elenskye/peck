@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { ModelEntry } from "@/lib/agentEvents";
-import { ipc, type AllowRule } from "@/lib/ipc";
+import { ipc, type AllowRule, type MemoryNote, type VerifyState } from "@/lib/ipc";
 import type { Permission, ProjectOverview } from "@/lib/types";
 import { ago, PERMISSIONS, shortenHomePath } from "@/lib/utils";
 import { Btn, Field, ModHead, Row, Seg } from "@/ui";
@@ -8,7 +8,7 @@ import { WhoPicker, pickable } from "@/shell/ModelPicker";
 
 const RULE_WORD: Record<string, string> = { "install-deps": "装依赖", "long-running": "起常驻进程" };
 
-/** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、「总是允许」过的、移出列表。 */
+/** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、验证命令、记忆、「总是允许」过的、移出列表。 */
 export const ProjectPage: React.FC<{
   project: ProjectOverview;
   entries: ModelEntry[];
@@ -25,7 +25,19 @@ export const ProjectPage: React.FC<{
   const [name, setName] = useState(workspace.name);
   const [rules, setRules] = useState<AllowRule[] | null>(null);
   const [armed, setArmed] = useState(false);
+  const [memories, setMemories] = useState<MemoryNote[] | null>(null);
+  const [verify, setVerify] = useState<VerifyState | null>(null);
+  const [verifyText, setVerifyText] = useState("");
   useEffect(() => setName(workspace.name), [workspace.name]);
+  useEffect(() => {
+    let live = true;
+    ipc.memoryList(workspace.id).then((m) => { if (live) setMemories(m); }).catch(say);
+    if (!missing) ipc.verifyGet(workspace.id).then((v) => { if (live) { setVerify(v); setVerifyText(v.text ?? v.guessed ?? ""); } }).catch(say);
+    return () => { live = false; };
+  }, [workspace.id, missing]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveVerify = async () => {
+    try { const v = await ipc.verifySave(workspace.id, verifyText); setVerify(v); setVerifyText(v.text ?? ""); say("验证命令存好了"); } catch (e) { say(e); }
+  };
   useEffect(() => {
     let live = true;
     ipc.harnessAllowList().then((all) => { if (live) setRules(all.filter((r) => r.workspaceId === workspace.id)); }).catch(say);
@@ -73,6 +85,30 @@ export const ProjectPage: React.FC<{
                 onChange={(p) => void save({ settings: { ...settings, permission: p === "global" ? null : p } }, p === "global" ? "改回跟全局" : `这个项目默认 ${p.toUpperCase()}`)} />
             </Row>
           </div>
+
+          <p className="lbl">VERIFY · .peck/verify.toml</p>
+          <p className="hint">{verify?.exists ? "模型改了文件，Peck 在后台替它跑这些；模型停下时没过，就把失败交回去修（最多 3 次）。[[server]] 是常驻的 dev server，在输入框旁的 DEV 里起停。" : verify?.guessed ? "还没有。下面是 Peck 按项目猜的，改好了 SAVE 就写进去。" : "还没有，也猜不出来。照这个格式写：[[check]] 里 name、run、when（改了哪些文件才跑）、timeout（秒）。"}</p>
+          {verify?.error && <p className="hint is-bad">{verify.error}</p>}
+          {verify?.exists && !verify.approved && !verify.error && <p className="hint is-bad">还没确认（项目自带的，或者改过了）：看一遍，SAVE 以后 Peck 才替模型跑、才起 dev server。</p>}
+          <textarea className="verify-text" aria-label="verify.toml" spellCheck={false} disabled={missing} value={verifyText}
+            placeholder={'[[check]]\nname = "check"\nrun = "pnpm check"\nwhen = ["**/*.ts"]'} rows={Math.min(18, Math.max(6, verifyText.split("\n").length + 1))} onChange={(e) => setVerifyText(e.target.value)} />
+          <div className="set-inline">
+            <Btn sm disabled={missing || !verifyText.trim() || (verifyText === (verify?.text ?? "") && !!verify?.approved)} onClick={() => void saveVerify()}>SAVE</Btn>
+            {verify?.exists && verifyText !== (verify.text ?? "") && <Btn sm v="ghost" onClick={() => setVerifyText(verify.text ?? "")}>RESET</Btn>}
+          </div>
+
+          <p className="lbl">MEMORY</p>
+          {memories && memories.length > 0 ? (
+            <div className="set-rows">
+              {memories.map((m) => (
+                <Row key={m.id} name={<span className="memory-text">{m.text}</span>} desc={`${m.sourceRun ? `任务 ${m.sourceRun.replace(/^run-/, "")} 提的` : "手工记的"} · ${ago(m.createdAt)}`}>
+                  <Btn sm v="danger" onClick={() => void ipc.memoryDelete(workspace.id, m.id).then((next) => { setMemories(next); say("删掉了，以后不再带上"); }).catch(say)}>DELETE</Btn>
+                </Row>
+              ))}
+            </div>
+          ) : (
+            <p className="hint">{memories ? "还没有。Peck 循环觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；每次发任务都带上。" : "在读…"}</p>
+          )}
 
           <p className="lbl">ALWAYS ALLOWED</p>
           {rules && rules.length > 0 ? (

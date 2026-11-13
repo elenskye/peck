@@ -192,6 +192,92 @@ pub enum EventBody {
         windows: Vec<QuotaWindow>,
     },
 
+    // ── 上下文（v0.6）──
+    /// 这份上下文现在多大、分成哪几块（输入框旁的用量小环）。有实报的用量就按实报校准。
+    #[serde(rename = "context.updated")]
+    ContextUpdated {
+        /// 估的 tokens（下一次请求的整个提示）。
+        used: u64,
+        #[serde(default)]
+        window: Option<u64>,
+        /// 到这个数自动压缩（压缩线）。
+        #[serde(default)]
+        compact_at: Option<u64>,
+        #[serde(default)]
+        parts: Vec<ContextPart>,
+    },
+    /// 自动压缩的一步：落盘、清旧工具输出、交接摘要。
+    #[serde(rename = "context.compacted")]
+    ContextCompacted {
+        step: CompactStep,
+        before: u64,
+        after: u64,
+        /// 给人看的一句：「落盘了 3 份长输出」。
+        text: String,
+        /// 交接摘要的原文（`summary` 这一步才有）。
+        #[serde(default)]
+        summary: Option<String>,
+    },
+    /// 模型想记住的几条（任务结束时站主批）。
+    #[serde(rename = "memory.proposed")]
+    MemoryProposed { notes: Vec<String> },
+    /// 站主批完了：记住了哪几条、没要哪几条（任务结束后追加进事件日志）。
+    #[serde(rename = "memory.reviewed")]
+    MemoryReviewed {
+        saved: Vec<String>,
+        #[serde(default)]
+        skipped: Vec<String>,
+    },
+
+    // ── 验证和后台（v0.6）──
+    /// Peck 替模型跑一条验证命令（`.peck/verify.toml`）。
+    #[serde(rename = "verify.started")]
+    VerifyStarted {
+        check_id: String,
+        name: String,
+        command: String,
+        trigger: VerifyTrigger,
+        /// 第几次自动修之后跑的（0 是还没修过）。
+        #[serde(default)]
+        attempt: u32,
+    },
+    #[serde(rename = "verify.completed")]
+    VerifyCompleted {
+        check_id: String,
+        name: String,
+        status: VerifyStatus,
+        #[serde(default)]
+        exit_code: Option<i32>,
+        #[serde(default)]
+        duration_ms: Option<u64>,
+        /// 输出的结尾（完整的落盘，路径写在里面）。
+        #[serde(default)]
+        output: Option<String>,
+    },
+    /// 模型停下以后的一轮验证：都过了、交回去修、停下。
+    #[serde(rename = "verify.round")]
+    VerifyRound {
+        attempt: u32,
+        max_attempts: u32,
+        outcome: VerifyOutcome,
+        #[serde(default)]
+        reason: Option<String>,
+        /// 目标模式。
+        #[serde(default)]
+        goal: bool,
+    },
+    /// 后台命令（模型起的、常驻的 dev server）的状态变了。
+    #[serde(rename = "background.updated")]
+    BackgroundUpdated {
+        id: String,
+        name: String,
+        command: String,
+        kind: BackgroundKind,
+        status: BackgroundStatus,
+        #[serde(default)]
+        exit_code: Option<i32>,
+    },
+
     // ── 其他 ──
     #[serde(rename = "notice")]
     Notice { level: NoticeLevel, text: String },
@@ -245,6 +331,14 @@ impl EventBody {
             Self::SubagentCompleted { .. } => "subagent.completed",
             Self::UsageUpdated { .. } => "usage.updated",
             Self::QuotaUpdated { .. } => "quota.updated",
+            Self::ContextUpdated { .. } => "context.updated",
+            Self::ContextCompacted { .. } => "context.compacted",
+            Self::MemoryProposed { .. } => "memory.proposed",
+            Self::MemoryReviewed { .. } => "memory.reviewed",
+            Self::VerifyStarted { .. } => "verify.started",
+            Self::VerifyCompleted { .. } => "verify.completed",
+            Self::VerifyRound { .. } => "verify.round",
+            Self::BackgroundUpdated { .. } => "background.updated",
             Self::Notice { .. } => "notice",
             Self::Retry { .. } => "retry",
             Self::Error { .. } => "error",
@@ -253,7 +347,7 @@ impl EventBody {
     }
 
     /// 全部类型名（给 TS 对照测试和文档用）。
-    pub const TYPE_NAMES: [&'static str; 25] = [
+    pub const TYPE_NAMES: [&'static str; 33] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -275,11 +369,88 @@ impl EventBody {
         "subagent.completed",
         "usage.updated",
         "quota.updated",
+        "context.updated",
+        "context.compacted",
+        "memory.proposed",
+        "memory.reviewed",
+        "verify.started",
+        "verify.completed",
+        "verify.round",
+        "background.updated",
         "notice",
         "retry",
         "error",
         "raw",
     ];
+}
+
+/// 上下文里的一块：`system`（Peck 的说明和工具）、`project`（项目说明和记忆）、
+/// `conversation`（对话和思考）、`tools`（工具的输出）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPart {
+    pub key: String,
+    pub tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactStep {
+    /// 长的工具输出落盘，上下文里只留开头结尾和路径。
+    Spill,
+    /// 旧的工具输出清掉（只留「做过什么」）。
+    Clear,
+    /// 模型写一份交接摘要，前面的对话换成它。
+    Summary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyTrigger {
+    /// 模型改了文件，后台先跑一遍。
+    Edit,
+    /// 模型停下了，收尾前跑。
+    End,
+    /// 目标模式：每次停下都跑目标那几条。
+    Goal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyStatus {
+    Passed,
+    Failed,
+    /// 跑的时候文件又变了，结果不算（会再跑）。
+    Stale,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyOutcome {
+    /// 都过了：不再叫模型。
+    Passed,
+    /// 没过：失败的输出交回模型修。
+    Fixing,
+    /// 停下：修够了次数、同一个失败连续两次、两次之间没改文件。
+    Stopped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundKind {
+    /// 模型用 `bash_background` 起的。
+    Command,
+    /// `.peck/verify.toml` 里的常驻 dev server。
+    Server,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundStatus {
+    Running,
+    Exited,
+    Stopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

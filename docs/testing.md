@@ -10,6 +10,9 @@
 - 假数据里有 3 个项目（notebook、peck、edge-gateway），6 个任务：在跑的一个（Muse → Grok，第二步在跑）、完成的四个（Grok 单个、Muse → Grok、API 模式单模型干活、API 模式规划 + 实施）、失败的一个（Grok 登录过期）。每个完成的任务都有改动列表和 Diff，API 模式的有调用与审查历史。
 - 在 `?mock` 里发任务：选项目 → NEW TASK → 左栏 AGENTS 里选谁来干（FLOW 选干法，再选 CLI / API 和模型；模型列表全部当能用、CLI 的模型是演示数据；设置的开发者选项开了 FLOW 里多一个「假」）→ 一句话 → ↵。
   - **Peck 循环**（任何一个 PECK 组的模型）：`src/dev/peckMock.ts` 的剧本——看目录、读、搜、改（进 CHANGES）、跑一条输出很长的命令（点开能看完整日志）、`rm -rf dist`（高危卡片，ALLOW / DENY 都能走完）、清单、ASK（选项或自己写）、收尾；每轮报用量，任务下面一行花费，输入框旁累计。设置里花费上限设得比 0.42（演示里这个月已花的）低，发出去就停、写明原因。
+  - **上下文和验证的场景**（Peck 循环，按这句话里的字挑，`peckMock.ts` 开头写着）：「长任务」上下文过了压缩线、自动压缩三步以后接着做完；「修好」改完验证没过、交回模型修一次、再验证过了挂 ✓；「反复」同一个失败连续两次停下（任务记成失败、写原因）；「并发」后台验证跑到一半文件又改了、这次的结果过期、按新文件再跑；输入框旁开了 GOAL 就是目标模式。不带这些字的主线在 peck 项目里（演示有验证命令）改完文件会在后台跑一遍、收尾挂 ✓，结束时弹「想记住这几条」。输入框旁的小环点开看上下文分成哪几块。
+  - **验证命令**：notebook 项目没有 `.peck/verify.toml`，NEW TASK 上有 Peck 猜的三条（CONFIRM 写进去、NOT NOW 不再问；演示里都当站主确认过）；peck 项目有，输入框旁有 GOAL 和 DEV（DEV 里起 dev server，1.5 秒后算起好了）；项目设置里能改 verify.toml、看和删记忆（peck 演示有两条）。
+  - **@ 旧任务**：在一个任务里打 `接着 @设置`，上方弹出旧任务，↵ 插进去。
   - **CLI 引擎**：回放 `src-tauri/tests/fixtures/gateway/` 的录音（Codex 3 次审批、Grok 1 次……），碰到审批停下等卡片。
   - **接力、规划 + 实施、假 Agent**：照旧的步骤显示，能停、能重跑步骤、能撤销。
   - **ONE SHOT**：右栏页签，选一个（Antigravity 不在里面）问一句，读一个文件再答，COPY、TO TASK。
@@ -35,7 +38,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 
 - 日常只跑改到的模块：在命令末尾加模块名过滤，如 `-- snapshot::`。一个版本收尾才全跑。
 - 云端（Linux）：装上 `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libsoup-3.0-dev`、`librsvg2-dev`、`libayatana-appindicator3-dev`、`libxdo-dev` 就编得过（没有离线的 crate 缓存，去掉 `--offline`）。`api::tools` 的 3 项和 `api::worker` 的 5 项要 macOS 的 `sandbox-exec`，在 Linux 上一定失败，留给本地。`harness::tools::bash` 的沙箱测试（项目外写被拒、联网能通、`.git` 只读）只在 macOS 上编进来；Linux 上命令不进沙箱直接跑。`app_icon.rs` 的 AppKit 部分只在 macOS 上编。
-- Peck 循环的测试（`-- harness::`）用假模型（`ScriptedModel`）跑完整的循环：工具顺序、PLAN 不给改的工具、高危必弹、EDIT 装依赖问一次和「总是允许」、轮数 / 上下文 / 花费上限 / 用量未知停下、打断命令、追加一句、续接对话、ONE SHOT 只读，以及发任务到收尾（任务记录、CHANGES、事件日志、花费）。
+- Peck 循环的测试（`-- harness::`）用假模型（`ScriptedModel`）跑完整的循环：工具顺序、PLAN 不给改的工具、高危必弹、EDIT 装依赖问一次和「总是允许」、轮数 / 花费上限 / 用量未知停下、打断命令、追加一句、续接对话、ONE SHOT 只读，以及发任务到收尾（任务记录、CHANGES、事件日志、花费）。上下文和验证：项目层（AGENTS.md / CLAUDE.md + 记忆）、环境块（git 不动 index）、引用和 `search_tasks`、长任务压缩以后接着做、压完还太满停下、三步压缩各自的单测；后台命令不阻塞、任务结束就停、EDIT 起后台命令问一次、常驻 server 不跟任务停；验证命令的猜、校验、写，没确认过的、改过的不用；后台验证和并发过期；没过交回去修好不再叫模型、同一个失败连续两次停、两次之间没改文件停、修够 3 次停、目标模式；记忆存、去重、批过不能再批。命令的 future 被丢掉时整个进程组都停（`harness::tools::bash`）。验证和后台命令的测试真的起 `sh`（`sleep`、`test -f` 这类），在 Linux 上没有沙箱照样跑。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 每次用新的临时目录（上面的 `mktemp -d`）：模拟授权的次数记在数据目录里，重复用同一个目录会把次数用完，`api::worker` 的测试就失败。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境（`term.rs`），启动脚本特别慢的机器上会多等几秒。

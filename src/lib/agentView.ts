@@ -3,7 +3,9 @@
 // - 连续的工具调用折叠成一行（「读了 4 个文件、改了 2 个、跑了 1 条命令 · 38s」），在跑的那一步露出来；
 // - 没批、没答的审批和 ASK 单独拿出来做卡片；任务清单取最新的一份；
 // - 花费：这一次的进、出、缓存命中、美元（CLI 估的标「估」，不知道的写「未知」，不当 0）。
-import type { AgentEvent, ApprovalDecision, Cost, CostSource, FileDiff, PlanStep, ResolvedBy, TokenUsage, ToolKind, ToolStatus } from "@/lib/agentEvents";
+// - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、验证卡片（Peck 替模型跑的验证命令）、
+//   后台命令、模型想记住的几条。
+import type { AgentEvent, ApprovalDecision, BackgroundKind, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, FileDiff, PlanStep, ResolvedBy, TokenUsage, ToolKind, ToolStatus, VerifyOutcome, VerifyStatus, VerifyTrigger } from "@/lib/agentEvents";
 
 export interface ToolView {
   callId: string;
@@ -44,6 +46,47 @@ export interface AskView {
   answer?: string;
 }
 
+/** 一条验证命令这一次跑的样子。 */
+export interface VerifyCheckView {
+  checkId: string;
+  name: string;
+  command: string;
+  trigger: VerifyTrigger;
+  attempt: number;
+  status: "running" | VerifyStatus;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  output?: string | null;
+  startedAt: number;
+  endedAt?: number;
+}
+
+export interface VerifyRoundView {
+  attempt: number;
+  maxAttempts: number;
+  outcome: VerifyOutcome;
+  reason?: string | null;
+  goal: boolean;
+}
+
+export interface ContextView {
+  used: number;
+  window: number | null;
+  compactAt: number | null;
+  parts: ContextPart[];
+}
+
+export interface BackgroundView {
+  id: string;
+  name: string;
+  command: string;
+  kind: BackgroundKind;
+  status: BackgroundStatus;
+  exitCode?: number | null;
+  /** 任务结束了：这里只记到起的那一刻（dev server 跨任务在跑，现状看 DEV），不再转圈。 */
+  past?: boolean;
+}
+
 export type ViewItem =
   | { kind: "text"; id: string; text: string; done: boolean }
   | { kind: "reasoning"; id: string; text: string; done: boolean; startedAt: number; endedAt?: number }
@@ -51,7 +94,11 @@ export type ViewItem =
   | { kind: "asked"; id: string; ask: AskView }
   | { kind: "approved"; id: string; approval: ApprovalView }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
-  | { kind: "error"; id: string; text: string };
+  | { kind: "error"; id: string; text: string }
+  | { kind: "compacted"; id: string; step: CompactStep; text: string; before: number; after: number; summary?: string | null }
+  /** 一组验证命令（连着跑的放一张卡片；模型停下后的那一轮带 round）。 */
+  | { kind: "verify"; id: string; checks: VerifyCheckView[]; round?: VerifyRoundView; reused?: boolean }
+  | { kind: "background"; id: string; bg: BackgroundView };
 
 export interface UsageLine {
   input: number | null;
@@ -78,12 +125,22 @@ export interface AgentView {
   usage: UsageLine | null;
   ended: { reason: string; error?: string | null } | null;
   sessionRef: string | null;
+  /** 最新的一份上下文大小。 */
+  context: ContextView | null;
+  /** 模型想记住的几条；reviewed 是站主批过的结果。 */
+  memory: { notes: string[]; reviewed: { saved: string[]; skipped: string[] } | null } | null;
+  /** 最后一轮验证（收尾时挂 ✓ 用）。 */
+  verified: VerifyRoundView | null;
+  /** 这个任务里的后台命令（最新的状态）。 */
+  background: BackgroundView[];
 }
 
 const LIVE_TAIL = 8 * 1024;
 
 export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null };
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, verified: null, background: [] };
+  const checks = new Map<string, VerifyCheckView>();
+  const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
   const thoughts = new Map<string, Extract<ViewItem, { kind: "reasoning" }>>();
@@ -97,6 +154,10 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
   const lastGroup = (): Extract<ViewItem, { kind: "tools" }> | null => {
     const last = view.items[view.items.length - 1];
     return last && last.kind === "tools" ? last : null;
+  };
+  const lastVerify = (): Extract<ViewItem, { kind: "verify" }> | null => {
+    const last = view.items[view.items.length - 1];
+    return last && last.kind === "verify" && !last.round ? last : null;
   };
   for (const e of events) {
     switch (e.type) {
@@ -209,6 +270,61 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
       case "notice":
         view.items.push({ kind: "notice", id: `n-${e.seq}`, level: e.level, text: e.text });
         break;
+      case "context.updated":
+        view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [] };
+        break;
+      case "context.compacted":
+        view.items.push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
+        break;
+      case "memory.proposed": {
+        const m = (view.memory ??= { notes: [], reviewed: null });
+        for (const n of e.notes) if (!m.notes.includes(n)) m.notes.push(n);
+        break;
+      }
+      case "memory.reviewed":
+        view.memory = { notes: view.memory?.notes ?? [], reviewed: { saved: e.saved, skipped: e.skipped ?? [] } };
+        break;
+      case "verify.started": {
+        const check: VerifyCheckView = { checkId: e.checkId, name: e.name, command: e.command, trigger: e.trigger, attempt: e.attempt, status: "running", startedAt: e.at };
+        checks.set(e.checkId, check);
+        const group = lastVerify();
+        if (group) group.checks.push(check);
+        else view.items.push({ kind: "verify", id: `v-${e.checkId}-${e.seq}`, checks: [check] });
+        break;
+      }
+      case "verify.completed": {
+        const check = checks.get(e.checkId);
+        if (!check) break;
+        check.status = e.status;
+        check.exitCode = e.exitCode;
+        check.durationMs = e.durationMs ?? e.at - check.startedAt;
+        check.output = e.output;
+        check.endedAt = e.at;
+        break;
+      }
+      case "verify.round": {
+        const round: VerifyRoundView = { attempt: e.attempt, maxAttempts: e.maxAttempts, outcome: e.outcome, reason: e.reason, goal: e.goal };
+        view.verified = round;
+        // 挂在刚跑的那组上；结果是现成的（没再跑）就单独一张，列出最近每条的结果。
+        const group = lastVerify();
+        if (group) group.round = round;
+        else {
+          const latest = new Map<string, VerifyCheckView>();
+          for (const c of checks.values()) if (c.status !== "stale" && c.status !== "cancelled") latest.set(c.name, c);
+          view.items.push({ kind: "verify", id: `vr-${e.seq}`, checks: [...latest.values()], round, reused: true });
+        }
+        break;
+      }
+      case "background.updated": {
+        const known = bgs.get(e.id);
+        const bg: BackgroundView = { id: e.id, name: e.name, command: e.command, kind: e.kind, status: e.status, exitCode: e.exitCode };
+        bgs.set(e.id, bg);
+        if (known) {
+          const item = view.items.find((i) => i.kind === "background" && i.bg.id === e.id);
+          if (item && item.kind === "background") item.bg = bg;
+        } else view.items.push({ kind: "background", id: `b-${e.id}`, bg });
+        break;
+      }
       case "error":
         // 不致命的（Codex 自己会重试的那种）只是一行提醒，不画成红条。
         if (e.fatal === false) view.items.push({ kind: "notice", id: `e-${e.seq}`, level: "warn", text: e.message });
@@ -239,6 +355,16 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
   view.asks = view.ended ? [] : [...asks.values()].filter((a) => a.answer == null);
   view.usage = cumulative ?? turnUsage;
   view.files = diffFiles ?? collectDiffs([...tools.values()]);
+  view.background = [...bgs.values()];
+  if (view.ended) {
+    // 回合结束了还在跑的验证命令：收成「停了」（Peck 收尾时会停掉它们）。
+    for (const c of checks.values()) if (c.status === "running") { c.status = "cancelled"; c.endedAt = c.endedAt ?? events[events.length - 1].at; }
+    // 模型起的后台命令跟着任务停了；dev server 以后的变化不进任务记录，只记到起过。
+    for (const item of view.items) {
+      if (item.kind !== "background" || item.bg.status !== "running") continue;
+      item.bg = item.bg.kind === "server" ? { ...item.bg, past: true } : { ...item.bg, status: "stopped" };
+    }
+  }
   return view;
 }
 
@@ -304,6 +430,20 @@ export function spillPath(output?: string | null): string | null {
 }
 
 const fmt = (n: number) => (n >= 10_000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : n.toLocaleString());
+
+/** Token 数：「12.3k」「640」「1M」。 */
+export const tokens = (n: number): string => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(2)}M` : fmt(n));
+
+/** 上下文的几块叫什么。 */
+export const CONTEXT_PARTS: Record<string, string> = {
+  system: "Peck 的说明和工具",
+  project: "项目说明和记忆",
+  conversation: "对话和思考",
+  tools: "工具的输出",
+};
+
+/** 自动压缩三步叫什么。 */
+export const COMPACT_STEP: Record<string, string> = { spill: "落盘", clear: "清旧输出", summary: "交接摘要" };
 
 /** 「$0.0123」「< $0.0001」；不知道是 null。 */
 export function usd(v: number | null | undefined): string | null {

@@ -1,6 +1,6 @@
 # 技术架构
 
-> 选型、一个任务怎么跑、数据放哪、Model Gateway、Peck 循环、代码位置。界面的用词和样子在 [design.md](./design.md)，怎么测在 [testing.md](./testing.md)。
+> 选型、一个任务怎么跑、数据放哪、Model Gateway、Peck 循环（上下文、后台和验证）、代码位置。界面的用词和样子在 [design.md](./design.md)，怎么测在 [testing.md](./testing.md)。
 
 ## 选型
 
@@ -43,9 +43,10 @@
 | 内容 | 位置 |
 |---|---|
 | 正式数据 / 开发数据（`pnpm app:dev`） | `~/Library/Application Support/Peck/` / `Peck Dev/` |
-| 项目、任务、步骤、消息、调用、用量快照、界面设置、事件日志 | 数据目录的 `peck.db`（**schema 8**，迁移在 `src-tauri/migrations/`）：6 加 `app_settings`（界面设置整段一行 JSON；Gateway 设置、CLI 的模型列表、左栏拖过的顺序 `layout` 也在这里）；7 加 `agent_events`（统一事件，原件另存一列）和 `runs.engine`；8 加 `harness_conversations`（Peck 循环的对话，接着发一句就带上）、`harness_allow`（「这个项目总是允许」） |
+| 项目、任务、步骤、消息、调用、用量快照、界面设置、事件日志 | 数据目录的 `peck.db`（**schema 9**，迁移在 `src-tauri/migrations/`）：6 加 `app_settings`（界面设置整段一行 JSON；Gateway 设置、CLI 的模型列表、左栏拖过的顺序 `layout` 也在这里）；7 加 `agent_events`（统一事件，原件另存一列）和 `runs.engine`；8 加 `harness_conversations`（Peck 循环的对话，接着发一句就带上）、`harness_allow`（「这个项目总是允许」）；9 加 `memories`（站主批过的项目记忆） |
+| 项目的验证命令 | 项目里的 `.peck/verify.toml`（`.peck/` 打开项目时已经加进 `.gitignore`）；项目设置里记站主确认过的那一份的 md5（`verifyApproved`）和不要猜（`verifyDismissed`），这两样只由 `verify_save` / `verify_dismiss` 改 |
 | 任务前快照和历史 Diff | `shadow/<项目哈希>/` |
-| Peck 循环命令用的 HOME / 落盘的长输出 | `harness-runtime/<项目>/` / `harness-output/<任务>/`（同一个任务接着发的几次共用；14 天没动过的文件夹打开 App 时删掉） |
+| Peck 循环命令用的 HOME / 落盘的长输出 | `harness-runtime/<项目>/` / `harness-output/<任务>/`（命令输出、压缩时落的 `ctx-*.log`、验证命令的输出、模型起的后台命令的日志；同一个任务接着发的几次共用；14 天没动过的文件夹打开 App 时删掉）；常驻 dev server 的日志在 `harness-output/servers-<项目哈希>/` |
 | 旧循环（规划 + 实施）命令用的 HOME | `worker-runtime/<项目哈希>/home/` |
 | CLI 清单（接力、假 Agent） | `agents/*.toml`、`flows/*.toml`（第一次从 `src-tauri/defaults/` 复制） |
 | Key | macOS 钥匙串，服务名 `Peck API`、`Peck API Dev`、`Peck API Test` 分开；每个服务两项：AI 供应商的 Key 一项（账户 `keys`）、其他 Key 一项（`other-keys`） |
@@ -102,12 +103,33 @@
 ## Peck 循环（`src-tauri/src/harness/`）
 
 - **循环**（`loop.rs`，`PeckBackend` 实现 `AgentBackend`，引擎 id `peck`）：问模型 → 跑它要的工具 → 结果放回去，直到模型不再要工具。思考的私有数据原样放回下一轮。一个任务的对话存 `harness_conversations`，一问一答交替（连着两条用户消息并成一条）。
-- **上限**：默认 40 轮；上下文估到模型窗口的 85% 先停（压缩是 v0.6）；**花费上限**按这个月（UTC）Peck 循环和 ONE SHOT 在事件日志里的 `usage.updated` 加起来算，每次请求前现算（同时跑的任务花的也算进来）；设了上限时价格表里没有价格的模型不发；供应商没报用量也停。停下都是 `turn.completed` 的 `limit` + 一句原因。旧的 API 记录和 CLI 估的花费不算进上限。
-- **九个工具**（`tools/`）：`list_directory`（遵守 .gitignore，最多 300 条）、`read_file`（6 位行号 + tab，2000 行 / 50KB，记下读到时的哈希，能读这个任务落盘的命令输出；超过 8MB 的文件边读边数行、只留要的那段，也不记「读过」）、`search_text`（进程内 `ignore` + `grep-searcher`）、`find_files`（按修改时间，最多 100 条）、`write_file`（覆盖前要在这个任务里读过且没变）、`write_patch`（找原文 → 换新文：整批校验，临时文件 + 改名，中途失败写回原样；找不到给最像的几行和空白差异，多处列行号，宽松匹配行尾空白和中英文标点但仍要唯一）、`bash_run`、`update_plan`（同时一步在做）、`ask_user`。读改都只在项目里、不碰 `.git`。
-- **命令**（`tools/bash.rs`）：`sandbox-exec`，默认联网；EDIT / AUTO 只能写项目、临时目录和 Peck 给的 HOME，`.git` 只读；PLAN 只能写临时目录；不能开别的 App（`lsopen`）、不能发 Apple Events。环境是站主 shell 的那份，去掉名字像 Key、令牌、密码、Cookie、Session 的变量和 `SSH_AUTH_SOCK`（站主 2026-11-13 定）；stdin 空，`CI=1`、`PAGER=cat`、`NO_COLOR=1`；默认 120 秒、最长 600 秒，跑完或超时结束整个进程组。被沙箱拒了写项目外，弹高危卡片，批了出沙箱再跑一次。输出超过 16KB 整份落盘（`spill.rs`），上下文只留开头 2KB、结尾 6KB（失败时 1KB、7KB）和路径，界面能点开（`harness_output_read`）。grep、rg、diff 的退出码 1 不算失败。
+- **上限**：默认 40 轮；上下文到了压缩线先自动压缩（下面「上下文」），压完还超过窗口的 95% 才停；**花费上限**按这个月（UTC）Peck 循环和 ONE SHOT 在事件日志里的 `usage.updated` 加起来算，每次请求前现算（同时跑的任务花的也算进来）；设了上限时价格表里没有价格的模型不发；供应商没报用量也停。停下都是 `turn.completed` 的 `limit` + 一句原因。旧的 API 记录和 CLI 估的花费不算进上限。
+- **十二个工具**（`tools/`；`bash_background`、`memory`、`search_tasks` 见下面两节）：`list_directory`（遵守 .gitignore，最多 300 条）、`read_file`（6 位行号 + tab，2000 行 / 50KB，记下读到时的哈希，能读这个任务落盘的命令输出；超过 8MB 的文件边读边数行、只留要的那段，也不记「读过」）、`search_text`（进程内 `ignore` + `grep-searcher`）、`find_files`（按修改时间，最多 100 条）、`write_file`（覆盖前要在这个任务里读过且没变）、`write_patch`（找原文 → 换新文：整批校验，临时文件 + 改名，中途失败写回原样；找不到给最像的几行和空白差异，多处列行号，宽松匹配行尾空白和中英文标点但仍要唯一）、`bash_run`、`update_plan`（同时一步在做）、`ask_user`。读改都只在项目里、不碰 `.git`。
+- **命令**（`tools/bash.rs`）：`sandbox-exec`，默认联网；EDIT / AUTO 只能写项目、临时目录和 Peck 给的 HOME，`.git` 只读；PLAN 只能写临时目录；不能开别的 App（`lsopen`）、不能发 Apple Events。环境是站主 shell 的那份，去掉名字像 Key、令牌、密码、Cookie、Session 的变量和 `SSH_AUTH_SOCK`（站主 2026-11-13 定）；stdin 空，`CI=1`、`PAGER=cat`、`NO_COLOR=1`；默认 120 秒、最长 600 秒，跑完或超时结束整个进程组；跑命令的 future 被丢掉（验证命令作废、任务被打断）时 `process::GroupGuard` 也把整组杀掉。被沙箱拒了写项目外，弹高危卡片，批了出沙箱再跑一次。输出超过 16KB 整份落盘（`spill.rs`），上下文只留开头 2KB、结尾 6KB（失败时 1KB、7KB）和路径，界面能点开（`harness_output_read`）。grep、rg、diff 的退出码 1 不算失败。
 - **权限三档**（`permission.rs`）：PLAN 只给读的工具、`update_plan`、`ask_user`，命令在只读沙箱；EDIT 全部工具，装依赖、起常驻进程前问一次（能选「这个项目总是允许」，存 `harness_allow`；设置 → 权限里列出来、能撤：`harness_allow_list` / `_remove`）；AUTO 除了高危都不问。
 - **高危**（`risk.rs`，不管哪档都弹，只有批准、不行）：删文件（`rm`、`git clean`、`find -delete` / `-exec(dir) rm`、丢掉没提交的改动……）、推送和改历史（`git push`、`git -c alias.*`、`reset --hard`、`branch -D`、`rebase`、`commit --amend`……）、写到项目外（重定向、`cp`、`mv`、`tee` 的目标在项目外）、改系统设置（`sudo`、`defaults write`、`launchctl`……）、看不出会做什么的命令（命令名是展开出来的 `$CMD` / `$(…)`、`eval` 带展开、`… | sh`、`find -exec sh`、解释器代码里删文件或起进程）。命令先按 shell 规矩拆段，`sh -c '…'`（`-ec`、`-xc` 这类也算）、`$(…)` 里的也看。规则是黑名单，挡常见写法；兜底的是沙箱和撤销。
 - **任务记录**（`run.rs`）：和 CLI 引擎一样占任务号、一个项目一次一个、任务前快照；`runs.engine` 记 `peck`。`harness_spend` 给这个月花了多少。
+
+### 上下文（`context.rs`、`compact.rs`、`history.rs`）
+
+- **分层和缓存断点**：系统提示两块，都打缓存断点：Peck 自己的说明（档位、怎么干活）+ 工具定义；项目层 = 项目说明（项目根的 `AGENTS.md`，没有就 `CLAUDE.md`；空文件当没有；指到项目外的符号链接不认；最多 32KB，多了截掉写明）+ 站主批过的记忆。Anthropic 再在对话最后一块打一个断点（`convert/anthropic.rs`：系统提示打了断点才打，一共 3 个）；OpenAI、DeepSeek、Gemini 是自动前缀缓存，不用打。
+- **每次发一句话带上的环境**（`<peck-context>`，放在这句话前面、不进系统提示，免得每次打穿缓存）：系统和项目根、git（分支、没提交的改动最多 20 条、最近 5 个提交；`GIT_OPTIONAL_LOCKS=0`，不碰用户仓库的 index）、最近一份任务清单、这个任务之前几次改过的文件（撤销了的不算）、验证命令、目标模式、在跑的后台命令。ONE SHOT 不带环境块，但有项目层。
+- **大小**：每次请求前粗估一遍（中日韩字一个算一个 token，其他四个字符一个），按上一次实报的提示大小校准，发 `context.updated`（四块：Peck 的说明和工具、项目说明和记忆、对话和思考、工具的输出；窗口和压缩线），回合结束再报一次。
+- **自动压缩**：估到窗口的 80%（压缩线）时，下一次请求前按顺序做，降到 60% 以下就停：① **落盘**：除了最后一条，比 3KB 长的工具输出整份写进这个任务的输出目录（`ctx-<n>.log`，已有的不覆盖），上下文里留开头结尾各 800 字节和路径（`read_file` 读得回来）；② **清旧工具输出**：最近两轮以外的工具输出换成一句「做过什么」，站主最近一句以前的思考、旧的环境块去掉（工具调用都留着，对话接得上；这一回合的思考留着，DeepSeek 要原样传回）；③ **交接摘要**：同样的系统提示、工具、对话（命中缓存）后面接一段要求，让模型写交接摘要（不显示成回答，花费照算，输出上限 16000），对话换成「摘要 + 站主最近说的三句」；没写出来或被截断就不换，对话原样留着、提示一行。每一步发 `context.compacted`。压完还超过 95%、或者刚压过一轮又满了，停下写明原因。
+- **记忆**：`memory` 工具只发 `memory.proposed`；任务结束时中栏一张「想记住这几条」，站主勾了 SAVE（IPC `memory_review`）才存进 `memories`（按项目，一字不差的不重复存），事件日志里追加 `memory.reviewed`（卡片据此收起）。项目设置里能看、能删（`memory_list` / `memory_delete`）；换文件夹时跟着项目走。
+- **@ 旧任务**：输入框里打 `@` 列出这个项目的旧任务，点一个插进 `[@标题](peck:task/<任务 id>)`；也认手写的 `@任务 12`。发出去时 `history::task_refs` 把那个任务（最近 5 次）问了什么、结果、改了哪些文件做成 `<referenced-task>` 放在这句话前面（最多 4 个，只认这个项目的）；CLI 引擎看到的这一句前面也带上，任务记录里照旧是站主的原话。
+- **搜历史任务**：`search_tasks`（关键词都要出现在标题、请求、结果或文件路径里，最新的 10 个；或者按任务号看一次的详情），ONE SHOT 也有。
+
+### 后台和验证（`verify.rs`、`background.rs`、`monitor.rs`）
+
+- **`.peck/verify.toml`**：`[[check]]`（name、run、when：改了哪些文件才跑的 glob，空着是都跑、timeout：秒，默认 300、最长 3600）最多 8 条；`[[server]]`（name、run、ready：输出里出现这段算起好了、autostart）最多 4 个。写错了照常跑任务、不看验证，开头记一条提示。第一次打开项目（没有这份文件、没说过不要）时按 `package.json` 的 scripts（check / typecheck、lint、test、dev；照锁文件认 pnpm / yarn / bun / npm）、根目录或下一层的 `Cargo.toml`、`go.mod`、`pyproject.toml` / `setup.py`、`Makefile` 的 test 猜几条（不跑任何命令），站主在 NEW TASK 上确认（能改）才写（`verify_get` / `verify_save` / `verify_dismiss`）。**只认站主确认过的那一份**（`verify::load_approved` 比 md5）：项目自带的、模型或别人改过的，不替模型跑、不起 dev server、不开目标模式，NEW TASK 上换成「还没确认的验证命令」。
+- **规则为主**：Peck 循环（不是 PLAN、不是 ONE SHOT）每轮跑过会改东西的工具后，比一遍项目文件（大小 + 修改时间，照 `.gitignore`，最多 5 万个；再多就只认工具报的 Diff），改到了哪条的 `when` 就在后台起它（项目沙箱、命令的环境同 `bash_run`），模型接着干活。
+- **并发过期**：一条验证命令跑的时候它管的文件又改了：停掉，记一条 `stale`，按新文件再跑。
+- **模型停下时**：要看的那几条（目标模式是目标那几条；平时是这个任务改过的文件管得到的）——结果是新的直接用，正在按最新文件跑的等它，没跑过的现在跑。都过了：发 `verify.round` passed、收尾，不再叫模型（中栏挂 ✓）。没过：把失败的命令、退出码、输出结尾 3KB 和完整输出的路径包成 `<peck-verify>` 交回模型修，最多 3 次（目标模式 8 次）；**同一个失败连续两次**（命令名 + 退出码 + 像错误的那几行，去掉耗时和地址）或者**两次之间没改文件**都停下（`limit`，写明原因）。没有要看的就照常收尾。
+- **后台命令通道**（`bash_background`，`start` / `read` / `stop` / `list`）：最长 12 小时；起的时候照 `bash_run` 的规矩（高危弹卡片；EDIT 下这条命令自己要问的，比如装依赖，照问，再当「起常驻进程」问一次，都能「总是允许」）；起完等 1.5 秒把开头的输出一起给模型；`read` 给上次读过以后的新输出（多了留开头结尾，完整的写在日志文件，`read_file` 读得到），能等最多 60 秒；一个任务最多同时 4 个；任务结束一起停。
+- **常驻 dev server**（`[[server]]`）：站主在输入框旁的 DEV 里起停（`server_start` / `background_stop`），不限时、跨任务一直在，退出 Peck 才停（`RunEvent::Exit` 停整个进程组）；起之前加锁，同时点不会起两份。`autostart = true` 的发任务时没在跑就先起（PLAN 不起；拍完任务前快照再起，它写的文件不算任务的改动）；模型能读它的输出，不能停它。项目有 server 时界面每 2.5 秒读一次状态（`background_list`，窗口藏着不读）。
+- **目标模式**：发任务时开 GOAL 选一条（或全部），只给 Peck 循环、不能是 PLAN；每次模型停下都跑目标那几条，过了才收尾。Antigravity 只做直接调用，不进目标模式和自动修。
+- **CLI 引擎**：不替 CLI 引擎跑验证、不自动修（它们自己会跑命令；要做的话在 Gateway 的 runner 收尾后接上，记在 HANDOFF）。PLAN 也不跑验证，环境块里不提验证命令。
 
 ## 旧的 API 层（`src-tauri/src/api/`）
 
@@ -147,7 +169,7 @@
 |---|---|
 | `src-tauri/src/{lib,commands,state,events}.rs` | 启动和恢复、IPC、共享状态、推给界面的事件 |
 | `src-tauri/src/gateway/` | Model Gateway：契约（`mod`、`event`、`caps`、`catalog`）、事件日志（`log`）、七家 API（`providers` + `convert/`）、五家 CLI（`engines/` + `convert/`）、CLI 的登录和模型列表、本机 MCP、Gateway 版发任务（`runner`）、假 Gateway（`mock`） |
-| `src-tauri/src/harness/` | Peck 循环：`loop`、`tools/`、`permission`、`risk`、`spill`、`run`（发任务、ONE SHOT、花费） |
+| `src-tauri/src/harness/` | Peck 循环：`loop`、`tools/`、`permission`、`risk`、`spill`、`run`（发任务、ONE SHOT、花费）；上下文 `context`、`compact`、`history`（记忆、@ 旧任务、搜历史）；后台和验证 `verify`、`background`、`monitor` |
 | `src-tauri/src/{run,flow,agent,process,mock,mode}.rs` | 旧的任务派发、接力、CLI 清单、子进程、假 Agent、模式 |
 | `src-tauri/src/api/` | Key、授权账本、旧的请求层、规划 + 实施和它的工具、API 记录 |
 | `src-tauri/src/{store,migrations}.rs`、`src-tauri/migrations/` | 历史存储和追加迁移 |

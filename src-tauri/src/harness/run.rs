@@ -7,7 +7,8 @@
 //! ONE SHOT：只读回答（Peck 循环按 PLAN 档、只给读的工具；CLI 引擎按 PLAN 档），不占任务号、不锁项目、
 //! 不锁终端、不存快照；事件照样进事件日志（花费算进这个月）。Antigravity 只做直接调用，不进 ONE SHOT。
 
-use super::r#loop::{Budget, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS};
+use super::context::ProjectLayer;
+use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, VerifyPlan, DEFAULT_MAX_ROUNDS};
 use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
@@ -60,7 +61,7 @@ pub fn prune_spills(root: &Path, max_age: std::time::Duration) -> usize {
     removed
 }
 
-fn runtime_dir(workspace: &Path) -> PathBuf {
+pub(crate) fn runtime_dir(workspace: &Path) -> PathBuf {
     crate::mode::app_data_dir()
         .join("harness-runtime")
         .join(crate::workspace::workspace_hash(workspace))
@@ -148,6 +149,32 @@ fn live_spend(store: &Arc<Mutex<Store>>) -> SpendProbe {
     Arc::new(move || store.lock().ok().and_then(|s| s.harness_spend_since(month_start_ms(now_ms())).ok()))
 }
 
+/// 这个项目站主批过的记忆（旧的在前）。
+fn memories_of(store: &Arc<Mutex<Store>>, workspace_id: &str) -> Vec<String> {
+    store
+        .lock()
+        .ok()
+        .and_then(|s| s.memories(workspace_id).ok())
+        .map(|m| m.into_iter().map(|n| n.text).collect())
+        .unwrap_or_default()
+}
+
+/// 目标模式要过的那几条：名字都得在 verify.toml 里（`*` 是全部）。
+fn check_goal(goal: &[String], verify: &Option<super::verify::VerifyConfig>) -> Result<(), String> {
+    if goal.is_empty() {
+        return Ok(());
+    }
+    let Some(config) = verify.as_ref().filter(|c| !c.check.is_empty()) else {
+        return Err("目标模式要先有验证命令：在项目设置里写 .peck/verify.toml。".into());
+    };
+    for g in goal {
+        if g != "*" && config.find_check(g).is_none() {
+            return Err(format!("verify.toml 里没有叫「{g}」的验证命令。"));
+        }
+    }
+    Ok(())
+}
+
 fn model_id_of(who: &str) -> Result<String, String> {
     let id = who.strip_prefix("api:").ok_or("这个入口只跑 Peck 循环（api:…）。")?;
     catalog::catalog().model(id).ok_or_else(|| format!("模型目录里没有 {id}。"))?;
@@ -172,6 +199,8 @@ pub async fn harness_run_start(
     permission: Option<String>,
     effort: Option<String>,
     cost_cap: Option<f64>,
+    // 目标模式（v0.6）：要过的验证命令的名字，`*` 是全部。
+    goal: Option<Vec<String>>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
@@ -194,6 +223,7 @@ pub async fn harness_run_start(
             effort,
             cost_cap,
             env: super::tools::bash::shell_env(),
+            goal: goal.unwrap_or_default(),
         },
         provider,
         move |e: &AgentEvent| {
@@ -214,6 +244,8 @@ pub(crate) struct PeckRun {
     pub effort: Option<String>,
     pub cost_cap: Option<f64>,
     pub env: Vec<(String, String)>,
+    /// 目标模式：要过的验证命令（`*` 是全部）。空：不是目标模式。
+    pub goal: Vec<String>,
 }
 
 /// 收尾时要的：最后一段回答、回合怎么结束的。
@@ -228,8 +260,22 @@ pub(crate) fn start_peck_run(
     provider: Arc<dyn ModelProvider>,
     out: impl Fn(&AgentEvent) + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env } = run;
+    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, goal } = run;
     let label = model_label(&model_id);
+    // 验证命令（.peck/verify.toml）：只认站主确认过的那一份；写错了、没确认照常跑、不看验证，开头记一条提示；目标模式要有才行。
+    let (verify_config, verify_error, approved) = {
+        let db = store.lock().map_err(|e| e.to_string())?;
+        let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
+        let approved = ws.settings.verify_approved.clone();
+        match super::verify::load_approved(Path::new(&ws.path), approved.as_deref()) {
+            Ok(c) => (c, None, approved),
+            Err(e) => (None, Some(e), approved),
+        }
+    };
+    check_goal(&goal, &verify_config)?;
+    if level == PermissionLevel::Plan && !goal.is_empty() {
+        return Err("PLAN 只读，不能开目标模式。".into());
+    }
     let (run_id, step_id, workspace, workspace_id, cancel_rx) = {
         let mut active = active_runs.lock().map_err(|e| e.to_string())?;
         let mut db = store.lock().map_err(|e| e.to_string())?;
@@ -278,13 +324,38 @@ pub(crate) fn start_peck_run(
         );
         (run_id, step_id, workspace, ws.id, cancel_rx)
     };
-    let (history, allowed) = {
+    let (history, allowed, refs, prior_changed) = {
         let db = store.lock().map_err(|e| e.to_string())?;
+        // 这个任务之前几次改过的文件（撤销了的不算）。
+        let prior_changed: Vec<String> = db
+            .runs(&session_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.id != run_id && r.undone_at.is_none())
+            .flat_map(|r| r.files.into_iter().map(|f| f.path))
+            .collect();
         (
             db.harness_conversation(&session_id).unwrap_or_default(),
             db.harness_allowed(&workspace_id).unwrap_or_default(),
+            super::history::task_refs(&db, &workspace_id, &prompt),
+            prior_changed,
         )
     };
+    let context = ContextConfig {
+        project: ProjectLayer::load(&workspace, memories_of(&store, &workspace_id)),
+        environment: true,
+        prior_changed,
+        refs,
+        history: Some(super::history::probe(store.clone(), workspace_id.clone())),
+        compact_at: 0.0,
+    };
+    // PLAN 只读：不起能写项目的 dev server。
+    let autostart: Vec<String> = if level == PermissionLevel::Plan {
+        vec![]
+    } else {
+        verify_config.as_ref().map(|c| c.server.iter().filter(|s| s.autostart).map(|s| s.name.clone()).collect()).unwrap_or_default()
+    };
+    let verify = VerifyPlan { checks: verify_config.map(|c| c.check).unwrap_or_default(), goal };
     let config = LoopConfig {
         model_id: model_id.clone(),
         max_rounds: DEFAULT_MAX_ROUNDS,
@@ -296,6 +367,8 @@ pub(crate) fn start_peck_run(
         runtime_dir: runtime_dir(&workspace),
         env,
         session_ref: Some(format!("peck-{session_id}")),
+        context,
+        verify,
     };
     let hook_store = store.clone();
     let hook_ws = workspace_id.clone();
@@ -322,6 +395,9 @@ pub(crate) fn start_peck_run(
             out(e);
         });
         let run_sink = RunSink::Persistent { target: Box::new(RunSink::new_memory().0), store: store.clone() };
+        if let Some(e) = verify_error {
+            sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Warn, text: format!("{e} 这次不替模型跑验证命令。") });
+        }
         let started = Instant::now();
         let repo = ShadowRepo::open_or_init(&workspace).ok();
         let before = repo.as_ref().and_then(|r| {
@@ -330,6 +406,19 @@ pub(crate) fn start_peck_run(
             record_step_start(&id, &step_id, r, tree.clone());
             Some(tree)
         });
+        // 常驻的 dev server：`autostart = true` 的没在跑就先起（拍完任务前快照再起，它写的文件不算这个任务的改动；跨任务一直在，不往这个任务的日志里记后来的变化）。
+        for name in &autostart {
+            if super::background::server(&workspace, name).is_none() {
+                match super::background::start_server(&workspace, name, approved.as_deref(), None) {
+                    Ok(p) => {
+                        sink.emit(super::background::event_of(&p.info()));
+                    }
+                    Err(e) => {
+                        sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Warn, text: format!("dev server「{name}」没起来：{e}") });
+                    }
+                }
+            }
+        }
         let descriptor = |status| {
             ResolvedStepPlan {
                 id: step_id.clone(),
@@ -466,6 +555,12 @@ pub async fn harness_oneshot(
             runtime_dir: runtime_dir(&workspace),
             env: super::tools::bash::shell_env(),
             session_ref: None,
+            context: ContextConfig {
+                project: ProjectLayer::load(&workspace, memories_of(&state.store, &workspace_id)),
+                history: Some(super::history::probe(state.store.clone(), workspace_id.clone())),
+                ..Default::default()
+            },
+            verify: Default::default(),
         };
         (Arc::new(PeckBackend::new(provider, config, vec![])), "peck".into())
     } else if let Some(engine) = who.strip_prefix("cli:") {
@@ -707,6 +802,7 @@ mod tests {
             effort: None,
             cost_cap: Some(100.0),
             env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
+            goal: vec![],
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         let run_id = start_peck_run(make("把标题改成中文"), Arc::new(ScriptedModel::peck_demo(Duration::ZERO)), move |e| {
