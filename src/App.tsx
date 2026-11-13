@@ -16,6 +16,7 @@ import { SettingsPage } from "@/shell/SettingsPage";
 import { ProjectPage } from "@/shell/ProjectPage";
 import type { LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
+import { AgentsPanel } from "@/shell/AgentsPanel";
 import { Icon } from "@/ui";
 
 export interface TermEntry {
@@ -64,6 +65,8 @@ export const App: React.FC = () => {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [terms, setTerms] = useState<Record<string, TermView>>({});
   const [draft, setDraft] = useState("");
+  /** 输入框下点了「谁」：AGENTS 闪一下。 */
+  const [agentsFlash, setAgentsFlash] = useState(0);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number>(0);
   const tabRef = useRef(tab);
@@ -237,7 +240,7 @@ export const App: React.FC = () => {
   }, [refreshProjects, queueAgentEvent]);
 
   /** 发任务：没选任务就新开一个（任务名是这句话），选着任务就接着在里面发。 */
-  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string) => {
+  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string) => {
     if (!project) return;
     if (project.missing) { say("这个项目的文件夹不在了：先重新找文件夹"); return; }
     if (busy) { say("同一个项目一次跑一个任务"); return; }
@@ -257,7 +260,7 @@ export const App: React.FC = () => {
         const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
         id = who.startsWith("api:")
           ? await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap }, onEvent)
-          : await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined }, onEvent);
+          : await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined }, onEvent);
         runId = id;
         setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
         setAgentEvents((prev) => ({ ...prev, [runId]: prev[runId] ?? [] }));
@@ -275,7 +278,7 @@ export const App: React.FC = () => {
       setDraft("");
       setShownRunId(null);
       setTaskId(target);
-      setTab((t) => (t === "term" || t === "oneshot" ? t : "changes"));
+      setTab((t) => (t === "term" || t === "oneshot" || t === "log" ? t : "changes"));
       await refreshProjects();
       setMessages(await ipc.sessionGetMessages(target));
     } catch (e) { say(e); void refreshProjects(); }
@@ -451,7 +454,24 @@ export const App: React.FC = () => {
           projectId={projectId}
           taskId={taskId}
           busyProjects={busyProjects}
-          run={run}
+          folded={!!settings.fold.projects}
+          onFold={(projectsFolded) => updateSettings({ fold: { ...settingsRef.current.fold, projects: projectsFolded } })}
+          agents={
+            <AgentsPanel
+              entries={entries}
+              value={chosenEntry(entries, settings)}
+              settings={settings}
+              onSettings={updateSettings}
+              apiStatus={apiStatus}
+              onApiConfig={async (config) => { try { await api.saveConfig(config); await refreshApi(); } catch (e) { say(e); } }}
+              disabled={busy}
+              onOpenSettings={() => setPage("settings")}
+              grow={!!settings.fold.projects}
+              onFold={(agentsFolded) => updateSettings({ fold: { ...settingsRef.current.fold, agents: agentsFolded } })}
+              flash={agentsFlash}
+              say={say}
+            />
+          }
           onSelectProject={selectProject}
           onSelectTask={selectTask}
           onOpen={openProject}
@@ -508,7 +528,7 @@ export const App: React.FC = () => {
                 onRetryStep={retryStep}
                 onOpen={openProject}
                 onOpenSettings={() => setPage("settings")}
-                onApiConfig={async (config) => { try { await api.saveConfig(config); await refreshApi(); } catch (e) { say(e); } }}
+                onShowAgents={() => { if (settingsRef.current.fold.agents) updateSettings({ fold: { ...settingsRef.current.fold, agents: false } }); setAgentsFlash((n) => n + 1); }}
                 onRelocate={relocateProject}
                 onRemoveProject={removeProject}
                 shownRunId={run?.id ?? null}

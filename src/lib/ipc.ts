@@ -242,6 +242,11 @@ export const ipc = {
 
   // ── Model Gateway（v0.5 契约，src-tauri/src/gateway/）──
   /** 模型列表：API 模型（配了 Key 的能用）、CLI 引擎（检测到的能用）、接力。 */
+  /** 一家 CLI 能选的模型（从 CLI 自己那里读，存着；refresh 才重读）。 */
+  async cliModels(engine: string, refresh = false): Promise<CliModels> {
+    if (isMockMode()) return mockCliModels(engine);
+    return invoke<CliModels>("cli_models", { engine, refresh });
+  },
   async gatewayModels(): Promise<ModelEntry[]> {
     if (isMockMode()) return mockIpc.gatewayModels();
     return invoke<ModelEntry[]>("gateway_models");
@@ -371,8 +376,27 @@ export interface OneshotArgs {
   prompt: string;
   /** api:… 或 cli:…（Antigravity 不行） */
   who: string;
+  /** CLI 引擎里的模型名（AGENTS 里选的；不填用 CLI 默认）。 */
+  model?: string;
   effort?: string;
   costCap?: number | null;
+}
+
+/** CLI 能选的一个模型（`gateway/cli_models.rs`）。 */
+export interface CliModel { id: string; label: string; efforts: string[]; defaultEffort: string | null; isDefault: boolean }
+export interface CliModels { engine: string; models: CliModel[]; source: "cli" | "builtin" | "mock"; readAt: number | null; error: string | null }
+
+/** 浏览器演示：照夹具里录到的。 */
+function mockCliModels(engine: string): Promise<CliModels> {
+  const m = (id: string, efforts: string[], isDefault = false): CliModel => ({ id, label: id, efforts, defaultEffort: null, isDefault });
+  const list: Record<string, CliModel[]> = {
+    "claude-code": ["fable", "opus", "sonnet", "haiku"].map((id) => ({ ...m(id, ["low", "medium", "high", "xhigh", "max"]), label: id[0].toUpperCase() + id.slice(1) })),
+    codex: [m("gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], true), m("gpt-6-luna", ["low", "medium", "high"])],
+    muse: [m("muse-wonder-1.0", ["minimal", "low", "medium", "high", "max"], true), m("muse-ember-1.0", ["low", "medium", "high"]), m("muse-spark-1.3", ["low", "medium", "high"])],
+    grok: [m("grok-4.6", ["medium", "high", "xhigh"], true), m("grok-4.5", ["medium", "high", "xhigh"])],
+    antigravity: [m("gemini-4-argon", ["low", "medium", "high"], true), m("gemini-3.8-flash", ["low", "medium", "high"]), m("claude-opus-5-5", ["low", "medium", "high"])],
+  };
+  return Promise.resolve({ engine, models: list[engine] ?? [], source: "mock", readAt: Date.now(), error: null });
 }
 
 /** 「这个项目总是允许」的一条。 */

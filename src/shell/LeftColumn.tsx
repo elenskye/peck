@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
-import { ago, clock, cn, plainLine, runState, span, STATUS_WORD, stepName } from "@/lib/utils";
-import { Btn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
+import type { ProjectOverview, TaskBrief } from "@/lib/types";
+import { ago, clock, cn, plainLine, runState, STATUS_WORD } from "@/lib/utils";
+import { Btn, FoldBtn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
 
 const RECENT = 3;
 
@@ -164,19 +164,22 @@ export interface LeftActions {
   onReorderTasks: (projectId: string, ids: string[]) => void;
 }
 
-/** 左栏：项目和任务（没选项目时每个项目带最近几次任务；选了就是它的任务列表），下面是这个任务的记录。 */
+/** 左栏：项目和任务（没选项目时每个项目带最近几次任务；选了就是它的任务列表），下面是 AGENTS（谁来干）。两块都能收起，收起的只剩头，另一块占满。 */
 export const LeftColumn: React.FC<{
   projects: ProjectOverview[];
   projectId: string | null;
   taskId: string | null;
   busyProjects: Set<string>;
-  run: RunRecord | null;
+  /** 下面那一块（AGENTS）。 */
+  agents: React.ReactNode;
+  folded: boolean;
+  onFold: (folded: boolean) => void;
   onSelectProject: (id: string | null) => void;
   onSelectTask: (projectId: string, taskId: string | null) => void;
   onOpen: (path?: string) => void;
   native: boolean;
   actions: LeftActions;
-}> = ({ projects, projectId, taskId, busyProjects, run, onSelectProject, onSelectTask, onOpen, native, actions }) => {
+}> = ({ projects, projectId, taskId, busyProjects, agents, folded, onFold, onSelectProject, onSelectTask, onOpen, native, actions }) => {
   const [pathOpen, setPathOpen] = useState(false);
   const [path, setPath] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
@@ -215,8 +218,10 @@ export const LeftColumn: React.FC<{
 
   return (
     <section className="col" aria-label="项目和任务">
-      <div className="pk-mod left-projects">
-        <ModHead label="PROJECTS" note={projectId ? <button type="button" className="link" onClick={() => onSelectProject(null)}>全部项目</button> : undefined} count={projects.length} />
+      <div className={cn("pk-mod left-projects", folded && "is-folded")}>
+        <ModHead label="PROJECTS" note={folded ? projects.find((p) => p.workspace.id === projectId)?.workspace.name : projectId ? <button type="button" className="link" onClick={() => onSelectProject(null)}>全部项目</button> : undefined} count={projects.length}>
+          <FoldBtn name="PROJECTS" folded={folded} onFold={onFold} />
+        </ModHead>
         {projects.length === 0 ? (
           <div className="empty">
             <p>还没有项目。打开一个项目文件夹，Peck 就在里面干活。</p>
@@ -297,44 +302,9 @@ export const LeftColumn: React.FC<{
           <p className="hint">右键项目或任务：改名、设置、删除；按住拖动换顺序</p>
         </div>
       </div>
-      <TaskLog run={run} />
+      {agents}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </section>
   );
 };
 
-/** 这个任务的记录：存快照、每一步、做完、撤销。 */
-const TaskLog: React.FC<{ run: RunRecord | null }> = ({ run }) => {
-  const items: Array<{ t: number; title: string; note: string }> = [];
-  if (run) {
-    items.push({ t: run.startedAt, title: "存了任务前快照", note: "撤销就回到这一刻" });
-    for (const step of run.steps) {
-      if (step.status === "succeeded" && step.finishedAt) items.push({ t: step.finishedAt, title: `${stepName(step)} 做完`, note: `用了 ${span(step.durationMs)}` });
-      if (step.status === "failed" && step.finishedAt) items.push({ t: step.finishedAt, title: `${stepName(step)} 失败`, note: step.exitCode != null ? `退出码 ${step.exitCode}` : "没跑完" });
-    }
-    if (run.finishedAt && run.status === "succeeded") items.push({ t: run.finishedAt, title: "做完了", note: `${run.files.length} 个文件 · 默认留着` });
-    if (run.finishedAt && run.status === "cancelled") items.push({ t: run.finishedAt, title: "已停止", note: "改过的文件留着，能撤销" });
-    if (run.undoneAt) items.push({ t: run.undoneAt, title: "撤销了", note: `回到 ${clock(run.startedAt)} 开始前的样子` });
-    items.sort((a, b) => a.t - b.t);
-  }
-  return (
-    <div className="pk-mod left-log">
-      <ModHead label="LOG" note="这个任务" />
-      {items.length === 0 ? (
-        <p className="empty-line">发任务以后，存快照、每一步、做完、撤销都记在这里。</p>
-      ) : (
-        <ul className="scroll log">
-          {items.map((item, i) => (
-            <li key={i}>
-              <span className="log-t">{clock(item.t)}</span>
-              <span>
-                <b className="t-name">{item.title}</b>
-                <span className="log-n">{item.note}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-};

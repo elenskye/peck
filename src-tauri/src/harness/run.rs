@@ -430,6 +430,8 @@ pub async fn harness_oneshot(
     workspace_id: String,
     prompt: String,
     who: String,
+    // CLI 引擎里的模型名（AGENTS 里选的；不填用 CLI 默认）。API 模型不看它。
+    model: Option<String>,
     effort: Option<String>,
     cost_cap: Option<f64>,
     channel: Channel<AgentEvent>,
@@ -449,6 +451,7 @@ pub async fn harness_oneshot(
     let out = move |e: &AgentEvent| {
         let _ = channel.send(e.clone());
     };
+    let cli_model = if who.starts_with("cli:") { model.filter(|m| !m.trim().is_empty()) } else { None };
     let (backend, engine): (Arc<dyn AgentBackend>, String) = if who.starts_with("api:") {
         let model_id = model_id_of(&who)?;
         let provider = providers::for_model(&state, &model_id).await.map_err(|e| e.message)?;
@@ -473,7 +476,7 @@ pub async fn harness_oneshot(
     } else {
         return Err("ONE SHOT 选一个 API 模型或 CLI 引擎。".into());
     };
-    start_oneshot(state.store.clone(), id.clone(), engine, workspace, prompt, effort, backend, out);
+    start_oneshot(state.store.clone(), id.clone(), engine, workspace, prompt, cli_model, effort, backend, out);
     Ok(id)
 }
 
@@ -484,6 +487,7 @@ pub(crate) fn start_oneshot(
     engine: String,
     workspace: PathBuf,
     prompt: String,
+    model: Option<String>,
     effort: Option<String>,
     backend: Arc<dyn AgentBackend>,
     out: impl Fn(&AgentEvent) + Send + Sync + 'static,
@@ -497,7 +501,7 @@ pub(crate) fn start_oneshot(
             prompt,
             cwd: workspace,
             permission: PermissionLevel::Plan,
-            model: None,
+            model,
             effort,
             resume: None,
             peck_mcp: None,

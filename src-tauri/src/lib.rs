@@ -121,6 +121,7 @@ pub fn run() {
             commands::shell_set_activity,
             commands::notify,
             gateway::gateway_models,
+            gateway::cli_models::cli_models,
             gateway::gateway_config_get,
             gateway::gateway_config_set,
             gateway::gateway_events,

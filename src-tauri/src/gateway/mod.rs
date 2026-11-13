@@ -14,6 +14,7 @@
 pub mod accounts;
 pub mod caps;
 pub mod catalog;
+pub mod cli_models;
 pub mod config;
 pub mod convert;
 pub mod engines;

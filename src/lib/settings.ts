@@ -10,7 +10,11 @@ export interface AppSettings {
   pick: string;
   /** 每种干法（FLOW：api、cli、relay、plan、fake）上次选的哪个；换 FLOW 时回到它。 */
   picks: Partial<Record<string, string>>;
-  /** 每个模型上次选的思考强度（`off` 是不思考）。 */
+  /** 每家 CLI 用哪个模型（引擎 id → CLI 里的模型名；空着用 CLI 自己的默认）。 */
+  cliModels: Record<string, string>;
+  /** 左栏收起的模块（PROJECTS、AGENTS）。 */
+  fold: { projects?: boolean; agents?: boolean };
+  /** 每个模型上次选的思考强度（`off` 是不思考；CLI 的 `default` 是不指定、用 CLI 自己的）。 */
   efforts: Record<string, string>;
   /** ONE SHOT 上次选的谁来答。 */
   oneshotPick: string;
@@ -32,6 +36,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   pick: "",
   picks: {},
+  cliModels: {},
+  fold: {},
   efforts: {},
   oneshotPick: "",
   permission: "edit",
@@ -62,6 +68,8 @@ export async function loadSettings(): Promise<AppSettings> {
       ...saved,
       pick: saved.pick ?? legacyPick(saved),
       picks: { ...saved.picks },
+      cliModels: { ...saved.cliModels },
+      fold: { ...saved.fold },
       efforts: { ...saved.efforts },
       limits: { ...DEFAULT_SETTINGS.limits, ...saved.limits },
       appIcon: saved.appIcon === "a3" ? "a3" : "j2",

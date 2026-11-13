@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v0.5 做完，等站主提交**（2026-11-13）：云端分支 `claude/peck-v0.5` 压成一份改动合进 `main`，本地修了审查找出的问题，又按站主的意见做了三轮优化（见 HANDOFF），装了正式包。验收页没交，站主 11-13 让直接提交、推送。站主提交、打 tag `peck-v0.5.0`、删掉云端分支以后，云端开 v0.6（Phase 7 上下文、Phase 8 后台和 Monitor），站主的额度监测器作业同时开始。
+**v0.5 完成**（tag `peck-v0.5.0`，2026-11-13）。之后本地又按站主的意见做了一轮界面优化（Refine R4：左栏 AGENTS、CLI 选模型、LOG 挪进右栏、页签图标、左栏两块能收起，见 HANDOFF），等站主提交。云端可以开 v0.6（Phase 7 上下文、Phase 8 后台和 Monitor），站主的额度监测器作业同时开始。
 
 ## 定位
 
@@ -51,7 +51,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | --- | --- | --- |
 | v0.3 | 文档与底座、视觉基线 | 不出页，站主在画布上批的视觉 |
 | v0.4 | 新外壳、发任务与看任务（通过 19/19；tag `peck-v0.4.0`） | [Peck v0.4 验收](https://claude.ai/artifact/65eT7MNmNNFbn343WTX6BK) |
-| v0.5 | Model Gateway、工具箱和 Peck 循环（三轮优化；页没交，站主 11-13 让直接提交） | [Peck v0.5 验收](https://claude.ai/artifact/7udRbMmzo6C3NRLTwpE7iJ) |
+| v0.5 | Model Gateway、工具箱和 Peck 循环（三轮优化；页没交，站主 11-13 直接提交；tag `peck-v0.5.0`） | [Peck v0.5 验收](https://claude.ai/artifact/7udRbMmzo6C3NRLTwpE7iJ) |
 | v0.6 | 上下文、后台和 Monitor | 本地验收时填 |
 | v0.7 | 会话和项目、审阅和预览 | 本地验收时填 |
 | v0.8 | 多引擎合作、本机和打磨 | 本地验收时填 |

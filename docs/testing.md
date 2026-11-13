@@ -8,7 +8,7 @@
 - 浏览器里 `src/lib/ipc.ts` 把所有调用转给 `src/dev/mockIpc.ts`，数据在 `src/dev/mockData.ts`，只在内存，刷新重置；原生窗口永远走 Rust。
 - 参数：`&empty` 没有项目（看空状态）。
 - 假数据里有 3 个项目（notebook、peck、edge-gateway），6 个任务：在跑的一个（Muse → Grok，第二步在跑）、完成的四个（Grok 单个、Muse → Grok、API 模式单模型干活、API 模式规划 + 实施）、失败的一个（Grok 登录过期）。每个完成的任务都有改动列表和 Diff，API 模式的有调用与审查历史。
-- 在 `?mock` 里发任务：选项目 → NEW TASK → 一句话 + 「谁来干」（FLOW 选干法，再在 CLI / API 里选谁；模型列表全部当能用；设置的开发者选项开了 FLOW 里多一个假 Agent）→ ↵。
+- 在 `?mock` 里发任务：选项目 → NEW TASK → 左栏 AGENTS 里选谁来干（FLOW 选干法，再选 CLI / API 和模型；模型列表全部当能用、CLI 的模型是演示数据；设置的开发者选项开了 FLOW 里多一个「假」）→ 一句话 → ↵。
   - **Peck 循环**（任何一个 PECK 组的模型）：`src/dev/peckMock.ts` 的剧本——看目录、读、搜、改（进 CHANGES）、跑一条输出很长的命令（点开能看完整日志）、`rm -rf dist`（高危卡片，ALLOW / DENY 都能走完）、清单、ASK（选项或自己写）、收尾；每轮报用量，任务下面一行花费，输入框旁累计。设置里花费上限设得比 0.42（演示里这个月已花的）低，发出去就停、写明原因。
   - **CLI 引擎**：回放 `src-tauri/tests/fixtures/gateway/` 的录音（Codex 3 次审批、Grok 1 次……），碰到审批停下等卡片。
   - **接力、规划 + 实施、假 Agent**：照旧的步骤显示，能停、能重跑步骤、能撤销。
@@ -90,3 +90,5 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 | Anthropic API | [Usage/Cost Analytics](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api) | 要 Admin 权限，普通 Key 没有余额接口，显示未知 |
 
 看的要点：只在对应客户端运行时监测，退出就停并留最后一次快照；未装、未登录、缺字段、失败分开显示；未知不填 0，币种不直接相加，估算标出来；不采集提示词、会话正文、环境变量；不为查额度启动已关闭的客户端或发模型 turn。合成数据只验启停和显示，不算真实接入。
+
+- **CLI 的模型列表**（不发任务、不花额度，只握手和列模型）：`PECK_LIVE_CLI_DIR=<cli/bin 的完整路径> PECK_LIVE_ENGINE=codex cargo test --manifest-path src-tauri/Cargo.toml live_list_models -- --ignored --nocapture`（engine 换成 muse、grok、antigravity）。

@@ -1,15 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, type ApiConfig, type ApiStatus, type ApiTask } from "@/lib/api";
+import { api, type ApiStatus, type ApiTask } from "@/lib/api";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { addUsage, foldEvents, usageText, usd, type UsageLine } from "@/lib/agentView";
 import type { AppSettings } from "@/lib/settings";
 import type { Message, Permission, ProjectOverview, RunRecord, StepDescriptor, TaskBrief } from "@/lib/types";
-import { PERMISSIONS, agentDot, clock, cn, engineDot, isAgentRun, runState, span, stepName, timer, whoDots, whoLabel , shortenHomePath } from "@/lib/utils";
+import { PERMISSIONS, agentDot, clock, cn, engineDot, entryDot, isAgentRun, runState, span, stepName, timer, whoDots, whoLabel , shortenHomePath } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Icon, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
-import { EffortPicker, WhoPicker, defaultEffort, flowOf, labelOf, pickable } from "@/shell/ModelPicker";
+import { cliModelOf, labelOf, pickable, sendEffort, whoText } from "@/shell/ModelPicker";
 
 interface Props {
   project: ProjectOverview | null;
@@ -29,14 +29,14 @@ interface Props {
   runningRunId: string | null;
   draft: string;
   onDraft: (text: string) => void;
-  onSend: (prompt: string, who: string, permission: Permission, effort?: string) => void;
+  onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string) => void;
   onStop: () => void;
   onRetryStep: (run: RunRecord, stepId: string) => void;
   onControl: (runId: string, control: Control) => Promise<void>;
   onOpen: (path?: string) => void;
   onOpenSettings: () => void;
-  /** 规划 + 实施在输入框下换模型：存旧 API 层的设置。 */
-  onApiConfig: (config: ApiConfig) => Promise<void>;
+  /** 输入框下点了「谁」：展开、闪一下左栏的 AGENTS。 */
+  onShowAgents: () => void;
   /** 项目文件夹不在了：重新找文件夹、移出列表。 */
   onRelocate: (projectId: string) => void;
   onRemoveProject: (projectId: string) => void;
@@ -227,14 +227,11 @@ const Composer: React.FC<Props & {
   permission: Permission;
   onPermission: (p: Permission) => void;
   placeholder: string;
-}> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onSettings, entries, onOpenSettings, onApiConfig, apiStatus, runs, agentEvents, task }) => {
-  const options = pickable(entries, settings.fakeAgent);
+}> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, apiStatus, runs, agentEvents, task }) => {
   const ready = !!draft.trim() && !!who && !busy;
-  const effort = who ? settings.efforts[who.id] ?? defaultEffort(who) : "off";
   const submit = () => {
     if (!ready || !who) return;
-    const chosen = who.efforts.includes(effort) ? effort : undefined;
-    onSend(draft.trim(), who.id, permission, chosen);
+    onSend(draft.trim(), who.id, permission, sendEffort(who, settings), cliModelOf(who, settings));
   };
   const spent = useMemo(() => (task ? taskUsage(runs, agentEvents) : null), [task, runs, agentEvents]);
   const money = spent ? usd(spent.usd) : null;
@@ -244,11 +241,12 @@ const Composer: React.FC<Props & {
         <span className="pk-prompt">›</span>
         <MarkdownEditor value={draft} onChange={onDraft} onSubmit={submit} placeholder={placeholder} disabled={busy} ariaLabel="一句话说要做什么" />
       </div>
+      {/* 谁来干在左栏 AGENTS 里选；这里一行写现在是谁，点它跳过去。 */}
+      <button type="button" className="composer-who" title="在左栏 AGENTS 里换" onClick={onShowAgents}>
+        <Dot kind={who ? entryDot(who.id) : ""} />
+        <span>{whoText(who, settings, apiStatus)}</span>
+      </button>
       <div className="composer-row">
-        <WhoPicker entries={options} value={who} disabled={busy} remembered={settings.picks} onOpenSettings={onOpenSettings} apiStatus={apiStatus} onApiConfig={onApiConfig}
-          onChange={(pick) => { const e = options.find((x) => x.id === pick); onSettings({ pick, picks: e ? { ...settings.picks, [flowOf(e)]: pick } : settings.picks }); }}>
-          <EffortPicker entry={who} value={effort} disabled={busy} onChange={(e) => who && onSettings({ efforts: { ...settings.efforts, [who.id]: e } })} />
-        </WhoPicker>
         <Seg label="权限" sm disabled={busy} items={PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))} value={permission} onChange={onPermission} />
         <span className="grow" />
         {spent && <span className="composer-cost t-code" title={`这个任务一共：${usageText(spent)}`}>{money == null ? "花费未知" : `${spent.source === "estimated" ? "估 " : ""}${money}`}</span>}

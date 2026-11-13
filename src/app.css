@@ -34,7 +34,7 @@ body { overflow: hidden; }
 .app-grid--wide { grid-template-columns: var(--width-left) minmax(0, 1fr); }
 .col { display: flex; flex-direction: column; gap: var(--space-7); min-width: 0; min-height: 0; }
 .col-grow { flex: 1 1 0; min-height: 0; }
-.pk-mod.col-grow, .pk-mod.left-projects, .pk-mod.left-log { display: flex; flex-direction: column; }
+.pk-mod.col-grow, .pk-mod.left-projects, .pk-mod.left-agents { display: flex; flex-direction: column; }
 .pk-mod-head { flex: none; }
 .pk-mod-head .pk-btn { margin: -6px 0; }
 .pk-mod-head .pk-mod-note { display: inline-flex; align-items: center; gap: var(--space-3); }
@@ -82,7 +82,7 @@ body { overflow: hidden; }
 .menu-pop--down { top: calc(100% + var(--space-3)); }
 
 /* ---------- 左栏：项目和任务、这个任务的记录 ---------- */
-.left-projects { flex: 0 1 auto; max-height: 68%; }
+.left-projects { flex: 1 1 0; min-height: 0; }
 .left-list { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--space-1); margin: 0 calc(-1 * var(--space-4)); padding: 0 var(--space-4); }
 .pj-head { display: flex; align-items: center; gap: var(--space-4); width: 100%; height: var(--size-menu-row); padding: 0 var(--space-4); clip-path: var(--pk-clip2); }
 .pj-head .pk-i { color: var(--color-text-2); }
@@ -111,7 +111,34 @@ body { overflow: hidden; }
 .left-path { display: flex; align-items: center; gap: var(--space-4); }
 .left-path .pk-field { flex: 1; min-width: 0; height: var(--size-button); }
 .left-path > .pk-btn:first-child { flex: 1; }
-.left-log { flex: 1 1 0; min-height: 96px; }
+/* 左栏下面的 AGENTS：按内容高，最多占六成；PROJECTS 收起了它就占满。两块都能收起，收起的只剩模块头。 */
+.left-agents { flex: none; max-height: 62%; min-height: 0; }
+.left-agents.is-grow { flex: 1 1 0; max-height: none; }
+.left-projects.is-folded, .left-agents.is-folded { flex: none; }
+.left-projects.is-folded > :not(.pk-mod-head) { display: none; }
+.left-agents.is-flash { --pk-edge: var(--color-cyan); }
+.fold-btn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; margin: 0 calc(-1 * var(--space-2)) 0 var(--space-3); padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }
+.fold-btn:hover { color: var(--color-cyan-text); }
+.fold-btn:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
+.agents-body { display: flex; flex-direction: column; gap: var(--space-4); min-height: 0; margin: 0 calc(-1 * var(--space-2)); padding: 0 var(--space-2); }
+.agents-flow { flex: none; }
+.agents-flow > button.is-off { color: var(--color-text-3); }
+.agents-row .pk-seg > button { flex: 1 1 auto; min-width: 0; padding: 0 var(--space-3); }
+.agents-list { display: flex; flex-direction: column; gap: 2px; }
+.agents-list .pk-menu-item b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.agents-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: var(--space-4); }
+.agents-k { font-family: var(--font-name); font-size: var(--text-name); line-height: 18px; color: var(--color-text-3); }
+.agents-row .menu-anchor { display: block; min-width: 0; }
+.agents-row .pk-chip { width: 100%; }
+.agents-row .pk-chip .pk-chip-label { flex: 1; text-align: left; }
+.agents-hint { margin: 0; }
+.agents-hint.is-warn { color: var(--color-warn); }
+.agents-more { flex: none; margin-top: var(--space-2); }
+/* 输入框下一行：现在是谁来干，点它去左栏 AGENTS。 */
+.composer-who { display: flex; align-items: center; gap: var(--space-4); align-self: flex-start; max-width: 100%; margin: 0; padding: 0; border: 0; background: none; font-family: var(--font-name); font-size: var(--text-name); line-height: 18px; color: var(--color-text-2); cursor: pointer; }
+.composer-who span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-who:hover span { color: var(--color-cyan-text); }
+.composer-who:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: 2px; }
 .log { display: flex; flex-direction: column; }
 .log li { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: var(--space-4); padding: var(--space-3) 0; border-top: 1px dotted var(--color-line-strong); }
 .log li:first-child { border-top: 0; padding-top: 0; }
@@ -535,3 +562,14 @@ body { overflow: hidden; }
 
 /* 输入框下的三个按钮：FLOW、CLI、API。前面暗的是按钮名，后面是选中的。 */
 .pk-chip-label .who-k { font-style: normal; color: var(--color-text-3); margin-right: 6px; }
+
+/* 右栏五个页签的图标（站主 2026-11-13 要的，8×8 像素格，画法同方案里的图标）：CHANGES 加减、LOG 时间线、ONE SHOT 闪电、FILES 两张纸；TERM 用方案里的终端。要并进 visual-atelier 方案。 */
+.pk-i--changes{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M3 0h1v1h-1zM3 1h1v1h-1zM1 2h5v1h-5zM3 3h1v1h-1zM3 4h1v1h-1zM1 6h5v1h-5z'/%3E%3C/svg%3E")}
+.pk-i--log{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 0h2v1h-2zM3 0h4v1h-4zM0 1h1v1h-1zM0 2h1v1h-1zM0 3h2v1h-2zM3 3h5v1h-5zM0 4h1v1h-1zM0 5h1v1h-1zM0 6h2v1h-2zM3 6h3v1h-3z'/%3E%3C/svg%3E")}
+.pk-i--oneshot{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M5 0h2v1h-2zM4 1h2v1h-2zM3 2h2v1h-2zM2 3h5v1h-5zM1 4h5v1h-5zM3 5h2v1h-2zM2 6h2v1h-2zM1 7h2v1h-2z'/%3E%3C/svg%3E")}
+.pk-i--files{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M2 0h6v1h-6zM2 1h1v1h-1zM7 1h1v1h-1zM0 2h6v1h-6zM7 2h1v1h-1zM0 3h1v1h-1zM5 3h1v1h-1zM7 3h1v1h-1zM0 4h1v1h-1zM5 4h1v1h-1zM7 4h1v1h-1zM0 5h1v1h-1zM5 5h3v1h-3zM0 6h1v1h-1zM5 6h1v1h-1zM0 7h6v1h-6z'/%3E%3C/svg%3E")}
+
+/* 右栏页签只有图标、选中的带名字：没选中的按内容宽，选中的占剩下的。 */
+.pk-tabs--icons > button { flex: 0 0 auto; padding: 0 var(--space-6); }
+.pk-tabs--icons > button.is-on { flex: 1 1 auto; }
+.right--wide .pk-tabs--icons > button.is-on { flex: none; }

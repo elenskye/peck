@@ -54,6 +54,9 @@ impl ClaudeCodeBackend {
         if let Some(model) = &task.model {
             args.extend(["--model".into(), model.clone()]);
         }
+        if let Some(effort) = &task.effort {
+            args.extend(["--effort".into(), effort.clone()]);
+        }
         if let Some(session) = &task.resume {
             args.extend(["--resume".into(), session.clone()]);
         }
@@ -370,7 +373,9 @@ mod tests {
         assert!(joined.contains("--permission-prompt-tool stdio"));
         assert!(joined.contains("--permission-mode plan"));
         assert!(joined.contains("--model haiku") && joined.contains("--resume s1"));
-        assert!(!joined.contains("--bare"));
+        assert!(!joined.contains("--bare") && !joined.contains("--effort"));
+        let with_effort = ClaudeCodeBackend::args(&AgentTask { effort: Some("high".into()), ..task() }).join(" ");
+        assert!(with_effort.contains("--effort high"));
     }
 
     #[tokio::test]

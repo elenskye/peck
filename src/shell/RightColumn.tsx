@@ -6,12 +6,12 @@ import { ipc } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import type { DiffResult, FileChangeItem, FileListing, FilePreview, ProjectOverview, RunRecord, UndoPreview } from "@/lib/types";
 import { clock, cn, fileSize, isMarkdownFile, runState, shortenHomePath, span, stepName } from "@/lib/utils";
-import { Btn, Icon, ModHead, Twinkle } from "@/ui";
+import { Btn, Icon, ModHead, Twinkle, type IconName } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
-import { EffortPicker, WhoPicker, defaultEffort, effortFor } from "@/shell/ModelPicker";
+import { EffortPicker, WhoPicker, cliModelOf, defaultEffort, sendEffort } from "@/shell/ModelPicker";
 
-export type RightTab = "changes" | "oneshot" | "files" | "term";
+export type RightTab = "changes" | "log" | "oneshot" | "files" | "term";
 
 interface Props {
   project: ProjectOverview | null;
@@ -48,13 +48,16 @@ const Expand: React.FC<{ wide: boolean; onWide: (wide: boolean) => void }> = ({ 
 export const RightColumn: React.FC<Props> = (props) => {
   const { run, tab, onTab, wide, onWide, busy, term } = props;
   const state = run ? runState(run) : null;
-  const tabs: Array<{ id: RightTab; label: string; extra?: React.ReactNode }> = [
-    { id: "changes", label: "CHANGES", extra: run && run.files.length > 0 ? <em>{run.files.length}</em> : null },
-    { id: "oneshot", label: "ONE SHOT" },
-    { id: "files", label: "FILES" },
+  // 页签只有图标，选中的那个带名字（站主 2026-11-13 定）；悬停看名字。
+  const tabs: Array<{ id: RightTab; label: string; icon: IconName; extra?: React.ReactNode }> = [
+    { id: "changes", label: "CHANGES", icon: "changes", extra: run && run.files.length > 0 ? <em>{run.files.length}</em> : null },
+    { id: "log", label: "LOG", icon: "log" },
+    { id: "oneshot", label: "ONE SHOT", icon: "oneshot" },
+    { id: "files", label: "FILES", icon: "files" },
     {
       id: "term",
       label: "TERM",
+      icon: "term",
       extra: (
         <>
           {busy && <Icon name="lock" size={12} />}
@@ -73,19 +76,60 @@ export const RightColumn: React.FC<Props> = (props) => {
           <Btn sm onClick={() => onWide(false)}>BACK</Btn>
         </div>
       )}
-      <div className="pk-seg pk-seg--full pk-tabs" role="tablist">
+      <div className="pk-seg pk-seg--full pk-tabs pk-tabs--icons" role="tablist">
         {tabs.map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={t.id === tab} className={t.id === tab ? "is-on" : undefined} onClick={() => onTab(t.id)}>
-            {t.label}{t.extra}
+          <button key={t.id} type="button" role="tab" aria-selected={t.id === tab} aria-label={t.label} title={t.id === tab ? undefined : t.label} className={t.id === tab ? "is-on" : undefined} onClick={() => onTab(t.id)}>
+            <Icon name={t.icon} size={12} />
+            {t.id === tab && <span className="tab-name">{t.label}</span>}
+            {t.extra}
           </button>
         ))}
       </div>
       {tab === "changes" && <Changes {...props} />}
+      {tab === "log" && <TaskLog run={props.run} />}
       {/* ONE SHOT 一直挂着，只是藏起来：切去别的页签再回来，问到一半的、答完的都还在，STOP 也还能点。 */}
       <OneShot key={props.project?.workspace.id ?? "none"} {...props} shown={tab === "oneshot"} />
       {tab === "files" && <Files {...props} />}
       {tab === "term" && <Term {...props} />}
     </section>
+  );
+};
+
+// ---------- LOG ----------
+
+/** 这个任务的记录：存快照、每一步、做完、撤销（原来在左栏，站主 2026-11-13 挪到右栏）。 */
+const TaskLog: React.FC<{ run: RunRecord | null }> = ({ run }) => {
+  const items: Array<{ t: number; title: string; note: string }> = [];
+  if (run) {
+    items.push({ t: run.startedAt, title: "存了任务前快照", note: "撤销就回到这一刻" });
+    for (const step of run.steps) {
+      if (step.status === "succeeded" && step.finishedAt) items.push({ t: step.finishedAt, title: `${stepName(step)} 做完`, note: `用了 ${span(step.durationMs)}` });
+      if (step.status === "failed" && step.finishedAt) items.push({ t: step.finishedAt, title: `${stepName(step)} 失败`, note: step.exitCode != null ? `退出码 ${step.exitCode}` : "没跑完" });
+    }
+    if (run.finishedAt && run.status === "succeeded") items.push({ t: run.finishedAt, title: "做完了", note: `${run.files.length} 个文件 · 默认留着` });
+    if (run.finishedAt && run.status === "cancelled") items.push({ t: run.finishedAt, title: "已停止", note: "改过的文件留着，能撤销" });
+    if (run.undoneAt) items.push({ t: run.undoneAt, title: "撤销了", note: `回到 ${clock(run.startedAt)} 开始前的样子` });
+    items.sort((a, b) => a.t - b.t);
+  }
+  return (
+    <div className="pk-mod col-grow">
+      <ModHead label="LOG" note={run ? `任务 ${run.number}` : "这个任务"} />
+      {items.length === 0 ? (
+        <p className="empty-line">发任务以后，存快照、每一步、做完、撤销都记在这里。</p>
+      ) : (
+        <ul className="scroll log col-grow">
+          {items.map((item, i) => (
+            <li key={i}>
+              <span className="log-t">{clock(item.t)}</span>
+              <span>
+                <b className="t-name">{item.title}</b>
+                <span className="log-n">{item.note}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 };
 
@@ -112,7 +156,8 @@ const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, setti
     setRunning(true);
     try {
       const id = await ipc.harnessOneshot(
-        { workspaceId: project.workspace.id, prompt, who: pick.id, effort: effortFor(pick, settings.efforts), costCap: settings.costCap },
+        // CLI 用 AGENTS 里给这家选的模型和强度。
+        { workspaceId: project.workspace.id, prompt, who: pick.id, model: cliModelOf(pick, settings), effort: sendEffort(pick, settings), costCap: settings.costCap },
         (event) => {
           setEvents((prev) => [...prev, event]);
           if (event.type === "turn.completed") setRunning(false);

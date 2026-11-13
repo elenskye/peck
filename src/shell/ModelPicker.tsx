@@ -289,3 +289,49 @@ export function effortFor(entry: ModelEntry | null, saved: Record<string, string
   const v = saved[entry.id] ?? defaultEffort(entry);
   return v === "off" || !entry.efforts.includes(v) ? undefined : v;
 }
+
+// ---------- 发出去时带什么（AGENTS 里选的） ----------
+
+/** CLI 引擎的 id（`cli:codex` → `codex`）；不是 CLI 是 null。 */
+export function cliEngine(e: ModelEntry | null): string | null {
+  return e && e.group === "cli" ? e.id.slice(4) : null;
+}
+
+/** CLI 用哪个模型：AGENTS 里选的；没选是 undefined（CLI 自己的默认）。 */
+export function cliModelOf(e: ModelEntry | null, settings: { cliModels: Record<string, string> }): string | undefined {
+  const engine = cliEngine(e);
+  return engine ? settings.cliModels[engine] || undefined : undefined;
+}
+
+/** 发出去带的思考强度：API 照模型的档（OFF 不带）；CLI 是 AGENTS 里选的（`default` 不带，CLI 自己定）。 */
+export function sendEffort(e: ModelEntry | null, settings: { efforts: Record<string, string> }): string | undefined {
+  if (!e) return undefined;
+  if (e.group === "cli") {
+    const v = settings.efforts[e.id];
+    return v && v !== "default" ? v : undefined;
+  }
+  return effortFor(e, settings.efforts);
+}
+
+/** 一行字说现在是谁来干（输入框下、AGENTS 收起时）。 */
+export function whoText(e: ModelEntry | null, settings: { cliModels: Record<string, string>; efforts: Record<string, string> }, apiStatus?: ApiStatus | null): string {
+  if (!e) return "还没选谁来干";
+  const flow = flowOf(e);
+  if (flow === "fake") return "假 AGENT";
+  if (flow === "relay") return `接力 · ${e.label.toUpperCase()}`;
+  if (flow === "plan") {
+    const config = apiStatus?.config;
+    const name = (role: "supervisor" | "worker") => config?.models.find((m) => m.id === config.agents.find((a) => a.role === role)?.modelId)?.name.toUpperCase() ?? "没选";
+    return `规划 ${name("supervisor")} → 实施 ${name("worker")}`;
+  }
+  const parts = [labelOf(e)];
+  if (flow === "cli") parts.push((cliModelOf(e, settings) ?? "默认模型").toUpperCase());
+  if (flow === "api" && e.efforts.length > 0 && e.thinking !== "never") {
+    const v = settings.efforts[e.id] ?? defaultEffort(e);
+    parts.push(v === "off" ? "不思考" : `思考 ${v.toUpperCase()}`);
+  } else {
+    const v = sendEffort(e, settings);
+    if (v) parts.push(`思考 ${v.toUpperCase()}`);
+  }
+  return parts.join(" · ");
+}

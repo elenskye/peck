@@ -6,7 +6,7 @@ import { cn, type DotKind } from "@/lib/utils";
 export type IconName =
   | "check" | "x" | "play" | "ask" | "bang" | "term" | "file" | "folder" | "shield" | "globe" | "trash" | "pen"
   | "undo" | "bell" | "send" | "out" | "clock" | "lock" | "plus" | "expand" | "collapse" | "chat" | "triR" | "triD"
-  | "stop" | "gear";
+  | "stop" | "gear" | "changes" | "log" | "oneshot" | "files";
 
 export const Icon: React.FC<{ name: IconName; size?: 12 | 16 | 24; className?: string }> = ({ name, size = 16, className }) => (
   <i aria-hidden="true" className={cn("pk-i", `pk-i--${name}`, size !== 16 && `pk-i--${size}`, className)} />
@@ -74,6 +74,13 @@ export function Seg<T extends string>({ items, value, onChange, sm, full, disabl
 export const Switch: React.FC<{ on: boolean; onChange: (on: boolean) => void; label: string; disabled?: boolean }> = ({ on, onChange, label, disabled }) => (
   <button type="button" className="pk-switch" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => onChange(!on)}>
     <span className="pk-switch-track"><i /></span>
+  </button>
+);
+
+/** 模块收起 / 展开（左栏的 PROJECTS、AGENTS）：放在模块头最右边。 */
+export const FoldBtn: React.FC<{ name: string; folded: boolean; onFold: (folded: boolean) => void }> = ({ name, folded, onFold }) => (
+  <button type="button" className="fold-btn" aria-expanded={!folded} aria-label={`${folded ? "展开" : "收起"} ${name}`} title={folded ? "展开" : "收起"} onClick={() => onFold(!folded)}>
+    <Icon name={folded ? "triR" : "triD"} size={12} />
   </button>
 );
 
