@@ -43,12 +43,11 @@
 | 内容 | 位置 |
 |---|---|
 | 正式数据 / 开发数据（`pnpm app:dev`） | `~/Library/Application Support/Peck/` / `Peck Dev/` |
-| 项目、任务、步骤、消息、调用、用量快照、界面设置、事件日志 | 数据目录的 `peck.db`（**schema 8**，迁移在 `src-tauri/migrations/`）：6 加 `app_settings`（界面设置整段一行 JSON；CLI 账号、Gateway 设置、左栏拖过的顺序 `layout` 也在这里）；7 加 `agent_events`（统一事件，原件另存一列）和 `runs.engine`；8 加 `harness_conversations`（Peck 循环的对话，接着发一句就带上）、`harness_allow`（「这个项目总是允许」） |
+| 项目、任务、步骤、消息、调用、用量快照、界面设置、事件日志 | 数据目录的 `peck.db`（**schema 8**，迁移在 `src-tauri/migrations/`）：6 加 `app_settings`（界面设置整段一行 JSON；Gateway 设置、CLI 的模型列表、左栏拖过的顺序 `layout` 也在这里）；7 加 `agent_events`（统一事件，原件另存一列）和 `runs.engine`；8 加 `harness_conversations`（Peck 循环的对话，接着发一句就带上）、`harness_allow`（「这个项目总是允许」） |
 | 任务前快照和历史 Diff | `shadow/<项目哈希>/` |
 | Peck 循环命令用的 HOME / 落盘的长输出 | `harness-runtime/<项目>/` / `harness-output/<任务>/`（同一个任务接着发的几次共用；14 天没动过的文件夹打开 App 时删掉） |
 | 旧循环（规划 + 实施）命令用的 HOME | `worker-runtime/<项目哈希>/home/` |
 | CLI 清单（接力、假 Agent） | `agents/*.toml`、`flows/*.toml`（第一次从 `src-tauri/defaults/` 复制） |
-| 新增的 CLI 账号 | 「CLI 目录」旁边的 `accounts/<引擎>/<账号名>/`（`cli/bin` → `cli/accounts/…`），没设 CLI 目录就放数据目录的 `accounts/` |
 | Key | macOS 钥匙串，服务名 `Peck API`、`Peck API Dev`、`Peck API Test` 分开；每个服务两项：AI 供应商的 Key 一项（账户 `keys`）、其他 Key 一项（`other-keys`） |
 | 真实 API 授权账本（只管 Agent 的测试调用，界面里 Peck 循环的请求不经过它） | 正式数据目录的 `api-budget.db`，测试目录、角色、别名都不重置 |
 
@@ -84,7 +83,7 @@
 
 ### CLI 五家（`engines/` + `convert/`）
 
-`engines::from_state(state, 引擎 id)` 拿（CLI 目录 + 当前账号的配置目录；模拟模式回放夹具）。一次 `run` 第一条是 `session.started`、最后一条总是 `turn.completed`（引擎中途退出也补一条出错的）。Peck 不认识的引擎请求马上回错误，免得它干等。
+`engines::from_state(state, 引擎 id)` 拿（CLI 目录；账号就是客户端那一个；模拟模式回放夹具）。一次 `run` 第一条是 `session.started`、最后一条总是 `turn.completed`（引擎中途退出也补一条出错的）。Peck 不认识的引擎请求马上回错误，免得它干等。
 
 | CLI（实测版本） | 接口 | PLAN / EDIT / AUTO | 审批和 ASK | 用量和额度 |
 |---|---|---|---|---|
@@ -96,8 +95,8 @@
 
 - **Antigravity 只做直接调用**（站主 2026-11-12 定，避开条款风险）：只在 NEW TASK 和接着发的那一句里能选；不进 ONE SHOT、接力、委派、审查、定时任务、目标模式、自动修。
 - **本机 MCP**（`mcp.rs`，手写的最小服务）：只听 127.0.0.1，每个任务一个随机令牌，任务结束令牌作废、还在等的提问回「结束了」。工具只有 `ask_user`，只注入给 Grok、Antigravity（别家有自己的提问通道）。
-- **CLI 账号**（`accounts.rs`）：一个账号 = 一个独立的配置目录（Claude Code `CLAUDE_CONFIG_DIR`、Codex `CODEX_HOME`），和客户端、浏览器里的登录互不干扰。每个引擎有一个「默认」账号，就是 CLI 自己的默认位置（Codex 的默认账号和 ChatGPT 客户端共用登录，站主 2026-11-12 同意）。登录在 Peck 的伪终端里跑 CLI 自己的命令（`claude auth login --claudeai`、`codex login --device-auth`），`open` 和 `BROWSER` 换成只记链接的小脚本（数据目录的 `login-shim/`），站主自己挑浏览器去登；重新验权只跑状态命令。Peck 不读、不复用任何凭据。独立目录下 Claude Code 不读 `~/.claude` 的用户级设置和 MCP。Grok、Muse、Antigravity 只有默认账号。
-- **额度**：`EventSink` 收到 `quota.updated` 时写进 `usage.rs` 的额度卡片（`usage_record_gateway_quota`，只认默认账号），顶栏 QUOTA 就能看到 Codex、Claude Code、Muse 的余量。
+- **CLI 的登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号——CLI 自己的默认位置（`~/.claude`、`~/.codex`），不加 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`（站主 2026-11-13 定，原来的多账号去掉了）。设置里能看登录状态、登录 / 重新登录（切换登录）：在 Peck 的伪终端里跑 CLI 自己的命令（`claude auth login --claudeai`、`codex login --device-auth`），`open` 和 `BROWSER` 换成只记链接的小脚本（数据目录的 `login-shim/`），站主自己挑浏览器去登；切了以后让客户端也是这个账号，站主自己统一。看状态只跑状态命令。Peck 不读、不复用任何凭据。
+- **额度**：`EventSink` 收到 `quota.updated` 时写进 `usage.rs` 的额度卡片（`usage_record_gateway_quota`），顶栏 QUOTA 就能看到 Codex、Claude Code、Muse 的余量。
 - **版本**：检测到的版本和 `testedVersion` 不一样时，设置的「CLI 检测 → 引擎」标 CHANGED、写「格式可能变了」。
 
 ## Peck 循环（`src-tauri/src/harness/`）
@@ -147,7 +146,7 @@
 | 位置 | 职责 |
 |---|---|
 | `src-tauri/src/{lib,commands,state,events}.rs` | 启动和恢复、IPC、共享状态、推给界面的事件 |
-| `src-tauri/src/gateway/` | Model Gateway：契约（`mod`、`event`、`caps`、`catalog`）、事件日志（`log`）、七家 API（`providers` + `convert/`）、五家 CLI（`engines/` + `convert/`）、CLI 账号、本机 MCP、Gateway 版发任务（`runner`）、假 Gateway（`mock`） |
+| `src-tauri/src/gateway/` | Model Gateway：契约（`mod`、`event`、`caps`、`catalog`）、事件日志（`log`）、七家 API（`providers` + `convert/`）、五家 CLI（`engines/` + `convert/`）、CLI 的登录和模型列表、本机 MCP、Gateway 版发任务（`runner`）、假 Gateway（`mock`） |
 | `src-tauri/src/harness/` | Peck 循环：`loop`、`tools/`、`permission`、`risk`、`spill`、`run`（发任务、ONE SHOT、花费） |
 | `src-tauri/src/{run,flow,agent,process,mock,mode}.rs` | 旧的任务派发、接力、CLI 清单、子进程、假 Agent、模式 |
 | `src-tauri/src/api/` | Key、授权账本、旧的请求层、规划 + 实施和它的工具、API 记录 |

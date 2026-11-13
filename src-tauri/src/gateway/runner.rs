@@ -11,7 +11,7 @@
 
 use super::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
 use super::log::EventSink;
-use super::{accounts, catalog, engines, mcp, AgentTask, Control};
+use super::{catalog, engines, mcp, AgentTask, Control};
 use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::process::ProcessCancelHandle;
@@ -67,10 +67,8 @@ pub async fn gateway_run_start(
         .map(|e| e.label.clone())
         .ok_or_else(|| format!("不认识的引擎 {engine}。"))?;
     let backend = engines::from_state(&state, &engine).await.map_err(|e| e.message)?;
-    let default_account = {
-        let store = state.store.lock().map_err(|_| "读不到设置。")?;
-        accounts::AccountBook::load(&store).current(&engine) == accounts::DEFAULT_ID
-    };
+    // 只有一个账号（和客户端同一个），额度照常记进 QUOTA。
+    let default_account = true;
     start_engine_run(
         EngineRun {
             store: state.store.clone(),

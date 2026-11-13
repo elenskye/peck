@@ -1541,30 +1541,21 @@ async fn codex_app_server(bin: &PathBuf) -> Result<(Value, Value), String> {
     result
 }
 
-/// 读 Claude 额度用的 Claude Code：在哪、PATH、Peck 里选的账号目录、账号的名字。
+/// 读 Claude 额度用的 Claude Code：在哪、PATH。
 pub struct ClaudeSetup {
     bin: PathBuf,
     path: String,
-    env: Vec<(String, String)>,
-    account: String,
 }
 
+/// 账号就是客户端那一个（CLI 的默认位置 ~/.claude），不加环境变量。
 async fn claude_setup(store_arc: &std::sync::Arc<Mutex<Store>>) -> Option<ClaudeSetup> {
-    let (config, book) = {
+    let config = {
         let store = store_arc.lock().ok()?;
-        (
-            crate::gateway::config::GatewayConfig::load(&store).ok()?,
-            crate::gateway::accounts::AccountBook::load(&store),
-        )
+        crate::gateway::config::GatewayConfig::load(&store).ok()?
     };
     let path = config.search_path();
     let bin = crate::agent::resolve_command_path("claude", &path).await?;
-    Some(ClaudeSetup {
-        env: crate::gateway::accounts::env_for(&book, &config, "claude-code"),
-        account: book.current("claude-code"),
-        bin,
-        path,
-    })
+    Some(ClaudeSetup { bin, path })
 }
 
 /// Claude 的额度：跑 Claude Code 自带的 `/usage`（`claude -p /usage`）。它是本地命令，不进模型、不花额度，
@@ -1579,12 +1570,13 @@ async fn query_claude(setup: Option<&ClaudeSetup>, variant: &str) -> ClientCard 
         }
         return c;
     };
-    let mut env: HashMap<String, String> = setup.env.iter().cloned().collect();
+    let mut env: HashMap<String, String> = HashMap::new();
     env.insert("PATH".into(), setup.path.clone());
     env.insert("TZ".into(), "UTC".into());
     let cwd = crate::mode::app_data_dir().join("cli-probe");
     let _ = std::fs::create_dir_all(&cwd);
-    let account = Some(format!("peck:{}", setup.account));
+    // 和客户端同一个账号：记成一个固定的名字，读失败时上次的读数才留得住。
+    let account = Some("peck:client".to_string());
     let out = run_capture_in(
         Some(&cwd),
         &setup.bin,
@@ -1612,7 +1604,6 @@ async fn query_claude(setup: Option<&ClaudeSetup>, variant: &str) -> ClientCard 
         }
     }
     card.account_id = account;
-    card.account_label = (setup.account != "default").then(|| setup.account.clone());
     card.running = true;
     card.installed = true;
     card
@@ -1635,7 +1626,7 @@ async fn claude_login_hint(setup: &ClaudeSetup, env: &HashMap<String, String>, c
         .and_then(|(_, out, _)| serde_json::from_str::<Value>(out.trim()).ok())
         .and_then(|v| v.get("loggedIn").and_then(Value::as_bool));
     match logged_in {
-        Some(false) => "Claude Code 命令行还没登录（桌面 App 的登录和它不共用）：在设置 → CLI 检测 → Claude Code 的账号点 LOGIN（或终端跑 cli/bin/claude auth login），登录和桌面 App 同一个订阅，Peck 就能读到额度。".into(),
+        Some(false) => "Claude Code 命令行还没登录（桌面 App 的登录和它不共用）：在设置 → CLI 检测 → 登录 → Claude Code 点 LOGIN（或终端跑 cli/bin/claude auth login），登录和桌面 App 同一个订阅，Peck 就能读到额度。".into(),
         _ => "Claude Code 的 /usage 没给出订阅额度：可能登录的不是订阅（是 API Key），或者这个账号看不到额度。".into(),
     }
 }

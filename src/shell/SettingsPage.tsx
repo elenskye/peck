@@ -302,7 +302,7 @@ const Cli: React.FC<Props> = ({ onRefreshAgents, say }) => {
     void onRefreshAgents().then(load).then(() => say(message)).catch(say).finally(() => setBusy(false));
   };
   return (
-    <Pane title="CLI 检测" lead="Peck 在「CLI 目录」、你终端里的 PATH 和常见的安装位置找这五家，只跑 --version。检测到不等于登录了、有额度；登录看下面的 CLI 账号。">
+    <Pane title="CLI 检测" lead="Peck 在「CLI 目录」、你终端里的 PATH 和常见的安装位置找这五家，只跑 --version。检测到不等于登录了、有额度；登录看下面的「登录」。">
       <div className="set-rows">
         <CliDir say={say} onSaved={() => recheck("CLI 目录存好了，重新检测过了")} />
         {engines?.map((e) => <EngineRow key={e.id} entry={e} />)}
@@ -332,7 +332,7 @@ const EngineRow: React.FC<{ entry: ModelEntry }> = ({ entry: e }) => {
   );
 };
 
-// ---------- CLI 账号（v0.5）：一个账号一个配置目录，登录互不干扰 ----------
+// ---------- 登录：Claude Code、Codex 只用和客户端同一个账号（站主 2026-11-13 定） ----------
 
 const CliAccounts: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
   const [groups, setGroups] = useState<EngineAccounts[] | null>(null);
@@ -350,39 +350,20 @@ const CliAccounts: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
   if (!groups) return null;
   return (
     <>
-      <p className="lbl">CLI 账号</p>
-      <p className="hint">一个账号一个独立的配置目录：不同账号的登录互不干扰，也不碰客户端和浏览器里的登录。登录时 Peck 不自动开浏览器，给你链接，自己挑浏览器或隐身窗口去登。</p>
-      {groups.map((g) => <EngineAccountGroup key={g.engine} group={g} onGroups={setGroups} say={say} />)}
-      <div className="set-inline"><Btn icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("账号都验过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn><span className="hint">只跑各家的登录状态命令，不发模型请求、不花额度。</span></div>
+      <p className="lbl">登录</p>
+      <p className="hint">Claude Code、Codex 用的就是 Claude 客户端、ChatGPT 客户端那一个账号（CLI 自己的默认位置）。要换账号点 RELOGIN；换了以后让 CLI 和客户端是同一个账号。登录时 Peck 不自动开浏览器，给你链接，自己挑浏览器去登。</p>
+      <div className="set-rows">
+        {groups.flatMap((g) => g.accounts.map((a) => <AccountRow key={g.engine} engine={g.engine} engineLabel={g.label} note={g.defaultNote} account={a} say={say} />))}
+      </div>
+      <div className="set-inline"><Btn icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("登录状态都看过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn><span className="hint">只跑各家的登录状态命令，不发模型请求、不花额度。</span></div>
     </>
   );
 };
 
-const EngineAccountGroup: React.FC<{ group: EngineAccounts; onGroups: (g: EngineAccounts[]) => void; say: (m: unknown) => void }> = ({ group, onGroups, say }) => {
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const add = async () => {
-    setBusy(true);
-    try { onGroups(await ipc.cliAccountAdd(group.engine, name)); setName(""); say(`${group.label} 加了账号「${name.trim()}」，点 LOGIN 登录`); } catch (e) { say(e); } finally { setBusy(false); }
-  };
-  return (
-    <div className="set-rows">
-      {group.accounts.map((a) => <AccountRow key={a.id} engine={group.engine} engineLabel={group.label} note={group.defaultNote} account={a} onGroups={onGroups} say={say} />)}
-      <div className="set-block">
-        <div className="set-inline">
-          <Field aria-label={`${group.label} 新账号的名字`} placeholder={`给 ${group.label} 的新账号起个名字，比如「工作」`} value={name} off={busy} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) void add(); }} />
-          <Btn sm disabled={busy || !name.trim()} onClick={() => void add()}>ADD</Btn>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; account: CliAccount; onGroups: (g: EngineAccounts[]) => void; say: (m: unknown) => void }> = ({ engine, engineLabel, note, account, onGroups, say }) => {
+const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; account: CliAccount; say: (m: unknown) => void }> = ({ engine, engineLabel, note, account, say }) => {
   const [status, setStatus] = useState<CliAccountStatus | null>(account.status ?? null);
   const [login, setLogin] = useState<CliLoginState | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirmDrop, setConfirmDrop] = useState(false);
   const [code, setCode] = useState("");
   useEffect(() => { if (account.status) setStatus(account.status); }, [account.status]);
   // 登录中每秒看一次；结束了自动验一次权。
@@ -394,7 +375,7 @@ const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; 
         if (!s.running) {
           const st = await ipc.cliAccountCheck(engine, account.id);
           setStatus(st);
-          say(st.loggedIn ? `${engineLabel} 的「${account.label}」登录好了` : `${engineLabel} 的「${account.label}」还没登录上，看看下面的输出`);
+          say(st.loggedIn ? `${engineLabel} 登录好了：记得让客户端也是这个账号` : `${engineLabel} 还没登录上，看看下面的输出`);
         }
       }).catch(say);
     }, 1000);
@@ -409,20 +390,11 @@ const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; 
   const who = status?.loggedIn ? [status.email, status.plan].filter(Boolean).join(" · ") : status?.detail;
   return (
     <div className="set-block">
-      <Row
-        name={<>{engineLabel} · {account.label}{account.current && <span className="t-code set-ver">当前</span>}</>}
-        desc={[who, account.isDefault ? note : null].filter(Boolean).join(" · ") || undefined}
-      >
+      <Row name={engineLabel} desc={[who, note].filter(Boolean).join(" · ") || undefined}>
         {tag}
-        {!account.current && <Btn sm disabled={busy} onClick={() => void run(async () => { onGroups(await ipc.cliAccountUse(engine, account.id)); say(`${engineLabel} 换成「${account.label}」了，下一个任务生效`); })}>USE</Btn>}
         <Btn sm disabled={busy || !!login?.running} onClick={() => void startLogin()}>{status?.loggedIn ? "RELOGIN" : "LOGIN"}</Btn>
         <Btn sm disabled={busy} onClick={() => void check()}>CHECK</Btn>
-        {!account.isDefault && <Btn sm v={confirmDrop ? "danger" : undefined} disabled={busy} onClick={() => {
-          if (!confirmDrop) { setConfirmDrop(true); return; }
-          void run(async () => { onGroups(await ipc.cliAccountRemove(engine, account.id)); say(`删掉了「${account.label}」和它的登录`); });
-        }}>{confirmDrop ? "CONFIRM" : "DELETE"}</Btn>}
       </Row>
-      {confirmDrop && <p className="hint">再点一次 CONFIRM：删掉这个账号的配置目录，里面的登录一起没了。</p>}
       {login && (
         <div className="set-login">
           {login.url ? (

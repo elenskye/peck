@@ -598,30 +598,9 @@ export const mockIpc = {
     return structuredClone(agentEventsState[runId] ?? []);
   },
 
-  // ── CLI 账号（假的：登录几秒后自动成功）──
+  // ── CLI 登录（假的：登录几秒后自动成功；只有客户端那一个账号）──
   async cliAccountsList(checkAll: boolean): Promise<EngineAccounts[]> {
     if (checkAll) for (const g of accountState) for (const a of g.accounts) a.status = mockAccountStatus(g.engine, a.id);
-    return structuredClone(accountState);
-  },
-  async cliAccountAdd(engine: string, name: string): Promise<EngineAccounts[]> {
-    const g = accountGroup(engine);
-    const n = name.trim();
-    if (!n || n.length > 32 || /[/\\:]/.test(n) || n === "默认" || n === "default") throw new Error("账号名 1–32 个字，不能带 / \\ :，不能叫「默认」。");
-    if (g.accounts.some((a) => a.id === n)) throw new Error(`已经有叫「${n}」的账号了。`);
-    g.accounts.push({ id: n, label: n, isDefault: false, current: false, status: null });
-    return structuredClone(accountState);
-  },
-  async cliAccountUse(engine: string, id: string): Promise<EngineAccounts[]> {
-    for (const a of accountGroup(engine).accounts) a.current = a.id === id;
-    return structuredClone(accountState);
-  },
-  async cliAccountRemove(engine: string, id: string): Promise<EngineAccounts[]> {
-    if (id === "default") throw new Error("默认账号不能删。");
-    const g = accountGroup(engine);
-    const wasCurrent = g.accounts.find((a) => a.id === id)?.current;
-    g.accounts = g.accounts.filter((a) => a.id !== id);
-    if (wasCurrent) g.accounts[0].current = true;
-    loggedIn.delete(`${engine}/${id}`);
     return structuredClone(accountState);
   },
   async cliAccountCheck(engine: string, id: string): Promise<CliAccountStatus> {
@@ -838,12 +817,12 @@ async function replayAgent(
 const loginStarted = new Map<string, number>();
 const loggedIn = new Set<string>(["claude-code/default", "codex/default"]);
 let accountState: EngineAccounts[] = [
-  { engine: "claude-code", label: "Claude Code", defaultNote: "默认账号用 ~/.claude，和 Claude 客户端的 Code 页共用设置", accounts: [{ id: "default", label: "默认", isDefault: true, current: true, status: null }] },
-  { engine: "codex", label: "Codex", defaultNote: "默认账号用 ~/.codex，和 ChatGPT 客户端共用登录", accounts: [{ id: "default", label: "默认", isDefault: true, current: true, status: null }] },
+  { engine: "claude-code", label: "Claude Code", defaultNote: "用 ~/.claude，和 Claude 客户端是同一个账号", accounts: [{ id: "default", label: "客户端的账号", isDefault: true, current: true, status: null }] },
+  { engine: "codex", label: "Codex", defaultNote: "用 ~/.codex，和 ChatGPT 客户端是同一个账号", accounts: [{ id: "default", label: "客户端的账号", isDefault: true, current: true, status: null }] },
 ];
 function accountGroup(engine: string): EngineAccounts {
   const g = accountState.find((x) => x.engine === engine);
-  if (!g) throw new Error(`${engine} 还不支持多账号。`);
+  if (!g) throw new Error(`${engine} 不在 Peck 里登录。`);
   return g;
 }
 function mockAccountStatus(engine: string, id: string): CliAccountStatus {

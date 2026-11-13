@@ -93,19 +93,15 @@ pub async fn backend_for(
     }
 }
 
-/// 发任务时用：按 App 的设置拿引擎（CLI 目录、当前账号的配置目录、模拟模式）。
+/// 发任务时用：按 App 的设置拿引擎（CLI 目录、模拟模式）。账号就是客户端那一个（CLI 的默认位置），不加环境变量。
 pub async fn from_state(state: &crate::state::AppState, engine: &str) -> Result<Arc<dyn AgentBackend>, GatewayError> {
     let internal = || GatewayError::new(ErrorKind::Internal, "读不到设置。");
     let mock = *state.api.mode.lock().map_err(|_| internal())? == crate::mode::ApiMode::Mock;
-    let (config, book) = {
+    let config = {
         let store = state.store.lock().map_err(|_| internal())?;
-        (
-            GatewayConfig::load(&store).map_err(|_| internal())?,
-            super::accounts::AccountBook::load(&store),
-        )
+        GatewayConfig::load(&store).map_err(|_| internal())?
     };
-    let env = super::accounts::env_for(&book, &config, engine);
-    backend_for(engine, &config, mock, env).await
+    backend_for(engine, &config, mock, Vec::new()).await
 }
 
 /// CLI 输出的一行：JSON，或者读不懂的文字。

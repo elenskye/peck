@@ -329,11 +329,7 @@ pub async fn gateway_models(
             .await
             .unwrap_or(false)
     };
-    let book = {
-        let store = state.store.lock().map_err(|_| "读不到设置。")?;
-        accounts::AccountBook::load(&store)
-    };
-    let mut entries = catalog::model_entries(
+    let entries = catalog::model_entries(
         catalog::catalog(),
         &catalog::Availability {
             all: mock,
@@ -343,12 +339,6 @@ pub async fn gateway_models(
             engines,
         },
     );
-    // CLI 引擎后面显示当前账号（默认账号不写）。
-    for entry in &mut entries {
-        if let Some(engine) = entry.id.strip_prefix("cli:") {
-            entry.account = accounts::current_label(&book, engine);
-        }
-    }
     Ok(entries)
 }
 

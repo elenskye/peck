@@ -341,17 +341,8 @@ pub async fn cli_models(engine: String, refresh: bool, state: tauri::State<'_, A
         return Ok(CliModels { engine: engine.clone(), models: mock(&engine), source: "mock".into(), read_at: Some(now_ms()), error: None });
     }
     if engine == "claude-code" {
-        // 账号目录（Peck 里加的账号）或默认的 ~/.claude。
-        let dir = {
-            let db = state.store.lock().map_err(|_| "读不到设置。")?;
-            let config = super::config::GatewayConfig::load(&db).map_err(|e| e.to_string())?;
-            let book = super::accounts::AccountBook::load(&db);
-            super::accounts::env_for(&book, &config, "claude-code")
-                .into_iter()
-                .find(|(k, _)| k == "CLAUDE_CONFIG_DIR")
-                .map(|(_, v)| std::path::PathBuf::from(v))
-                .unwrap_or_else(|| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude"))
-        };
+        // 和客户端同一个账号：默认的 ~/.claude。
+        let dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude");
         return Ok(match claude_catalog(&dir) {
             Some((models, read_at)) => CliModels { engine, models, source: "cli".into(), read_at, error: None },
             None => CliModels {
@@ -370,9 +361,9 @@ pub async fn cli_models(engine: String, refresh: bool, state: tauri::State<'_, A
             return Ok(CliModels { error: None, ..c.clone() });
         }
     }
-    let (config, book) = {
+    let config = {
         let db = state.store.lock().map_err(|_| "读不到设置。")?;
-        (super::config::GatewayConfig::load(&db).map_err(|e| e.to_string())?, super::accounts::AccountBook::load(&db))
+        super::config::GatewayConfig::load(&db).map_err(|e| e.to_string())?
     };
     let fail = |error: String| CliModels {
         engine: engine.clone(),
@@ -381,10 +372,9 @@ pub async fn cli_models(engine: String, refresh: bool, state: tauri::State<'_, A
         read_at: cached.as_ref().and_then(|c| c.read_at),
         error: Some(error),
     };
-    let Some(mut setup) = engines::locate(&spec.command, &config).await else {
+    let Some(setup) = engines::locate(&spec.command, &config).await else {
         return Ok(fail(format!("没找到 {}。", spec.label)));
     };
-    setup.env = super::accounts::env_for(&book, &config, &engine);
     let cwd = crate::mode::app_data_dir().join("cli-probe");
     let _ = std::fs::create_dir_all(&cwd);
     match tokio::time::timeout(Duration::from_secs(25), ask(&engine, setup, cwd)).await {

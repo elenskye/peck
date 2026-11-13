@@ -271,18 +271,6 @@ export const ipc = {
     if (isMockMode()) return mockIpc.cliAccountsList(checkAll);
     return invoke<EngineAccounts[]>("cli_accounts_list", { checkAll });
   },
-  async cliAccountAdd(engine: string, name: string): Promise<EngineAccounts[]> {
-    if (isMockMode()) return mockIpc.cliAccountAdd(engine, name);
-    return invoke<EngineAccounts[]>("cli_account_add", { engine, name });
-  },
-  async cliAccountUse(engine: string, id: string): Promise<EngineAccounts[]> {
-    if (isMockMode()) return mockIpc.cliAccountUse(engine, id);
-    return invoke<EngineAccounts[]>("cli_account_use", { engine, id });
-  },
-  async cliAccountRemove(engine: string, id: string): Promise<EngineAccounts[]> {
-    if (isMockMode()) return mockIpc.cliAccountRemove(engine, id);
-    return invoke<EngineAccounts[]>("cli_account_remove", { engine, id });
-  },
   async cliAccountCheck(engine: string, id: string): Promise<CliAccountStatus> {
     if (isMockMode()) return mockIpc.cliAccountCheck(engine, id);
     return invoke<CliAccountStatus>("cli_account_check", { engine, id });
