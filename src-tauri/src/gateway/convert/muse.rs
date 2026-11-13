@@ -138,13 +138,15 @@ impl MuseConverter {
                         input: args,
                     }];
                 }
-                let output = item["visibleOutput"].as_str().map(str::to_string);
-                // bash 的输出是一段 JSON（带 exit_code）。
-                let exit_code = output
-                    .as_deref()
-                    .and_then(|o| serde_json::from_str::<Value>(o).ok())
-                    .and_then(|v| v["exit_code"].as_i64())
-                    .map(|c| c as i32);
+                let visible = item["visibleOutput"].as_str().map(str::to_string);
+                // bash 的输出是一段 JSON（exit_code、output、truncated……，1.4.15 和 1.4.18 一样）：
+                // 退出码单独拿出来，界面上只给命令真正打出来的那段字。
+                let result = visible.as_deref().and_then(|o| serde_json::from_str::<Value>(o).ok()).filter(Value::is_object);
+                let exit_code = result.as_ref().and_then(|v| v["exit_code"].as_i64()).map(|c| c as i32);
+                let output = match result.as_ref().and_then(|v| v["output"].as_str().map(|text| (text, v["truncated"].as_bool() == Some(true)))) {
+                    Some((text, truncated)) => Some(if truncated { format!("{text}\n（Muse 截断了这段输出）") } else { text.to_string() }),
+                    None => visible,
+                };
                 let status = match item["status"].as_str() {
                     Some("completed") if exit_code.is_some_and(|c| c != 0) => ToolStatus::Failed,
                     Some("completed") => ToolStatus::Ok,

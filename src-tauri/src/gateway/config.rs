@@ -109,6 +109,116 @@ impl GatewayConfig {
         }
         Some(crate::agent::expand_tilde(&self.cli_dir))
     }
+
+    /// 找 CLI 用的 PATH：「CLI 目录」→ 站主 shell 的 PATH（从访达打开的 App 自己的 PATH 几乎是空的）→ 常见的安装位置。
+    /// 检测、发任务、登录、找 gcloud 都用这一份。
+    pub fn search_path(&self) -> String {
+        let mut extra: Vec<String> = self
+            .cli_dir_path()
+            .map(|p| vec![p.to_string_lossy().into_owned()])
+            .unwrap_or_default();
+        extra.extend(shell_path_dirs().iter().map(|p| p.to_string_lossy().into_owned()));
+        crate::agent::build_augmented_path(&extra)
+    }
+}
+
+/// 站主登录 shell 里的 PATH（`term.rs` 打开 App 时读的那份）。测试里不读，免得跟着这台机器变。
+fn shell_path_dirs() -> Vec<PathBuf> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    crate::term::user_env()
+        .as_ref()
+        .and_then(|env| env.iter().find(|(k, _)| k == "PATH"))
+        .map(|(_, v)| std::env::split_paths(v).filter(|p| p.is_absolute()).collect())
+        .unwrap_or_default()
+}
+
+/// 「CLI 目录」没设时自己找一个：旧清单（`agents/*.toml`）里写的 CLI 旁边的 `bin/`、站主 shell 的 PATH，
+/// 哪个目录里能找到的引擎最多（至少两家）就用哪个。找不到返回 `None`，照旧在 PATH 里找。
+/// `shell`：也看站主 shell 的 PATH（第一次要等 shell 读完，最多 8 秒）。
+pub fn discover_cli_dir(data_dir: &std::path::Path, commands: &[&str], shell: bool) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut push = |p: PathBuf| {
+        if !candidates.contains(&p) {
+            candidates.push(p);
+        }
+    };
+    if let Ok(entries) = std::fs::read_dir(data_dir.join("agents")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            for line in text.lines() {
+                let Some(value) = line.trim().strip_prefix("command").map(str::trim).and_then(|v| v.strip_prefix('=')) else { continue };
+                let command = crate::agent::expand_tilde(value.trim().trim_matches('"'));
+                if !command.is_absolute() {
+                    continue;
+                }
+                // `…/cli/muse/muse` → `…/cli/bin`，也看 `…/cli/muse` 自己。
+                if let Some(dir) = command.parent() {
+                    if let Some(root) = dir.parent() {
+                        push(root.join("bin"));
+                    }
+                    push(dir.to_path_buf());
+                }
+            }
+        }
+    }
+    if shell {
+        for dir in shell_path_dirs() {
+            push(dir);
+        }
+    }
+    let count = |dir: &PathBuf| commands.iter().filter(|c| is_executable(&dir.join(c))).count();
+    candidates
+        .into_iter()
+        .map(|d| (count(&d), d))
+        .filter(|(n, _)| *n >= 2)
+        .max_by_key(|(n, _)| *n)
+        .map(|(_, d)| d)
+}
+
+/// 打开 App 时：「CLI 目录」空着就自己找一个存上，设置里看得到、能改。先不带 shell 的 PATH 同步找一遍（快，
+/// 模型列表第一次读就用得上），找不到再在后台带上 shell 的 PATH 找。
+pub fn fill_cli_dir(store: &std::sync::Arc<std::sync::Mutex<Store>>, shell: bool) {
+    let empty = store
+        .lock()
+        .ok()
+        .and_then(|s| GatewayConfig::load(&s).ok())
+        .is_some_and(|c| c.cli_dir.is_empty());
+    if !empty {
+        return;
+    }
+    let commands: Vec<String> = super::catalog::catalog().engines.iter().map(|e| e.command.clone()).collect();
+    let refs: Vec<&str> = commands.iter().map(String::as_str).collect();
+    let Some(dir) = discover_cli_dir(&crate::mode::app_data_dir(), &refs, shell) else {
+        return;
+    };
+    if let Ok(s) = store.lock() {
+        if let Ok(mut config) = GatewayConfig::load(&s) {
+            if config.cli_dir.is_empty() {
+                config.cli_dir = tilde(&dir);
+                let _ = config.save(&s);
+            }
+        }
+    }
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+/// 家目录换成 `~`，存进设置、显示给站主看都短一点。
+pub fn tilde(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().into_owned();
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && text.starts_with(&format!("{home}/")) => format!("~{}", &text[home.len()..]),
+        _ => text,
+    }
 }
 
 fn valid_project_id(id: &str) -> bool {
@@ -152,6 +262,35 @@ pub fn adc_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn finds_the_cli_dir_next_to_the_old_manifests() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("peck-cli-{}", uuid::Uuid::new_v4()));
+        let bin = root.join("cli/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(root.join("cli/muse")).unwrap();
+        for name in ["claude", "codex", "muse"] {
+            let f = bin.join(name);
+            std::fs::write(&f, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(bin.join("grok"), "not executable").unwrap();
+        let data = root.join("data");
+        std::fs::create_dir_all(data.join("agents")).unwrap();
+        std::fs::write(
+            data.join("agents/muse.toml"),
+            format!("id = \"muse\"\ncommand     = \"{}\"\n", root.join("cli/muse/muse").display()),
+        )
+        .unwrap();
+        let commands = ["claude", "codex", "muse", "grok", "agy"];
+        assert_eq!(discover_cli_dir(&data, &commands, false), Some(bin.clone()));
+        // 只有一家的目录不算。
+        std::fs::remove_file(bin.join("codex")).unwrap();
+        std::fs::remove_file(bin.join("muse")).unwrap();
+        assert_eq!(discover_cli_dir(&data, &commands, false), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     use super::*;
 
     fn vertex(location: &str) -> VertexConfig {

@@ -1,5 +1,6 @@
 // 小零件：都是 `src/vendor/peck/bundle.css` 里 pk- 组件的标准写法（照 components/<组件>/preview.html）。
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn, type DotKind } from "@/lib/utils";
 
 export type IconName =
@@ -86,9 +87,12 @@ export const ModHead: React.FC<{ label: string; note?: React.ReactNode; count?: 
   </div>
 );
 
-/** 选项片 + 从它上方弹出的菜单（K10）：再点一下收起，点外面也收起。 */
-export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLabel }: {
+/** 选项片 + 从它上方弹出的菜单（K10）：再点一下收起，点外面也收起。
+ *  菜单挂在 body 上、按选项片的位置摆（模块的像素切角会裁掉放在里面的弹层）。 */
+export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLabel, title }: {
   label: React.ReactNode;
+  /** 悬停看全名（字是元素不是字符串时要给）。 */
+  title?: string;
   dot?: DotKind;
   children: (close: () => void) => React.ReactNode;
   sm?: boolean;
@@ -97,23 +101,47 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
   ariaLabel: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState<React.CSSProperties>({});
   const ref = useRef<HTMLSpanElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const at = () => {
+      const r = ref.current?.getBoundingClientRect();
+      if (!r) return;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - 8 - (pop.current?.offsetWidth ?? 280)));
+      setPlace(up ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
+    };
+    at();
+    const away = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !pop.current?.contains(t)) setOpen(false);
+    };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     window.addEventListener("mousedown", away);
     window.addEventListener("keydown", esc);
-    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("keydown", esc); };
-  }, [open]);
+    window.addEventListener("resize", at);
+    const raf = requestAnimationFrame(at);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("mousedown", away);
+      window.removeEventListener("keydown", esc);
+      window.removeEventListener("resize", at);
+    };
+  }, [open, up]);
   return (
     <span className="menu-anchor" ref={ref}>
-      <button type="button" disabled={disabled} className={cn("pk-chip", sm && "pk-chip--sm", open && "is-on")} aria-haspopup="menu" aria-expanded={open} aria-label={ariaLabel} onClick={() => setOpen((v) => !v)}>
+      <button type="button" disabled={disabled} className={cn("pk-chip", sm && "pk-chip--sm", open && "is-on")} aria-haspopup="menu" aria-expanded={open} aria-label={ariaLabel} title={title ?? (typeof label === "string" ? label : undefined)} onClick={() => setOpen((v) => !v)}>
         {dot !== undefined && <Dot kind={dot} />}
-        {label}
+        <span className="pk-chip-label">{label}</span>
         <Icon name="triD" size={12} />
       </button>
-      {open && <div className={cn("pk-anim-reveal-s menu-pop", up ? "menu-pop--up" : "menu-pop--down")}><div className="pk-menu" role="menu">{children(() => setOpen(false))}</div></div>}
+      {open && createPortal(
+        <div ref={pop} className="pk-anim-reveal-s menu-pop menu-pop--fixed" style={place}>
+          <div className="pk-menu" role="menu">{children(() => setOpen(false))}</div>
+        </div>,
+        document.querySelector(".app") ?? document.body,
+      )}
     </span>
   );
 }

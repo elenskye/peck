@@ -1,16 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api, type ApiStatus } from "@/lib/api";
 import { ipc, isMockMode } from "@/lib/ipc";
+import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from "@/lib/settings";
 import { applyTheme } from "@/lib/theme";
 import type { AgentInfo, Message, Permission, ProjectOverview, RunEvent, RunRecord, TermEvent } from "@/lib/types";
-import { plainTerminal, whoLabel } from "@/lib/utils";
+import { isAgentRun, plainLine, plainTerminal, rememberEntries, shortenHomePath, whoLabel } from "@/lib/utils";
 import { applyRunEvent } from "@/lib/runEvents";
 import { TopBar } from "@/shell/TopBar";
 import { LeftColumn } from "@/shell/LeftColumn";
-import { MiddleColumn } from "@/shell/MiddleColumn";
+import { chosenEntry, MiddleColumn } from "@/shell/MiddleColumn";
 import { RightColumn, type RightTab } from "@/shell/RightColumn";
 import { SettingsPage } from "@/shell/SettingsPage";
+import { ProjectPage } from "@/shell/ProjectPage";
+import type { LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
 import { Icon } from "@/ui";
 
@@ -46,9 +50,15 @@ export const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null);
+  /** 模型列表（「谁来干」）。 */
+  const [entries, setEntries] = useState<ModelEntry[]>([]);
+  /** 统一事件：任务号 → 过程（Peck 循环、CLI 引擎的任务）。 */
+  const [agentEvents, setAgentEvents] = useState<Record<string, AgentEvent[]>>({});
   /** 这次打开 App 以后发出去、还没做完的任务：任务号 → 它在哪个项目、哪个任务里。 */
   const [live, setLive] = useState<Record<string, { projectId: string; taskId: string }>>({});
-  const [page, setPage] = useState<"" | "settings" | "quota">("");
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const [page, setPage] = useState<"" | "settings" | "quota" | "project">("");
   const [tab, setTab] = useState<RightTab>("changes");
   const [wide, setWide] = useState(false);
   const [filePath, setFilePath] = useState<string | null>(null);
@@ -78,22 +88,45 @@ export const App: React.FC = () => {
   const refreshApi = useCallback(async () => {
     try { const status = await api.status(); setApiStatus(status); return status; } catch (e) { say(e); return null; }
   }, [say]);
+  const refreshEntries = useCallback(async () => {
+    try { const list = await ipc.gatewayModels(); rememberEntries(list); setEntries(list); } catch (e) { say(e); }
+  }, [say]);
 
   useEffect(() => {
+    let closed = false;
+    let off: (() => void) | null = null;
     void (async () => {
+      // 打开 App 时后台在读钥匙串（更新后会弹授权窗口）：读完重读 Key 状态和模型列表。先挂上再取，免得漏掉。
+      if (!isMockMode()) {
+        try {
+          const f = await listen("keys-loaded", () => { void refreshApi(); void refreshEntries(); });
+          if (closed) f(); else off = f;
+        } catch { /* 浏览器里没有 */ }
+      }
       const loaded = await loadSettings();
       setSettings(loaded);
       applyTheme(loaded.theme);
+      if (loaded.appIcon !== "j2") void ipc.appIconSet(loaded.appIcon).catch(() => {});
       setReady(true);
-      await Promise.all([refreshProjects(), refreshAgents(), refreshApi()]);
+      await Promise.all([refreshProjects(), refreshAgents(), refreshApi(), refreshEntries()]);
     })();
-  }, [refreshProjects, refreshAgents, refreshApi]);
+    return () => { closed = true; off?.(); };
+  }, [refreshProjects, refreshAgents, refreshApi, refreshEntries]);
+
+  // 回到 Peck 窗口（比如刚在访达里删了、挪了项目文件夹）就重读项目列表，文件夹不在了马上标出来。
+  useEffect(() => {
+    const again = () => { if (document.visibilityState === "visible") void refreshProjects(); };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => { window.removeEventListener("focus", again); document.removeEventListener("visibilitychange", again); };
+  }, [refreshProjects]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     const next = { ...settingsRef.current, ...patch };
     settingsRef.current = next;
     setSettings(next);
     if (patch.theme) applyTheme(patch.theme);
+    if (patch.appIcon) void ipc.appIconSet(patch.appIcon).catch(say);
     void saveSettings(next).catch(say);
   }, [say]);
 
@@ -125,6 +158,10 @@ export const App: React.FC = () => {
       const [loadedRuns, loadedMessages] = await Promise.all([ipc.sessionGetRuns(id), ipc.sessionGetMessages(id)]);
       setRunsByTask((prev) => ({ ...prev, [id]: loadedRuns }));
       setMessages(loadedMessages);
+      // Peck 循环、CLI 引擎的任务：过程在事件日志里（这次打开 App 以后正在收的不重读）。
+      const agentRuns = loadedRuns.filter((r) => isAgentRun(r) && !liveRef.current[r.id]);
+      const loaded = await Promise.all(agentRuns.map(async (r) => [r.id, await ipc.gatewayEvents(r.id).catch(() => [] as AgentEvent[])] as const));
+      if (loaded.length) setAgentEvents((prev) => ({ ...prev, ...Object.fromEntries(loaded) }));
     } catch (e) { say(e); }
   }, [say]);
   useEffect(() => {
@@ -145,14 +182,64 @@ export const App: React.FC = () => {
       void ipc.sessionGetMessages(ctx.taskId).then((loaded) => setMessages((prev) => (prev.length && prev[0].sessionId !== ctx.taskId ? prev : loaded))).catch(() => {});
       if (settingsRef.current.notifyDone && !document.hasFocus()) {
         const word = event.payload.status === "succeeded" ? "做完了" : event.payload.status === "failed" ? "失败了" : "已停止";
-        void ipc.notify(`Peck · ${word}`, ctx.prompt.slice(0, 80)).catch(() => {});
+        void ipc.notify(`Peck · ${word}`, plainLine(ctx.prompt).slice(0, 80)).catch(() => {});
       }
     }
   }, [refreshProjects]);
 
+  /** Peck 循环、CLI 引擎的任务（统一事件）：收事件；要你批、要你答时 Peck 不在前面就发通知；做完重读任务。 */
+  // 流式的事件一条一条来（每个字一条）：攒 40ms 一起放进去，不然每来一条整个任务就重算、重画一遍。
+  // 用定时器不用 requestAnimationFrame：窗口藏起来时后者不走。
+  const pendingEvents = useRef<Record<string, AgentEvent[]>>({});
+  const flushTimer = useRef<number | null>(null);
+  const queueAgentEvent = useCallback((runId: string, event: AgentEvent) => {
+    (pendingEvents.current[runId] ??= []).push(event);
+    if (flushTimer.current != null) return;
+    flushTimer.current = window.setTimeout(() => {
+      flushTimer.current = null;
+      const batch = pendingEvents.current;
+      pendingEvents.current = {};
+      setAgentEvents((prev) => {
+        const next = { ...prev };
+        for (const [id, events] of Object.entries(batch)) next[id] = [...(prev[id] ?? []), ...events];
+        return next;
+      });
+    }, 40);
+  }, []);
+
+  const onAgentEvent = useCallback((ctx: { projectId: string; taskId: string; prompt: string }, runId: string, event: AgentEvent) => {
+    queueAgentEvent(runId, event);
+    const s = settingsRef.current;
+    if ((event.type === "approval.requested" || event.type === "user_input.requested") && s.notifyDone && !document.hasFocus()) {
+      void ipc.notify(event.type === "approval.requested" ? "Peck · 等你批" : "Peck · 等你回答", event.type === "approval.requested" ? event.title : event.question).catch(() => {});
+    }
+    if (event.type === "turn.completed") {
+      // 收尾（快照、改动、任务记录）在后台，记录写好了再重读。大仓库拍快照慢：越等越久地看，最多三分多钟。
+      void (async () => {
+        for (let i = 0, wait = 200; i < 120; i++, wait = Math.min(2000, Math.round(wait * 1.25))) {
+          const loaded = await ipc.sessionGetRuns(ctx.taskId).catch(() => null);
+          const record = loaded?.find((r) => r.id === runId);
+          if (loaded && (!record || record.status !== "running")) {
+            setRunsByTask((prev) => ({ ...prev, [ctx.taskId]: loaded }));
+            break;
+          }
+          await new Promise((r) => setTimeout(r, wait));
+        }
+        setLive((prev) => { const next = { ...prev }; delete next[runId]; return next; });
+        void refreshProjects();
+        void ipc.sessionGetMessages(ctx.taskId).then((loaded) => setMessages((prev) => (prev.length && prev[0].sessionId !== ctx.taskId ? prev : loaded))).catch(() => {});
+        if (s.notifyDone && !document.hasFocus()) {
+          const word = event.reason === "done" ? "做完了" : event.reason === "interrupted" || event.reason === "cancelled" ? "已停止" : "停下了";
+          void ipc.notify(`Peck · ${word}`, plainLine(ctx.prompt).slice(0, 80)).catch(() => {});
+        }
+      })();
+    }
+  }, [refreshProjects, queueAgentEvent]);
+
   /** 发任务：没选任务就新开一个（任务名是这句话），选着任务就接着在里面发。 */
-  const send = useCallback(async (prompt: string, who: string, permission: Permission) => {
+  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string) => {
     if (!project) return;
+    if (project.missing) { say("这个项目的文件夹不在了：先重新找文件夹"); return; }
     if (busy) { say("同一个项目一次跑一个任务"); return; }
     try {
       let target = taskId;
@@ -160,13 +247,31 @@ export const App: React.FC = () => {
         const created = await ipc.sessionCreate(project.workspace.id, prompt.replace(/\s+/g, " ").slice(0, 60));
         target = created.id;
       }
-      const ctx = { projectId: project.workspace.id, taskId: target, prompt, sent: who.startsWith("api-") ? { permission } : { who, permission } };
-      const onEvent = (event: RunEvent) => receive(ctx, event);
+      const ctx = { projectId: project.workspace.id, taskId: target, prompt };
       const s = settingsRef.current;
-      const runId = who.startsWith("api-")
-        ? await api.runStart(target, prompt, s.limits, who === "api-supervisor" ? "supervisor" : "worker", "success", permission, onEvent)
-        : await ipc.runDispatch(target, prompt, who, permission, onEvent);
-      setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
+      let runId: string;
+      if (who.startsWith("api:") || who.startsWith("cli:")) {
+        // 事件可能比任务号先到：先攒着，拿到任务号再一起放进去。
+        let id: string | null = null;
+        const early: AgentEvent[] = [];
+        const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
+        id = who.startsWith("api:")
+          ? await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap }, onEvent)
+          : await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined }, onEvent);
+        runId = id;
+        setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
+        setAgentEvents((prev) => ({ ...prev, [runId]: prev[runId] ?? [] }));
+        for (const event of early) onAgentEvent(ctx, runId, event);
+        const loaded = await ipc.sessionGetRuns(target);
+        setRunsByTask((prev) => ({ ...prev, [target!]: loaded }));
+      } else {
+        const sent = { who: who.replace(/^flow:/, ""), permission };
+        const onEvent = (event: RunEvent) => receive({ ...ctx, sent: who === "flow:plan-implement" ? { permission } : sent }, event);
+        runId = who === "flow:plan-implement"
+          ? await api.runStart(target, prompt, s.limits, "supervisor", "success", permission, onEvent)
+          : await ipc.runDispatch(target, prompt, who.replace(/^flow:/, ""), permission, onEvent);
+        setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
+      }
       setDraft("");
       setShownRunId(null);
       setTaskId(target);
@@ -174,7 +279,11 @@ export const App: React.FC = () => {
       await refreshProjects();
       setMessages(await ipc.sessionGetMessages(target));
     } catch (e) { say(e); void refreshProjects(); }
-  }, [project, busy, taskId, receive, refreshProjects, say]);
+  }, [project, busy, taskId, runs, agentEvents, receive, onAgentEvent, refreshProjects, say]);
+
+  const control = useCallback(async (runId: string, c: Control) => {
+    await ipc.gatewayControl(runId, c);
+  }, []);
 
   const stop = useCallback(async () => {
     if (!runningRunId) return;
@@ -194,7 +303,7 @@ export const App: React.FC = () => {
         const history = await api.taskHistory(target.id);
         const root = history.find((t) => !t.parentId);
         const evidence = history.flatMap((t) => t.tools).slice(-6).map((t) => `${t.tool.name} (${t.status}): ${t.output.slice(0, 1500)}`).join("\n");
-        await send(`接着做上一个任务：先核对现在的文件，再做完。不要直接重放旧的工具调用，被打断的工具可能已经改过文件。\n原来要做的：${target.prompt}\n上次的结果：${root?.summary ?? target.summary ?? ""}\n最后几次工具调用：\n${evidence}`, target.flowId, target.permission ?? settingsRef.current.permission);
+        await send(`接着做上一个任务：先核对现在的文件，再做完。不要直接重放旧的工具调用，被打断的工具可能已经改过文件。\n原来要做的：${target.prompt}\n上次的结果：${root?.summary ?? target.summary ?? ""}\n最后几次工具调用：\n${evidence}`, target.flowId === "api-supervisor" ? "flow:plan-implement" : (chosenEntry(entries, settingsRef.current)?.id ?? settingsRef.current.pick), target.permission ?? settingsRef.current.permission);
       } catch (e) { say(e); }
       return;
     }
@@ -207,7 +316,7 @@ export const App: React.FC = () => {
       setLive((prev) => { const next = { ...prev }; delete next[target.id]; return next; });
       say(e);
     }
-  }, [project, taskId, busy, receive, send, say]);
+  }, [project, taskId, busy, entries, receive, send, say]);
 
   const undo = useCallback(async (target: RunRecord) => {
     try {
@@ -227,6 +336,7 @@ export const App: React.FC = () => {
       await refreshProjects();
       setProjectId(opened.id);
       setTaskId(null);
+      setPage("");
     } catch (e) { say(e); }
   }, [refreshProjects, say]);
 
@@ -273,7 +383,54 @@ export const App: React.FC = () => {
     if (next === "term" && projectId) patchTerm(projectId, (view) => ({ ...view, unread: "" }));
   }, [projectId, patchTerm]);
 
-  const selectProject = (id: string | null) => { setProjectId(id); setTaskId(null); setPage(""); setWide(false); };
+  /** 进一个项目：它有自己的默认谁来干、默认权限，就换成它的。 */
+  const applyProjectDefaults = (id: string | null) => {
+    const ws = projects.find((p) => p.workspace.id === id)?.workspace;
+    const patch: Partial<AppSettings> = {};
+    if (ws?.settings?.who && ws.settings.who !== settingsRef.current.pick) patch.pick = ws.settings.who;
+    if (ws?.settings?.permission && ws.settings.permission !== settingsRef.current.permission) patch.permission = ws.settings.permission as Permission;
+    if (Object.keys(patch).length) updateSettings(patch);
+  };
+  // 点项目时顺手重读一遍列表：文件夹在 App 开着的时候被删、被挪，马上就标出来。
+  const selectProject = (id: string | null) => { if (id !== projectId) applyProjectDefaults(id); setProjectId(id); setTaskId(null); setPage(""); setWide(false); void refreshProjects(); };
+
+  const act = (fn: () => Promise<unknown>) => { void fn().catch(say); };
+  const relocateProject = (id: string) => act(async () => {
+    const moved = await ipc.workspaceRelocate(id);
+    if (!moved) return;
+    await refreshProjects();
+    if (projectId === id) setProjectId(moved.id);
+    say(`接上了：${shortenHomePath(moved.path)}`);
+  });
+  const removeProject = (id: string) => act(async () => {
+    await ipc.workspaceRemove(id);
+    if (projectId === id) { setProjectId(null); setTaskId(null); setPage(""); }
+    await refreshProjects();
+    say("移出列表了；重新打开这个文件夹就回来");
+  });
+  const leftActions: LeftActions = {
+    onRenameProject: (id, name) => act(async () => { await ipc.workspaceUpdate(id, { name }); await refreshProjects(); }),
+    onProjectSettings: (id) => { setProjectId(id); setPage("project"); },
+    onRevealProject: (id) => act(() => ipc.workspaceReveal(id)),
+    onRelocateProject: relocateProject,
+    onRemoveProject: removeProject,
+    onRenameTask: (_pid, id, title) => act(async () => { await ipc.sessionRename(id, title); await refreshProjects(); }),
+    onDeleteTask: (_pid, id) => act(async () => {
+      await ipc.sessionDelete(id);
+      if (taskId === id) setTaskId(null);
+      setRunsByTask((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      await refreshProjects();
+      say("任务删掉了（项目里的文件没动）");
+    }),
+    onReorderProjects: (ids) => {
+      setProjects((prev) => ids.map((id) => prev.find((p) => p.workspace.id === id)!).filter(Boolean));
+      act(() => ipc.layoutSave({ projects: ids }));
+    },
+    onReorderTasks: (pid, ids) => {
+      setProjects((prev) => prev.map((p) => (p.workspace.id === pid ? { ...p, tasks: ids.map((id) => p.tasks.find((t) => t.id === id)!).filter(Boolean) } : p)));
+      act(() => ipc.layoutSave({ workspaceId: pid, tasks: ids }));
+    },
+  };
   const selectTask = (pid: string, id: string | null) => { setProjectId(pid); setTaskId(id); setPage(""); };
 
   if (!ready) return <div className="pk pk-dots app" />;
@@ -285,9 +442,7 @@ export const App: React.FC = () => {
       <TopBar
         native={native}
         project={project?.workspace ?? null}
-        mode={settings.mode}
-        onMode={(mode) => updateSettings({ mode })}
-        page={page}
+        page={page === "project" ? "" : page}
         onPage={(next) => setPage((p) => (p === next ? "" : next))}
       />
       <main className={page || wide ? "app-grid app-grid--wide" : "app-grid"}>
@@ -301,20 +456,34 @@ export const App: React.FC = () => {
           onSelectTask={selectTask}
           onOpen={openProject}
           native={native}
+          actions={leftActions}
         />
-        {page === "settings" ? (
+        {page === "project" && project ? (
+          <ProjectPage
+            project={project}
+            entries={entries}
+            fakeAgent={settings.fakeAgent}
+            native={native}
+            onChanged={refreshProjects}
+            onRelocate={relocateProject}
+            onReveal={(id) => act(() => ipc.workspaceReveal(id))}
+            onRemove={removeProject}
+            onClose={() => setPage("")}
+            say={say}
+          />
+        ) : page === "settings" ? (
           <SettingsPage
             settings={settings}
             onSettings={updateSettings}
             agents={agents}
-            onRefreshAgents={refreshAgents}
+            onRefreshAgents={async () => { await refreshAgents(); await refreshEntries(); }}
             apiStatus={apiStatus}
-            onRefreshApi={refreshApi}
+            onRefreshApi={async () => { const st = await refreshApi(); void refreshEntries(); return st; }}
             onClose={() => setPage("")}
             say={say}
           />
         ) : page === "quota" ? (
-          <UsagePage onClose={() => setPage("")} say={say} />
+          <UsagePage onClose={() => setPage("")} say={say} entries={entries} costCap={settings.costCap} />
         ) : (
           <>
             {!wide && (
@@ -326,8 +495,12 @@ export const App: React.FC = () => {
                 busy={busy}
                 settings={settings}
                 onSettings={updateSettings}
-                agents={agents}
+                entries={entries}
                 apiStatus={apiStatus}
+                agentEvents={agentEvents}
+                runningRunId={runningRunId}
+                onControl={control}
+                say={say}
                 draft={draft}
                 onDraft={setDraft}
                 onSend={send}
@@ -335,6 +508,9 @@ export const App: React.FC = () => {
                 onRetryStep={retryStep}
                 onOpen={openProject}
                 onOpenSettings={() => setPage("settings")}
+                onApiConfig={async (config) => { try { await api.saveConfig(config); await refreshApi(); } catch (e) { say(e); } }}
+                onRelocate={relocateProject}
+                onRemoveProject={removeProject}
                 shownRunId={run?.id ?? null}
                 onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("changes"); }}
                 native={native}
@@ -356,6 +532,10 @@ export const App: React.FC = () => {
               onTermStop={termStop}
               onTermClear={termClear}
               say={say}
+              entries={entries}
+              settings={settings}
+              onSettings={updateSettings}
+              onToTask={(text) => setDraft((d) => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text))}
             />
           </>
         )}
@@ -370,3 +550,14 @@ export const App: React.FC = () => {
   );
 };
 export default App;
+
+/** 同一个任务里接着发给同一个 CLI 引擎：带上上一次的会话号（`session.started` 的 `sessionRef`），它才记得前面说过什么。 */
+function lastSessionRef(runs: RunRecord[], events: Record<string, AgentEvent[]>, who: string): string | undefined {
+  const same = runs.filter((r) => r.who === who).sort((a, b) => b.number - a.number);
+  for (const run of same) {
+    for (const e of events[run.id] ?? []) {
+      if (e.type === "session.started" && e.sessionRef) return e.sessionRef;
+    }
+  }
+  return undefined;
+}

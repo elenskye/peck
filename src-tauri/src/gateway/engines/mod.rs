@@ -48,13 +48,9 @@ pub struct EngineSetup {
     pub env: Vec<(String, String)>,
 }
 
-/// 在「CLI 目录」里找，没设就照 PATH 找。
+/// 在「CLI 目录」、站主 shell 的 PATH、常见的安装位置里找。
 pub async fn locate(command: &str, config: &GatewayConfig) -> Option<EngineSetup> {
-    let extra: Vec<String> = config
-        .cli_dir_path()
-        .map(|p| vec![p.to_string_lossy().into_owned()])
-        .unwrap_or_default();
-    let path = crate::agent::build_augmented_path(&extra);
+    let path = config.search_path();
     let bin = crate::agent::resolve_command_path(command, &path).await?;
     Some(EngineSetup {
         bin,

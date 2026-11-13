@@ -118,6 +118,9 @@ pub struct RunBrief {
 pub struct ProjectOverview {
     pub workspace: Workspace,
     pub tasks: Vec<TaskBrief>,
+    /// 项目文件夹不在了（被删、挪走、外接盘没插）。每次读列表都看一遍。
+    #[serde(default)]
+    pub missing: bool,
 }
 
 pub struct Store {
@@ -185,8 +188,10 @@ impl Store {
     /// 左栏的项目列表：每个项目带它的任务（新的在上），只带最近一次记录的摘要，不带输出。
     /// 没发过任务的空对话不列。
     pub fn overview(&self) -> StoreResult<Vec<ProjectOverview>> {
+        let layout = crate::projects::Layout::load(self);
         let mut out = Vec::new();
-        for workspace in self.workspaces()? {
+        let workspaces: Vec<Workspace> = self.workspaces()?.into_iter().filter(|w| !w.hidden).collect();
+        for workspace in crate::projects::arrange(workspaces, &layout.projects, |w| &w.id) {
             let mut tasks = Vec::new();
             for session in self.sessions(&workspace.id)? {
                 let run_count: usize = self.conn.query_row(
@@ -231,7 +236,12 @@ impl Store {
                     last_run,
                 });
             }
-            out.push(ProjectOverview { workspace, tasks });
+            let tasks = match layout.tasks.get(&workspace.id) {
+                Some(order) => crate::projects::arrange(tasks, order, |t| &t.id),
+                None => tasks,
+            };
+            let missing = crate::projects::folder_missing(&workspace.path);
+            out.push(ProjectOverview { workspace, tasks, missing });
         }
         Ok(out)
     }

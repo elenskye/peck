@@ -6,7 +6,7 @@
 {"type":"usage.updated","usage":{"input":64067,"output":237,"cacheRead":null,"cacheWrite":null,"reasoning":null,"contextUsed":32502,"contextWindow":1007997},"cost":{"usd":null,"source":"unknown"},"scope":"cumulative"}
 {"type":"notice","level":"info","text":"Muse 的审查员放行了一次操作"}
 {"type":"tool_call.started","callId":"01a1ceac-8661-7372-8477-47a300269fa9","name":"bash","kind":"run","title":"跑 echo muse > stamp.txt","input":{"command":"echo muse > stamp.txt","description":"Create stamp file as requested"}}
-{"type":"tool_call.completed","callId":"01a1ceac-8661-7372-8477-47a300269fa9","status":"ok","output":"{\n  \"chunk_id\": \"exec-1-1\",\n  \"command\": \"echo muse > stamp.txt\",\n  \"description\": \"Create stamp file as requested\",\n  \"exit_code\": 0,\n  \"terminal_status\": \"completed\",\n  \"output\": \"\",\n  \"original_output_bytes\": 0,\n  \"original_output_tokens\": 0,\n  \"truncated\": false\n}","exitCode":0,"durationMs":null}
+{"type":"tool_call.completed","callId":"01a1ceac-8661-7372-8477-47a300269fa9","status":"ok","output":"","exitCode":0,"durationMs":null}
 {"type":"message.delta","itemId":"fc58b11f-61e7-47ee-8ccc-fe1ac9a5fd37","text":"Done."}
 {"type":"message.completed","itemId":"fc58b11f-61e7-47ee-8ccc-fe1ac9a5fd37","text":"Done."}
 {"type":"usage.updated","usage":{"input":64265,"output":253,"cacheRead":32116,"cacheWrite":null,"reasoning":null,"contextUsed":32489,"contextWindow":1007997},"cost":{"usd":null,"source":"unknown"},"scope":"cumulative"}

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod app_icon;
 pub mod api;
 pub mod commands;
 pub mod events;
@@ -6,12 +7,15 @@ pub mod export;
 pub mod files;
 pub mod flow;
 pub mod gateway;
+pub mod harness;
 pub mod migrations;
 pub mod mock;
 pub mod mode;
 pub mod process;
+pub mod projects;
 pub mod run;
 pub mod snapshot;
+pub mod spend;
 pub mod state;
 pub mod store;
 pub mod tasks;
@@ -43,11 +47,27 @@ pub fn run() {
                 .map_err(|e| e as Box<dyn std::error::Error>)?;
             let state = AppState::new(store).map_err(|e| e as Box<dyn std::error::Error>)?;
             let store_arc = state.store.clone();
+            let gateway_store = state.store.clone();
             let monitor_arc = state.usage_monitor.clone();
             let api_arc = state.api.clone();
+            let keys_api = state.api.clone();
             app.manage(state);
+            // 打开 App 就读钥匙串里的 Key（AI 一包、其他一包）：更新以后系统在这时弹授权窗口，
+            // 不用等到发任务或进设置；读完告诉界面重读模型列表和 Key 状态。
+            let keys_app = app.handle().clone();
+            std::thread::spawn(move || {
+                use tauri::Emitter;
+                if !matches!(api::keys::Keys::load_unlocked(&keys_api.keys), Ok(false)) {
+                    let _ = keys_app.emit("keys-loaded", ());
+                }
+            });
             crate::usage::start_monitor(app.handle().clone(), store_arc, monitor_arc, api_arc);
             term::warm_env();
+            // 「CLI 目录」没设：在后台找一个存上（旧清单旁边的 bin/、站主 shell 的 PATH），引擎才检测得到。
+            gateway::config::fill_cli_dir(&gateway_store, false);
+            std::thread::spawn(move || gateway::config::fill_cli_dir(&gateway_store, true));
+            // 落盘的长输出：14 天没动过的任务文件夹删掉。
+            std::thread::spawn(|| harness::run::prune_spills(&harness::run::spill_root(), std::time::Duration::from_secs(14 * 86_400)));
             // 菜单栏图标起不来不挡 App 打开。
             if let Err(error) = tray::init(app) {
                 eprintln!("Peck 菜单栏图标没起来: {error}");
@@ -115,6 +135,21 @@ pub fn run() {
             gateway::accounts::cli_account_login_cancel,
             gateway::runner::gateway_run_start,
             gateway::runner::gateway_control,
+            harness::run::harness_run_start,
+            harness::run::harness_oneshot,
+            harness::run::harness_output_read,
+            harness::run::harness_spend,
+            harness::run::harness_allow_list,
+            projects::workspace_update,
+            projects::workspace_remove,
+            projects::workspace_relocate,
+            projects::workspace_reveal,
+            projects::session_rename,
+            projects::session_delete,
+            projects::layout_save,
+            spend::spend_overview,
+            harness::run::harness_allow_remove,
+            app_icon::app_icon_set,
         ])
         // 点红色关闭只把窗口藏起来：菜单栏图标和在跑的任务都留着；⌘Q 或菜单栏图标的「退出 Peck」才退出。
         .on_window_event(|window, event| {

@@ -22,6 +22,9 @@ pub struct ClaudeCodeConverter {
     calls: HashMap<String, (String, Value)>,
     /// 流式（`--include-partial-messages`）时当前消息的 id。
     streaming_message: Option<String>,
+    /// 流式出过的消息 id → 整条消息里已经来过几块。Claude Code 一块内容出一行 `assistant`（同一个消息 id），
+    /// 增量那边的 item id 是「消息 id:第几块」，完成的那条照这个编号，界面才认得是同一段，不会显示两遍。
+    streamed_blocks: HashMap<String, usize>,
     last_quota: Option<Value>,
 }
 
@@ -33,6 +36,7 @@ impl ClaudeCodeConverter {
             in_turn: false,
             calls: HashMap::new(),
             streaming_message: None,
+            streamed_blocks: HashMap::new(),
             last_quota: None,
         }
     }
@@ -127,8 +131,18 @@ impl ClaudeCodeConverter {
     fn assistant(&mut self, raw: &Value, sub: &Option<String>, out: &mut Vec<Emitted>) {
         let line_id = raw["uuid"].as_str().unwrap_or("").to_string();
         let blocks = raw["message"]["content"].as_array().cloned().unwrap_or_default();
+        let message_id = raw["message"]["id"].as_str().unwrap_or("").to_string();
+        let streamed_from = self.streamed_blocks.get_mut(&message_id).map(|seen| {
+            let from = *seen;
+            *seen += blocks.len();
+            from
+        });
         for (i, block) in blocks.iter().enumerate() {
-            let item_id = if blocks.len() > 1 { format!("{line_id}:{i}") } else { line_id.clone() };
+            let item_id = match streamed_from {
+                Some(from) => format!("{message_id}:{}", from + i),
+                None if blocks.len() > 1 => format!("{line_id}:{i}"),
+                None => line_id.clone(),
+            };
             let body = match block["type"].as_str().unwrap_or("") {
                 "text" => EventBody::MessageCompleted {
                     item_id,
@@ -361,12 +375,15 @@ impl ClaudeCodeConverter {
         self.in_turn = false;
     }
 
-    /// `--include-partial-messages` 的增量。item id 和整条消息不一样（那边用行的 uuid），界面按「同一回合最后一条完成的为准」。
+    /// `--include-partial-messages` 的增量。item id 是「消息 id:第几块」，和完成的那条（`assistant`）对得上。
     fn stream_event(&mut self, raw: &Value, sub: &Option<String>) -> Vec<Emitted> {
         let e = &raw["event"];
         match e["type"].as_str().unwrap_or("") {
             "message_start" => {
                 self.streaming_message = e["message"]["id"].as_str().map(str::to_string);
+                if let Some(id) = &self.streaming_message {
+                    self.streamed_blocks.entry(id.clone()).or_insert(0);
+                }
                 vec![]
             }
             "content_block_delta" => {
@@ -578,6 +595,44 @@ mod tests {
         assert_eq!(edit.map(|d| (d.path, d.additions)), Some(("notes.txt".into(), Some(1))));
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::UsageUpdated { cost, .. } if cost.source == CostSource::Estimated)));
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::QuotaUpdated { provider, .. } if provider == "claude-code")));
+    }
+
+    #[test]
+    fn streamed_pieces_and_the_finished_message_share_ids() {
+        // `--include-partial-messages`：增量和完成的那条要是同一个 item id，界面才不会显示两遍（2026-11-12 本地验收查到）。
+        let mut c = ClaudeCodeConverter::new(None);
+        let feed = |c: &mut ClaudeCodeConverter, v: Value| c.feed(&v);
+        let ev = |t: &str, index: u64, delta: Value| json!({"type": "stream_event", "event": {"type": t, "index": index, "delta": delta}});
+        feed(&mut c, json!({"type": "stream_event", "event": {"type": "message_start", "message": {"id": "msg_1"}}}));
+        let mut ids: Vec<(String, String)> = Vec::new();
+        let mut take = |out: Vec<Emitted>| {
+            for e in out {
+                match e.body {
+                    EventBody::ReasoningDelta { item_id, .. } => ids.push(("reasoning.delta".into(), item_id)),
+                    EventBody::ReasoningCompleted { item_id, .. } => ids.push(("reasoning.completed".into(), item_id)),
+                    EventBody::MessageDelta { item_id, .. } => ids.push(("message.delta".into(), item_id)),
+                    EventBody::MessageCompleted { item_id, .. } => ids.push(("message.completed".into(), item_id)),
+                    _ => {}
+                }
+            }
+        };
+        take(feed(&mut c, ev("content_block_delta", 0, json!({"type": "thinking_delta", "thinking": "想"}))));
+        take(feed(&mut c, json!({"type": "assistant", "uuid": "u1", "message": {"id": "msg_1", "content": [{"type": "thinking", "thinking": "想"}]}})));
+        take(feed(&mut c, ev("content_block_delta", 1, json!({"type": "text_delta", "text": "好"}))));
+        take(feed(&mut c, json!({"type": "assistant", "uuid": "u2", "message": {"id": "msg_1", "content": [{"type": "text", "text": "好的"}]}})));
+        take(feed(&mut c, json!({"type": "assistant", "uuid": "u3", "message": {"id": "msg_1", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}})));
+        // 没流式过的消息照旧用行的 uuid。
+        take(feed(&mut c, json!({"type": "assistant", "uuid": "u4", "message": {"id": "msg_2", "content": [{"type": "text", "text": "完"}]}})));
+        assert_eq!(
+            ids,
+            [
+                ("reasoning.delta".to_string(), "msg_1:0".to_string()),
+                ("reasoning.completed".into(), "msg_1:0".into()),
+                ("message.delta".into(), "msg_1:1".into()),
+                ("message.completed".into(), "msg_1:1".into()),
+                ("message.completed".into(), "u4".into()),
+            ]
+        );
     }
 
     #[test]

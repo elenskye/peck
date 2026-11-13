@@ -10,6 +10,15 @@ export interface Workspace {
   lastOpenedAt: number;
   gitBranch?: string;
   gitignoreConfigured?: boolean;
+  /** 「移出列表」了（左栏不列）。 */
+  hidden?: boolean;
+  /** 项目设置：在这个项目里发任务默认谁来干、哪一档权限；空着跟全局。 */
+  settings?: ProjectSettings;
+}
+
+export interface ProjectSettings {
+  who?: string | null;
+  permission?: string | null;
 }
 
 export interface Session {
@@ -125,6 +134,8 @@ export interface TaskBrief {
 export interface ProjectOverview {
   workspace: Workspace;
   tasks: TaskBrief[];
+  /** 项目文件夹不在了（每次读列表都看一遍）。 */
+  missing?: boolean;
 }
 
 export interface FileEntry { path: string; size: number }

@@ -16,6 +16,7 @@ import type {
   TermEvent,
   TermState,
   UndoPreview,
+  ProjectSettings,
   Workspace,
 } from "@/lib/types";
 
@@ -41,6 +42,45 @@ export const ipc = {
       return mockIpc.workspaceOpen(path);
     }
     return invoke<Workspace>("workspace_open", { path });
+  },
+
+  /** 改项目的名字、项目设置。 */
+  async workspaceUpdate(id: string, patch: { name?: string; settings?: ProjectSettings }): Promise<Workspace> {
+    if (isMockMode()) return mockIpc.workspaceUpdate(id, patch);
+    return invoke<Workspace>("workspace_update", { id, name: patch.name ?? null, settings: patch.settings ?? null });
+  },
+  /** 移出列表：文件夹、任务、快照都不动，重新打开这个文件夹就回来。 */
+  async workspaceRemove(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.workspaceRemove(id);
+    return invoke<void>("workspace_remove", { id });
+  },
+  /** 文件夹不在了：换一个文件夹（不给路径就弹选文件夹的窗）。 */
+  async workspaceRelocate(id: string, path?: string): Promise<Workspace | null> {
+    if (isMockMode()) return mockIpc.workspaceRelocate(id, path);
+    return invoke<Workspace | null>("workspace_relocate", { id, path: path ?? null });
+  },
+  async workspaceReveal(id: string): Promise<void> {
+    if (isMockMode()) return;
+    return invoke<void>("workspace_reveal", { id });
+  },
+  async sessionRename(id: string, title: string): Promise<void> {
+    if (isMockMode()) return mockIpc.sessionRename(id, title);
+    return invoke<void>("session_rename", { id, title });
+  },
+  /** 删一个任务和它的全部记录（项目里的文件不动）。 */
+  async sessionDelete(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.sessionDelete(id);
+    return invoke<void>("session_delete", { id });
+  },
+  /** 存拖动排好的顺序。 */
+  async layoutSave(args: { projects?: string[]; workspaceId?: string; tasks?: string[] }): Promise<void> {
+    if (isMockMode()) return mockIpc.layoutSave(args);
+    return invoke<void>("layout_save", { projects: args.projects ?? null, workspaceId: args.workspaceId ?? null, tasks: args.tasks ?? null });
+  },
+  /** QUOTA 页的图表：近几天的花费和额度读数。 */
+  async spendOverview(days: number): Promise<SpendOverview> {
+    if (isMockMode()) return mockIpc.spendOverview(days);
+    return invoke<SpendOverview>("spend_overview", { days });
   },
 
   async workspaceListRecent(): Promise<Workspace[]> {
@@ -272,4 +312,91 @@ export const ipc = {
     if (isMockMode()) return mockIpc.gatewayControl(runId, control);
     return invoke<void>("gateway_control", { runId, control });
   },
+
+  // ── Peck 循环（v0.5 Phase 6，src-tauri/src/harness/）：「谁来干」是 api:<供应商>/<模型> 的走这里 ──
+  /** 返回任务 id；过程是统一事件（和 CLI 引擎同一套）。审批、回答、打断照旧用 gatewayControl。 */
+  async harnessRunStart(args: HarnessRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessRunStart(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("harness_run_start", { ...args, channel });
+  },
+  /** ONE SHOT：只读回答一句（API 模型或 CLI，Antigravity 除外）；不占任务、不锁终端。返回 id（oneshot-…）。 */
+  async harnessOneshot(args: OneshotArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessOneshot(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("harness_oneshot", { ...args, channel });
+  },
+  /** 打开落盘的完整命令输出。 */
+  async harnessOutputRead(path: string): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessOutputRead(path);
+    return invoke<string>("harness_output_read", { path });
+  },
+  /** 这个月 Peck 循环（API）花了多少。 */
+  async harnessSpend(): Promise<{ monthUsd: number; since: number }> {
+    if (isMockMode()) return mockIpc.harnessSpend();
+    return invoke<{ monthUsd: number; since: number }>("harness_spend");
+  },
+  /** 设置 → 权限：哪些项目「总是允许」了哪一类（装依赖、起常驻进程）。 */
+  async harnessAllowList(): Promise<AllowRule[]> {
+    if (isMockMode()) return mockIpc.harnessAllowList();
+    return invoke<AllowRule[]>("harness_allow_list");
+  },
+  /** 撤掉一条「总是允许」，返回剩下的。 */
+  async harnessAllowRemove(workspaceId: string, rule: string): Promise<AllowRule[]> {
+    if (isMockMode()) return mockIpc.harnessAllowRemove(workspaceId, rule);
+    return invoke<AllowRule[]>("harness_allow_remove", { workspaceId, rule });
+  },
+  /** 换 Dock 里的 App 图标（j2 / a3）。浏览器里不做事。 */
+  async appIconSet(icon: "j2" | "a3"): Promise<void> {
+    if (isMockMode()) return;
+    return invoke<void>("app_icon_set", { icon });
+  },
 };
+
+export interface HarnessRunArgs {
+  sessionId: string;
+  prompt: string;
+  /** api:<供应商>/<模型> */
+  who: string;
+  permission?: Permission;
+  effort?: string;
+  /** 每月花费上限（美元）；空着不管。 */
+  costCap?: number | null;
+}
+
+export interface OneshotArgs {
+  workspaceId: string;
+  prompt: string;
+  /** api:… 或 cli:…（Antigravity 不行） */
+  who: string;
+  effort?: string;
+  costCap?: number | null;
+}
+
+/** 「这个项目总是允许」的一条。 */
+export interface AllowRule {
+  workspaceId: string;
+  /** 项目文件夹（家目录写成 ~）；项目不在列表里了为空。 */
+  workspace?: string | null;
+  /** install-deps（装依赖）、long-running（起常驻进程）。 */
+  rule: string;
+  createdAt: number;
+}
+
+/** 一次请求花的（spend.rs）。 */
+export interface SpendPoint {
+  at: number;
+  /** peck（Peck 循环和 ONE SHOT）或 CLI 引擎 id。 */
+  engine: string;
+  /** Peck 循环：目录里的模型 id；ONE SHOT：oneshot；CLI：引擎 id。 */
+  key: string;
+  usd: number | null;
+  estimated: boolean;
+  input: number | null;
+  output: number | null;
+  cacheRead: number | null;
+}
+export interface QuotaPoint { at: number; engine: string; label: string; usedPercent: number; resetsAt: number | null }
+export interface SpendOverview { since: number; points: SpendPoint[]; quota: QuotaPoint[] }

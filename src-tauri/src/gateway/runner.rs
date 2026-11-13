@@ -273,6 +273,16 @@ pub(crate) fn start_engine_run(
             peck_mcp,
         };
         let outcome = backend.run(task, sink.clone(), control_rx).await;
+        // 引擎起都没起来（找不到程序、起不了进程）时一条事件都没有：补一条出错的收尾，
+        // 界面和别的结束一样收掉「在跑」，不然这个项目一直占着。
+        if let Err(e) = &outcome {
+            sink.emit(EventBody::Error { message: e.message.clone(), fatal: true });
+            sink.emit(EventBody::TurnCompleted {
+                turn_id: "turn-1".into(),
+                reason: TurnEndReason::Error,
+                error: Some(e.message.clone()),
+            });
+        }
         watcher.abort();
         if let (Some(token), Ok(h)) = (token, mcp::hub().await) {
             h.unregister(&token);
@@ -387,6 +397,8 @@ mod tests {
             last_opened_at: 0,
             git_branch: None,
             gitignore_configured: false,
+            hidden: false,
+            settings: Default::default(),
         };
         store.save_workspace(&ws).unwrap();
         let session = store.create_session(&ws.id, None).unwrap();
@@ -488,6 +500,8 @@ mod tests {
             last_opened_at: 0,
             git_branch: None,
             gitignore_configured: false,
+            hidden: false,
+            settings: Default::default(),
         };
         store.save_workspace(&ws).unwrap();
         let session = store.create_session(&ws.id, None).unwrap();
@@ -502,5 +516,21 @@ mod tests {
         store.set_run_engine("run-1", "codex").unwrap();
         assert_eq!(store.run_engine("run-1").unwrap().as_deref(), Some("codex"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+// ── Phase 6（云端）追加：Peck 循环（`api:…`）和 ONE SHOT 的任务也登记在这里，界面照旧用 `gateway_control` ──
+
+/// 登记一个任务的控制通道（`harness/run.rs` 起任务时用）。
+pub(crate) fn register_control(run_id: &str, tx: mpsc::UnboundedSender<Control>) {
+    if let Ok(mut c) = controls().lock() {
+        c.insert(run_id.to_string(), tx);
+    }
+}
+
+/// 任务结束：拿掉它的控制通道。
+pub(crate) fn unregister_control(run_id: &str) {
+    if let Ok(mut c) = controls().lock() {
+        c.remove(run_id);
     }
 }

@@ -19,13 +19,14 @@ pub async fn workspace_open(path: String, state: State<'_, AppState>) -> Result<
     let canonical = expanded
         .canonicalize()
         .map_err(|e| format!("打不开这个文件夹：{e}"))?;
-    let ws = open_workspace(&canonical.to_string_lossy())?;
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .save_workspace(&ws)
-        .map_err(|e| e.to_string())?;
+    let mut ws = open_workspace(&canonical.to_string_lossy())?;
+    let db = state.store.lock().map_err(|e| e.to_string())?;
+    // 打开过的：留着改过的名字和项目设置；移出过列表的回来。
+    if let Ok(old) = db.workspace(&ws.id) {
+        ws.name = old.name;
+        ws.settings = old.settings;
+    }
+    db.save_workspace(&ws).map_err(|e| e.to_string())?;
     Ok(ws)
 }
 
@@ -250,6 +251,10 @@ pub async fn run_retry_step(
     let mut record = db.run(&run_id).map_err(|e| e.to_string())?;
     if record.flow_id.starts_with("api-") {
         return Err("API 模式的任务不重放已经跑过的工具；看一下调用记录，再从现在的文件接着发一个任务。".into());
+    }
+    // Peck 循环（`peck`）和 CLI 引擎（`cli-*`）没有按步骤的清单，重跑会落到假 Agent 上：接着发一句就行。
+    if record.flow_id == "peck" || record.flow_id.starts_with("cli-") {
+        return Err("这个任务不按步骤重跑；在下面接着发一句，它会从现在的文件接着做。".into());
     }
     if !matches!(record.status, RunStatus::Failed | RunStatus::Cancelled) {
         return Err("只有失败或已停止的任务能重跑。".into());

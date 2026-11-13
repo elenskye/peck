@@ -138,7 +138,7 @@ fn read_user_env(shell: &str) -> Option<Vec<(String, String)>> {
 
 /// 站主平时在终端里的环境。从访达打开的 App 只有系统给的最小 PATH（找不到 pnpm、node 这些），
 /// 所以读一次站主自己 shell 的环境，这次打开 App 期间一直用它。读不出来就是 `None`，退回登录 shell。
-fn user_env() -> &'static Option<Vec<(String, String)>> {
+pub(crate) fn user_env() -> &'static Option<Vec<(String, String)>> {
     static ENV: OnceLock<Option<Vec<(String, String)>>> = OnceLock::new();
     ENV.get_or_init(|| read_user_env(&pick_shell()))
 }

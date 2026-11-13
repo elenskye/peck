@@ -1,6 +1,6 @@
 [package]
 name = "peck"
-version = "0.4.0"
+version = "0.5.0"
 description = "Peck — 只在自己 Mac 上用的本地 Coding Agent"
 authors = ["Peck Team"]
 edition = "2021"
@@ -26,9 +26,17 @@ reqwest = { version = "0.13.5", default-features = false, features = ["native-tl
 zeroize = "1"
 time = { version = "0.3", features = ["parsing"] }
 rfd = "0.16.0"
+ignore = "^0.4.34"
+grep-searcher = "^0.1.17"
+grep-regex = "^0.1.14"
+globset = "^0.4.21"
+similar = "^2.7.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
+objc2 = "^0.6.5"
+objc2-app-kit = { version = "^0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
+objc2-foundation = { version = "^0.3.2", default-features = false, features = ["std", "NSData"] }
 
 [profile.dev]
 incremental = true

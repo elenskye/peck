@@ -11,8 +11,10 @@ import {
   MOCK_SESSIONS,
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
-import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES } from "@/dev/gatewayMock";
-import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry } from "@/lib/agentEvents";
+import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
+import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
+import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
+import type { AllowRule, HarnessRunArgs, OneshotArgs, SpendOverview, SpendPoint } from "@/lib/ipc";
 import type { ApiConfig, ApiRole, ApiStatus, ApiTask } from "@/lib/api";
 import type {
   AgentInfo,
@@ -31,12 +33,23 @@ import type {
   TermEvent,
   TermState,
   UndoPreview,
+  ProjectSettings,
   Workspace,
 } from "@/lib/types";
 
 const DEMO_NOTICE = "浏览器演示数据，没有调用真实 AI。";
 const emptyPreview = new URLSearchParams(window.location.search).has("empty");
-let workspacesState: Workspace[] = emptyPreview ? [] : [...MOCK_WORKSPACES];
+// 演示「文件夹不在了」：多一个找不到文件夹的项目（`?mock&empty` 时没有）。
+const MISSING_DEMO: Workspace = { id: "ws-old-site", path: "~/code/old-site", name: "old-site", lastOpenedAt: Date.now() - 20 * 86_400_000, gitBranch: "main", gitignoreConfigured: true };
+let workspacesState: Workspace[] = emptyPreview ? [] : [...MOCK_WORKSPACES, MISSING_DEMO];
+const missingFolders = new Set<string>(emptyPreview ? [] : [MISSING_DEMO.path]);
+const layoutState: { projects: string[]; tasks: Record<string, string[]> } = { projects: [], tasks: {} };
+/** 拖过的按拖的排；没拖过的（新的）排在前面，照原来的先后。 */
+function arrange<T>(items: T[], order: string[] | undefined, id: (t: T) => string): T[] {
+  if (!order?.length) return items;
+  const rank = new Map(order.map((x, i) => [x, i]));
+  return [...items.filter((t) => !rank.has(id(t))), ...items.filter((t) => rank.has(id(t))).sort((a, b) => rank.get(id(a))! - rank.get(id(b))!)];
+}
 let sessionsState: Session[] = emptyPreview ? [] : [...MOCK_SESSIONS];
 const messagesState: Record<string, Message[]> = structuredClone(MOCK_MESSAGES);
 const runsState: Record<string, RunRecord[]> = structuredClone(MOCK_RUNS);
@@ -251,6 +264,7 @@ export const mockIpc = {
     const existing = workspacesState.find((w) => w.path === path);
     if (existing) {
       existing.lastOpenedAt = Date.now();
+      existing.hidden = false;
       return { ...existing };
     }
     const name = path.split("/").filter(Boolean).pop() || "project";
@@ -265,9 +279,11 @@ export const mockIpc = {
   },
 
   async overview(): Promise<ProjectOverview[]> {
-    return (await this.workspaceListRecent()).map((workspace) => ({
+    const visible = arrange((await this.workspaceListRecent()).filter((w) => !w.hidden), layoutState.projects, (w) => w.id);
+    return visible.map((workspace) => ({
       workspace,
-      tasks: sessionsState
+      missing: missingFolders.has(workspace.path),
+      tasks: arrange(sessionsState
         .filter((s) => s.workspaceId === workspace.id && (runsState[s.id]?.length ?? 0) > 0)
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((s) => {
@@ -277,8 +293,52 @@ export const mockIpc = {
             id: s.id, workspaceId: s.workspaceId, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, runCount: runs.length,
             lastRun: last ? { id: last.id, number: last.number, flowId: last.flowId, flowName: last.flowName, status: last.status, startedAt: last.startedAt, finishedAt: last.finishedAt, files: [...last.files], who: last.who, undoneAt: last.undoneAt } : null,
           };
-        }),
+        }), layoutState.tasks[workspace.id], (t) => t.id),
     }));
+  },
+
+  async workspaceUpdate(id: string, patch: { name?: string; settings?: ProjectSettings }): Promise<Workspace> {
+    const ws = workspacesState.find((w) => w.id === id);
+    if (!ws) throw new Error("没找到这个项目。");
+    if (patch.name != null) {
+      if (!patch.name.trim()) throw new Error("名字不能空着。");
+      ws.name = patch.name.trim();
+    }
+    if (patch.settings) ws.settings = { ...patch.settings };
+    return { ...ws };
+  },
+  async workspaceRemove(id: string): Promise<void> {
+    if (workspaceIsBusy(id)) throw new Error("这个项目有任务在跑，先停下再移出。");
+    const ws = workspacesState.find((w) => w.id === id);
+    if (ws) ws.hidden = true;
+  },
+  async workspaceRelocate(id: string, path?: string): Promise<Workspace | null> {
+    const ws = workspacesState.find((w) => w.id === id);
+    if (!ws) throw new Error("没找到这个项目。");
+    // 浏览器里没有选文件夹的窗：演示就当选了同名的新位置。
+    missingFolders.delete(ws.path);
+    ws.path = path ?? ws.path.replace(/^~\/code\//, "~/Documents/GitHub/");
+    filesState[ws.id] ??= { "README.md": `# ${ws.name}\n` };
+    return { ...ws };
+  },
+  async sessionRename(id: string, title: string): Promise<void> {
+    const s = sessionsState.find((x) => x.id === id);
+    if (!s) throw new Error("没找到这个任务。");
+    if (!title.trim()) throw new Error("名字不能空着。");
+    s.title = title.trim();
+  },
+  async sessionDelete(id: string): Promise<void> {
+    if ((runsState[id] ?? []).some((r) => r.status === "running")) throw new Error("这个任务在跑，先停下再删。");
+    sessionsState = sessionsState.filter((s) => s.id !== id);
+    delete runsState[id];
+    delete messagesState[id];
+  },
+  async layoutSave(args: { projects?: string[]; workspaceId?: string; tasks?: string[] }): Promise<void> {
+    if (args.projects) layoutState.projects = [...args.projects];
+    if (args.workspaceId && args.tasks) layoutState.tasks[args.workspaceId] = [...args.tasks];
+  },
+  async spendOverview(days: number): Promise<SpendOverview> {
+    return mockSpend(days);
   },
 
   async sessionCreate(workspaceId: string, title?: string): Promise<Session> {
@@ -329,6 +389,8 @@ export const mockIpc = {
   },
 
   async runCancel(runId: string): Promise<void> {
+    const agent = agentRuns.get(runId);
+    if (agent) { agent.stopped = true; agent.waiting?.({ type: "interrupt" }); return; }
     clearRunTimers(runId);
     const live = activeCallbacks.get(runId);
     if (live) {
@@ -532,8 +594,8 @@ export const mockIpc = {
     gatewayConfigState = { vertex: { projectId, location }, cliDir: config.cliDir.trim() };
     return structuredClone(gatewayConfigState);
   },
-  async gatewayEvents(_runId: string): Promise<AgentEvent[]> {
-    return [];
+  async gatewayEvents(runId: string): Promise<AgentEvent[]> {
+    return structuredClone(agentEventsState[runId] ?? []);
   },
 
   // ── CLI 账号（假的：登录几秒后自动成功）──
@@ -587,45 +649,191 @@ export const mockIpc = {
     loginStarted.delete(`${engine}/${id}`);
   },
 
-  // ── 发任务（Gateway 版）：回放这个引擎录下来的过程；碰到审批、提问停下，等 gatewayControl ──
+  // ── 发任务（Gateway 版）：回放这个引擎录下来的过程；任务记录照旧进左栏；碰到审批、提问停下，等 gatewayControl ──
   async gatewayRunStart(args: GatewayRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
     const engine = args.who.replace(/^cli:/, "");
     const replay = MOCK_ENGINE_REPLAYS[engine];
     if (!args.who.startsWith("cli:") || !replay) throw new Error("这个入口只跑 CLI 引擎（cli:…）。");
     if (!args.prompt.trim()) throw new Error("先写一句话。");
-    const runId = `mock-gw-${++gatewayRunCounter}`;
-    const run = { waiting: null as null | ((c: Control) => void), stopped: false };
-    gatewayRuns.set(runId, run);
-    let seq = 0;
-    const send = (body: object) => onEvent({ ...(body as AgentEvent), seq: seq++, at: Date.now() });
-    void (async () => {
-      for (const event of replay) {
-        if (run.stopped) break;
-        await new Promise((r) => setTimeout(r, 120));
-        send(event);
-        if (event.type === "approval.requested" || event.type === "user_input.requested") {
-          const control = await new Promise<Control>((resolve) => { run.waiting = resolve; });
-          run.waiting = null;
-          if (control.type === "interrupt") { run.stopped = true; break; }
-          if (control.type === "approve") send({ type: "approval.resolved", requestId: control.requestId, decision: control.decision, by: "user" });
-          if (control.type === "answer") send({ type: "user_input.resolved", requestId: control.requestId, answer: control.answer });
-        }
-      }
-      if (run.stopped) send({ type: "turn.completed", turnId: "turn-1", reason: "interrupted", error: null });
-      gatewayRuns.delete(runId);
-    })();
+    const label = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who)?.label ?? engine;
+    const { runId, record } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", `cli-${engine}`, label);
+    void replayAgent(runId, [replay], [], onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
     return runId;
   },
   async gatewayControl(runId: string, control: Control): Promise<void> {
-    const run = gatewayRuns.get(runId);
+    const run = agentRuns.get(runId);
     if (!run) throw new Error("这个任务已经结束了。");
     if (control.type === "interrupt") run.stopped = true;
     run.waiting?.(control);
   },
+
+  // ── Peck 循环（Phase 6）：照剧本演一遍（读 → 搜 → 改 → 跑 → 高危卡片 → 清单 → 问 → 收尾）；花费上限设得很低会停 ──
+  async harnessRunStart(args: HarnessRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (!args.who.startsWith("api:")) throw new Error("这个入口只跑 Peck 循环（api:…）。");
+    if (!args.prompt.trim()) throw new Error("先写一句话。");
+    const model = args.who.slice(4);
+    const entry = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who);
+    const label = `Peck · ${entry?.label ?? model}`;
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", "peck", label);
+    const files = (filesState[workspaceId] ??= {});
+    const demo = peckDemo(runId, files);
+    const header: ReplayEvent[] = [
+      { type: "session.started", engine: "peck", model, caps: PECK_CAPS, tools: ["list_directory", "read_file", "search_text", "find_files", "write_file", "write_patch", "bash_run", "update_plan", "ask_user"], mcp: [], sessionRef: `peck-${args.sessionId}`, version: null },
+      { type: "turn.started", turnId: `turn-${runId}` },
+    ];
+    void replayAgent(runId, demo.rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
+      if (end.diffs.some((d) => d.path === demo.edit.path)) {
+        files[demo.edit.path] = demo.edit.after;
+        undoState[runId] = { workspaceId, restore: { [demo.edit.path]: demo.edit.before }, remove: [] };
+      }
+      finishAgentRecord(record, end, label);
+    });
+    return runId;
+  },
+  async harnessOneshot(args: OneshotArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (!args.prompt.trim()) throw new Error("先写一句话。");
+    const engine = args.who.startsWith("api:") ? "peck" : args.who.replace(/^cli:/, "");
+    if (engine === "antigravity") throw new Error("Antigravity 只做直接调用，不进 ONE SHOT。");
+    const id = `oneshot-${++oneshotCounter}`;
+    const header: ReplayEvent[] = [
+      { type: "session.started", engine, model: engine === "peck" ? args.who.slice(4) : null, caps: PECK_CAPS, tools: [], mcp: [], sessionRef: null, version: null },
+      { type: "turn.started", turnId: `turn-${id}` },
+    ];
+    void replayAgent(id, oneshotDemo(args.prompt, filesState[args.workspaceId] ?? {}, engine), header, onEvent, { costCap: args.costCap ?? null, countSpend: engine === "peck" });
+    return id;
+  },
+  async harnessOutputRead(path: string): Promise<string> {
+    const text = MOCK_SPILLS[path];
+    if (text == null) throw new Error("这份输出不在了。");
+    return text;
+  },
+  async harnessAllowList(): Promise<AllowRule[]> {
+    return mockAllow.slice();
+  },
+  async harnessAllowRemove(workspaceId: string, rule: string): Promise<AllowRule[]> {
+    mockAllow = mockAllow.filter((r) => !(r.workspaceId === workspaceId && r.rule === rule));
+    return mockAllow.slice();
+  },
+  async harnessSpend(): Promise<{ monthUsd: number; since: number }> {
+    const now = new Date();
+    return { monthUsd: mockMonthSpend, since: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) };
+  },
 };
 
-let gatewayRunCounter = 0;
-const gatewayRuns = new Map<string, { waiting: null | ((c: Control) => void); stopped: boolean }>();
+// ── 统一事件的任务（CLI 引擎、Peck 循环、ONE SHOT）：回放 ──
+const agentRuns = new Map<string, { waiting: null | ((c: Control) => void); stopped: boolean }>();
+const agentEventsState: Record<string, AgentEvent[]> = {};
+/** 这个月 Peck 循环（API）已经花了多少（演示）。 */
+let mockMonthSpend = 0.42;
+// 设置 → 权限里的「总是允许」：演示两条。
+let mockAllow: AllowRule[] = [
+  { workspaceId: "ws-peck", workspace: "~/Documents/GitHub/personal-cli-studio/peck", rule: "install-deps", createdAt: Date.now() - 3_600_000 },
+  { workspaceId: "ws-notebook", workspace: "~/code/notebook", rule: "long-running", createdAt: Date.now() - 86_400_000 },
+];
+let oneshotCounter = 0;
+
+interface AgentEnd { reason: TurnEndReason; error: string | null; text: string; diffs: FileDiff[] }
+
+function createAgentRecord(sessionId: string, prompt: string, who: string, permission: Permission, flowId: string, label: string) {
+  const workspaceId = workspaceOfSession(sessionId);
+  if (workspaceIsBusy(workspaceId)) throw new Error("同一个项目一次跑一个任务。");
+  const number = runCounter++;
+  const runId = `run-${number}`;
+  const engine = who.replace(/^(api|cli):/, "").split("/")[0];
+  const step: StepDescriptor = { id: `${runId}-step-1`, stepIndex: 0, agentId: who.startsWith("api:") ? "peck" : engine, agentName: label, title: label, status: "running", expects: [], startedAt: Date.now() };
+  const record: RunRecord = { id: runId, number, sessionId, flowId, flowName: label, prompt, status: "running", startedAt: Date.now(), steps: [step], tasks: [], files: [], logs: [], who, permission };
+  runsState[sessionId] = [...(runsState[sessionId] ?? []), record];
+  messagesState[sessionId] = [...(messagesState[sessionId] ?? []), { id: `msg-u-${number}`, sessionId, role: "user", content: prompt, createdAt: Date.now() }];
+  const session = sessionsState.find((s) => s.id === sessionId);
+  if (session) session.updatedAt = Date.now();
+  return { runId, record, workspaceId };
+}
+
+function finishAgentRecord(record: RunRecord, end: AgentEnd, label: string) {
+  record.status = end.reason === "done" ? "succeeded" : end.reason === "interrupted" || end.reason === "cancelled" ? "cancelled" : "failed";
+  record.finishedAt = Date.now();
+  record.summary = end.reason === "done" ? end.text || `${label} 做完了。` : record.status === "cancelled" ? "已停止。" : end.error ?? "没做完。";
+  const stepId = record.steps[0]?.id ?? "";
+  record.steps = record.steps.map((s) => ({ ...s, status: record.status === "succeeded" ? "succeeded" : record.status === "cancelled" ? "cancelled" : "failed", finishedAt: Date.now(), durationMs: Date.now() - (s.startedAt ?? Date.now()), executionMode: "mock", notice: DEMO_NOTICE }));
+  record.files = end.diffs.map((d) => ({ path: d.path, kind: d.change === "added" ? "create" : d.change === "deleted" ? "delete" : "modify", additions: d.additions ?? 0, deletions: d.deletions ?? 0, stepId }));
+  for (const d of end.diffs) {
+    diffsState[`${record.id}:${d.path}`] = {
+      runId: record.id, stepId, filePath: d.path, kind: d.change === "added" ? "create" : d.change === "deleted" ? "delete" : "modify",
+      language: /\.tsx?$/.test(d.path) ? "typescript" : "text", additions: d.additions ?? 0, deletions: d.deletions ?? 0,
+      unifiedDiff: d.patch ?? "", contentAfter: undefined,
+    } as DiffResult;
+  }
+  messagesState[record.sessionId] = [...(messagesState[record.sessionId] ?? []), { id: `msg-a-${record.number}`, sessionId: record.sessionId, role: "assistant", content: record.summary, runId: record.id, createdAt: Date.now() }];
+}
+
+/** 一轮一轮演；每轮开头看花费上限。碰到审批、提问停下等回答；被拒的命令换成「没批」。 */
+async function replayAgent(
+  runId: string, rounds: Round[], header: ReplayEvent[], onEvent: (event: AgentEvent) => void,
+  opts: { costCap: number | null; countSpend: boolean },
+): Promise<AgentEnd> {
+  const run = { waiting: null as null | ((c: Control) => void), stopped: false };
+  agentRuns.set(runId, run);
+  const log: AgentEvent[] = [];
+  agentEventsState[runId] = log;
+  let seq = 0;
+  let ended = false;
+  const send = (body: ReplayEvent) => {
+    const event = { ...(body as object), seq: seq++, at: Date.now() } as AgentEvent;
+    if (event.type === "turn.completed") ended = true;
+    log.push(event);
+    onEvent(event);
+  };
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const state = { answer: "" };
+  const denied = new Set<string>();
+  const diffs = new Map<string, FileDiff>();
+  let spent = 0;
+  let text = "";
+  let limit: string | null = null;
+  for (const e of header) send(e);
+  for (let i = 0; i < rounds.length && !run.stopped; i++) {
+    const cap = opts.costCap;
+    if (opts.countSpend && cap != null && cap > 0 && mockMonthSpend + spent >= cap) {
+      limit = `这个月的 API 花费到了上限（$${cap.toFixed(2)}，已用 $${(mockMonthSpend + spent).toFixed(2)}），没发下一次请求。在设置里调高上限再接着做。`;
+      break;
+    }
+    const round = rounds[i];
+    for (const ev of typeof round === "function" ? round(state) : round) {
+      if (run.stopped) break;
+      await pause(ev.type.endsWith(".delta") ? 35 : 150);
+      if (ev.type === "tool_call.output_delta" && denied.has(ev.callId)) continue;
+      if (ev.type === "tool_call.completed" && denied.has(ev.callId)) {
+        send({ ...ev, status: "denied", output: "站主没批这条命令。换个办法，或者说明为什么非这样不可。", exitCode: null });
+        continue;
+      }
+      send(ev);
+      if (ev.type === "usage.updated" && ev.cost.usd != null) spent += ev.cost.usd;
+      if (ev.type === "message.completed") text = ev.text;
+      if (ev.type === "tool_call.completed") for (const d of ev.diff ?? []) diffs.set(d.path, d);
+      if (ev.type === "approval.requested" || ev.type === "user_input.requested") {
+        let control: Control;
+        do {
+          control = await new Promise<Control>((resolve) => { run.waiting = resolve; });
+          run.waiting = null;
+        } while (control.type === "append");
+        if (control.type === "interrupt") { run.stopped = true; break; }
+        if (control.type === "approve") {
+          send({ type: "approval.resolved", requestId: control.requestId, decision: control.decision, by: "user" });
+          if (control.decision.startsWith("deny") && ev.type === "approval.requested" && ev.callId) denied.add(ev.callId);
+        }
+        if (control.type === "answer") {
+          send({ type: "user_input.resolved", requestId: control.requestId, answer: control.answer });
+          state.answer = control.answer;
+        }
+      }
+    }
+  }
+  const reason: TurnEndReason = run.stopped ? "interrupted" : limit ? "limit" : "done";
+  if (!ended || run.stopped) send({ type: "turn.completed", turnId: `turn-${runId}`, reason, error: limit });
+  if (opts.countSpend) mockMonthSpend += spent;
+  agentRuns.delete(runId);
+  return { reason, error: limit, text, diffs: [...diffs.values()] };
+}
 
 const loginStarted = new Map<string, number>();
 const loggedIn = new Set<string>(["claude-code/default", "codex/default"]);
@@ -646,3 +854,36 @@ function mockAccountStatus(engine: string, id: string): CliAccountStatus {
 }
 
 let gatewayConfigState: GatewayConfig = { vertex: { projectId: "", location: "global" }, cliDir: "" };
+
+/** QUOTA 页的演示数据：近 30 天，按天随机但固定（同一个种子），几家引擎都有。 */
+function mockSpend(days: number): SpendOverview {
+  const now = Date.now();
+  const since = now - days * 86_400_000;
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const points: SpendPoint[] = [];
+  const keys: Array<[string, string, number, boolean]> = [
+    ["peck", "deepseek/deepseek-flash", 0.06, false],
+    ["peck", "anthropic/claude-haiku-5-5", 0.12, false],
+    ["peck", "oneshot", 0.01, false],
+    ["claude-code", "claude-code", 0.3, true],
+    ["codex", "codex", 0.18, true],
+    ["grok", "grok", 0.08, true],
+  ];
+  for (let d = days - 1; d >= 0; d--) {
+    const day = now - d * 86_400_000;
+    for (const [engine, key, scale, estimated] of keys) {
+      if (rand() < 0.45) continue;
+      const n = 1 + Math.floor(rand() * 4);
+      for (let i = 0; i < n; i++) {
+        const input = Math.round(2000 + rand() * 40000);
+        points.push({ at: day - Math.floor(rand() * 8) * 3_600_000, engine, key, usd: +(scale * (0.2 + rand())).toFixed(4), estimated, input, output: Math.round(input / 12), cacheRead: Math.round(input * 0.6) });
+      }
+    }
+  }
+  const quota = ["claude-code", "codex", "muse"].flatMap((engine, k) => [0, 1, 2, 3, 4, 5, 6].flatMap((d) => [
+    { at: now - (6 - d) * 86_400_000, engine, label: "5 小时", usedPercent: Math.round(10 + rand() * 70), resetsAt: now + (2 + k) * 3_600_000 },
+    { at: now - (6 - d) * 86_400_000, engine, label: "每周", usedPercent: Math.min(98, 20 + d * (8 + k * 3)), resetsAt: now + (3 + k) * 86_400_000 },
+  ]));
+  return { since, points: points.filter((p) => p.at >= since), quota };
+}

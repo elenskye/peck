@@ -233,13 +233,17 @@ pub struct ModelEntry {
     /// 转换器按哪个版本的 CLI 写的（录夹具时的版本）。和 `version` 里的版本号不一样就提示「格式可能变了」。
     #[serde(default)]
     pub tested_version: Option<String>,
+    /// CLI 在哪找到的（家目录写成 `~`）。设置里给站主看。
+    #[serde(default)]
+    pub location: Option<String>,
 }
 
 /// 录夹具时各家 CLI 的版本（2026-11-12）。升级 CLI 后重录夹具、确认转换器没问题再改这里。
 pub const TESTED_VERSIONS: [(&str, &str); 5] = [
     ("claude-code", "2.1.322"),
     ("codex", "0.167.2"),
-    ("muse", "1.4.15"),
+    // 夹具是 1.4.15 录的；1.4.18 在 2026-11-13 真跑核对过，事件的格式没变。
+    ("muse", "1.4.18"),
     ("grok", "1.0.77"),
     ("antigravity", "1.5.6"),
 ];
@@ -273,6 +277,8 @@ pub struct EngineProbe {
     pub id: String,
     pub found: bool,
     pub version: Option<String>,
+    /// 在哪找到的（家目录写成 `~`）。
+    pub location: Option<String>,
 }
 
 impl EngineProbe {
@@ -284,17 +290,14 @@ impl EngineProbe {
                 id: e.id.clone(),
                 found: true,
                 version: None,
+                location: None,
             })
             .collect()
     }
 
-    /// 在设置里的「CLI 目录」找，没设就照 PATH 找；找到了顺手取版本。
+    /// 在「CLI 目录」、站主 shell 的 PATH、常见的安装位置里找（`GatewayConfig::search_path`）；找到了顺手取版本和位置。
     pub async fn detect(config: &super::config::GatewayConfig) -> Vec<Self> {
-        let extra: Vec<String> = config
-            .cli_dir_path()
-            .map(|p| vec![p.to_string_lossy().into_owned()])
-            .unwrap_or_default();
-        let path = crate::agent::build_augmented_path(&extra);
+        let path = config.search_path();
         let mut out = Vec::new();
         for engine in &catalog().engines {
             let resolved = crate::agent::resolve_command_path(&engine.command, &path).await;
@@ -308,6 +311,7 @@ impl EngineProbe {
                 id: engine.id.clone(),
                 found: resolved.is_some(),
                 version,
+                location: resolved.as_deref().map(super::config::tilde),
             });
         }
         out
@@ -357,6 +361,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             version: None,
             account: None,
             tested_version: None,
+            location: None,
         });
     }
     for engine in &catalog.engines {
@@ -380,6 +385,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             version: probe.and_then(|p| p.version.clone()),
             account: None,
             tested_version: tested_version(&engine.id),
+            location: probe.and_then(|p| p.location.clone()),
         });
     }
     // 现有的接力：两家 CLI 都在才能用。规划 + 实施要 API（用现有的「API 设置」里的两个角色）。
@@ -412,6 +418,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             version: None,
             account: None,
             tested_version: None,
+            location: None,
         });
     }
     out.push(ModelEntry {
@@ -431,6 +438,7 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
         version: None,
         account: None,
         tested_version: None,
+        location: None,
     });
     out
 }
@@ -558,8 +566,8 @@ mod tests {
                 vertex_ready: false,
                 vertex_adc: true,
                 engines: vec![
-                    EngineProbe { id: "codex".into(), found: true, version: Some("0.167.2".into()) },
-                    EngineProbe { id: "antigravity".into(), found: true, version: None },
+                    EngineProbe { id: "codex".into(), found: true, version: Some("0.167.2".into()), location: None },
+                    EngineProbe { id: "antigravity".into(), found: true, version: None, location: None },
                 ],
             },
         );

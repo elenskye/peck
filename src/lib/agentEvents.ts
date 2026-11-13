@@ -250,6 +250,8 @@ export interface ModelEntry {
   account?: string | null;
   /** 转换器按哪个版本的 CLI 写的；和 version 里的版本号不一样就提示「格式可能变了」。 */
   testedVersion?: string | null;
+  /** CLI 在哪找到的（家目录写成 ~）。 */
+  location?: string | null;
 }
 
 // ── Gateway 设置（config.rs，IPC gateway_config_get / gateway_config_set）──

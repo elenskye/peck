@@ -13,6 +13,21 @@ export interface ModelProfile {
 }
 export interface AgentProfile { role: "supervisor" | "worker"; modelId: string; thinking: boolean; effort: string | null; maxOutputTokens: number }
 export interface ApiConfig { models: ModelProfile[]; agents: AgentProfile[]; aliyunRegion: "beijing" | "singapore"; aliyunWorkspaceId: string }
+/** 规划 + 实施换一个角色的模型：思考、强度、输出上限跟着新模型调。 */
+export function withAgentModel(config: ApiConfig, role: AgentProfile["role"], modelId: string): ApiConfig {
+  const next = config.models.find((m) => m.id === modelId);
+  if (!next) return config;
+  return {
+    ...config,
+    agents: config.agents.map((a) => a.role !== role ? a : {
+      ...a,
+      modelId: next.id,
+      thinking: next.thinking !== "never" && next.thinking !== "unknown",
+      effort: next.efforts.includes("medium") ? "medium" : next.efforts[0] ?? null,
+      maxOutputTokens: Math.min(a.maxOutputTokens, next.maxOutputTokens),
+    }),
+  };
+}
 export interface Allowance { providerId: string; apiModel: string; limit: number; used: number }
 export interface Usage { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheCreationTokens: number | null; reasoningTokens: number | null }
 export interface ApiCall {

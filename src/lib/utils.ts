@@ -44,6 +44,18 @@ export function timer(ms: number): string {
   return `${pad(m)}:${pad(total % 60)}`;
 }
 
+/** 站主发的话是 Markdown：当任务名、通知正文时去掉记号，并成一行。 */
+export function plainLine(markdown: string): string {
+  return markdown
+    .replace(/```[^\n]*\n?/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)/gm, "")
+    .replace(/(\*\*|__|~~|`)(.+?)\1/g, "$2")
+    .replace(/(^|[^\w*])[*_](\S(?:.*?\S)?)[*_](?=[^\w*]|$)/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function shortenHomePath(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
 }
@@ -60,7 +72,11 @@ export function fileSize(bytes: number): string {
 
 // ---------- 谁来干 ----------
 
-export type DotKind = "muse" | "grok" | "api" | "";
+/** 身份色点：五家 CLI 各一色，API（Peck 循环、规划 + 实施）一色；空的是不上色的点。 */
+export type DotKind = "muse" | "grok" | "codex" | "claude-code" | "antigravity" | "api" | "";
+const ENGINE_DOTS: DotKind[] = ["muse", "grok", "codex", "claude-code", "antigravity"];
+/** 引擎 id → 色点；不认识的是空的。 */
+export const engineDot = (engine: string): DotKind => (ENGINE_DOTS.includes(engine as DotKind) ? (engine as DotKind) : "");
 export interface WhoOption {
   id: string;
   /** 点阵字：英文大写 */
@@ -69,10 +85,9 @@ export interface WhoOption {
   flow: Array<{ name: string; dot: DotKind; does: string }>;
 }
 
-const NAME: Record<string, string> = { muse: "Muse", grok: "Grok", mock: "假 Agent" };
+const NAME: Record<string, string> = { muse: "Muse", grok: "Grok", mock: "假 Agent", codex: "Codex", "claude-code": "Claude Code", antigravity: "Antigravity", peck: "Peck" };
 export const agentName = (id: string, fallback?: string) => NAME[id.toLowerCase()] ?? fallback ?? id;
-export const agentDot = (id: string): DotKind =>
-  id === "muse" || id === "grok" ? id : id.startsWith("api") ? "api" : "";
+export const agentDot = (id: string): DotKind => (id.startsWith("api") ? "api" : engineDot(id));
 
 export const CLI_WHO: WhoOption[] = [
   { id: "muse", label: "MUSE", flow: [{ name: "Muse", dot: "muse", does: "一个人跑完整个任务：读代码、改文件、自己检查。" }] },
@@ -111,8 +126,32 @@ export const API_WHO: WhoOption[] = [
   },
 ];
 
+// 模型列表（gateway_models）里每一项的显示名：App 拿到列表时记一下，whoLabel 用。
+const ENTRY_LABELS = new Map<string, string>();
+export function rememberEntries(entries: Array<{ id: string; label: string }>): void {
+  for (const e of entries) ENTRY_LABELS.set(e.id, e.label);
+}
+
+/** 模型列表里一项的身份色点：API 模型蓝，Muse 紫，Grok 橙，别的 CLI 不上色。 */
+export function entryDot(id: string): DotKind {
+  if (id.startsWith("api:") || id === "flow:plan-implement") return "api";
+  return engineDot(id.replace(/^(cli|flow):/, "").split(">")[0]);
+}
+
+/** 新的「谁来干」（api:、cli:、flow:）的显示名。 */
+export function entryLabel(id: string): string {
+  const known = ENTRY_LABELS.get(id);
+  if (known) return known;
+  if (id.startsWith("api:")) return id.slice(4).split("/").pop() ?? id;
+  if (id === "flow:plan-implement") return "规划 + 实施";
+  if (id.startsWith("flow:")) return id.slice(5).split(">").map((x) => agentName(x)).join(" → ");
+  if (id.startsWith("cli:")) return agentName(id.slice(4));
+  return agentName(id);
+}
+
 /** 一个任务是谁干的：点阵字的短名字，旧记录也认。 */
 export function whoLabel(run: Pick<RunRecord, "flowId" | "who" | "steps">): string {
+  if (run.who && /^(api|cli|flow):/.test(run.who)) return entryLabel(run.who).toUpperCase();
   const id = run.who ?? (run.flowId.startsWith("single-") ? run.flowId.slice(7) : run.flowId);
   const known = [...CLI_WHO, FAKE_WHO, ...API_WHO].find((w) => w.id === id);
   if (known) return known.label;
@@ -123,7 +162,9 @@ export function whoLabel(run: Pick<RunRecord, "flowId" | "who" | "steps">): stri
   return (run.steps[0]?.agentName ?? id).toUpperCase();
 }
 
-export function whoDots(run: Pick<RunRecord, "steps" | "flowId">): DotKind[] {
+export function whoDots(run: Pick<RunRecord, "steps" | "flowId" | "who">): DotKind[] {
+  if (run.who?.startsWith("flow:") && run.who !== "flow:plan-implement") return run.who.slice(5).split(">").map((x) => entryDot(`cli:${x}`)).filter(Boolean);
+  if (run.who && /^(api|cli|flow):/.test(run.who)) { const d = entryDot(run.who); return d ? [d] : []; }
   if (run.flowId.startsWith("api-")) return ["api"];
   const seen: DotKind[] = [];
   for (const step of run.steps) {
@@ -137,7 +178,9 @@ export function whoDots(run: Pick<RunRecord, "steps" | "flowId">): DotKind[] {
 export function stepName(step: StepDescriptor): string {
   const title = STEP_TITLES[step.title] ?? step.title;
   if (step.agentId.startsWith("api-")) return `${step.agentName} · ${title}`;
-  return `${agentName(step.agentId, step.agentName)} ${title}`;
+  const name = agentName(step.agentId, step.agentName);
+  // Peck 循环、CLI 引擎的任务：步骤名就是「Peck · DeepSeek V4 Pro」「Codex」，不再重复。
+  return title.startsWith(name) ? title : `${name} ${title}`;
 }
 // 旧记录里的步骤名换成现在的说法。
 const STEP_TITLES: Record<string, string> = {
@@ -148,9 +191,9 @@ const STEP_TITLES: Record<string, string> = {
 };
 
 export const PERMISSIONS: Array<{ id: Permission; label: string; name: string; does: string }> = [
-  { id: "plan", label: "PLAN", name: "只读", does: "只读：读代码、写计划，不改文件、不跑命令。要动手，换 EDIT 再发。" },
-  { id: "edit", label: "EDIT", name: "改文件、跑命令不问", does: "改文件、跑命令都不问；删文件、联网装依赖、改项目外的文件，开始前一张卡一次批。" },
-  { id: "auto", label: "AUTO", name: "全部放行", does: "装依赖、联网也不问；删文件、改项目外的文件（推送也算）照样一张卡批。" },
+  { id: "plan", label: "PLAN", name: "只读", does: "只读：读代码、搜、写计划，不改文件；命令在只读沙箱里跑。要动手，换 EDIT 再发。" },
+  { id: "edit", label: "EDIT", name: "改文件、跑命令不问", does: "改文件、跑命令不问；装依赖、起常驻进程前问一次，能选「这个项目总是允许」。命令默认联网，只能写项目里。" },
+  { id: "auto", label: "AUTO", name: "除了高危都不问", does: "装依赖、起常驻进程也不问。删文件、推送和改历史、写到项目外、改系统设置、看不出会做什么的命令，不管哪档都弹卡片。" },
 ];
 
 export const STATUS_WORD: Record<string, string> = {
@@ -160,6 +203,11 @@ export const STATUS_WORD: Record<string, string> = {
   cancelled: "已停止",
   undone: "已撤销",
 };
+/** 这个任务的过程是统一事件（Peck 循环、CLI 引擎）：界面按事件显示，不按旧的步骤日志。 */
+export function isAgentRun(run: Pick<RunRecord, "who">): boolean {
+  return !!run.who && (run.who.startsWith("api:") || run.who.startsWith("cli:"));
+}
+
 export function runState(run: { status: string; undoneAt?: number | null }): keyof typeof STATUS_WORD {
   return run.undoneAt ? "undone" : run.status;
 }

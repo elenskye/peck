@@ -42,7 +42,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:anthropic/claude-opus-5-5",
@@ -87,7 +88,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:anthropic/claude-sonnet-5-5",
@@ -132,7 +134,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:anthropic/claude-haiku-5-5",
@@ -186,7 +189,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:openai/gpt-6.1-sol",
@@ -240,7 +244,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:openai/gpt-6.1-terra",
@@ -294,7 +299,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:openai/gpt-6-astra",
@@ -348,7 +354,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:openai/gpt-6-luna",
@@ -402,7 +409,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:deepseek/deepseek-v4-pro",
@@ -445,7 +453,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:deepseek/deepseek-flash",
@@ -488,7 +497,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:aliyun/qwen3.8-max",
@@ -531,7 +541,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:aliyun/qwen3.8-flash",
@@ -574,7 +585,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:aliyun/qwen3.7-plus",
@@ -622,7 +634,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:google/gemini-4-carbon",
@@ -665,7 +678,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:google/gemini-4-argon",
@@ -708,7 +722,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:google/gemini-3.8-flash",
@@ -751,7 +766,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:google/gemini-3.5-flash-lite",
@@ -795,7 +811,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:vertex-anthropic/claude-opus-5-5@default",
@@ -840,7 +857,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:vertex-anthropic/claude-sonnet-5-5@default",
@@ -885,7 +903,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:vertex-anthropic/claude-haiku-5-5@default",
@@ -939,7 +958,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:vertex-google/gemini-4-carbon",
@@ -982,7 +1002,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "api:vertex-google/gemini-3.8-flash",
@@ -1025,7 +1046,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "cli:claude-code",
@@ -1059,7 +1081,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": "2.1.322"
+    "testedVersion": "2.1.322",
+    "location": null
   },
   {
     "id": "cli:codex",
@@ -1093,7 +1116,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": "0.167.2"
+    "testedVersion": "0.167.2",
+    "location": null
   },
   {
     "id": "cli:muse",
@@ -1127,7 +1151,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": "1.4.15"
+    "testedVersion": "1.4.18",
+    "location": null
   },
   {
     "id": "cli:grok",
@@ -1161,7 +1186,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": "1.0.77"
+    "testedVersion": "1.0.77",
+    "location": null
   },
   {
     "id": "cli:antigravity",
@@ -1195,7 +1221,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": "1.5.6"
+    "testedVersion": "1.5.6",
+    "location": null
   },
   {
     "id": "flow:muse>grok",
@@ -1229,7 +1256,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "flow:grok>muse",
@@ -1263,7 +1291,8 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   },
   {
     "id": "flow:plan-implement",
@@ -1297,6 +1326,7 @@
     },
     "version": null,
     "account": null,
-    "testedVersion": null
+    "testedVersion": null,
+    "location": null
   }
 ]

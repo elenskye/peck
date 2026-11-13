@@ -13,6 +13,20 @@ pub struct Workspace {
     pub last_opened_at: i64,
     pub git_branch: Option<String>,
     pub gitignore_configured: bool,
+    /// 「移出列表」了：文件夹、任务、快照都不动，重新打开这个文件夹就回来。
+    #[serde(default)]
+    pub hidden: bool,
+    /// 项目自己的设置（右键 → 项目设置）。
+    #[serde(default)]
+    pub settings: ProjectSettings,
+}
+
+/// 项目设置：在这个项目里发任务默认谁来干、哪一档权限（空着就跟全局的）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectSettings {
+    pub who: Option<String>,
+    pub permission: Option<String>,
 }
 
 /// Normalize a workspace path string (canonicalizing when possible, stripping `/private` prefix on macOS tmp if needed for display consistency).
@@ -160,6 +174,8 @@ pub fn open_workspace(path_str: &str) -> Result<Workspace, String> {
         last_opened_at: now_ts,
         git_branch,
         gitignore_configured,
+        hidden: false,
+        settings: ProjectSettings::default(),
     })
 }
 

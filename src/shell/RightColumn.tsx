@@ -1,9 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { TermView } from "@/App";
+import { canAutomate, type AgentEvent, type ModelEntry } from "@/lib/agentEvents";
+import { foldEvents } from "@/lib/agentView";
 import { ipc } from "@/lib/ipc";
+import type { AppSettings } from "@/lib/settings";
 import type { DiffResult, FileChangeItem, FileListing, FilePreview, ProjectOverview, RunRecord, UndoPreview } from "@/lib/types";
 import { clock, cn, fileSize, isMarkdownFile, runState, shortenHomePath, span, stepName } from "@/lib/utils";
 import { Btn, Icon, ModHead, Twinkle } from "@/ui";
+import { AgentView } from "@/shell/AgentView";
+import { MarkdownEditor } from "@/shell/MarkdownEditor";
+import { EffortPicker, WhoPicker, defaultEffort, effortFor } from "@/shell/ModelPicker";
 
 export type RightTab = "changes" | "oneshot" | "files" | "term";
 
@@ -24,6 +30,12 @@ interface Props {
   onTermStop: () => void;
   onTermClear: () => void;
   say: (message: unknown) => void;
+  /** 模型列表（ONE SHOT 选谁来答） */
+  entries: ModelEntry[];
+  settings: AppSettings;
+  onSettings: (patch: Partial<AppSettings>) => void;
+  /** 把 ONE SHOT 的回答放进中栏输入框 */
+  onToTask: (text: string) => void;
 }
 
 const Expand: React.FC<{ wide: boolean; onWide: (wide: boolean) => void }> = ({ wide, onWide }) => (
@@ -69,19 +81,93 @@ export const RightColumn: React.FC<Props> = (props) => {
         ))}
       </div>
       {tab === "changes" && <Changes {...props} />}
-      {tab === "oneshot" && (
-        <div className="pk-mod col-grow">
-          <ModHead label="ONE SHOT" note="只读"><Expand wide={wide} onWide={onWide} /></ModHead>
-          <div className="empty">
-            <p>边干活边问，不打断任务。它能读整个项目，但不改文件、不跑命令；任务进度和终端输出它看不到，要带上才行。</p>
-            <p className="empty-s">Muse、Grok 用它们的订阅额度；API 模型按次算钱，算进花费上限。</p>
-            <p className="empty-s">这一版先放着这个页签：Muse、Grok 来答从 v0.5 起，API 模型来答从 v0.6 起。</p>
-          </div>
-        </div>
-      )}
+      {/* ONE SHOT 一直挂着，只是藏起来：切去别的页签再回来，问到一半的、答完的都还在，STOP 也还能点。 */}
+      <OneShot key={props.project?.workspace.id ?? "none"} {...props} shown={tab === "oneshot"} />
       {tab === "files" && <Files {...props} />}
       {tab === "term" && <Term {...props} />}
     </section>
+  );
+};
+
+// ---------- ONE SHOT ----------
+
+/** 边干活边问：选一个引擎（API 模型和 CLI，Antigravity 除外），按 PLAN 档只读回答，不锁终端，答完一行花费。 */
+const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, settings, onSettings, onToTask, wide, onWide, say, shown }) => {
+  const hide = shown ? undefined : { display: "none" };
+  const options = entries.filter((e) => e.available && e.group !== "flow" && canAutomate(e));
+  const pick = options.find((e) => e.id === settings.oneshotPick) ?? options.find((e) => e.id === settings.pick) ?? options.find((e) => e.group === "peck") ?? options[0] ?? null;
+  const [question, setQuestion] = useState("");
+  const [asked, setAsked] = useState("");
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const view = useMemo(() => foldEvents(events), [events]);
+  const answer = [...view.items].reverse().find((i) => i.kind === "text");
+  const effort = pick ? settings.efforts[pick.id] ?? defaultEffort(pick) : "off";
+  const ask = async () => {
+    const prompt = question.trim();
+    if (!project || !pick || !prompt || running) return;
+    setAsked(prompt);
+    setEvents([]);
+    setRunning(true);
+    try {
+      const id = await ipc.harnessOneshot(
+        { workspaceId: project.workspace.id, prompt, who: pick.id, effort: effortFor(pick, settings.efforts), costCap: settings.costCap },
+        (event) => {
+          setEvents((prev) => [...prev, event]);
+          if (event.type === "turn.completed") setRunning(false);
+        },
+      );
+      setRunId(id);
+      setQuestion("");
+    } catch (e) { setRunning(false); say(e); }
+  };
+  const stop = () => { if (runId) void ipc.gatewayControl(runId, { type: "interrupt" }).catch(() => setRunning(false)); };
+  if (!project) {
+    return (
+      <div className="pk-mod col-grow" style={hide}>
+        <ModHead label="ONE SHOT" note="只读"><Expand wide={wide} onWide={onWide} /></ModHead>
+        <p className="empty-line">先选一个项目。</p>
+      </div>
+    );
+  }
+  return (
+    <div className="pk-mod col-grow oneshot" style={hide}>
+      <ModHead label="ONE SHOT" note="只读 · 不打断任务"><Expand wide={wide} onWide={onWide} /></ModHead>
+      <div className="col-grow scroll oneshot-body">
+        {!asked ? (
+          <div className="empty">
+            <p>边干活边问一句。它能读整个项目，但不改文件；任务进度和终端输出它看不到，要带上就贴进问题里。</p>
+            <p className="empty-s">API 模型按次算钱，算进花费上限；CLI 用它们的订阅额度。Antigravity 只做直接调用，不在这里。</p>
+          </div>
+        ) : (
+          <>
+            <div className="you sel"><span className="t-label">ASK</span><span className="you-text">{asked}</span></div>
+            <AgentView events={events} running={running} who={pick?.label.toUpperCase() ?? ""} onControl={(c) => (runId ? ipc.gatewayControl(runId, c) : Promise.resolve())} onShowFile={() => {}} say={say} />
+            {!running && answer && answer.kind === "text" && (
+              <div className="oneshot-acts">
+                <Btn v="ghost" sm onClick={() => void navigator.clipboard.writeText(answer.text)}>COPY</Btn>
+                <Btn v="ghost" sm onClick={() => onToTask(answer.text)}>TO TASK</Btn>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="oneshot-in">
+        <div className={cn("composer-in", running && "is-off")}>
+          <span className="pk-prompt">›</span>
+          <MarkdownEditor value={question} onChange={setQuestion} onSubmit={() => void ask()} placeholder="问一句…（↵ 发送，⇧↵ 换行）" disabled={running} ariaLabel="ONE SHOT 问一句" />
+        </div>
+        <div className="composer-row">
+          <WhoPicker entries={options} value={pick} disabled={running} only={["api", "cli"]} remembered={settings.picks}
+            onChange={(oneshotPick) => onSettings({ oneshotPick })}>
+            <EffortPicker entry={pick} value={effort} disabled={running} onChange={(e) => pick && onSettings({ efforts: { ...settings.efforts, [pick.id]: e } })} />
+          </WhoPicker>
+          <span className="grow" />
+          {running ? <Btn v="danger" sm icon="stop" onClick={stop}>STOP</Btn> : <Btn v="primary" sm disabled={!question.trim() || !pick} onClick={() => void ask()}>ASK</Btn>}
+        </div>
+      </div>
+    </div>
   );
 };
 

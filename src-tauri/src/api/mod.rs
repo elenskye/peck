@@ -151,7 +151,7 @@ pub async fn api_set_mode(mode: ApiMode, state: State<'_, AppState>) -> Result<(
 #[tauri::command]
 pub async fn api_key_load(state: State<'_, AppState>) -> Result<(), String> {
     let api = state.api.clone();
-    tokio::task::spawn_blocking(move || api.keys.lock().map_err(|_| "无法读取密钥。")?.load())
+    tokio::task::spawn_blocking(move || Keys::load_unlocked(&api.keys).map(|_| ()))
         .await
         .map_err(|_| "读取密钥任务中断。")?
 }

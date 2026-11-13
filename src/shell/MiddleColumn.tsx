@@ -1,9 +1,15 @@
-import React, { useEffect, useRef, useState } from "react";
-import { api, type ApiStatus, type ApiTask } from "@/lib/api";
+import React, { useEffect, useMemo, useState } from "react";
+import { api, type ApiConfig, type ApiStatus, type ApiTask } from "@/lib/api";
+import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
+import { addUsage, foldEvents, usageText, usd, type UsageLine } from "@/lib/agentView";
 import type { AppSettings } from "@/lib/settings";
-import type { AgentInfo, Message, Permission, ProjectOverview, RunRecord, StepDescriptor, TaskBrief } from "@/lib/types";
-import { API_WHO, CLI_WHO, FAKE_WHO, PERMISSIONS, agentDot, clock, cn, runState, span, stepName, timer, whoDots, whoLabel, type WhoOption } from "@/lib/utils";
+import type { Message, Permission, ProjectOverview, RunRecord, StepDescriptor, TaskBrief } from "@/lib/types";
+import { PERMISSIONS, agentDot, clock, cn, engineDot, isAgentRun, runState, span, stepName, timer, whoDots, whoLabel , shortenHomePath } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Icon, ModHead, Seg, useNow } from "@/ui";
+import { AgentView } from "@/shell/AgentView";
+import { Md } from "@/shell/Markdown";
+import { MarkdownEditor } from "@/shell/MarkdownEditor";
+import { EffortPicker, WhoPicker, defaultEffort, flowOf, labelOf, pickable } from "@/shell/ModelPicker";
 
 interface Props {
   project: ProjectOverview | null;
@@ -14,32 +20,96 @@ interface Props {
   busy: boolean;
   settings: AppSettings;
   onSettings: (patch: Partial<AppSettings>) => void;
-  agents: AgentInfo[];
+  /** 模型列表（gateway_models） */
+  entries: ModelEntry[];
   apiStatus: ApiStatus | null;
+  /** 统一事件：任务号 → 这次的过程 */
+  agentEvents: Record<string, AgentEvent[]>;
+  /** 在跑的任务号（这个项目的） */
+  runningRunId: string | null;
   draft: string;
   onDraft: (text: string) => void;
-  onSend: (prompt: string, who: string, permission: Permission) => void;
+  onSend: (prompt: string, who: string, permission: Permission, effort?: string) => void;
   onStop: () => void;
   onRetryStep: (run: RunRecord, stepId: string) => void;
+  onControl: (runId: string, control: Control) => Promise<void>;
   onOpen: (path?: string) => void;
   onOpenSettings: () => void;
+  /** 规划 + 实施在输入框下换模型：存旧 API 层的设置。 */
+  onApiConfig: (config: ApiConfig) => Promise<void>;
+  /** 项目文件夹不在了：重新找文件夹、移出列表。 */
+  onRelocate: (projectId: string) => void;
+  onRemoveProject: (projectId: string) => void;
   /** 右栏现在看的是哪一次记录 */
   shownRunId: string | null;
   /** 让右栏看这一次的改动（带上文件就直接开它的 Diff） */
   onShowRun: (runId: string, path?: string) => void;
   native: boolean;
+  say: (message: unknown) => void;
 }
 
-/** 这个模式下能选的「谁来干」：CLI 检测到才出现；假 Agent 只在开发者选项开着时出现。 */
-function whoOptions(mode: "cli" | "api", agents: AgentInfo[], fake: boolean): WhoOption[] {
-  if (mode === "api") return API_WHO;
-  const found = (id: string) => agents.some((a) => a.id === id && a.available && !a.isMock);
-  const cli = CLI_WHO.filter((w) => w.id.split(">").every(found));
-  return fake ? [...cli, FAKE_WHO] : cli;
+/** 选中的「谁来干」：记住的那个还能用就用它，不然列表里第一个。 */
+export function chosenEntry(entries: ModelEntry[], settings: AppSettings): ModelEntry | null {
+  const list = pickable(entries, settings.fakeAgent);
+  return list.find((e) => e.id === settings.pick) ?? list.find((e) => e.group === "peck") ?? list[0] ?? null;
 }
+
+/** 选了谁，NEW TASK 上写它怎么干。 */
+function describe(entry: ModelEntry, apiStatus: ApiStatus | null): Array<{ name: string; dot: ReturnType<typeof agentDot>; does: string; model?: string }> {
+  const modelName = (role: "worker" | "supervisor") => {
+    const id = apiStatus?.config.agents.find((a) => a.role === role)?.modelId;
+    return apiStatus?.config.models.find((m) => m.id === id)?.name ?? "还没选模型";
+  };
+  if (entry.id === "mock") return [{ name: "假 Agent", dot: "", does: "不推理，照剧本写几个演示文件，几秒跑完。只在开发和验收时用。" }];
+  if (entry.group === "peck") {
+    return [{ name: `Peck · ${entry.label}`, dot: "api", does: "Peck 自己的循环：读、搜、改（整批一起改）、跑命令、任务清单、问你，都用 Peck 的工具；每一步看得见，花费按价格表算，算进花费上限。" }];
+  }
+  if (entry.group === "cli") {
+    const dot = engineDot(entry.id.slice(4));
+    return [{
+      name: entry.label,
+      dot,
+      does: entry.directOnly
+        ? "直接调用：你发一句话，它自己做完；Peck 显示每一步和改动，要批的事弹卡片。不进 ONE SHOT 和任何自动化。"
+        : `整包引擎：用它自己的工具和订阅额度；Peck 显示每一步、替它审批、记花费${entry.account ? `（账号：${entry.account}）` : ""}。`,
+    }];
+  }
+  if (entry.id === "flow:plan-implement") {
+    return [
+      { name: "规划的模型", dot: "api", does: "拆成几项交给实施的模型，做完逐项审查：通过、返工或接手。", model: modelName("supervisor") },
+      { name: "实施的模型", dot: "api", does: "只拿到目标、要改的文件和验收条件，做完交回。", model: modelName("worker") },
+    ];
+  }
+  const [a, b] = entry.id.slice(5).split(">");
+  const name = (x: string) => (x === "muse" ? "Muse" : x === "grok" ? "Grok" : x);
+  return [
+    { name: name(a), dot: engineDot(a), does: "先写规范：要改什么，拆成一条条任务。" },
+    { name: name(b), dot: engineDot(b), does: "照规范实施，做完一条勾一条。" },
+  ];
+}
+
+/** 项目文件夹不在了：任务记录和快照都还在，换个文件夹接上，或者移出列表。 */
+const MissingFolder: React.FC<{ project: ProjectOverview; onRelocate: (id: string) => void; onRemove: (id: string) => void }> = ({ project, onRelocate, onRemove }) => {
+  const [armed, setArmed] = useState(false);
+  const { workspace, tasks } = project;
+  return (
+    <section className="col" aria-label="对话">
+      <div className="pk-mod pk-mod--wait col-grow home">
+        <ModHead label="MISSING" note={workspace.name} />
+        <h1 className="t-hero">文件夹不在了</h1>
+        <p className="lead">找不到 <span className="t-code">{shortenHomePath(workspace.path)}</span>：可能被删了、挪了地方，或者外接盘没插。{tasks.length ? `这个项目的 ${tasks.length} 个任务和快照都还在，` : ""}换成它现在的位置就能接着用。</p>
+        <div className="set-inline">
+          <Btn v="primary" icon="folder" onClick={() => onRelocate(workspace.id)}>FIND FOLDER</Btn>
+          <Btn v={armed ? "danger" : "ghost"} icon="trash" onClick={() => { if (!armed) { setArmed(true); return; } onRemove(workspace.id); }}>{armed ? "CONFIRM" : "REMOVE"}</Btn>
+          <span className="hint">{armed ? "再点一次：移出列表（记录不删，重新打开这个文件夹就回来）" : "外接盘没插的话，插上就好，不用动。"}</span>
+        </div>
+      </div>
+    </section>
+  );
+};
 
 export const MiddleColumn: React.FC<Props> = (props) => {
-  const { project, task, runs, settings, onSettings, agents, apiStatus, busy } = props;
+  const { project, task, runs, settings, entries, apiStatus, busy } = props;
   const [permission, setPermission] = useState<Permission>(settings.permission);
   useEffect(() => setPermission(settings.permission), [settings.permission]);
 
@@ -47,55 +117,44 @@ export const MiddleColumn: React.FC<Props> = (props) => {
     return (
       <section className="col" aria-label="对话">
         <div className="pk-mod col-grow home">
-          <ModHead label="PECK" note="本机的 Coding Agent" />
+          <ModHead label="PECK" note="只在你这台 Mac 上的 Harness" />
           <h1 className="t-hero">先选一个项目</h1>
-          <p className="lead">在左边点一个项目，或者打开一个项目文件夹。给它一句话，Peck 调本机的 Muse、Grok 或 API 模型去改代码；改动看得见，整个任务能一键撤销。</p>
+          <p className="lead">在左边点一个项目，或者打开一个项目文件夹。给它一句话，选谁来干：Peck 自己的循环配一个 API 模型，或者一个 CLI 引擎。每一步看得见，要批的事弹卡片；整个任务能一键撤销。</p>
           {props.native && <div><Btn v="primary" icon="folder" onClick={() => props.onOpen()}>OPEN FOLDER</Btn></div>}
         </div>
       </section>
     );
   }
 
-  const options = whoOptions(settings.mode, agents, settings.fakeAgent);
-  const remembered = settings.who[settings.mode];
-  const who = options.find((o) => o.id === remembered) ?? options[0] ?? null;
-  const pickWho = (id: string) => onSettings({ who: { ...settings.who, [settings.mode]: id } });
-  const access = PERMISSIONS.find((p) => p.id === permission)!;
-  const modelName = (role: "worker" | "supervisor") => {
-    const id = apiStatus?.config.agents.find((a) => a.role === role)?.modelId;
-    return apiStatus?.config.models.find((m) => m.id === id)?.name ?? "还没选模型";
-  };
+  if (project.missing) return <MissingFolder project={project} onRelocate={props.onRelocate} onRemove={props.onRemoveProject} />;
 
+  const who = chosenEntry(entries, settings);
+  const access = PERMISSIONS.find((p) => p.id === permission)!;
   const composer = (
     <Composer
       {...props}
-      options={options}
       who={who}
-      onWho={pickWho}
       permission={permission}
       onPermission={setPermission}
-      placeholder={task ? (busy ? "下一句话…（这个任务跑完再发）" : "下一句话…") : "一句话说要做什么…"}
+      placeholder={task ? (busy ? "下一句话…（这个任务跑完再发）" : "下一句话…") : "一句话说要做什么…（↵ 发送，⇧↵ 换行）"}
     />
   );
 
   if (!task) {
+    const flow = who ? describe(who, apiStatus) : [];
     return (
       <section className="col" aria-label="对话">
         <div className="pk-mod col-grow home scroll">
-          <ModHead label="NEW TASK" note={settings.mode === "api" ? `${project.workspace.name} · API 模式` : project.workspace.name} />
+          <ModHead label="NEW TASK" note={project.workspace.name} />
           <h1 className="t-hero">{project.workspace.name} 要做什么？</h1>
-          <p className="lead">
-            {settings.mode === "api"
-              ? "API 模式：Peck 自己调模型干活，读写只在项目里。开始前先存一份快照，做完默认留着；不满意，一键撤销整个任务。"
-              : "一句话说清楚，再选谁来干。开始前先存一份快照，做完默认留着；不满意，一键撤销整个任务。"}
-          </p>
+          <p className="lead">一句话说清楚，再在下面选谁来干。开始前先存一份快照，做完默认留着；不满意，一键撤销整个任务。</p>
           {who ? (
             <div>
-              <p className="lbl">WHO · {who.label}</p>
-              <ol className={cn("flow", who.flow.length === 1 && "flow--one")}>
-                {who.flow.map((f, i) => (
+              <p className="lbl">WHO · {labelOf(who)}</p>
+              <ol className={cn("flow", flow.length === 1 && "flow--one")}>
+                {flow.map((f, i) => (
                   <li key={i}>
-                    <p><span className="flow-k">{i + 1}</span><Dot kind={f.dot} /><b className="t-name">{f.name}</b>{settings.mode === "api" && <em>{modelName(who.id === "api-supervisor" && i === 0 ? "supervisor" : "worker")}</em>}</p>
+                    <p><span className="flow-k">{i + 1}</span><Dot kind={f.dot} /><b className="t-name">{f.name}</b>{f.model && <em>{f.model}</em>}</p>
                     <span>{f.does}</span>
                   </li>
                 ))}
@@ -103,14 +162,13 @@ export const MiddleColumn: React.FC<Props> = (props) => {
             </div>
           ) : (
             <div className="empty">
-              <p>没检测到能用的 CLI。到设置里看一下 CLI 检测，或者把顶栏的模式换成 API。</p>
+              <p>还没有能用的：在设置里配一家 API 的 Key，或者看一下 CLI 检测。</p>
               <div><Btn icon="gear" onClick={props.onOpenSettings}>SETTINGS</Btn></div>
             </div>
           )}
           <div>
             <p className="lbl">ACCESS · {access.label}</p>
             <p className="note">{access.does}</p>
-            <p className="note note--quiet">这一版权限档只记在任务上；管住 CLI 和工具从 v0.5 起。</p>
           </div>
         </div>
         {composer}
@@ -124,11 +182,11 @@ export const MiddleColumn: React.FC<Props> = (props) => {
         {runs.length === 0 && <div className="pk-mod"><p className="empty-line">在读这个任务…</p></div>}
         {runs.map((run, i) => (
           <React.Fragment key={run.id}>
-            <p className="you sel">
+            <div className="you sel">
               <span className="t-label">YOU</span>
-              <span className="t-name you-text">{run.prompt}</span>
+              <Md text={run.prompt} className="you-text" />
               <span className="you-meta">{clock(run.startedAt)}</span>
-            </p>
+            </div>
             <TaskModule
               run={run}
               latest={i === runs.length - 1}
@@ -137,6 +195,10 @@ export const MiddleColumn: React.FC<Props> = (props) => {
               onRetryStep={props.onRetryStep}
               onShowFile={(path) => props.onShowRun(run.id, path)}
               busy={busy}
+              events={props.agentEvents[run.id]}
+              live={props.runningRunId === run.id}
+              onControl={(c) => props.onControl(run.id, c)}
+              say={props.say}
             />
           </React.Fragment>
         ))}
@@ -146,68 +208,55 @@ export const MiddleColumn: React.FC<Props> = (props) => {
   );
 };
 
+/** 这个任务一共花了多少（几次加起来）。 */
+function taskUsage(runs: RunRecord[], events: Record<string, AgentEvent[]>): UsageLine | null {
+  let total: UsageLine | null = null;
+  for (const r of runs) {
+    const ev = events[r.id];
+    if (!ev) continue;
+    const u = foldEvents(ev).usage;
+    if (u) total = total ? addUsage(total, u) : u;
+  }
+  return total;
+}
+
 // ---------- 输入位 ----------
 
 const Composer: React.FC<Props & {
-  options: WhoOption[];
-  who: WhoOption | null;
-  onWho: (id: string) => void;
+  who: ModelEntry | null;
   permission: Permission;
   onPermission: (p: Permission) => void;
   placeholder: string;
-}> = ({ draft, onDraft, onSend, onStop, busy, options, who, onWho, permission, onPermission, placeholder, settings, apiStatus, onOpenSettings }) => {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
-  }, [draft]);
+}> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onSettings, entries, onOpenSettings, onApiConfig, apiStatus, runs, agentEvents, task }) => {
+  const options = pickable(entries, settings.fakeAgent);
   const ready = !!draft.trim() && !!who && !busy;
-  const submit = () => { if (ready && who) onSend(draft.trim(), who.id, permission); };
-  const apiModel = (role: "worker" | "supervisor") => {
-    const id = apiStatus?.config.agents.find((a) => a.role === role)?.modelId;
-    return (apiStatus?.config.models.find((m) => m.id === id)?.name ?? "还没选模型").toUpperCase();
+  const effort = who ? settings.efforts[who.id] ?? defaultEffort(who) : "off";
+  const submit = () => {
+    if (!ready || !who) return;
+    const chosen = who.efforts.includes(effort) ? effort : undefined;
+    onSend(draft.trim(), who.id, permission, chosen);
   };
+  const spent = useMemo(() => (task ? taskUsage(runs, agentEvents) : null), [task, runs, agentEvents]);
+  const money = spent ? usd(spent.usd) : null;
   return (
-    <div className="pk-mod composer" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(); } }}>
-      <label className={cn("composer-in", busy && "is-off")}>
+    <div className="pk-mod composer">
+      <div className={cn("composer-in", busy && "is-off")}>
         <span className="pk-prompt">›</span>
-        <textarea
-          ref={ref}
-          rows={1}
-          aria-label="一句话说要做什么"
-          value={draft}
-          disabled={busy}
-          placeholder={placeholder}
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          onChange={(e) => onDraft(e.target.value)}
-        />
-      </label>
-      <div className="composer-row" role="group" aria-label="谁来干">
-        {options.map((o) => (
-          <button key={o.id} type="button" disabled={busy} className={cn("pk-chip pk-chip--sm", who?.id === o.id && "is-on")} aria-pressed={who?.id === o.id} onClick={() => onWho(o.id)}>
-            {o.flow.map((f, i) => <React.Fragment key={i}>{i > 0 && "→"}<Dot kind={f.dot} />{o.flow.length > 1 ? f.name.toUpperCase() : null}</React.Fragment>)}
-            {(o.flow.length === 1 || settings.mode === "api") && o.label}
-          </button>
-        ))}
-        {options.length === 0 && <span className="hint">没检测到能用的 CLI</span>}
-        {settings.mode === "api" && who && (
-          <button type="button" className="pk-chip pk-chip--sm" onClick={onOpenSettings} aria-label="换模型（在设置里）">
-            <Dot kind="api" />{who.id === "api-supervisor" ? `${apiModel("supervisor")} → ${apiModel("worker")}` : apiModel("worker")}
-          </button>
-        )}
+        <MarkdownEditor value={draft} onChange={onDraft} onSubmit={submit} placeholder={placeholder} disabled={busy} ariaLabel="一句话说要做什么" />
       </div>
       <div className="composer-row">
+        <WhoPicker entries={options} value={who} disabled={busy} remembered={settings.picks} onOpenSettings={onOpenSettings} apiStatus={apiStatus} onApiConfig={onApiConfig}
+          onChange={(pick) => { const e = options.find((x) => x.id === pick); onSettings({ pick, picks: e ? { ...settings.picks, [flowOf(e)]: pick } : settings.picks }); }}>
+          <EffortPicker entry={who} value={effort} disabled={busy} onChange={(e) => who && onSettings({ efforts: { ...settings.efforts, [who.id]: e } })} />
+        </WhoPicker>
         <Seg label="权限" sm disabled={busy} items={PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))} value={permission} onChange={onPermission} />
         <span className="grow" />
+        {spent && <span className="composer-cost t-code" title={`这个任务一共：${usageText(spent)}`}>{money == null ? "花费未知" : `${spent.source === "estimated" ? "估 " : ""}${money}`}</span>}
         {busy ? (
           <Btn v="danger" icon="stop" onClick={onStop}>STOP</Btn>
         ) : (
           <>
-            <span className="kbd">⌘↵</span>
+            <span className="kbd" title="⇧↵ 或 ⌘↵ 换行">↵</span>
             <Btn v="primary" iconEnd="send" disabled={!ready} onClick={submit}>SEND</Btn>
           </>
         )}
@@ -236,14 +285,24 @@ const TaskModule: React.FC<{
   busy: boolean;
   onRetryStep: (run: RunRecord, stepId: string) => void;
   onShowFile: (path: string) => void;
-}> = ({ run, latest, shown, onShow, busy, onRetryStep, onShowFile }) => {
+  /** 统一事件（Peck 循环、CLI 引擎的任务才有） */
+  events?: AgentEvent[];
+  /** 这次正在跑（这次打开 App 以后发的） */
+  live: boolean;
+  onControl: (control: Control) => Promise<void>;
+  say: (message: unknown) => void;
+}> = ({ run, latest, shown, onShow, busy, onRetryStep, onShowFile, events, live, onControl, say }) => {
   const state = runState(run);
   const running = state === "running";
   const now = useNow(running);
+  const agent = isAgentRun(run);
+  const view = useMemo(() => (agent && events ? foldEvents(events) : null), [agent, events]);
   const doneSteps = run.steps.filter((s) => s.status === "succeeded").length;
   const doneTasks = run.tasks.filter((t) => t.completed).length;
+  const plan = view?.plan ?? null;
+  const donePlan = plan ? plan.filter((p) => p.status === "completed").length : 0;
   // 进度：有任务清单就按清单，没有按步骤；在跑的那一步算半步。
-  const ratio = run.tasks.length > 0 ? doneTasks / run.tasks.length : run.steps.length > 0 ? doneSteps / run.steps.length : 0;
+  const ratio = plan && plan.length > 0 ? donePlan / plan.length : run.tasks.length > 0 ? doneTasks / run.tasks.length : run.steps.length > 0 ? doneSteps / run.steps.length : 0;
   const lit = state === "succeeded" ? 28 : Math.min(27, Math.round(ratio * 28));
   const adds = run.files.reduce((n, f) => n + f.additions, 0);
   const dels = run.files.reduce((n, f) => n + f.deletions, 0);
@@ -258,7 +317,7 @@ const TaskModule: React.FC<{
       <ModHead
         label="TASK"
         note={<>{dots.map((d) => <Dot key={d} kind={d} />)} {whoLabel(run)}{run.permission ? ` · ${run.permission.toUpperCase()}` : ""}</>}
-        count={`${doneSteps}/${run.steps.length}`}
+        count={agent ? (plan && plan.length ? `${donePlan}/${plan.length}` : undefined) : `${doneSteps}/${run.steps.length}`}
       >
         {onShow && (
           <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏看任务 ${run.number} 的改动`} onClick={onShow}>CHANGES</Btn>
@@ -272,12 +331,18 @@ const TaskModule: React.FC<{
         <b className={cn("pk-readout task-clock", state === "succeeded" && "pk-readout--done", !running && state !== "succeeded" && "task-clock--off")}>{timer(elapsed)}</b>
       </div>
       <Blocks lit={lit} still={!running} />
-      {run.tasks.length > 0 && <Checklist run={run} />}
-      <ol className="steps">
-        {run.steps.map((step) => (
-          <Step key={step.id} run={run} step={step} now={now} open={open === step.id} onToggle={() => setOpen(open === step.id ? null : step.id)} onRetry={retryable && (step.status === "failed" || step.status === "cancelled") ? () => onRetryStep(run, step.id) : undefined} />
-        ))}
-      </ol>
+      {agent ? (
+        <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} />
+      ) : (
+        <>
+          {run.tasks.length > 0 && <Checklist run={run} />}
+          <ol className="steps">
+            {run.steps.map((step) => (
+              <Step key={step.id} run={run} step={step} now={now} open={open === step.id} onToggle={() => setOpen(open === step.id ? null : step.id)} onRetry={retryable && (step.status === "failed" || step.status === "cancelled") ? () => onRetryStep(run, step.id) : undefined} />
+            ))}
+          </ol>
+        </>
+      )}
       {run.flowId.startsWith("api-") && <ApiHistory run={run} onShowFile={onShowFile} />}
       {state === "succeeded" && (
         <div className="summary sel">
@@ -286,11 +351,18 @@ const TaskModule: React.FC<{
             <div><b className="t-name">做完了</b><span>{run.files.length} 个文件 · 用了 {span(elapsed)}</span></div>
             <p className="summary-n"><span className="pk-add">+{adds}</span><span className="pk-del">−{dels}</span></p>
           </div>
-          {run.summary && <p className="summary-text">{run.summary}</p>}
-          <div className="verify">
-            {run.tasks.length > 0 && <p className={doneTasks === run.tasks.length ? "is-ok" : "is-warn"}><Icon name={doneTasks === run.tasks.length ? "check" : "bang"} size={12} />任务清单 {doneTasks}/{run.tasks.length} 条勾了</p>}
-            {run.steps.map((s) => <p key={s.id} className="is-ok"><Icon name="check" size={12} />{stepName(s)}{s.exitCode != null ? ` · 退出码 ${s.exitCode}` : ""}</p>)}
-          </div>
+          {run.summary && !agent && <p className="summary-text">{run.summary}</p>}
+          {agent ? (
+            <div className="verify">
+              {plan && plan.length > 0 && <p className={donePlan === plan.length ? "is-ok" : "is-warn"}><Icon name={donePlan === plan.length ? "check" : "bang"} size={12} />任务清单 {donePlan}/{plan.length} 条勾了</p>}
+              {!events?.length && run.summary && <Md text={run.summary} className="summary-text" />}
+            </div>
+          ) : (
+            <div className="verify">
+              {run.tasks.length > 0 && <p className={doneTasks === run.tasks.length ? "is-ok" : "is-warn"}><Icon name={doneTasks === run.tasks.length ? "check" : "bang"} size={12} />任务清单 {doneTasks}/{run.tasks.length} 条勾了</p>}
+              {run.steps.map((s) => <p key={s.id} className="is-ok"><Icon name="check" size={12} />{stepName(s)}{s.exitCode != null ? ` · 退出码 ${s.exitCode}` : ""}</p>)}
+            </div>
+          )}
           <p className="keep">默认留着。不满意，在右边撤销整个任务。</p>
         </div>
       )}
@@ -300,6 +372,7 @@ const TaskModule: React.FC<{
           <span className="pk-bar-text">{run.summary}</span>
         </div>
       )}
+      {agent && (state === "failed" || state === "cancelled") && latest && <p className="keep">文件和过程都留着；接着说一句就能继续（不重放跑过的工具）。</p>}
       {state === "undone" && run.undoneAt && (
         <p className="back"><Icon name="undo" size={12} /><span>已回到 {clock(run.startedAt)} 开始前的样子</span><span className="back-n">你的 Git 没动</span></p>
       )}

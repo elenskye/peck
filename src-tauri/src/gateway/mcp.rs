@@ -347,7 +347,17 @@ mod tests {
         let pending = tokio::spawn(async move {
             post(&url, &token, json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "ask_user", "arguments": {"question": "还在吗"}}})).await
         });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // 等第二个提问真的到了服务这边再结束任务（只睡一会儿的话，全量跑负载高时请求还没到就作废了）。
+        let asked_twice = || {
+            seen.lock().unwrap().iter().filter(|e| matches!(e.body, EventBody::UserInputRequested { .. })).count() >= 2
+        };
+        for _ in 0..250 {
+            if asked_twice() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(asked_twice(), "第二个提问 5 秒内没到");
         hub.unregister(&mcp.token);
         let (_, result) = pending.await.unwrap();
         assert_eq!(result["result"]["isError"], true);

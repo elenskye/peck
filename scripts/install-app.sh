@@ -60,3 +60,13 @@ if [ -e "$INSTALL_DIR/Peck.app" ]; then
 fi
 mv "$STAGING_DIR/Peck.app" "$INSTALL_DIR/Peck.app"
 echo "[Peck] 已安装: $INSTALL_DIR/Peck.app"
+# 只留刚备份的这一份旧包：更早的挪进废纸篓（站主 2026-11-13 定，不在「应用程序」里攒；要找回去废纸篓里拖出来）。
+if [ -n "${BACKUP_PATH:-}" ]; then
+  for OLD in "$INSTALL_DIR"/Peck.app.backup-*; do
+    [ -e "$OLD" ] || continue
+    [ "$OLD" = "$BACKUP_PATH" ] && continue
+    TRASH_TO="$HOME/.Trash/$(basename "$OLD")"
+    [ -e "$TRASH_TO" ] && TRASH_TO="$TRASH_TO-$(date +%s)"
+    mv "$OLD" "$TRASH_TO" && echo "[Peck] 更早的旧包挪进了废纸篓: $(basename "$OLD")"
+  done
+fi
