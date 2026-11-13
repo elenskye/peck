@@ -12,6 +12,8 @@ export interface AppSettings {
   picks: Partial<Record<string, string>>;
   /** 每家 CLI 用哪个模型（引擎 id → CLI 里的模型名；空着用 CLI 自己的默认）。 */
   cliModels: Record<string, string>;
+  /** 选的那个模型叫什么（显示用，比如「Opus 5.5」）。 */
+  cliModelNames: Record<string, string>;
   /** 左栏收起的模块（PROJECTS、AGENTS）。 */
   fold: { projects?: boolean; agents?: boolean };
   /** 每个模型上次选的思考强度（`off` 是不思考；CLI 的 `default` 是不指定、用 CLI 自己的）。 */
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pick: "",
   picks: {},
   cliModels: {},
+  cliModelNames: {},
   fold: {},
   efforts: {},
   oneshotPick: "",
@@ -69,6 +72,7 @@ export async function loadSettings(): Promise<AppSettings> {
       pick: saved.pick ?? legacyPick(saved),
       picks: { ...saved.picks },
       cliModels: { ...saved.cliModels },
+      cliModelNames: { ...saved.cliModelNames },
       fold: { ...saved.fold },
       efforts: { ...saved.efforts },
       limits: { ...DEFAULT_SETTINGS.limits, ...saved.limits },

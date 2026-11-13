@@ -6,9 +6,9 @@ import { usageApi, type BalanceCard, type ClientCard, type UsageListResult } fro
 import { agentName, cn } from "@/lib/utils";
 import { Btn, Field, MenuChip, ModHead, Row, Seg } from "@/ui";
 
-// 现在的用量页（usage.rs + 事件日志）。站主用 Peck 做的「额度与花费」（src/quota/）接上以后，这一页退役。
+// 额度与花费（usage.rs + spend.rs 的事件日志）。原来要等站主用 Peck 另做一个（src/quota/），2026-11-13 站主改了主意：这一页就是它，本地的 Claude 接着做。
 
-const STATUS: Record<string, string> = { ok: "读到了", not_installed: "没装", not_running: "没在运行", not_logged_in: "没登录", fields_missing: "现在读不到", read_failed: "读取失败", stale_stopped: "已停止 · 最后一次的快照", unknown: "未知", missing_key: "没配 Key" };
+const STATUS: Record<string, string> = { ok: "读到了", not_installed: "没装", not_running: "没在运行", not_logged_in: "没登录", fields_missing: "现在读不到", read_failed: "读取失败", stale_stopped: "已停止 · 最后一次的快照", unknown: "未知", missing_key: "没配 Key", query_failed: "读取失败" };
 const when = (t: number | null | undefined) => (t ? new Date(t).toLocaleString("zh-CN", { hour12: false }) : "未知");
 const num = (v: number | null) => (v === null ? "未知" : v.toLocaleString());
 
@@ -300,7 +300,9 @@ const ClientQuota: React.FC<{ card: ClientCard; history: QuotaPoint[]; say: (m: 
         <span className="grow" />
         <em className={cn("pk-tag", (c.status === "ok" || (!fromClient && windows.length > 0)) && "pk-tag--ok")}>{tag}</em>
       </div>
-      {windows.length === 0 ? <p className="hint">{c.failureReason ?? "还没读到额度。"}</p> : windows.map((w) => {
+      {windows.length === 0 && <p className="hint">{c.failureReason ?? "还没读到额度。"}</p>}
+      {windows.length > 0 && fromClient && c.status !== "ok" && c.failureReason && <p className="hint q-client-warn">这次没读到：{c.failureReason} 下面是 {when(c.lastSuccessAt)} 的读数。</p>}
+      {windows.map((w) => {
         // 刻度和数字都是「还剩多少」（站主 2026-11-13 定）。过了重置时间的读数是旧的：刻度变暗，不当成现在还剩多少。
         const stale = w.reset != null && w.reset <= Date.now();
         const left = w.used == null ? null : 100 - Math.max(0, Math.min(100, w.used));
@@ -341,6 +343,8 @@ function balanceText(amount: string, currency: string): string {
 
 /** 窗口的名字：有时长就按时长叫（5 小时、每周），不然把客户端给的长名字收短。 */
 function windowName(label: string, mins: number | null | undefined): string {
+  // 已经是中文名字的（「5 小时」「每周」「每周 Sonnet」）照写。
+  if (/[一-鿿]/.test(label) && !label.includes("·")) return label;
   if (mins) {
     if (mins < 1440) return `${Math.round(mins / 60)} 小时`;
     if (mins === 1440) return "每天";

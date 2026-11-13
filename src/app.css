@@ -117,6 +117,11 @@ body { overflow: hidden; }
 .left-projects.is-folded, .left-agents.is-folded { flex: none; }
 .left-projects.is-folded > :not(.pk-mod-head) { display: none; }
 .left-agents.is-flash { --pk-edge: var(--color-cyan); }
+/* 模块头 [ LABEL ] 旁边的小图标按钮（PROJECTS 旁边的「新增环境」）。 */
+.head-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; margin-left: calc(-1 * var(--space-2)); padding: 0; border: 0; background: none; color: var(--color-text-2); cursor: pointer; }
+.head-icon:hover { color: var(--color-cyan-text); }
+.head-icon:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
+.left-projects > .left-path { flex: none; margin-bottom: var(--space-4); }
 .fold-btn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; margin: 0 calc(-1 * var(--space-2)) 0 var(--space-3); padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }
 .fold-btn:hover { color: var(--color-cyan-text); }
 .fold-btn:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
@@ -527,8 +532,8 @@ body { overflow: hidden; }
 .q-clients { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: var(--space-5); margin-top: var(--space-6); }
 .q-client { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-7); }
 .q-client-head { display: flex; align-items: center; gap: var(--space-4); }
-.q-window { display: grid; grid-template-columns: 64px minmax(60px, 1fr) 44px 72px 96px; align-items: center; gap: var(--space-5); font-size: var(--text-small); }
-.q-window-l { width: 64px; flex: none; color: var(--color-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.q-window { display: grid; grid-template-columns: 80px minmax(60px, 1fr) 44px 72px 96px; align-items: center; gap: var(--space-5); font-size: var(--text-small); }
+.q-window-l { width: 80px; flex: none; color: var(--color-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q-window-v { font-family: var(--font-code); font-weight: 400; text-align: right; color: var(--color-text); }
 .q-window-r { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .q-spark { flex: none; }
@@ -573,3 +578,5 @@ body { overflow: hidden; }
 .pk-tabs--icons > button { flex: 0 0 auto; padding: 0 var(--space-6); }
 .pk-tabs--icons > button.is-on { flex: 1 1 auto; }
 .right--wide .pk-tabs--icons > button.is-on { flex: none; }
+
+.q-client-warn { color: var(--color-warn); }

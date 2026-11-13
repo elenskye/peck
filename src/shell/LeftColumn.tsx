@@ -219,12 +219,19 @@ export const LeftColumn: React.FC<{
   return (
     <section className="col" aria-label="项目和任务">
       <div className={cn("pk-mod left-projects", folded && "is-folded")}>
-        <ModHead label="PROJECTS" note={folded ? projects.find((p) => p.workspace.id === projectId)?.workspace.name : projectId ? <button type="button" className="link" onClick={() => onSelectProject(null)}>全部项目</button> : undefined} count={projects.length}>
+        <ModHead label="PROJECTS" after={<button type="button" className="head-icon" aria-label="新增环境：打开一个项目文件夹" title="新增环境：打开一个项目文件夹" onClick={() => (native ? onOpen() : setPathOpen((v) => !v))}><Icon name="folder" size={12} /></button>} note={folded ? projects.find((p) => p.workspace.id === projectId)?.workspace.name : projectId ? <button type="button" className="link" onClick={() => onSelectProject(null)}>全部项目</button> : undefined} count={projects.length}>
           <FoldBtn name="PROJECTS" folded={folded} onFold={onFold} />
         </ModHead>
+        {/* 浏览器演示里没有系统选文件夹的窗：点文件夹图标出一行路径。 */}
+        {pathOpen && !native && (
+          <form onSubmit={submitPath} className="left-path">
+            <Field aria-label="项目文件夹的路径" placeholder="~/code/项目文件夹" value={path} onChange={(e) => setPath(e.target.value)} autoFocus />
+            <Btn sm type="submit" disabled={!path.trim()}>OPEN</Btn>
+          </form>
+        )}
         {projects.length === 0 ? (
           <div className="empty">
-            <p>还没有项目。打开一个项目文件夹，Peck 就在里面干活。</p>
+            <p>还没有项目。点 PROJECTS 旁边的文件夹图标，打开一个项目文件夹，Peck 就在里面干活。</p>
           </div>
         ) : (
           <div className={cn("scroll left-list", sort.dragging && "is-sorting")} data-sort-group="projects">
@@ -287,20 +294,6 @@ export const LeftColumn: React.FC<{
             })}
           </div>
         )}
-        <div className="left-open">
-          {pathOpen || !native ? (
-            <form onSubmit={submitPath} className="left-path">
-              <Field aria-label="项目文件夹的路径" placeholder="~/code/项目文件夹" value={path} onChange={(e) => setPath(e.target.value)} autoFocus={pathOpen} />
-              <Btn sm type="submit" disabled={!path.trim()}>OPEN</Btn>
-            </form>
-          ) : (
-            <div className="left-path">
-              <Btn icon="folder" onClick={() => onOpen()}>OPEN FOLDER</Btn>
-              <Btn v="ghost" sm onClick={() => setPathOpen(true)}>PATH</Btn>
-            </div>
-          )}
-          <p className="hint">右键项目或任务：改名、设置、删除；按住拖动换顺序</p>
-        </div>
       </div>
       {agents}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

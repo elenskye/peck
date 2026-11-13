@@ -215,7 +215,11 @@ const CliBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
   const pickModel = (id: string) => {
     const next = models.find((m) => m.id === id) ?? fallback;
     const keep = effort === "default" || (next?.efforts ?? []).includes(effort);
-    onSettings({ cliModels: { ...settings.cliModels, [engine]: id }, efforts: keep ? settings.efforts : { ...settings.efforts, [value.id]: "default" } });
+    onSettings({
+      cliModels: { ...settings.cliModels, [engine]: id },
+      cliModelNames: { ...settings.cliModelNames, [engine]: id ? models.find((m) => m.id === id)?.label ?? id : "" },
+      efforts: keep ? settings.efforts : { ...settings.efforts, [value.id]: "default" },
+    });
   };
   const cliNote = (e: ModelEntry) => (!e.available ? "没检测到" : e.directOnly ? "直接调用" : e.version ? `v${e.version.replace(/^v/, "")}` : "");
   return (

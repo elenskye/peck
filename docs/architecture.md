@@ -63,7 +63,7 @@
 - **事件**：`AgentEvent` = `seq`（任务里从 0 递增）+ `at`（毫秒）+ 可选 `subagentId` + 事件本体（`type` 是 `session.started` 这样带点的名字，字段 camelCase）。种类：会话、回合（结束原因：做完、到上限、拒绝、取消、打断、出错）、内容和思考的 delta / completed、工具调用（读、改、跑、搜、MCP……，改文件的带 Diff）、`diff.updated`、`plan.updated`、审批和提问的 requested / resolved、子任务、`usage.updated`、`quota.updated`、`notice`、`error`、`raw`。引擎只经 `EventSink`（`log.rs`）发：编号、存进 `agent_events`（原件另存一列，不发给界面）、再交给界面。读：`gateway_events(runId)`。
 - **用量口径**：`input` 是没走缓存的输入，`cacheRead`、`cacheWrite` 另算；`output` 包括思考，`reasoning` 是其中的思考。花费来源分实报 / 按价格表估 / CLI 估 / 未知；没有就是 `usd: null`，不填 0。Claude Code 续接后报的是累计，取差值。
 - **审批**：转换器只出 `approval.requested`；`approval.resolved` 由引擎那一层在站主回答以后发。选项统一成 `allow_once`、`allow_always`、`deny_once`、`deny_always`。`highRisk` 由 Peck 的 `harness/risk.rs` 定。
-- **CLI 的模型列表**（`cli_models.rs`，IPC `cli_models`）：从 CLI 自己那里读，不起模型、不花额度——Codex `app-server` 的 `model/list`、Muse `serve` 的 `model/list`、Grok / Antigravity（ACP）`session/new` 回应里的 `configOptions`（模型和强度；会在它们那边留一个空会话）。Claude Code 没有列模型的接口，给 `--model` 认的别名（fable、opus、sonnet、haiku）和 `--effort` 的五档。读到的存在 `app_settings` 的 `cli_models`，AGENTS 里点「重新读一遍」才重读；读不到照旧给上次的、带原因。发任务（`gateway_run_start`）和 ONE SHOT（`harness_oneshot`）都带 `model`、`effort`，不填用 CLI 自己的默认。
+- **CLI 的模型列表**（`cli_models.rs`，IPC `cli_models`）：从 CLI 自己那里读，不起模型、不花额度——Codex `app-server` 的 `model/list`、Muse `serve` 的 `model/list`、Grok / Antigravity（ACP）`session/new` 回应里的 `configOptions`（模型和强度；会在它们那边留一个空会话）。Claude Code 没有列模型的接口，读它自己缓存的模型目录（配置目录下 `cache/model-catalog/*.json`，带版本号的模型名、强度档、现在选的哪个；常用的在前、旧版本在后），没有缓存才给 `--model` 认的别名；强度用 `--effort`。读到的存在 `app_settings` 的 `cli_models`，AGENTS 里点「重新读一遍」才重读；读不到照旧给上次的、带原因。发任务（`gateway_run_start`）和 ONE SHOT（`harness_oneshot`）都带 `model`、`effort`，不填用 CLI 自己的默认。
 - **模型目录和价格**：`src-tauri/defaults/models.json`（ID、供应商、线协议、上下文窗口、最大输出、思考档位、工具和看图、每百万 tokens 的价格和日期），`node scripts/models-snapshot.mjs` 从 models.dev 重取。模型列表里 CLI 引擎带 `account`（当前账号名）和 `testedVersion`（录夹具时的版本，`catalog.rs` 的 `TESTED_VERSIONS`）；`directOnly` 为真的（Antigravity）不进 ONE SHOT 和任何自动化。
 - **假 Gateway**（`mock.rs`）：`ScriptedModel` 照剧本出工具调用，`ReplayBackend::fixture(引擎)` 回放录好的夹具，碰到审批、提问停下等控制通道。浏览器 `?mock` 用 `src/dev/gatewayMock.ts`，读同一份夹具。
 - **设置**：`gateway_config_get` / `_set` 存 Vertex 的 Project ID、Location 和「CLI 目录」。
@@ -121,13 +121,14 @@
 
 ## 额度与花费
 
+- **Claude 的订阅额度**（2026-11-13 改）：Claude 桌面 App 或 Claude Code 在跑时，三分钟一次跑 Claude Code 自带的 `/usage`（`claude -p /usage --output-format json --no-session-persistence`，`TZ=UTC`，在 Peck 数据目录的 `cli-probe/` 里跑）：它是本地命令，0 轮、不进模型、不花额度，由 Claude Code 自己去问订阅用了多少，Peck 不读它的登录；解析 `Current session / Current week …: N% used · resets …` 那几行。要 Claude Code 命令行按订阅登录（桌面 App 的登录和它不共用；没登录时卡片上写怎么登）。status line 送来的（终端里跑 Claude Code 才有）作补充。
 - 现在的 `usage.rs` 和用量页照旧可用：API 记录、DeepSeek 余额（只在真实 DeepSeek 请求进行中且 Key 已加载时查）、五家客户端额度卡（每 15 秒看进程，约 60 秒查一次，客户端退出就停、留最后一次的快照，缺数据不填 0），加上 Gateway 写进来的 CLI 额度。
 - Claude Code、Antigravity 的额度另有官方状态栏脚本：随 App 打包在 `Peck.app/Contents/Resources/integrations/statusline.py`，往 Claude Code 设置里**合并**（已有状态栏就在命令末尾加 `--forward-original '原有命令'`）：
   ```json
   {"statusLine":{"type":"command","command":"/usr/bin/python3 '/Applications/Peck.app/Contents/Resources/integrations/statusline.py' --client claude-code"}}
   ```
 - **QUOTA 页的图**（`spend.rs` 的 `spend_overview`）：从事件日志取近 7 / 30 / 90 天的 `usage.updated`（Peck 循环按任务的「谁来干」认模型，ONE SHOT 单算，CLI 引擎的标「估」，累计口径的取差值）和 `quota.updated`（订阅额度的历史读数），按天、按谁汇总在界面里做（界面知道本地时区）。旧的规划 + 实施的调用记录照旧来自 `usage.rs`，收在页底。
-- 新的「额度与花费」（`src/quota/`、`src-tauri/src/quota/`）是站主 v0.6 起用 Peck 开发的作业，Agent 只留入口和数据接口、不写实现；接上以后旧的 `usage.rs` 和用量页退役。各家额度的官方来源见 [testing.md](./testing.md#额度与花费的真实来源)。
+- 「额度与花费」就是这一页（`usage.rs`、`spend.rs`、`UsagePage.tsx`），本地账号接着做（站主 2026-11-13 改，不再另建 `src/quota/`）。各家额度的官方来源见 [testing.md](./testing.md#额度与花费的真实来源)。
 
 ## 视觉
 
@@ -160,4 +161,3 @@
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳：顶栏、左栏、左栏下面的 `AgentsPanel`（谁来干）、中栏（`AgentView`、`ModelPicker`（FLOW 的判断、发出去带什么；ONE SHOT 和项目设置还用它的三个按钮）、`Markdown`、`MarkdownEditor`）、右栏四个页签、设置、用量页；布局样式和方案里还没有的身份色 |
 | `src/dev/` | `?mock` 的假数据和假 IPC：`peckMock.ts` 是 Peck 循环的剧本，`gatewayMock.ts` 读 CLI 引擎的夹具 |
 | `src/vendor/peck/` | 同步来的视觉（不手改） |
-| `src/quota/`、`src-tauri/src/quota/` | 额度与花费，站主用 Peck 写（v0.6 起，还没建） |

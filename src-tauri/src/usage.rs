@@ -200,8 +200,8 @@ pub fn client_source_coverage(client: &str) -> (&'static str, &'static str) {
             "Codex 默认配置账号的订阅窗口；其他配置或窗口的账号需另行核对",
         ),
         "claude-code" => (
-            "Claude Code status line rate_limits（事件驱动）",
-            "Claude Code CLI 5 小时与 7 天窗口；桌面 App 不等于 CLI",
+            "Claude Code /usage（非交互，不进模型）",
+            "Claude 订阅的 5 小时和每周窗口（桌面 App 和 Claude Code 共用）",
         ),
         "antigravity" => (
             "Antigravity CLI statusline quota（事件驱动）",
@@ -717,7 +717,8 @@ pub fn classify_process(comm: &str) -> Option<(&'static str, &'static str)> {
         return Some(("codex", "cli-or-app"));
     }
     if lower.contains("claude.app") {
-        return None;
+        // 桌面 App 的主进程算「在跑」：它和 Claude Code 用同一份订阅额度。辅助进程不算。
+        return (base == "claude").then_some(("claude-code", "desktop"));
     }
     if base == "claude" || lower.contains("/.local/share/claude/versions/") {
         return Some(("claude-code", "cli"));
@@ -1208,7 +1209,21 @@ async fn run_capture(
     timeout_dur: Duration,
     stopped: impl std::future::Future<Output = ()>,
 ) -> Result<(bool, String, String), String> {
+    run_capture_in(None, program, args, env, timeout_dur, stopped).await
+}
+
+async fn run_capture_in(
+    cwd: Option<&std::path::Path>,
+    program: &PathBuf,
+    args: &[&str],
+    env: &HashMap<String, String>,
+    timeout_dur: Duration,
+    stopped: impl std::future::Future<Output = ()>,
+) -> Result<(bool, String, String), String> {
     let mut cmd = tokio::process::Command::new(program);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     cmd.args(args)
         .envs(env)
         .stdin(std::process::Stdio::null())
@@ -1526,6 +1541,197 @@ async fn codex_app_server(bin: &PathBuf) -> Result<(Value, Value), String> {
     result
 }
 
+/// 读 Claude 额度用的 Claude Code：在哪、PATH、Peck 里选的账号目录、账号的名字。
+pub struct ClaudeSetup {
+    bin: PathBuf,
+    path: String,
+    env: Vec<(String, String)>,
+    account: String,
+}
+
+async fn claude_setup(store_arc: &std::sync::Arc<Mutex<Store>>) -> Option<ClaudeSetup> {
+    let (config, book) = {
+        let store = store_arc.lock().ok()?;
+        (
+            crate::gateway::config::GatewayConfig::load(&store).ok()?,
+            crate::gateway::accounts::AccountBook::load(&store),
+        )
+    };
+    let path = config.search_path();
+    let bin = crate::agent::resolve_command_path("claude", &path).await?;
+    Some(ClaudeSetup {
+        env: crate::gateway::accounts::env_for(&book, &config, "claude-code"),
+        account: book.current("claude-code"),
+        bin,
+        path,
+    })
+}
+
+/// Claude 的额度：跑 Claude Code 自带的 `/usage`（`claude -p /usage`）。它是本地命令，不进模型、不花额度，
+/// 由 Claude Code 自己去问订阅用了多少；Peck 不读、不碰它的登录。时间用 UTC 打出来，好换算。
+/// 读不到再看 status line 送来的（只有在终端里跑 Claude Code 时才有）。
+async fn query_claude(setup: Option<&ClaudeSetup>, variant: &str) -> ClientCard {
+    let now = now_ms();
+    let Some(setup) = setup else {
+        let mut c = event_driven_card("claude-code", variant, now);
+        if c.status != "ok" {
+            c.failure_reason = Some("没找到 Claude Code 命令行：在设置 → CLI 检测里填 CLI 目录（cli/bin），Peck 用它的 /usage 读额度。".into());
+        }
+        return c;
+    };
+    let mut env: HashMap<String, String> = setup.env.iter().cloned().collect();
+    env.insert("PATH".into(), setup.path.clone());
+    env.insert("TZ".into(), "UTC".into());
+    let cwd = crate::mode::app_data_dir().join("cli-probe");
+    let _ = std::fs::create_dir_all(&cwd);
+    let account = Some(format!("peck:{}", setup.account));
+    let out = run_capture_in(
+        Some(&cwd),
+        &setup.bin,
+        &["-p", "/usage", "--output-format", "json", "--no-session-persistence"],
+        &env,
+        Duration::from_secs(25),
+        wait_client_stopped("claude-code"),
+    )
+    .await;
+    let mut card = match out {
+        Ok((_, stdout, _)) => match serde_json::from_str::<Value>(stdout.trim()) {
+            Ok(v) => parse_claude_usage(&v, now),
+            Err(_) => failed_claude(now, "Claude Code 的 /usage 没给出能读的结果。"),
+        },
+        Err(e) => failed_claude(now, &e),
+    };
+    if card.status != "ok" {
+        // 终端里跑的 Claude Code 可能经 status line 送来过。
+        let event = event_driven_card("claude-code", "cli", now);
+        if event.status == "ok" {
+            return event;
+        }
+        if card.failure_reason.is_none() {
+            card.failure_reason = Some(claude_login_hint(setup, &env, &cwd).await);
+        }
+    }
+    card.account_id = account;
+    card.account_label = (setup.account != "default").then(|| setup.account.clone());
+    card.running = true;
+    card.installed = true;
+    card
+}
+
+fn failed_claude(now: i64, reason: &str) -> ClientCard {
+    let mut c = ClientCard::base("claude-code");
+    c.status = "query_failed".into();
+    c.collected_at = now;
+    c.last_failure_at = Some(now);
+    c.failure_reason = Some(reason.into());
+    c
+}
+
+/// /usage 里没有额度：多半是 Claude Code 命令行没按订阅登录（桌面 App 的登录和它不共用）。
+async fn claude_login_hint(setup: &ClaudeSetup, env: &HashMap<String, String>, cwd: &std::path::Path) -> String {
+    let status = run_capture_in(Some(cwd), &setup.bin, &["auth", "status", "--json"], env, Duration::from_secs(10), std::future::pending::<()>()).await;
+    let logged_in = status
+        .ok()
+        .and_then(|(_, out, _)| serde_json::from_str::<Value>(out.trim()).ok())
+        .and_then(|v| v.get("loggedIn").and_then(Value::as_bool));
+    match logged_in {
+        Some(false) => "Claude Code 命令行还没登录（桌面 App 的登录和它不共用）：在设置 → CLI 检测 → Claude Code 的账号点 LOGIN（或终端跑 cli/bin/claude auth login），登录和桌面 App 同一个订阅，Peck 就能读到额度。".into(),
+        _ => "Claude Code 的 /usage 没给出订阅额度：可能登录的不是订阅（是 API Key），或者这个账号看不到额度。".into(),
+    }
+}
+
+/// 解析 `claude -p /usage --output-format json` 的 `result`：`Current session: 23% used · resets Nov 14, 3pm (UTC)` 这样一行一个窗口。
+pub fn parse_claude_usage(v: &Value, collected_at: i64) -> ClientCard {
+    let mut c = ClientCard::base("claude-code");
+    c.installed = true;
+    c.running = true;
+    c.collected_at = collected_at;
+    let text = v.get("result").and_then(Value::as_str).unwrap_or("");
+    let mut windows = vec![];
+    for line in text.lines() {
+        let line = line.trim();
+        let Some((title, rest)) = line.split_once(": ") else { continue };
+        if !title.starts_with("Current ") {
+            continue;
+        }
+        let Some(Ok(pct)) = rest.split_once('%').map(|(p, _)| p.trim().parse::<f64>()) else { continue };
+        let reset = rest.split_once("resets ").and_then(|(_, r)| parse_claude_reset(r, collected_at));
+        let (label, mins) = claude_window(title);
+        windows.push(QuotaWindow { label, used_percent: Some(pct), remaining_amount: None, reset_at_ms: reset, window_duration_mins: mins });
+    }
+    if windows.is_empty() {
+        c.status = "fields_missing".into();
+        c.last_failure_at = Some(collected_at);
+    } else {
+        c.status = "ok".into();
+        c.windows = windows;
+        c.last_success_at = Some(collected_at);
+        c.fresh = true;
+        if text.contains("using your overages") {
+            c.tier = Some("在用超额".into());
+        }
+    }
+    c
+}
+
+fn claude_window(title: &str) -> (String, Option<i64>) {
+    match title {
+        "Current session" => ("5 小时".into(), Some(300)),
+        "Current week (all models)" => ("每周".into(), Some(10080)),
+        t => match t.strip_prefix("Current week (").and_then(|x| x.strip_suffix(')')) {
+            // 按模型分的周窗口：名字带上模型，不按时长叫（不然和「每周」重名）。
+            Some(scope) => (format!("每周 {}", scope.trim_end_matches(" only")), None),
+            None => (t.trim_start_matches("Current ").to_string(), None),
+        },
+    }
+}
+
+/// `Nov 14, 3pm (UTC)`、`Nov 14, 3:30pm (UTC)`、`Jan 2, 2027, 9am (UTC)`、`1:30pm (UTC)` → 毫秒。没写年就是今年（已经过了一天以上算明年）；只有时刻是今天（过了算明天）。
+fn parse_claude_reset(s: &str, now_ms: i64) -> Option<i64> {
+    let s = s.split(" (").next()?.trim();
+    let parts: Vec<&str> = s.split(", ").collect();
+    let (date, year, clock) = match parts.as_slice() {
+        [c] => (None, None, *c),
+        [d, c] => (Some(*d), None, *c),
+        [d, y, c] => (Some(*d), y.trim().parse::<i32>().ok(), *c),
+        _ => return None,
+    };
+    let now = time::OffsetDateTime::from_unix_timestamp(now_ms / 1000).ok()?;
+    let (month, day) = match date {
+        Some(date) => {
+            let (mon, day) = date.split_once(' ')?;
+            let month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+                .iter()
+                .position(|m| mon.to_lowercase().starts_with(m))? as u8
+                + 1;
+            (month, day.trim().parse::<u8>().ok()?)
+        }
+        None => (u8::from(now.month()), now.day()),
+    };
+    let clock = clock.trim().to_lowercase();
+    let pm = clock.ends_with("pm");
+    let hm = clock.trim_end_matches("am").trim_end_matches("pm");
+    let (h, m) = match hm.split_once(':') {
+        Some((h, m)) => (h.parse::<u8>().ok()?, m.parse::<u8>().ok()?),
+        None => (hm.parse::<u8>().ok()?, 0),
+    };
+    let hour = (h % 12) + if pm { 12 } else { 0 };
+    let build = |y: i32| -> Option<i64> {
+        let d = time::Date::from_calendar_date(y, time::Month::try_from(month).ok()?, day).ok()?;
+        let t = time::Time::from_hms(hour, m, 0).ok()?;
+        Some(time::PrimitiveDateTime::new(d, t).assume_utc().unix_timestamp() * 1000)
+    };
+    match (year, date) {
+        (Some(y), _) => build(y),
+        // 只有时刻：今天的这个时刻，过了就是明天。
+        (None, None) => build(now.year()).map(|t| if t < now_ms { t + 86_400_000 } else { t }),
+        (None, Some(_)) => {
+            let this = build(now.year())?;
+            if this < now_ms - 86_400_000 { build(now.year() + 1) } else { Some(this) }
+        }
+    }
+}
+
 fn event_driven_card(client: &str, variant: &str, collected_at: i64) -> ClientCard {
     let mut c = ClientCard::base(client);
     c.installed = true;
@@ -1571,20 +1777,19 @@ fn event_driven_card(client: &str, variant: &str, collected_at: i64) -> ClientCa
         }
     }
     c.failure_reason = Some(match (client, variant) {
-        ("claude-code", "desktop") => "仅检测到 Claude 桌面 App，未检测到 Claude Code CLI 的 status line 事件；桌面与 CLI 分开，不冒充 CLI 额度已读取。Peck 未收到 status line 事件（事件驱动，需已有模型响应后才可能带 rate_limits）。可手工录入快照。".into(),
-        ("claude-code", _) => "Claude Code 正在运行，但 Peck 尚未收到 status line 的 rate_limits 事件；该字段仅在支持账户且已有模型响应后可能出现，事件驱动、可能不新鲜。Peck 不改写已有 status line 配置。可手工录入快照。".into(),
+        ("claude-code", _) => "还没读到 Claude 的额度。".into(),
         ("antigravity", "desktop") => "仅检测到 Antigravity 桌面 App；官方可核实的是 CLI statusline quota，桌面不等于 CLI 读取。Peck 未收到 CLI quota 事件。可手工录入快照。".into(),
         _ => "Antigravity 正在运行，但 Peck 尚未收到 CLI statusline 的 quota 事件；上下文比例不是订阅额度。可手工录入快照。".into(),
     });
     c
 }
 
-async fn query_client(client: &str, variant: &str) -> ClientCard {
+async fn query_client(client: &str, variant: &str, claude: Option<&ClaudeSetup>) -> ClientCard {
     match client {
         "muse-code" => query_muse().await,
         "grok" => query_grok().await,
         "codex" => query_codex().await,
-        "claude-code" => event_driven_card("claude-code", variant, now_ms()),
+        "claude-code" => query_claude(claude, variant).await,
         "antigravity" => event_driven_card("antigravity", variant, now_ms()),
         _ => ClientCard::base(client),
     }
@@ -1659,10 +1864,13 @@ pub async fn refresh_clients_inner(
         (store.usage_snapshots().unwrap_or_default(), installed_map())
     };
     let running = running_clients(&list_processes(), std::process::id() as i64);
+    // Claude Code 按「CLI 检测」的目录找（`cli/bin`），带上 Peck 里选的账号目录。
+    let claude = claude_setup(&store_arc).await;
     let mut cards = vec![];
     for client in CLIENTS {
         let old = old_map.get(client);
-        let is_installed = installed.get(client).copied().unwrap_or(false);
+        let is_installed = installed.get(client).copied().unwrap_or(false)
+            || (client == "claude-code" && (claude.is_some() || PathBuf::from("/Applications/Claude.app").exists()));
         if let Some(old) = old {
             if old.manual && old.status == "ok" && !running.contains_key(client) {
                 // Manual snapshots persist until replaced; still mark not fresh.
@@ -1697,7 +1905,9 @@ pub async fn refresh_clients_inner(
                 .lock()
                 .map(|m| m.get(client).copied())
                 .unwrap_or(None);
-            last.is_none_or(|t| now - t >= 60_000) || old.is_none()
+            // Claude 的 /usage 每次要起一个 Claude Code：三分钟一次就够。
+            let every = if client == "claude-code" { 180_000 } else { 60_000 };
+            last.is_none_or(|t| now - t >= every) || old.is_none()
         };
         if !due {
             let mut c = old.cloned().unwrap_or_else(|| ClientCard::base(client));
@@ -1728,7 +1938,7 @@ pub async fn refresh_clients_inner(
             cards.push(c);
             continue;
         }
-        let queried = query_client(client, variant).await;
+        let queried = query_client(client, variant, claude.as_ref()).await;
         if let Ok(mut m) = monitor.last_query.lock() {
             m.insert(client.to_string(), now_ms());
         }
@@ -2588,10 +2798,34 @@ mod tests {
             classify_process("/Users/fixture/.local/share/claude/versions/2.1.318"),
             Some(("claude-code", "cli"))
         );
+        // 桌面 App 的主进程算在跑（和 Claude Code 共用订阅额度），辅助进程不算。
         assert_eq!(
             classify_process("/Applications/Claude.app/Contents/MacOS/Claude"),
+            Some(("claude-code", "desktop"))
+        );
+        assert_eq!(
+            classify_process("/Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)"),
             None
         );
+    }
+
+    #[test]
+    fn claude_usage_lines_become_windows() {
+        let now = 1_794_556_800_000; // 2026-11-13 08:00 UTC
+        let v = json!({"type": "result", "local_command": "usage", "result": "You are currently using your subscription to power your Claude Code usage\n\nCurrent session: 23% used · resets 1:30pm (UTC)\nCurrent week (all models): 61% used · resets Nov 17, 2am (UTC)\nCurrent week (Sonnet only): 4% used · resets Nov 17, 2am (UTC)\nCurrent week (Opus): 70% used"});
+        let c = parse_claude_usage(&v, now);
+        assert_eq!(c.status, "ok");
+        let w: Vec<_> = c.windows.iter().map(|w| (w.label.as_str(), w.used_percent, w.window_duration_mins)).collect();
+        assert_eq!(w, vec![("5 小时", Some(23.0), Some(300)), ("每周", Some(61.0), Some(10080)), ("每周 Sonnet", Some(4.0), None), ("每周 Opus", Some(70.0), None)]);
+        assert_eq!(c.windows[3].reset_at_ms, None);
+        // 只有时刻的：今天的 13:30 UTC（过了就是明天）。
+        assert_eq!(c.windows[0].reset_at_ms, Some(now + 5 * 3_600_000 + 30 * 60_000));
+        assert_eq!(parse_claude_reset("Nov 17, 2am (UTC)", now), Some(1_794_880_800_000));
+        assert_eq!(parse_claude_reset("Jan 2, 2027, 12pm (UTC)", now), Some(1_798_891_200_000));
+        // 没登录订阅时只有花费那几行：读不到，不算 0。
+        let none = parse_claude_usage(&json!({"result": "Total cost:            $0.0000\nTotal duration (API):  0s"}), now);
+        assert_eq!(none.status, "fields_missing");
+        assert!(none.windows.is_empty());
     }
 
     #[test]

@@ -85,9 +85,10 @@ export const FoldBtn: React.FC<{ name: string; folded: boolean; onFold: (folded:
 );
 
 /** 模块头：[ LABEL ] · 右边一句话 · 数 · 小按钮。 */
-export const ModHead: React.FC<{ label: string; note?: React.ReactNode; count?: React.ReactNode; children?: React.ReactNode }> = ({ label, note, count, children }) => (
+export const ModHead: React.FC<{ label: string; note?: React.ReactNode; count?: React.ReactNode; children?: React.ReactNode; after?: React.ReactNode }> = ({ label, note, count, children, after }) => (
   <div className="pk-mod-head">
     <span className="pk-mod-label">{label}</span>
+    {after}
     <span className="pk-mod-note">{note}</span>
     {count != null && <span className="pk-mod-count">{count}</span>}
     {children}

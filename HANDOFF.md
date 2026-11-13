@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-13 傍晚（本地账号）。**v0.5 完成**（站主提交了 `a6858c1`、打了 tag `peck-v0.5.0`、删了云端分支）。之后本地按站主的意见又做了一轮界面优化 **Refine R4**（在工作区，没提交，等站主提交）。规则在 [CLAUDE.md](./CLAUDE.md)，Phase 表在 [docs/roadmap.md](./docs/roadmap.md)，结论都并进了 [architecture.md](./docs/architecture.md)、[design.md](./docs/design.md)。
+更新：2026-11-13 晚（本地账号）。**v0.5 完成**（tag `peck-v0.5.0`），R4 站主已提交（`201ef85`）。这一轮 **Refine R5** 在工作区，没提交，等站主提交。规则在 [CLAUDE.md](./CLAUDE.md)，Phase 表在 [docs/roadmap.md](./docs/roadmap.md)，结论都并进了 [architecture.md](./docs/architecture.md)、[design.md](./docs/design.md)。
 
 ## 云端开 v0.6 前要知道的
 
@@ -8,6 +8,8 @@
 
 - **「谁来干」在左栏下面的【AGENTS】**（`src/shell/AgentsPanel.tsx`，R4）：FLOW 分段（API、CLI、接力、规划、假）；CLI 五家点选 + 这家的模型和强度；API 模型下拉 + 强度；规划两个下拉。输入框下只剩一行「谁」（点它跳到 AGENTS）、权限、SEND。设置里 `picks` 记每种干法上次选的、`cliModels` 记每家 CLI 的模型、`fold` 记左栏两块收没收起。ONE SHOT 和项目设置的「默认谁来干」还用 `ModelPicker.tsx` 的 `WhoPicker` 三个按钮。
 - **CLI 能选模型**（R4）：`gateway/cli_models.rs` 从 CLI 自己读模型列表（Codex、Muse `model/list`；Grok、Antigravity ACP `session/new` 的 `configOptions`；Claude Code 用别名），存在 `app_settings.cli_models`；发任务、ONE SHOT 都带 `model`、`effort`；Claude Code 引擎加了 `--effort`。
+- **额度与花费改由本地账号做**（R5，站主定）：不再另建 `src/quota/`，CLAUDE.md、roadmap 已改；Claude 的额度改用 Claude Code 自带的 `/usage` 读（`usage.rs` 的 `query_claude`），桌面 App 开着也算在跑。
+- **PROJECTS 底下的 OPEN FOLDER / PATH / 提示去掉了**（R5）：[ PROJECTS ] 旁边一个文件夹图标是新增环境的入口（浏览器演示里点它出一行路径）。
 - **右栏五个页签**（R4）：CHANGES、LOG（原来在左栏）、ONE SHOT、FILES、TERM，只有像素图标、选中的带名字；四个新图标在 `src/app.css`（`.pk-i--changes/log/oneshot/files`）。
 - **输入框 ↵ 发送**，⇧↵ / ⌘↵ 换行（`MarkdownEditor.tsx`，输入法组字的回车不算）。
 - **Key 两包、打开 App 就读**（`api/keys.rs`）：AI 供应商一包（账户 `keys`）、其他 Key 一包（`other-keys`，`OTHER_KEYS` 现在是空的，以后加的都放这里）；`Keys::load_unlocked` 在启动时后台读，读完发 `keys-loaded`。没读到 Key 时模型列表里没有 API 模型，所以这一步要紧。
@@ -17,20 +19,23 @@
 - **设置页**重排过：CLI 检测一份五家清单（CLI 目录空着时自己找）、供应商只留 Key / 百炼地域 / Vertex、权限能撤「总是允许」、旧东西归开发者选项 LEGACY。五家 CLI 各一色（`engineDot`，三个新颜色在 `src/app.css`）。
 - **安全和正确性**（本地验收审查出来修的）：文件工具不能经大小写或符号链接写进 `.git`；高危规则多了「看不出会做什么的命令」一类；沙箱 `(deny lsopen)`、`(deny appleevent-send)`；环境变量去掉 `SSH_AUTH_SOCK` 和更多凭据名；Claude Code 流式回答不再显示两遍；同一任务接着发给 CLI 会续接；花费上限每次请求前现算；长输出按任务落盘；超过 8MB 的文件流式读；事件攒 40ms 一起放；前端包拆成四块。
 
-## 这一轮（Refine R4，站主 11-13 傍晚）做了什么
+## 这一轮（Refine R5，站主 11-13 晚）做了什么
 
-1. **LOG 挪到右栏**，五个页签换成像素图标（± 改动、时间线、闪电、两张纸、终端），选中的带名字、别的悬停看名字。
-2. **左栏下面是【AGENTS】**（原来 LOG 的位置）：布局三处问了站主，都选了推荐的——页签选中的带字；输入框下留一行「谁」和权限；AGENTS 用「分段 + 列表」。
-3. **CLI 能选模型**：从 CLI 自己读模型列表（不发任务、不花额度），AGENTS 里选；强度也跟着这个模型能选的来，「默认」是 CLI 自己定。
-4. **PROJECTS 和 AGENTS 都能收起**：模块头最右边的小三角；收起的只剩头（PROJECTS 写当前项目、AGENTS 写现在是谁），另一块占满整栏。
-5. 站主问 CLI 的专属命令（斜杠命令）要不要用：回答在对话里，结论是平时自然语言就够，没做界面。
+1. **Claude Code 选模型带版本号**：读 Claude Code 自己缓存的模型目录（配置目录下 `cache/model-catalog/`）：Opus 5.5、Fable 5.2、Sonnet 5.5、Haiku 5.5 在前，Opus 4.8 这些旧版本在后，各带强度档；没有缓存才退回别名。输入框下那一行「谁」写模型名。
+2. **PROJECTS**：去掉底下的 OPEN FOLDER、PATH 和右键提示；[ PROJECTS ] 旁边加文件夹图标（新增环境）。
+3. **多文件夹环境**：问了站主——照原计划 v0.7 Phase 9（云端）做；每个文件夹两档权限「能改 / 只读」，记进了 roadmap。
+4. **QUOTA 交给本地 Claude**，这一轮的优化：
+   - Claude 读不到额度的原因：status line 只在终端里跑 Claude Code 时才触发，桌面 App 不跑它；`cli/bin` 这份 Claude Code 也没登录。改成桌面 App 或 Claude Code 在跑时，三分钟一次跑 Claude Code 自带的 `/usage`（本地命令，0 轮、不进模型、不花额度），读 5 小时、每周、按模型分的周窗口和重置时间；没登录时卡片上写怎么登（设置 → CLI 检测 → Claude Code 的账号点 LOGIN，或终端 `cli/bin/claude auth login`）。
+   - 找 Claude Code 照「CLI 检测」的目录（原来只看 PATH，找不到就当没装）。
+   - 这次没读到时，写原因、照旧显示上次的读数；按模型分的窗口名字照写（「每周 Sonnet」）。
+5. CLAUDE.md、roadmap：额度与花费不再是 Peck 自己的作业；Peck 做好以后接手站主的其他项目。
 
 **验证**（分开记）：
-- 自动测试：`pnpm check` 过；全量 `cargo test` 215 过、0 失败、7 忽略（新加：四家模型列表的解析，用夹具里录到的回应；Claude Code 带 `--effort`）。
-- 真 CLI（只握手、列模型，没发任务、不算授权次数）：Codex 读到 8 个、Muse 4 个、Grok 2 个、Antigravity 7 个，强度都读到了。Grok、Antigravity 那边会留一个空会话。
-- `?mock`（深浅各一遍）：FLOW 四种切换、CLI 选模型和强度（四档以内分段、多了下拉）、接力、规划；输入框下那一行「谁」跟着变、点它 AGENTS 展开并闪一下；两块收起 / 展开两个方向；LOG 页签显示任务的记录；控制台没有界面报错。
+- 自动测试：`pnpm check` 过；全量 `cargo test` 217 过、0 失败、7 忽略（新加：Claude Code 模型目录、`/usage` 的几种行和重置时间、桌面 App 算在跑）。`target` 目录中途被清空过一次（不是这边删的），重新编译、联网拉了一次依赖。
+- 真 Claude Code（本机，不花额度）：`claude -p /usage` 在没登录时 0 轮、0 花费，只出花费几行，Peck 认成「读不到」；`auth status` 是没登录。**登录以后的输出没在真机上见过**，格式照 Claude Code 2.1.322 程序里的写法解析（`Current session: N% used · resets …`），站主登录以后要看一眼 QUOTA。
+- `?mock`：PROJECTS 头上的图标、点它出路径框；Claude Code 模型列表带版本、选了以后「谁」那一行写名字；QUOTA 页正常。
 - 正式包：`pnpm app:install` 装进 /Applications。
-- **没验的**：原生 App 里一项都没点；CLI 选了模型以后真发一个任务（要真跑，留给站主在 App 里用；我这边没花授权）。
+- **没验的**：原生 App 里一项都没点；Claude 额度要站主先给 CLI 登录才看得到。
 
 ## 授权账本（v0.5，`peck-v0.5-2026-11-12`）
 
@@ -52,12 +57,12 @@
 
 ## 下一步
 
-1. **站主**：提交、推送 R4（都在工作区）：
+1. **站主**：提交、推送 R5：
    ```bash
-   git add -A && git commit -m "v0.5: agents panel, cli model choice, log tab with icons and foldable left column" && git push
+   git add -A && git commit -m "v0.5: claude code models with versions, projects header entry, claude quota via usage and quota handover" && git push
    ```
-2. **站主**：退出旧的 Peck 再打开新装的。
-3. **云端**：开 Phase 7（roadmap 已是「进行中」）。开工前合进 `main` 的新提交，先看上面「云端开 v0.6 前要知道的」。
+2. **站主**：给 `cli/bin` 的 Claude Code 登录一次（设置 → CLI 检测 → Claude Code 账号点 LOGIN，或终端 `cli/bin/claude auth login`），和桌面 App 同一个订阅；退出旧的 Peck 再打开，几分钟后 QUOTA 的 Claude 卡片应该有 5 小时、每周。
+3. **云端**：开 Phase 7。开工前合进 `main`，先看上面「云端开 v0.6 前要知道的」。
 
 ## 视觉基线要补的（本地改方案时做）
 
@@ -67,5 +72,5 @@
 ## 留意
 
 - 调研全文在 visual-atelier 的 `canvases/peck-harness-questionnaire/research.md`。
-- 额度监测器（`src/quota/`、`src-tauri/src/quota/`）Agent 不写；v0.6 起站主用 Peck 开发，目录还没建。
+- 额度与花费（QUOTA 页）站主 11-13 改由本地账号做，不再另建 `src/quota/`；Peck 做好以后接手站主的其他项目。
 - Codex 暂时和 ChatGPT 客户端共用登录（站主 11-12 同意），要独立时再说。

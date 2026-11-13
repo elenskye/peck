@@ -2,7 +2,8 @@
 //!
 //! 从 CLI 自己那里读，不起模型、不花额度：Codex `app-server` 的 `model/list`、Muse `serve` 的 `model/list`、
 //! Grok / Antigravity（ACP）`session/new` 回应里的 `configOptions`（模型和强度）。Claude Code 没有列模型的接口，
-//! 用它 `--model` 认的别名（`--help` 里写的 fable、opus、sonnet，加上 haiku）。
+//! 读它自己缓存的模型目录（配置目录下 `cache/model-catalog/*.json`：带版本的模型名、强度档、现在选的哪个）；
+//! 没有缓存才退回 `--model` 认的别名（fable、opus、sonnet、haiku）。
 //! 读到的存在 `app_settings` 的 `cli_models`，界面点 REFRESH 才重读；读不到照旧给上次的，带上原因。
 
 use super::engines::{self, is_rpc_response, Launch, Line, Pipe};
@@ -58,6 +59,50 @@ fn claude_code() -> Vec<CliModel> {
             is_default: false,
         })
         .collect()
+}
+
+/// Claude Code 缓存的模型目录：`catalog.config.models`（`id` 带版本，比如 `claude-opus-5-5`；`name` 是「Opus 5.5」；
+/// `section` 是 main / overflow；`runtime.effort_levels`、`runtime.default_effort`），`catalog.state.model` 是现在选的。
+pub fn parse_claude_catalog(v: &Value) -> Vec<CliModel> {
+    let current = s(&v["catalog"]["state"]["model"]);
+    let mut models: Vec<(bool, CliModel)> = v["catalog"]["config"]["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let id = s(&m["id"])?;
+            let mut efforts = efforts_of(&m["runtime"]["effort_levels"]);
+            if efforts.is_empty() {
+                efforts = efforts_of(&m["thinking"]["effort_options"]).into_iter().filter(|e| !e.is_empty()).collect();
+                if efforts.is_empty() {
+                    efforts = m["thinking"]["effort_options"].as_array().into_iter().flatten().filter_map(|o| s(&o["id"])).collect();
+                }
+            }
+            let main = m["section"].as_str() != Some("overflow");
+            Some((main, CliModel {
+                label: s(&m["name"]).unwrap_or_else(|| id.clone()),
+                efforts,
+                default_effort: s(&m["runtime"]["default_effort"]),
+                is_default: current.as_deref() == Some(id.as_str()),
+                id,
+            }))
+        })
+        .collect();
+    // 常用的（main）在前，旧版本（overflow）在后，各自照目录里的顺序。
+    models.sort_by_key(|(main, _)| !*main);
+    models.into_iter().map(|(_, m)| m).collect()
+}
+
+/// 读 Claude Code 配置目录里最新的那份模型目录缓存；返回模型和它是什么时候取的。
+fn claude_catalog(config_dir: &std::path::Path) -> Option<(Vec<CliModel>, Option<i64>)> {
+    let newest = std::fs::read_dir(config_dir.join("cache").join("model-catalog"))
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?;
+    let v: Value = serde_json::from_slice(&std::fs::read(newest.path()).ok()?).ok()?;
+    let models = parse_claude_catalog(&v);
+    (!models.is_empty()).then(|| (models, v["fetchedAt"].as_i64()))
 }
 
 fn s(v: &Value) -> Option<String> {
@@ -163,7 +208,14 @@ fn mock(engine: &str) -> Vec<CliModel> {
         is_default,
     };
     match engine {
-        "claude-code" => claude_code(),
+        "claude-code" => {
+            let five = ["low", "medium", "high", "xhigh", "max"];
+            let mut list = vec![m("claude-opus-5-5", &five, true), m("claude-fable-5-2", &five, false), m("claude-sonnet-5-5", &five, false), m("claude-haiku-5-5", &five, false), m("claude-opus-4-8", &five, false)];
+            for (x, name) in list.iter_mut().zip(["Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5", "Opus 4.8"]) {
+                x.label = name.into();
+            }
+            list
+        }
         "codex" => vec![m("gpt-6.1-sol", &["low", "medium", "high", "xhigh"], true), m("gpt-6-luna", &["low", "medium", "high"], false)],
         "muse" => vec![m("muse-wonder-1.0", &["low", "medium", "high", "max"], true), m("muse-ember-1.0", &["low", "medium", "high", "max"], false), m("muse-spark-1.3", &["low", "medium", "high", "max"], false)],
         "grok" => vec![m("grok-4.7", &["medium", "high", "xhigh"], true), m("grok-4.7-build-fast", &["medium", "high", "xhigh"], false), m("grok-4.6", &["medium", "high", "xhigh"], false)],
@@ -289,7 +341,27 @@ pub async fn cli_models(engine: String, refresh: bool, state: tauri::State<'_, A
         return Ok(CliModels { engine: engine.clone(), models: mock(&engine), source: "mock".into(), read_at: Some(now_ms()), error: None });
     }
     if engine == "claude-code" {
-        return Ok(CliModels { engine, models: claude_code(), source: "builtin".into(), read_at: None, error: None });
+        // 账号目录（Peck 里加的账号）或默认的 ~/.claude。
+        let dir = {
+            let db = state.store.lock().map_err(|_| "读不到设置。")?;
+            let config = super::config::GatewayConfig::load(&db).map_err(|e| e.to_string())?;
+            let book = super::accounts::AccountBook::load(&db);
+            super::accounts::env_for(&book, &config, "claude-code")
+                .into_iter()
+                .find(|(k, _)| k == "CLAUDE_CONFIG_DIR")
+                .map(|(_, v)| std::path::PathBuf::from(v))
+                .unwrap_or_else(|| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude"))
+        };
+        return Ok(match claude_catalog(&dir) {
+            Some((models, read_at)) => CliModels { engine, models, source: "cli".into(), read_at, error: None },
+            None => CliModels {
+                engine,
+                models: claude_code(),
+                source: "builtin".into(),
+                read_at: None,
+                error: Some("没找到 Claude Code 的模型目录（用过一次 Claude Code 才有），先给它认的几个别名。".into()),
+            },
+        });
     }
     let mut cache = load_cache(&state);
     let cached = cache.get(&engine).cloned();
@@ -397,6 +469,23 @@ mod tests {
             println!("{engine}: {} ({}) efforts={:?} default={:?} isDefault={}", m.id, m.label, m.efforts, m.default_effort, m.is_default);
         }
         assert!(!models.is_empty());
+    }
+
+    #[test]
+    fn claude_catalog_lists_versioned_models_main_first() {
+        let v = json!({"version": 2, "fetchedAt": 5, "catalog": {
+            "config": {"models": [
+                {"id": "claude-opus-5-5", "name": "Opus 5.5", "section": "main", "runtime": {"effort_levels": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"}},
+                {"id": "claude-opus-4-8", "name": "Opus 4.8", "section": "overflow", "runtime": {"effort_levels": ["low", "high"]}},
+                {"id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5", "section": "overflow", "thinking": {"type": "none"}, "runtime": {}},
+                {"id": "claude-sonnet-5-5", "name": "Sonnet 5.5", "section": "main", "runtime": {"effort_levels": ["low"]}}
+            ]},
+            "state": {"model": "claude-opus-5-5"}
+        }});
+        let m = parse_claude_catalog(&v);
+        assert_eq!(m.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), vec!["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"]);
+        assert_eq!((m[0].label.as_str(), m[0].is_default, m[0].default_effort.as_deref()), ("Opus 5.5", true, Some("medium")));
+        assert!(m[3].efforts.is_empty(), "不能思考的模型不给强度");
     }
 
     #[test]

@@ -390,7 +390,7 @@ export interface CliModels { engine: string; models: CliModel[]; source: "cli" |
 function mockCliModels(engine: string): Promise<CliModels> {
   const m = (id: string, efforts: string[], isDefault = false): CliModel => ({ id, label: id, efforts, defaultEffort: null, isDefault });
   const list: Record<string, CliModel[]> = {
-    "claude-code": ["fable", "opus", "sonnet", "haiku"].map((id) => ({ ...m(id, ["low", "medium", "high", "xhigh", "max"]), label: id[0].toUpperCase() + id.slice(1) })),
+    "claude-code": [["claude-opus-5-5", "Opus 5.5"], ["claude-fable-5-2", "Fable 5.2"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"], ["claude-opus-4-8", "Opus 4.8"]].map(([id, label], i) => ({ ...m(id, ["low", "medium", "high", "xhigh", "max"], i === 0), label })),
     codex: [m("gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], true), m("gpt-6-luna", ["low", "medium", "high"])],
     muse: [m("muse-wonder-1.0", ["minimal", "low", "medium", "high", "max"], true), m("muse-ember-1.0", ["low", "medium", "high"]), m("muse-spark-1.3", ["low", "medium", "high"])],
     grok: [m("grok-4.6", ["medium", "high", "xhigh"], true), m("grok-4.5", ["medium", "high", "xhigh"])],

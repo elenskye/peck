@@ -314,7 +314,7 @@ export function sendEffort(e: ModelEntry | null, settings: { efforts: Record<str
 }
 
 /** 一行字说现在是谁来干（输入框下、AGENTS 收起时）。 */
-export function whoText(e: ModelEntry | null, settings: { cliModels: Record<string, string>; efforts: Record<string, string> }, apiStatus?: ApiStatus | null): string {
+export function whoText(e: ModelEntry | null, settings: { cliModels: Record<string, string>; cliModelNames?: Record<string, string>; efforts: Record<string, string> }, apiStatus?: ApiStatus | null): string {
   if (!e) return "还没选谁来干";
   const flow = flowOf(e);
   if (flow === "fake") return "假 AGENT";
@@ -325,7 +325,11 @@ export function whoText(e: ModelEntry | null, settings: { cliModels: Record<stri
     return `规划 ${name("supervisor")} → 实施 ${name("worker")}`;
   }
   const parts = [labelOf(e)];
-  if (flow === "cli") parts.push((cliModelOf(e, settings) ?? "默认模型").toUpperCase());
+  if (flow === "cli") {
+    const engine = cliEngine(e)!;
+    const id = cliModelOf(e, settings);
+    parts.push((id ? settings.cliModelNames?.[engine] || id : "默认模型").toUpperCase());
+  }
   if (flow === "api" && e.efforts.length > 0 && e.thinking !== "never") {
     const v = settings.efforts[e.id] ?? defaultEffort(e);
     parts.push(v === "off" ? "不思考" : `思考 ${v.toUpperCase()}`);

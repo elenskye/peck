@@ -40,7 +40,7 @@ Peck 仓库的版本 tag 照站主打的样子叫 `peck-v0.4.0`；visual-atelier
 - **不发真实请求**：不跑真实的 CLI（Claude Code、Codex、Muse、Grok、Antigravity），不发真实 API 请求，不碰 Key 和登录凭据；只用 `?mock`、仓库里的夹具（`src-tauri/tests/fixtures/`）和假 Agent、假 Gateway。验收点里要真 CLI、真 API、原生 App 的那一半留给本地，HANDOFF 里写清哪些没验。
 - **Antigravity 只做直接调用**：站主选它、发一句话、它自己做完。不把它放进接力、委派、交叉审查、定时任务、目标模式、自动续跑这类自动化（站主 2026-11-12 定）。
 - **不打包、不安装**：不跑 `pnpm app:install`、`pnpm app:package`。
-- 额度监测器的目录不碰（「边界」）；本文件的规则不改，要改写进 HANDOFF 提给站主。
+- 本文件的规则不改，要改写进 HANDOFF 提给站主。
 - 新加依赖写成 `^x.y.z`，在 HANDOFF 记一笔。
 
 ## 云端开发
@@ -81,7 +81,7 @@ Peck 仓库的版本 tag 照站主打的样子叫 `peck-v0.4.0`；visual-atelier
 
 - 只在 `personal-cli-studio/` 里开发（云端只有 Peck 这一个仓库）。`~/Documents/GitHub/pomelo` 只读。
 - visual-atelier（`~/Documents/GitHub/visual-atelier`，只有本地账号碰）：只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里 Peck 那一行（动索引前先 `git status`，有别人没提交的改动就不动）；别的地方要站主针对这一次同意。站主打了 `peck-v*` 的 tag 才同步：`VA_BROWSER_CHANNEL=chrome npm run sync -- --scheme peck --to peck --tag peck-v<版本>`。它的规矩读它的 `CLAUDE.md`，命令前先 `source ~/.nvm/nvm.sh && nvm use`（Node 22）。
-- **额度监测器是 Peck 自己的作业**：`src/quota/`、`src-tauri/src/quota/` 由站主用 Peck 开发，Agent 不写、不改、不「顺手修」；只读、评估、把 Peck 的改进项记下来。Peck 其他地方给它留的接口（导航入口、数据读取点）可以改。
+- **额度与花费（QUOTA 页）**：站主 2026-11-13 改了主意，不再留作 Peck 自己的作业，由本地账号接着做（`usage.rs`、`spend.rs`、`UsagePage.tsx`），云端照常能改。Peck 做好以后接手站主的其他项目。
 - 本地账号改任何文件但不提交（「本地验收」第 1 步的合并除外），保留接手时已有的改动；`git status` 里有你不认识的改动，不动也不还原。
 - 不碰 Keychain 里的 Key 内容，不把 Key、绝对路径、提示词写进文档和验收页。不新增付费服务。
 - 用户的仓库只读写文件，不动它的 index、commit、stash；任务前快照在应用数据目录的影子仓库里。
