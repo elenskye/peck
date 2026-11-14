@@ -92,6 +92,22 @@ pub fn init(app: &tauri::App) -> tauri::Result<()> {
 }
 
 /// 界面说现在是什么状态：有任务在跑、停下来等站主、都没有。
+/// 在跑几个（v0.7，不同项目能同时跑）：两个以上时菜单栏图标旁边写个数，提示里也写。
+pub fn set_running_count(app: &AppHandle, count: u32) {
+    // 提示每次都按现在的状态和个数重写（个数掉到两个以下、或者变成等你，都不留旧的字）。
+    let activity = app.state::<TrayState>().current.lock().ok().and_then(|c| c.0);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_title(if count >= 2 { Some(count.to_string()) } else { None });
+        let tip = match activity {
+            Some(Activity::Waiting) => "Peck · 等你回答".to_string(),
+            Some(Activity::Running) if count >= 2 => format!("Peck · {count} 个任务在跑"),
+            Some(Activity::Running) => "Peck · 有任务在跑".to_string(),
+            _ => "Peck".to_string(),
+        };
+        let _ = tray.set_tooltip(Some(tip));
+    }
+}
+
 pub fn set_activity(app: &AppHandle, activity: Activity) {
     let state = app.state::<TrayState>();
     let generation = {

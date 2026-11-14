@@ -32,6 +32,9 @@ export interface AppSettings {
   limits: RunLimits;
   /** Dock 里的 App 图标。 */
   appIcon: "j2" | "a3";
+  /** 左栏「待你处理」（v0.7）：每个任务上次看过的时间；没看过的、比 `seenSince` 晚做完的算没看。 */
+  seen: Record<string, number>;
+  seenSince: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -49,6 +52,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   costCap: 20,
   limits: defaultRunLimits,
   appIcon: "j2",
+  seen: {},
+  seenSince: 0,
 };
 
 /** v0.4 存的「模式 + 谁来干」换成模型列表里的 id。 */
@@ -64,9 +69,13 @@ function legacyPick(saved: { mode?: string; who?: { cli?: string; api?: string }
 export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await ipc.settingsGet();
-    if (!raw) return DEFAULT_SETTINGS;
+    if (!raw) {
+      const fresh = { ...DEFAULT_SETTINGS, seenSince: Date.now() };
+      void saveSettings(fresh).catch(() => {});
+      return fresh;
+    }
     const saved = JSON.parse(raw) as Partial<AppSettings> & { mode?: string; who?: { cli?: string; api?: string } };
-    return {
+    const settings: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...saved,
       pick: saved.pick ?? legacyPick(saved),
@@ -77,9 +86,15 @@ export async function loadSettings(): Promise<AppSettings> {
       efforts: { ...saved.efforts },
       limits: { ...DEFAULT_SETTINGS.limits, ...saved.limits },
       appIcon: saved.appIcon === "a3" ? "a3" : "j2",
+      seen: { ...saved.seen },
+      // 头一回用这一版：以前做完的都当看过了。
+      seenSince: saved.seenSince ?? Date.now(),
     };
+    // 这条线马上记下来，不然每次打开都往后挪，两次打开之间做完的就算看过了。
+    if (saved.seenSince === undefined) void saveSettings(settings).catch(() => {});
+    return settings;
   } catch {
-    return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS, seenSince: Date.now() };
   }
 }
 

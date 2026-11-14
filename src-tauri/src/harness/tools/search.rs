@@ -1,7 +1,7 @@
 //! `search_text`：进程内用 ripgrep 的库（`ignore` 遍历、`grep-searcher` 搜），遵守 .gitignore。
 
 use super::fs::walker;
-use super::{bool_arg, resolve, str_arg, u64_arg, ToolContext, ToolResult};
+use super::{bool_arg, str_arg, u64_arg, ToolContext, ToolResult};
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkContextKind, SinkMatch};
 use serde_json::Value;
@@ -57,7 +57,7 @@ impl Sink for Collect {
 
 pub fn search_text(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String> {
     let pattern = str_arg(input, "pattern").filter(|p| !p.is_empty()).ok_or("缺 pattern。")?;
-    let base = resolve(&ctx.root, str_arg(input, "path").unwrap_or("."))?;
+    let base = ctx.resolve_path(str_arg(input, "path").unwrap_or("."), false)?;
     if !base.exists() {
         return Err(format!("{} 不存在。", ctx.rel(&base)));
     }

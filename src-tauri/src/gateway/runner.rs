@@ -50,6 +50,8 @@ pub async fn gateway_run_start(
     model: Option<String>,
     effort: Option<String>,
     resume: Option<String>,
+    // 独立工作区（v0.7）：在项目的一个 git worktree 里做，做完再搬回。
+    worktree: Option<bool>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
@@ -84,6 +86,7 @@ pub async fn gateway_run_start(
             effort,
             resume,
             default_account,
+            worktree: worktree.unwrap_or(false),
         },
         backend,
         move |e: &AgentEvent| {
@@ -107,6 +110,8 @@ pub(crate) struct EngineRun {
     pub effort: Option<String>,
     pub resume: Option<String>,
     pub default_account: bool,
+    /// 在独立工作区（git worktree）里做。
+    pub worktree: bool,
 }
 
 /// 占任务号、记任务、起引擎（后台跑），返回任务 id。
@@ -129,7 +134,11 @@ pub(crate) fn start_engine_run(
         effort,
         resume,
         default_account,
+        worktree,
     } = run;
+    if worktree && level == PermissionLevel::Plan {
+        return Err("PLAN 只读，不用独立工作区。".into());
+    }
 
     // 任务记录：和旧的发任务一样占一个号、一个项目一次一个。
     let (run_id, step_id, workspace, cancel_rx, refs) = {
@@ -142,7 +151,8 @@ pub(crate) fn start_engine_run(
         if !workspace.is_dir() {
             return Err("项目文件夹不在了，重新打开一次。".into());
         }
-        if active.values().any(|r| r.workspace_path == workspace) {
+        crate::worktree::pending_in_session(&db, &session_id)?;
+        if active.values().any(|r| r.touches(&[workspace.clone()])) {
             return Err("同一个项目一次跑一个任务。".into());
         }
         let number = db.next_run_number().map_err(|e| e.to_string())?;
@@ -162,9 +172,16 @@ pub(crate) fn start_engine_run(
                 rendered_expects: vec![],
             }],
         };
+        if worktree && !crate::worktree::available(&workspace) {
+            return Err("这个项目不是 git 仓库，开不了独立工作区。".into());
+        }
         let mut record = db.create_run(&session_id, &prompt, number, &plan).map_err(|e| e.to_string())?;
         record.who = Some(who.clone());
         record.permission = permission.clone();
+        if worktree {
+            let at = crate::worktree::root_for(&workspace).join(&run_id);
+            record.worktree = Some(crate::worktree::WorktreeState { path: at.to_string_lossy().into_owned(), applied_at: None, discarded_at: None });
+        }
         db.save_run(&record).map_err(|e| e.to_string())?;
         db.set_run_engine(&run_id, &engine).map_err(|e| e.to_string())?;
         let (cancel_handle, cancel_rx) = ProcessCancelHandle::new();
@@ -178,11 +195,14 @@ pub(crate) fn start_engine_run(
                 plan,
                 agents: vec![],
                 cancel_handle,
+                writable: vec![],
             },
         );
         (run_id, step_id, workspace, cancel_rx, refs)
     };
     let engine_prompt = if refs.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", refs.join("\n\n")) };
+    // 独立工作区：先建好；建不了这个任务就算失败。
+    let cwd = crate::harness::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
 
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     if let Ok(mut c) = controls().lock() {
@@ -208,7 +228,7 @@ pub(crate) fn start_engine_run(
             store: store.clone(),
         };
         let started = Instant::now();
-        let repo = ShadowRepo::open_or_init(&workspace).ok();
+        let repo = if worktree { crate::worktree::shadow_repo(&cwd, &workspace).ok() } else { ShadowRepo::open_or_init(&workspace).ok() };
         let before = repo.as_ref().and_then(|r| {
             let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
             record_run_base(&id, r, tree.clone());
@@ -266,7 +286,7 @@ pub(crate) fn start_engine_run(
         let task = AgentTask {
             run_id: id.clone(),
             prompt: engine_prompt,
-            cwd: workspace.clone(),
+            cwd: cwd.clone(),
             permission: level,
             model,
             effort,
@@ -426,6 +446,7 @@ mod tests {
             effort: None,
             resume: None,
             default_account: true,
+            worktree: false,
         };
         let run_id = start_engine_run(run, backend.clone(), move |e| {
             let _ = tx.send(e.clone());
@@ -447,6 +468,7 @@ mod tests {
             effort: None,
             resume: None,
             default_account: true,
+            worktree: false,
         };
         assert!(start_engine_run(again, backend, |_| {}).unwrap_err().contains("一次跑一个"));
 

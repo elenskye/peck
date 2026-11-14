@@ -202,7 +202,7 @@ pub fn prepare(
     let workspace = PathBuf::from(&ws.path)
         .canonicalize()
         .map_err(|_| "项目文件夹不在了，重新打开一次。")?;
-    if active.values().any(|r| r.workspace_path == workspace) {
+    if active.values().any(|r| r.touches(&[workspace.clone()])) {
         return Err("同一个项目一次跑一个任务。".into());
     }
     let config = db.api_config().map_err(|e| e.to_string())?;
@@ -298,6 +298,7 @@ pub fn prepare(
         plan,
         agents: vec![],
         cancel_handle,
+        writable: vec![],
     };
     // Keep API mode locked for the entire tool loop, including time between HTTP sends.
     calls.insert(run_id.clone(), ctx.cancel_handle.tx.clone());

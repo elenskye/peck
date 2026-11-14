@@ -21,7 +21,14 @@ export interface ProjectSettings {
   permission?: string | null;
   /** 站主不要 Peck 猜的验证命令（v0.6）：中栏不再问。 */
   verifyDismissed?: boolean;
+  /** 项目即环境（v0.7）：主文件夹以外的文件夹，能改还是只读。 */
+  folders?: ProjectFolder[];
+  /** 这个项目的环境变量（v0.7）。 */
+  env?: EnvVar[];
 }
+
+export interface ProjectFolder { path: string; writable: boolean }
+export interface EnvVar { name: string; value: string }
 
 export interface Session {
   id: string;
@@ -107,6 +114,14 @@ export interface RunRecord {
   permission?: Permission;
   /** 「撤销整个任务」的时间。 */
   undoneAt?: number;
+  /** 在独立工作区（git worktree）里做的（v0.7）。 */
+  worktree?: WorktreeState | null;
+}
+
+export interface WorktreeState {
+  path: string;
+  appliedAt?: number | null;
+  discardedAt?: number | null;
 }
 
 export type Permission = "plan" | "edit" | "auto";
@@ -144,10 +159,13 @@ export interface FileEntry { path: string; size: number }
 export interface FileListing { entries: FileEntry[]; hidden: number; truncated: boolean }
 export interface FilePreview {
   path: string;
-  kind: "text" | "image" | "binary" | "large" | "missing";
+  /** office：Word、Excel 这类，交给 Quick Look（v0.7）。 */
+  kind: "text" | "image" | "pdf" | "office" | "binary" | "large" | "missing";
   content?: string | null;
   size: number;
   deleted: boolean;
+  /** 图片、PDF：data URL（v0.7）。 */
+  dataUrl?: string | null;
 }
 
 export interface UndoFile { path: string; kind: FileChangeKind; changedSince: boolean }

@@ -208,6 +208,11 @@ export function isAgentRun(run: Pick<RunRecord, "who">): boolean {
   return !!run.who && (run.who.startsWith("api:") || run.who.startsWith("cli:"));
 }
 
+/** Peck 自己的循环（`api:<供应商>/<模型>`）跑的。 */
+export function isPeckRun(run: Pick<RunRecord, "who">): boolean {
+  return !!run.who?.startsWith("api:");
+}
+
 export function runState(run: { status: string; undoneAt?: number | null }): keyof typeof STATUS_WORD {
   return run.undoneAt ? "undone" : run.status;
 }

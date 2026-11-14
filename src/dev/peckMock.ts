@@ -211,7 +211,7 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
       done("c8", "站主回答：（见上）"),
     ],
     (state) => [
-      ...say(9, `改好了：\n\n- \`${editPath}\` 开头加了一行说明\n- \`pnpm test\` 通过（4200 个测试；完整日志在命令那一步点开）\n- 副标题：你说「${state.answer}」，${state.answer.includes("不") ? "这次先不动" : "下一句我接着改"}\n\n| 文件 | 改动 |\n| --- | --- |\n| \`${editPath}\` | +1 |`, "站主回答了，收尾。"),
+      ...say(9, `改好了：\n\n- \`${editPath}\` 开头加了一行说明\n- \`pnpm test\` 通过（4200 个测试；完整日志在命令那一步点开）\n- 副标题：你说「${state.answer}」，${state.answer.includes("不") ? "这次先不动" : "下一句我接着改"}\n\n| 文件 | 改动 |\n| --- | --- |\n| \`${editPath}\` | +1 |\n\n→ 副标题也改成中文\n→ 把 dist/ 加进 .gitignore`, "站主回答了，收尾。"),
       usage(150, 160, 8500, 0.00031),
       ...(verifying ? [verifyRound("passed", 0)] : []),
       context(o, 3400, 8600),
@@ -264,7 +264,7 @@ function scenarioRounds(
       [context(o, 1900, 2900), ...say(4, "", "验证没过：第 3 行把数字赋给了 string。改回字符串。"), usage(800, 110, 5700, 0.0003),
         tool("f4", "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: "count: 0", new_text: "count: \"0\"" }] }),
         done("f4", "改好了 1 处", { diff: [{ path: editPath, change: "modified", additions: 2, deletions: 1 }] }), verifyStart("v2", check, "edit", 1)],
-      [context(o, 2300, 3100), ...say(5, `修好了：\n\n- \`${editPath}\` 开头加了一行说明\n- 第一次验证没过（第 3 行类型不对），改回字符串以后 \`${check.run}\` 过了`), usage(400, 130, 6500, 0.0003),
+      [context(o, 2300, 3100), ...say(5, `修好了：\n\n- \`${editPath}\` 开头加了一行说明\n- 第一次验证没过（第 3 行类型不对），改回字符串以后 \`${check.run}\` 过了\n\n→ 给这个类型补一个测试`), usage(400, 130, 6500, 0.0003),
         verifyDone("v2", check, "passed", "退出码 0（3.1s）", 3100), verifyRound("passed", 1)],
     ];
   }

@@ -78,6 +78,15 @@ pub struct ToolContext {
     pub originals: Mutex<Vec<(String, Option<String>)>>,
     /// 落盘文件的编号。
     pub spill_count: std::sync::atomic::AtomicU32,
+    /// 项目的其他文件夹（v0.7，规范化过的绝对路径，能改还是只读）。工具用绝对路径读写它们。
+    pub extra: Vec<ExtraRoot>,
+}
+
+/// 项目的另一个文件夹。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtraRoot {
+    pub path: PathBuf,
+    pub writable: bool,
 }
 
 impl ToolContext {
@@ -94,7 +103,46 @@ impl ToolContext {
             reads: Mutex::new(HashMap::new()),
             originals: Mutex::new(Vec::new()),
             spill_count: Default::default(),
+            extra: Vec::new(),
         })
+    }
+
+    /// 带上项目的其他文件夹（不在了的、和项目根套着的跳过）。
+    pub fn with_extra(mut self, folders: &[(PathBuf, bool)]) -> Self {
+        self.extra = folders
+            .iter()
+            .filter_map(|(p, w)| p.canonicalize().ok().map(|path| ExtraRoot { path, writable: *w }))
+            .filter(|e| !e.path.starts_with(&self.root) && !self.root.starts_with(&e.path))
+            // 存的时候查过；这里再查一遍（后来换成了指向家目录的符号链接这类）。
+            .filter(|e| crate::workspace::folder_allowed(&e.path).is_ok())
+            .collect();
+        self
+    }
+
+    /// 能改的其他文件夹（沙箱放开写）。
+    pub fn writable_extra(&self) -> Vec<PathBuf> {
+        self.extra.iter().filter(|e| e.writable).map(|e| e.path.clone()).collect()
+    }
+
+    /// 只读的其他文件夹（沙箱里明着不让写：在临时目录这类本来能写的地方也不行）。
+    pub fn read_only_extra(&self) -> Vec<PathBuf> {
+        self.extra.iter().filter(|e| !e.writable).map(|e| e.path.clone()).collect()
+    }
+
+    /// 模型给的路径 → 绝对路径：项目里的（相对或绝对），或者其他文件夹里的（绝对路径）。
+    /// `write` 为真时，只读的文件夹拒掉。
+    pub fn resolve_path(&self, raw: &str, write: bool) -> Result<PathBuf, String> {
+        let trimmed = raw.trim();
+        let expanded = if trimmed.starts_with("~/") { crate::agent::expand_tilde(trimmed) } else { PathBuf::from(trimmed) };
+        if expanded.is_absolute() && !expanded.starts_with(&self.root) {
+            if let Some(extra) = self.extra.iter().find(|e| expanded.starts_with(&e.path)) {
+                if write && !extra.writable {
+                    return Err(format!("{} 是只读的（项目设置里能改成能改）。", extra.path.display()));
+                }
+                return resolve(&extra.path, &expanded.to_string_lossy());
+            }
+        }
+        resolve(&self.root, raw)
     }
 
     /// 相对项目根的显示路径（`/` 分隔）；不在项目里就原样。
@@ -578,6 +626,25 @@ mod tests {
             assert!(resolve(root, "g/hooks/pre-commit").unwrap_err().contains(".git"));
             assert!(resolve(root, "g").unwrap_err().contains(".git"));
         }
+    }
+
+    #[test]
+    fn other_folders_resolve_by_absolute_path_and_respect_read_only() {
+        let p = TempProject::new();
+        let lib = TempProject::new();
+        let ro = TempProject::new();
+        let ctx = p.ctx(PermissionLevel::Edit).with_extra(&[(lib.dir.clone(), true), (ro.dir.clone(), false), (p.dir.join("inner"), true)]);
+        assert_eq!(ctx.extra.len(), 2, "项目里面的不算其他文件夹");
+        let in_lib = lib.dir.join("a.rs");
+        assert_eq!(ctx.resolve_path(&in_lib.to_string_lossy(), true).unwrap(), in_lib);
+        let in_ro = ro.dir.join("b.md");
+        assert_eq!(ctx.resolve_path(&in_ro.to_string_lossy(), false).unwrap(), in_ro);
+        assert!(ctx.resolve_path(&in_ro.to_string_lossy(), true).unwrap_err().contains("只读"));
+        assert!(ctx.resolve_path(&lib.dir.join(".git/config").to_string_lossy(), true).is_err(), "其他文件夹的 .git 也不碰");
+        assert!(ctx.resolve_path(&lib.dir.join("../x").to_string_lossy(), false).is_err());
+        assert!(ctx.resolve_path("/etc/passwd", false).is_err(), "不在任何一个文件夹里");
+        assert_eq!(ctx.resolve_path("src/x.rs", true).unwrap(), p.dir.join("src/x.rs"));
+        assert_eq!(ctx.writable_extra(), vec![lib.dir.clone()]);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! 找不到原文时给最像的几行和空白差异；找到多处时列出行号。可以宽松匹配（行尾空白、中英文标点），
 //! 但必须仍然唯一，并在结果里写明。
 
-use super::{file_diff, resolve, str_arg, ToolContext, ToolResult};
+use super::{file_diff, str_arg, ToolContext, ToolResult};
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -167,7 +167,7 @@ pub fn write_patch(ctx: &ToolContext, input: &Value) -> Result<ToolResult, Strin
         let old = edit.get("old_text").and_then(Value::as_str).ok_or(format!("第 {n} 处缺 old_text。"))?;
         let new = edit.get("new_text").and_then(Value::as_str).ok_or(format!("第 {n} 处缺 new_text。"))?;
         let replace_all = edit.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
-        let file = resolve(&ctx.root, raw)?;
+        let file = ctx.resolve_path(raw, true)?;
         let rel = ctx.rel(&file);
         if old.is_empty() {
             return Err(format!("第 {n} 处（{rel}）：old_text 不能为空；新建文件用 write_file。一处都没改。"));

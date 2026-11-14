@@ -304,7 +304,28 @@ export const mockIpc = {
       if (!patch.name.trim()) throw new Error("名字不能空着。");
       ws.name = patch.name.trim();
     }
-    if (patch.settings) ws.settings = { ...patch.settings };
+    if (patch.settings) {
+      const folders: { path: string; writable: boolean }[] = [];
+      for (const f of patch.settings.folders ?? []) {
+        const path = f.path.trim().replace(/\/+$/, "");
+        if (!path) continue;
+        if (!path.startsWith("/") && !path.startsWith("~/")) throw new Error(`文件夹要写完整的路径：${path}`);
+        if (path === ws.path || path.startsWith(`${ws.path}/`) || ws.path.startsWith(`${path}/`)) throw new Error(`${path} 和项目文件夹是套着的，不用另加。`);
+        const known = folders.find((x) => x.path === path);
+        if (known) known.writable = f.writable; else folders.push({ path, writable: f.writable });
+      }
+      const env: { name: string; value: string }[] = [];
+      for (const v of patch.settings.env ?? []) {
+        const name = v.name.trim();
+        if (!name) continue;
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`变量名只能用字母、数字、下划线，不以数字开头：${name}`);
+        if (["HOME", "TMPDIR", "PWD", "SHELL", "CI", "PAGER", "TERM"].includes(name) || name.startsWith("PECK_")) throw new Error(`${name} 是 Peck 自己管的，项目里不能改。`);
+        const at = env.findIndex((x) => x.name === name);
+        if (at >= 0) env.splice(at, 1);
+        env.push({ name, value: v.value });
+      }
+      ws.settings = { ...patch.settings, folders, env, verifyDismissed: ws.settings?.verifyDismissed };
+    }
     return { ...ws };
   },
   async workspaceRemove(id: string): Promise<void> {
@@ -478,7 +499,9 @@ export const mockIpc = {
 
   async filesRead(workspaceId: string, path: string, runId?: string): Promise<FilePreview> {
     const files = filesState[workspaceId] ?? {};
-    if (/\.(png|jpg|jpeg|gif|webp|icns)$/i.test(path)) return { path, kind: "image", content: null, size: 18_400, deleted: false };
+    if (/\.(png|jpg|jpeg|gif|webp|icns)$/i.test(path)) return { path, kind: "image", content: null, size: 18_400, deleted: false, dataUrl: demoPicture(path.split("/").pop() ?? path) };
+    if (/\.pdf$/i.test(path)) return { path, kind: "pdf", content: null, size: 412, deleted: false, dataUrl: `data:application/pdf;base64,${DEMO_PDF}` };
+    if (/\.(docx?|xlsx?|pptx?|key|pages|numbers|rtf|od[tsp])$/i.test(path)) return { path, kind: "office", content: null, size: 24_600, deleted: false };
     if (path in files) return { path, kind: "text", content: files[path], size: files[path].length, deleted: false };
     // 这个任务删掉的文件：给删之前的样子。
     const diff = runId ? diffsState[`${runId}:${path}`] : undefined;
@@ -488,6 +511,53 @@ export const mockIpc = {
     }
     if (diff?.contentAfter) return { path, kind: "text", content: diff.contentAfter, size: diff.contentAfter.length, deleted: false };
     return { path, kind: "missing", content: null, size: 0, deleted: false };
+  },
+
+  async filesQuicklook(_workspaceId: string, path: string): Promise<string> {
+    await new Promise((r) => setTimeout(r, 300));
+    return demoPicture(`Quick Look · ${path.split("/").pop() ?? path}`, true);
+  },
+  async filesQuicklookOpen(_workspaceId: string, _path: string): Promise<void> {
+    console.info("[演示] 原生 App 里这里会弹出系统的 Quick Look 窗口。");
+  },
+  async changesHunkRevert(runId: string, _stepId: string | undefined, filePath: string, hunk: number): Promise<void> {
+    const record = findRun(runId);
+    if (!record) throw new Error("没找到这个任务。");
+    if (record.status === "running") throw new Error("任务还在跑，跑完再拒绝。");
+    const diff = diffsState[`${runId}:${filePath}`];
+    if (!diff) throw new Error("这个文件不是这个任务改的。");
+    const workspaceId = workspaceOfSession(record.sessionId);
+    const files = (filesState[workspaceId] ??= {});
+    const blocks = diff.unifiedDiff.split(/\n(?=@@)/).filter((b) => b.startsWith("@@"));
+    const block = blocks[hunk];
+    if (!block) throw new Error("没有这一块。");
+    const lines = block.split("\n").slice(1);
+    const after = lines.filter((l) => l.startsWith(" ") || l.startsWith("+")).map((l) => l.slice(1)).join("\n");
+    const before = lines.filter((l) => l.startsWith(" ") || l.startsWith("-")).map((l) => l.slice(1)).join("\n");
+    const current = files[filePath];
+    if (current != null && after && current.includes(after)) files[filePath] = current.replace(after, before);
+    else if (current != null && after) throw new Error("这一块后来又改过了，和任务做完时对不上，没动。");
+  },
+  async worktreeApply(runId: string, force: boolean): Promise<{ applied: string[]; conflicts: string[]; record: RunRecord }> {
+    const record = findRun(runId);
+    const wt = record?.worktree;
+    if (!record || !wt) throw new Error("这个任务不在独立工作区里。");
+    if (wt.appliedAt || wt.discardedAt) throw new Error(wt.appliedAt ? "已经搬回去了。" : "已经丢掉了。");
+    const pending = worktreeState[runId] ?? { files: {}, conflicts: [] };
+    if (pending.conflicts.length && !force) return { applied: [], conflicts: pending.conflicts, record: structuredClone(record) };
+    const files = (filesState[workspaceOfSession(record.sessionId)] ??= {});
+    Object.assign(files, pending.files);
+    record.worktree = { ...wt, appliedAt: Date.now() };
+    delete worktreeState[runId];
+    return { applied: Object.keys(pending.files), conflicts: [], record: structuredClone(record) };
+  },
+  async worktreeDiscard(runId: string): Promise<RunRecord> {
+    const record = findRun(runId);
+    const wt = record?.worktree;
+    if (!record || !wt) throw new Error("这个任务不在独立工作区里。");
+    record.worktree = { ...wt, discardedAt: Date.now() };
+    delete worktreeState[runId];
+    return structuredClone(record);
   },
 
   async settingsGet(): Promise<string | null> {
@@ -635,7 +705,11 @@ export const mockIpc = {
     if (!args.who.startsWith("cli:") || !replay) throw new Error("这个入口只跑 CLI 引擎（cli:…）。");
     if (!args.prompt.trim()) throw new Error("先写一句话。");
     const label = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who)?.label ?? engine;
-    const { runId, record } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", `cli-${engine}`, label);
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", `cli-${engine}`, label);
+    if (args.worktree) {
+      record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
+      worktreeState[runId] = { files: {}, conflicts: [] };
+    }
     void replayAgent(runId, [replay], [], onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
     return runId;
   },
@@ -654,6 +728,7 @@ export const mockIpc = {
     const entry = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who);
     const label = `Peck · ${entry?.label ?? model}`;
     const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", "peck", label);
+    if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
     const files = (filesState[workspaceId] ??= {});
     const verify = mockVerify(workspaceId);
     const checks: DemoCheck[] = verify.config?.check.map((c) => ({ name: c.name, run: c.run })) ?? [];
@@ -665,7 +740,12 @@ export const mockIpc = {
     ];
     void replayAgent(runId, demo.rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
       if (end.diffs.some((d) => d.path === demo.edit.path)) {
-        files[demo.edit.path] = demo.edit.after;
+        if (args.worktree) {
+          // 独立工作区：主文件夹不动，等 APPLY 再搬（演示：「冲突」两个字在这句话里就报一个冲突）。
+          worktreeState[runId] = { files: { [demo.edit.path]: demo.edit.after }, conflicts: /冲突/.test(args.prompt) ? [demo.edit.path] : [] };
+        } else {
+          files[demo.edit.path] = demo.edit.after;
+        }
         undoState[runId] = { workspaceId, restore: { [demo.edit.path]: demo.edit.before }, remove: [] };
       }
       finishAgentRecord(record, end, label);
@@ -764,6 +844,21 @@ export const mockIpc = {
     return structuredClone(info);
   },
 };
+
+// ── 预览、独立工作区（v0.7，演示）──
+const DEMO_PDF = "JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgMzAwIDE2MF0vQ29udGVudHMgNCAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDUgMCBSPj4+Pj4+ZW5kb2JqCjQgMCBvYmo8PC9MZW5ndGggNTI+PnN0cmVhbQpCVCAvRjEgMTggVGYgMzAgOTAgVGQgKFBlY2sgZGVtbyBQREYpIFRqIEVUCmVuZHN0cmVhbSBlbmRvYmoKNSAwIG9iajw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0Y=";
+/** 独立工作区里做完、还没搬回的改动（任务号 → 文件）。 */
+const worktreeState: Record<string, { files: Record<string, string>; conflicts: string[] }> = {};
+
+/** 演示用的图（SVG 的 data URL）：深海底、青色的像素鸟格子。 */
+function demoPicture(label: string, page = false): string {
+  const w = page ? 600 : 480;
+  const h = page ? 780 : 300;
+  const dots = Array.from({ length: 48 }, (_, i) => `<rect x="${40 + (i % 12) * 14}" y="${60 + Math.floor(i / 12) * 14}" width="10" height="10" fill="${(i * 7) % 5 ? "#0B3B4F" : "#00E5FF"}"/>`).join("");
+  const lines = page ? Array.from({ length: 18 }, (_, i) => `<rect x="40" y="${150 + i * 30}" width="${520 - (i % 4) * 60}" height="10" fill="#C9D4E5"/>`).join("") : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${page ? "#FFFFFF" : "#06121F"}"/>${page ? "" : dots}<text x="40" y="${page ? 100 : 250}" font-family="sans-serif" font-size="20" fill="${page ? "#06121F" : "#9FB3C8"}">${label.replace(/[<&]/g, "")}</text>${lines}</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
 
 // ── 记忆、验证命令、dev server（v0.6，演示）──
 let memoryCounter = 0;

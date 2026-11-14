@@ -200,6 +200,35 @@ export const ipc = {
     if (isMockMode()) return mockIpc.filesRead(workspaceId, path, runId);
     return invoke<FilePreview>("files_read", { workspaceId, path, runId });
   },
+  /** 系统选文件夹的窗（只返回路径；浏览器里没有）。 */
+  async pickFolder(): Promise<string | null> {
+    if (isMockMode()) return null;
+    return invoke<string | null>("dialog_pick_folder");
+  },
+  /** Quick Look 的缩略图（Word、Excel 这类，PNG 的 data URL）。只在 Mac 上有。 */
+  async filesQuicklook(workspaceId: string, path: string): Promise<string> {
+    if (isMockMode()) return mockIpc.filesQuicklook(workspaceId, path);
+    return invoke<string>("files_quicklook", { workspaceId, path });
+  },
+  /** 叫出系统的 Quick Look 窗口。 */
+  async filesQuicklookOpen(workspaceId: string, path: string): Promise<void> {
+    if (isMockMode()) return mockIpc.filesQuicklookOpen(workspaceId, path);
+    return invoke<void>("files_quicklook_open", { workspaceId, path });
+  },
+  /** CHANGES：拒绝一块改动（在现在的文件里换回任务前的样子）。 */
+  async changesHunkRevert(runId: string, stepId: string | undefined, filePath: string, hunk: number): Promise<void> {
+    if (isMockMode()) return mockIpc.changesHunkRevert(runId, stepId, filePath, hunk);
+    return invoke<void>("changes_hunk_revert", { runId, stepId, filePath, hunk });
+  },
+  /** 独立工作区：搬回项目（有冲突、没让照样搬时什么都不动，返回冲突的文件）。 */
+  async worktreeApply(runId: string, force = false): Promise<WorktreeApply> {
+    if (isMockMode()) return mockIpc.worktreeApply(runId, force);
+    return invoke<WorktreeApply>("worktree_apply", { runId, force });
+  },
+  async worktreeDiscard(runId: string): Promise<RunRecord> {
+    if (isMockMode()) return mockIpc.worktreeDiscard(runId);
+    return invoke<RunRecord>("worktree_discard", { runId });
+  },
   async runUndoPreview(runId: string): Promise<UndoPreview> {
     if (isMockMode()) return mockIpc.runUndoPreview(runId);
     return invoke<UndoPreview>("run_undo_preview", { runId });
@@ -231,9 +260,10 @@ export const ipc = {
     return invoke<TermState>("term_state", { workspaceId });
   },
   /** 菜单栏小图标跟着变。浏览器里没有菜单栏，不做事。 */
-  async setActivity(activity: Activity): Promise<void> {
+  /** 菜单栏图标的状态；`count` 是在跑几个（两个以上图标旁边写个数，v0.7）。 */
+  async setActivity(activity: Activity, count = 0): Promise<void> {
     if (isMockMode()) return;
-    return invoke<void>("shell_set_activity", { activity });
+    return invoke<void>("shell_set_activity", { activity, count });
   },
   async notify(title: string, body: string): Promise<void> {
     if (isMockMode()) return mockIpc.notify(title, body);
@@ -410,7 +440,11 @@ export interface HarnessRunArgs {
   costCap?: number | null;
   /** 目标模式：要过的验证命令的名字（* 是全部）。 */
   goal?: string[];
+  /** 在独立工作区（git worktree）里做（v0.7）。 */
+  worktree?: boolean;
 }
+
+export interface WorktreeApply { applied: string[]; conflicts: string[]; record: RunRecord }
 
 /** 站主批过的一条记忆（harness/history.rs）。 */
 export interface MemoryNote { id: string; text: string; sourceRun?: string | null; createdAt: number }

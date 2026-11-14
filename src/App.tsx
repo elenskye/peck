@@ -6,15 +6,16 @@ import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from "@/lib/settings";
 import { applyTheme } from "@/lib/theme";
 import type { AgentInfo, Message, Permission, ProjectOverview, RunEvent, RunRecord, TermEvent } from "@/lib/types";
-import { isAgentRun, plainLine, plainTerminal, rememberEntries, shortenHomePath, whoLabel } from "@/lib/utils";
+import { isAgentRun, plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
+import { waitingOnYou } from "@/lib/agentView";
 import { applyRunEvent } from "@/lib/runEvents";
 import { TopBar } from "@/shell/TopBar";
 import { LeftColumn } from "@/shell/LeftColumn";
 import { chosenEntry, MiddleColumn } from "@/shell/MiddleColumn";
-import { RightColumn, type RightTab } from "@/shell/RightColumn";
+import { RightColumn, forgetTaskNotes, type RightTab } from "@/shell/RightColumn";
 import { SettingsPage } from "@/shell/SettingsPage";
 import { ProjectPage } from "@/shell/ProjectPage";
-import type { LeftActions } from "@/shell/LeftColumn";
+import type { InboxItem, LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
 import { AgentsPanel } from "@/shell/AgentsPanel";
 import { Icon } from "@/ui";
@@ -151,9 +152,46 @@ export const App: React.FC = () => {
     return fromLive ?? project?.tasks.find((t) => t.lastRun?.status === "running")?.lastRun?.id ?? null;
   }, [live, project, projectId]);
 
-  // 菜单栏小图标跟着变。
+  // 左栏「待你处理、在跑」（v0.7）：等你批或答的（这次打开 App 以后发的任务）、做完了还没看的、在跑的，跨项目。
+  const inbox = useMemo(() => {
+    const items: InboxItem[] = [];
+    const waiting = new Set<string>();
+    for (const [runId, l] of Object.entries(live)) {
+      const ev = agentEvents[runId];
+      if (ev?.length && waitingOnYou(ev)) waiting.add(l.taskId);
+    }
+    for (const p of projects) {
+      for (const t of p.tasks) {
+        const last = t.lastRun;
+        if (!last) continue;
+        const state = runState(last);
+        const base = { projectId: p.workspace.id, taskId: t.id, title: plainLine(t.title), project: p.workspace.name, at: last.finishedAt ?? last.startedAt };
+        if (waiting.has(t.id)) items.push({ ...base, kind: "waiting" });
+        else if (state === "running") items.push({ ...base, kind: "running" });
+        else if (state !== "undone" && (last.finishedAt ?? 0) > Math.max(settings.seen[t.id] ?? 0, settings.seenSince) && t.id !== taskId) items.push({ ...base, kind: state === "succeeded" ? "done" : "failed" });
+      }
+    }
+    const order = { waiting: 0, failed: 1, done: 2, running: 3 };
+    return items.sort((a, b) => order[a.kind] - order[b.kind] || b.at - a.at);
+  }, [live, agentEvents, projects, settings.seen, settings.seenSince, taskId]);
+  // 看过：打开一个任务，或者它在眼前做完了。
+  const openLast = task?.lastRun;
+  useEffect(() => {
+    if (!taskId || !openLast || runState(openLast) === "running") return;
+    const at = openLast.finishedAt ?? Date.now();
+    if ((settingsRef.current.seen[taskId] ?? 0) >= at) return;
+    const all = Object.entries({ ...settingsRef.current.seen, [taskId]: Date.now() }).sort((a, b) => b[1] - a[1]);
+    const kept = all.slice(0, 300);
+    // 挤出去的那些算「以前的都看过了」：把线抬到留下的最早那一条，免得它们又冒出来。
+    const seenSince = all.length > kept.length ? Math.max(settingsRef.current.seenSince, kept[kept.length - 1][1]) : settingsRef.current.seenSince;
+    updateSettings({ seen: Object.fromEntries(kept), seenSince });
+  }, [taskId, openLast?.id, openLast?.status, openLast?.finishedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 菜单栏小图标跟着变：等你 > 在跑 > 空闲；在跑两个以上图标旁边写个数（v0.7 起不同项目能同时跑）。
   const anyBusy = busyProjects.size > 0;
-  useEffect(() => { void ipc.setActivity(anyBusy ? "running" : "idle").catch(() => {}); }, [anyBusy]);
+  const anyWaiting = inbox.some((i) => i.kind === "waiting");
+  const runningCount = inbox.filter((i) => i.kind === "running" || i.kind === "waiting").length;
+  useEffect(() => { void ipc.setActivity(anyWaiting ? "waiting" : anyBusy ? "running" : "idle", runningCount).catch(() => {}); }, [anyBusy, anyWaiting, runningCount]);
 
   // 选了任务：读它的对话和记录。
   const loadTask = useCallback(async (id: string) => {
@@ -248,7 +286,7 @@ export const App: React.FC = () => {
   }, [refreshProjects, queueAgentEvent]);
 
   /** 发任务：没选任务就新开一个（任务名是这句话），选着任务就接着在里面发。 */
-  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, goal?: string[]) => {
+  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, goal?: string[], worktree?: boolean) => {
     if (!project) return;
     if (project.missing) { say("这个项目的文件夹不在了：先重新找文件夹"); return; }
     if (busy) { say("同一个项目一次跑一个任务"); return; }
@@ -267,8 +305,8 @@ export const App: React.FC = () => {
         const early: AgentEvent[] = [];
         const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
         id = who.startsWith("api:")
-          ? await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap, goal }, onEvent)
-          : await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined }, onEvent);
+          ? await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap, goal, worktree }, onEvent)
+          : await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree }, onEvent);
         runId = id;
         setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
         setAgentEvents((prev) => ({ ...prev, [runId]: prev[runId] ?? [] }));
@@ -428,6 +466,7 @@ export const App: React.FC = () => {
     onRenameTask: (_pid, id, title) => act(async () => { await ipc.sessionRename(id, title); await refreshProjects(); }),
     onDeleteTask: (_pid, id) => act(async () => {
       await ipc.sessionDelete(id);
+      forgetTaskNotes(id);
       if (taskId === id) setTaskId(null);
       setRunsByTask((prev) => { const next = { ...prev }; delete next[id]; return next; });
       await refreshProjects();
@@ -458,6 +497,7 @@ export const App: React.FC = () => {
       />
       <main className={page || wide ? "app-grid app-grid--wide" : "app-grid"}>
         <LeftColumn
+          inbox={inbox}
           projects={projects}
           projectId={projectId}
           taskId={taskId}
@@ -567,6 +607,8 @@ export const App: React.FC = () => {
               settings={settings}
               onSettings={updateSettings}
               onToTask={(text) => setDraft((d) => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text))}
+              onRunUpdated={(record) => { setRunsByTask((prev) => ({ ...prev, [record.sessionId]: (prev[record.sessionId] ?? []).map((r) => (r.id === record.id ? { ...r, ...record } : r)) })); void refreshProjects(); }}
+              native={native}
             />
           </>
         )}

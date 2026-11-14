@@ -80,6 +80,9 @@ pub struct RunRecord {
     /// 「撤销整个任务」的时间；没撤销过就没有。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub undone_at: Option<i64>,
+    /// 在独立工作区里做的（v0.7）：在哪、搬回去没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<crate::worktree::WorktreeState>,
 }
 
 /// 左栏用的任务摘要：一次对话（session）一行，带最近一次记录的状态。
@@ -351,6 +354,7 @@ impl Store {
             who: None,
             permission: None,
             undone_at: None,
+            worktree: None,
         };
         let mut stored = record.clone();
         stored.steps.clear();

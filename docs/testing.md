@@ -16,6 +16,13 @@
   - **CLI 引擎**：回放 `src-tauri/tests/fixtures/gateway/` 的录音（Codex 3 次审批、Grok 1 次……），碰到审批停下等卡片。
   - **接力、规划 + 实施、假 Agent**：照旧的步骤显示，能停、能重跑步骤、能撤销。
   - **ONE SHOT**：右栏页签，选一个（Antigravity 不在里面）问一句，读一个文件再答，COPY、TO TASK。
+- **会话和项目、审阅和预览**：
+  - **两个项目同时跑**：在 notebook 发一个 Peck 循环的任务，没等它停就切到 peck 再发一个；左栏最上面 `[ NOW ]` 列着两个在跑的，碰到审批的那个排到最前面（琥珀问号），点一行直接到那个任务。做完了、在别的任务里看不到的那个留着绿勾，打开过就从 NOW 里下去。
+  - **recap**：Peck 循环的主线和「修好」做完，回答末尾的 `→ ` 那几行变成 recap 下面的按钮，点了放进输入框（不发）。
+  - **项目设置**：FOLDERS 里填一个绝对路径点 ADD 加进来（空着点 ADD 是原生的选文件夹窗，`?mock` 里没有），READ / WRITE 切；ENV 写 `NAME=value`，写 `HOME=x` 会报错。
+  - **FILES**：peck 项目的 `docs/` 和 `public/` 里有几种演示文件——`guide.md`、`index.html`、`bird.svg`（VIEW / SRC）、`screenshot.png`、`spec.pdf`、`plan.docx`、`budget.xlsx`（Quick Look 的缩略图在 `?mock` 里是一张演示图）；`src-tauri/src/*.rs`、notebook 的 `.tsx` 看代码上色。
+  - **独立工作区**：peck 项目（演示里是 git 项目）输入框下点亮 WORKTREE 再发，做完 CHANGES 顶上是 APPLY / DISCARD；这句话里带「冲突」两个字，APPLY 会报一个冲突、再给 APPLY ANYWAY。
+  - **按块接受 / 拒绝、批注**：主线任务做完，CHANGES 里点 `src-tauri/src/settings.rs` 这类改过的文件，块头上 REJECT / ACCEPT；点行号写批注，顶上 TO TASK 放进输入框。批注和块的状态只在浏览器里存（`localStorage`），刷新 `?mock` 数据重置、它们还在。
 - `?mock` 里的终端只认几条命令：`ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败，退出码 1）、`pnpm dev`（一直跑，点 STOP 才停）。任务在跑时终端锁着。
 - 改了界面明暗各看一次（内置浏览器的 `resize_window` 切 `colorScheme`），截图只放会话临时目录。截图常慢一拍，关键结果用 `read_page` 或 JS 读页面确认。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
@@ -37,8 +44,9 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 ```
 
 - 日常只跑改到的模块：在命令末尾加模块名过滤，如 `-- snapshot::`。一个版本收尾才全跑。
+- 任务前快照的登记表是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号（9xx_001，各测试不一样），不然并行时互相覆盖（`api::worker` 会报「任务快照基线缺失」）。
 - 云端（Linux）：装上 `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libsoup-3.0-dev`、`librsvg2-dev`、`libayatana-appindicator3-dev`、`libxdo-dev` 就编得过（没有离线的 crate 缓存，去掉 `--offline`）。`api::tools` 的 3 项和 `api::worker` 的 5 项要 macOS 的 `sandbox-exec`，在 Linux 上一定失败，留给本地。`harness::tools::bash` 的沙箱测试（项目外写被拒、联网能通、`.git` 只读）只在 macOS 上编进来；Linux 上命令不进沙箱直接跑。`app_icon.rs` 的 AppKit 部分只在 macOS 上编。
-- Peck 循环的测试（`-- harness::`）用假模型（`ScriptedModel`）跑完整的循环：工具顺序、PLAN 不给改的工具、高危必弹、EDIT 装依赖问一次和「总是允许」、轮数 / 花费上限 / 用量未知停下、打断命令、追加一句、续接对话、ONE SHOT 只读，以及发任务到收尾（任务记录、CHANGES、事件日志、花费）。上下文和验证：项目层（AGENTS.md / CLAUDE.md + 记忆）、环境块（git 不动 index）、引用和 `search_tasks`、长任务压缩以后接着做、压完还太满停下、三步压缩各自的单测；后台命令不阻塞、任务结束就停、EDIT 起后台命令问一次、常驻 server 不跟任务停；验证命令的猜、校验、写，没确认过的、改过的不用；后台验证和并发过期；没过交回去修好不再叫模型、同一个失败连续两次停、两次之间没改文件停、修够 3 次停、目标模式；记忆存、去重、批过不能再批。命令的 future 被丢掉时整个进程组都停（`harness::tools::bash`）。验证和后台命令的测试真的起 `sh`（`sleep`、`test -f` 这类），在 Linux 上没有沙箱照样跑。
+- Peck 循环的测试（`-- harness::`）用假模型（`ScriptedModel`）跑完整的循环：工具顺序、PLAN 不给改的工具、高危必弹、EDIT 装依赖问一次和「总是允许」、轮数 / 花费上限 / 用量未知停下、打断命令、追加一句、续接对话、ONE SHOT 只读，以及发任务到收尾（任务记录、CHANGES、事件日志、花费）。上下文和验证：项目层（AGENTS.md / CLAUDE.md + 记忆）、环境块（git 不动 index）、引用和 `search_tasks`、长任务压缩以后接着做、压完还太满停下、三步压缩各自的单测；后台命令不阻塞、任务结束就停、EDIT 起后台命令问一次、常驻 server 不跟任务停；验证命令的猜、校验、写，没确认过的、改过的不用；后台验证和并发过期；没过交回去修好不再叫模型、同一个失败连续两次停、两次之间没改文件停、修够 3 次停、目标模式；记忆存、去重、批过不能再批。命令的 future 被丢掉时整个进程组都停（`harness::tools::bash`）。会话和项目、审阅和预览：项目的其他文件夹（只读的写不进、能改的进 CHANGES、和任务一起撤销，`harness::run`；沙箱里嵌套的 `.git`、只读文件夹写不进，`harness::tools::bash`，只在 Mac 上）、项目设置的校验（`workspace::`）、独立工作区（建、做完主文件夹不动、APPLY 搬回、冲突、照样搬以后撤销回到搬之前、可执行位、DISCARD，`worktree::` 和 `harness::run`）、按块拒绝（CRLF、重建的文件不动，`snapshot::hunk_tests`）、FILES 的图片和 PDF（`files::`）。Quick Look（`qlmanage`）只在 macOS 上有，Linux 上 Office 文件只回「看不了」。验证和后台命令的测试真的起 `sh`（`sleep`、`test -f` 这类），在 Linux 上没有沙箱照样跑。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 每次用新的临时目录（上面的 `mktemp -d`）：模拟授权的次数记在数据目录里，重复用同一个目录会把次数用完，`api::worker` 的测试就失败。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境（`term.rs`），启动脚本特别慢的机器上会多等几秒。

@@ -69,6 +69,12 @@ pub struct ContextConfig {
     pub history: Option<HistoryProbe>,
     /// 压缩线（窗口的比例）；0 用默认的 80%。
     pub compact_at: f64,
+    /// 项目的其他文件夹（v0.7）：（路径，能改）。
+    pub folders: Vec<(PathBuf, bool)>,
+    /// 项目自己的环境变量的名字（环境块里写，值不写）。
+    pub env_names: Vec<String>,
+    /// 在独立工作区里做：主文件夹在哪（环境块里写明）。
+    pub worktree_of: Option<PathBuf>,
 }
 
 /// 验证（v0.6 Phase 8）：`.peck/verify.toml` 的验证命令和目标模式。
@@ -147,7 +153,8 @@ impl AgentBackend for PeckBackend {
         Box::pin(async move {
             let level = if config.oneshot { PermissionLevel::Plan } else { task.permission };
             let ctx = ToolContext::new(&task.cwd, level, config.spill_dir.clone(), config.runtime_dir.clone(), config.env.clone())
-                .map_err(|e| GatewayError::new(ErrorKind::Internal, e))?;
+                .map_err(|e| GatewayError::new(ErrorKind::Internal, e))?
+                .with_extra(&config.context.folders);
             let (cancel_tx, cancel_rx) = watch::channel(false);
             let history = conversation.lock().map(|c| c.clone()).unwrap_or_default();
             let mut run = Run {
@@ -354,7 +361,8 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool) -> Str
          - search_tasks finds earlier tasks in this project; <referenced-task> blocks are earlier tasks the user pointed you to.\n\
          - When you learn something durable about this project (a convention, a command, a pitfall, a preference the user stated), propose it with memory; the user approves it at the end.\n\
          - Use ask_user only when you cannot continue without the user's decision.\n\
-         - Answer in the user's language (Chinese if they write Chinese), in Markdown, briefly: what you changed, how you checked it, anything left.",
+         - Answer in the user's language (Chinese if they write Chinese), in Markdown, briefly: what you changed, how you checked it, anything left.\n\
+         - When you finish, end the final answer with up to 3 suggested next steps the user might want, each on its own line starting with `→ ` (short, imperative, in the user's language). Peck shows them as buttons and hides these lines. Skip them when nothing obvious is left.",
         root = task.cwd.display(),
     )
 }
@@ -437,6 +445,9 @@ impl Run {
             checks: if self.level == PermissionLevel::Plan { vec![] } else { self.config.verify.checks.iter().map(|c| (c.name.clone(), c.run.clone())).collect() },
             background: background::list(&self.ctx.root).iter().filter(|p| p.running()).map(|p| background::describe_for_model(p)).collect(),
             goal: self.goal_names(),
+            folders: self.ctx.extra.iter().map(|e| (e.path.to_string_lossy().into_owned(), e.writable && self.level != PermissionLevel::Plan)).collect(),
+            env_names: self.config.context.env_names.clone(),
+            worktree_of: self.config.context.worktree_of.as_ref().map(|p| p.to_string_lossy().into_owned()),
         };
         let root = self.ctx.root.clone();
         tokio::task::spawn_blocking(move || context::environment_block(&root, &input)).await.unwrap_or_default()
@@ -1078,6 +1089,7 @@ impl Run {
                     env: self.ctx.env.clone(),
                     runtime_dir: self.ctx.runtime_dir.clone(),
                     log_dir: self.ctx.spill_dir.clone(),
+                    extra: self.ctx.extra.iter().map(|e| (e.path.clone(), e.writable)).collect(),
                 };
                 let proc_ = match background::start(spec, Some(Arc::new(move |i: &background::BgInfo| {
                     sink.emit(background::event_of(i));
@@ -1674,6 +1686,9 @@ mod tests {
             refs: vec!["<referenced-task number=\"12\">\n修过登录\n</referenced-task>".into()],
             history: Some(Arc::new(|q: Option<String>, _n: Option<u64>| Ok(format!("找到：任务 12 {}", q.unwrap_or_default())))),
             compact_at: 0.0,
+            folders: vec![],
+            env_names: vec![],
+            worktree_of: None,
         };
         cfg.verify.checks = vec![Check { name: "check".into(), run: "true".into(), when: vec![], timeout: None }];
         let (outcome, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Edit, "接着修"), |_| None).await;
@@ -1926,6 +1941,38 @@ mod tests {
         let names: Vec<String> = requests.lock().unwrap()[0].tools.iter().map(|t| t.name.clone()).collect();
         assert_eq!(names, ["list_directory", "read_file", "search_text", "find_files", "bash_run", "search_tasks"]);
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::MessageCompleted { text, .. } if text.contains("hello"))));
+    }
+
+    #[tokio::test]
+    async fn other_folders_are_readable_and_only_writable_ones_can_be_changed() {
+        let p = TempProject::new();
+        let lib = TempProject::new();
+        let docs = TempProject::new();
+        lib.write("shared.rs", "pub fn x() {}\n");
+        docs.write("guide.md", "# guide\n");
+        let lib_file = lib.dir.join("new.rs").to_string_lossy().into_owned();
+        let docs_file = docs.dir.join("guide.md").to_string_lossy().into_owned();
+        let model = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![
+                    ("read_file", json!({"path": lib.dir.join("shared.rs").to_string_lossy()})),
+                    ("write_file", json!({"path": lib_file, "content": "pub fn y() {}\n"})),
+                    ("write_file", json!({"path": docs_file, "content": "改掉\n"})),
+                ]),
+                turn("好了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.context.folders = vec![(lib.dir.clone(), true), (docs.dir.clone(), false)];
+        let (outcome, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Auto, "x"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        let statuses: Vec<ToolStatus> = events.iter().filter_map(|e| match &e.body { EventBody::ToolCallCompleted { status, .. } => Some(*status), _ => None }).collect();
+        assert_eq!(statuses, [ToolStatus::Ok, ToolStatus::Ok, ToolStatus::Failed]);
+        assert_eq!(lib.read("new.rs"), "pub fn y() {}\n", "能改的文件夹写得进");
+        assert_eq!(docs.read("guide.md"), "# guide\n", "只读的不动");
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { output: Some(o), .. } if o.contains("只读"))));
     }
 
     #[test]

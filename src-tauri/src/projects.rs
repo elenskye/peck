@@ -148,7 +148,7 @@ pub fn workspace_update(
         // 验证命令的两样只由 verify_save / verify_dismiss 改；界面改别的设置时手里那份可能是旧的。
         settings.verify_dismissed = ws.settings.verify_dismissed;
         settings.verify_approved = ws.settings.verify_approved.clone();
-        ws.settings = settings;
+        ws.settings = settings.normalized(Path::new(&ws.path))?;
     }
     db.save_workspace(&ws).map_err(|e| e.to_string())?;
     Ok(ws)

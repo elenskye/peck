@@ -30,6 +30,25 @@ pub async fn workspace_open(path: String, state: State<'_, AppState>) -> Result<
     Ok(ws)
 }
 
+/// 项目设置里加一个其他文件夹（v0.7）：系统选文件夹的窗，只返回路径，不打开成项目。
+#[tauri::command]
+pub async fn dialog_pick_folder() -> Result<Option<String>, String> {
+    let output = tokio::process::Command::new("/usr/bin/osascript")
+        .args(["-e", "POSIX path of (choose folder with prompt \"选一个文件夹加进项目\")"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        if message.contains("-128") {
+            return Ok(None);
+        }
+        return Err(format!("选不了文件夹：{}", message.trim()));
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().trim_end_matches('/').to_string();
+    Ok((!path.is_empty()).then_some(path))
+}
+
 #[tauri::command]
 pub async fn workspace_choose(state: State<'_, AppState>) -> Result<Option<Workspace>, String> {
     let output = tokio::process::Command::new("/usr/bin/osascript")
@@ -181,7 +200,7 @@ pub async fn run_dispatch(
     }
     if active
         .values()
-        .any(|r| r.workspace_path == PathBuf::from(&ws.path))
+        .any(|r| r.touches(&[PathBuf::from(&ws.path)]))
     {
         return Err("同一个项目一次跑一个任务。".into());
     }
@@ -218,6 +237,7 @@ pub async fn run_dispatch(
         plan,
         agents,
         cancel_handle,
+        writable: vec![],
     };
     active.insert(run_id.clone(), ctx.clone());
     drop(active);
@@ -281,7 +301,7 @@ pub async fn run_retry_step(
     }
     if active
         .values()
-        .any(|r| r.workspace_path == PathBuf::from(&ws.path))
+        .any(|r| r.touches(&[PathBuf::from(&ws.path)]))
     {
         return Err("同一个项目一次跑一个任务。".into());
     }
@@ -312,6 +332,7 @@ pub async fn run_retry_step(
         plan,
         agents,
         cancel_handle,
+        writable: vec![],
     };
     active.insert(run_id, ctx.clone());
     drop(active);
@@ -415,13 +436,7 @@ fn workspace_is_busy(state: &AppState, root: &std::path::Path) -> bool {
         .active_runs
         .lock()
         .map(|runs| {
-            runs.values().any(|r| {
-                r.workspace_path == root
-                    || r.workspace_path
-                        .canonicalize()
-                        .map(|p| p == canonical)
-                        .unwrap_or(false)
-            })
+            runs.values().any(|r| r.touches(&[canonical.clone()]))
         })
         .unwrap_or(false)
 }
@@ -475,6 +490,81 @@ pub async fn files_read(
     Ok(preview)
 }
 
+/// FILES：Quick Look 的缩略图（Word、Excel 这类）。只在 Mac 上有。
+#[tauri::command]
+pub async fn files_quicklook(workspace_id: String, path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    let file = crate::files::inside(&root, &path)?;
+    tokio::task::spawn_blocking(move || crate::files::quicklook_thumbnail(&file, 1400)).await.map_err(|e| e.to_string())?
+}
+
+/// FILES：叫出系统的 Quick Look 窗口看这个文件。
+#[tauri::command]
+pub async fn files_quicklook_open(workspace_id: String, path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    crate::files::quicklook_open(&crate::files::inside(&root, &path)?)
+}
+
+/// CHANGES：拒绝一块改动（v0.7）。在现在的文件里把这一块换回任务前的样子；后来又改过、对不上就不动。
+/// 独立工作区里还没搬回的任务，改的是独立工作区里的文件。
+#[tauri::command]
+pub async fn changes_hunk_revert(
+    run_id: String,
+    step_id: Option<String>,
+    file_path: String,
+    hunk: usize,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let (record, snapshot) = {
+        let db = state.store.lock().map_err(|e| e.to_string())?;
+        let record = db.run(&run_id).map_err(|_| "没找到这个任务。".to_string())?;
+        let snapshot = db.snapshot(&run_id).map_err(|e| e.to_string())?.ok_or("这个任务没有任务前快照。")?;
+        (record, snapshot)
+    };
+    if record.status == RunStatus::Running {
+        return Err("任务还在跑，跑完再拒绝。".into());
+    }
+    if record.undone_at.is_some() {
+        return Err("这个任务已经撤销了。".into());
+    }
+    if record.worktree.as_ref().is_some_and(|w| w.discarded_at.is_some()) {
+        return Err("独立工作区已经丢掉了。".into());
+    }
+    if workspace_is_busy(&state, &snapshot.workspace_path) {
+        return Err("这个项目有任务在跑，等它做完。".into());
+    }
+    restore_snapshot(snapshot.clone());
+    // 其他文件夹的写绝对路径；项目里的照记录里的文件夹（独立工作区还没搬回时是它）。
+    let full = if std::path::Path::new(&file_path).is_absolute() {
+        if !snapshot.extras.iter().any(|e| e.rel_of(&file_path).is_some()) {
+            return Err("只能改这个任务改过的文件。".into());
+        }
+        std::path::PathBuf::from(&file_path)
+    } else {
+        crate::files::check_relative(&file_path)?;
+        snapshot.workspace_path.join(&file_path)
+    };
+    if !record.files.iter().any(|f| f.path == file_path) {
+        return Err("这个文件不是这个任务改的。".into());
+    }
+    let created = record.files.iter().any(|f| f.path == file_path && f.kind == "create");
+    let diff = get_diff_for_run(&run_id, step_id.as_deref(), Some(&file_path), None)?;
+    tokio::task::spawn_blocking(move || {
+        let current = std::fs::read_to_string(&full).ok();
+        match crate::snapshot::revert_hunk(current.as_deref(), &diff.unified_diff, hunk, created)? {
+            None => std::fs::remove_file(&full).map_err(|e| format!("删不掉：{e}")),
+            Some(text) => {
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&full, text).map_err(|e| format!("写不进：{e}"))
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn snapshot_for_undo(
     state: &AppState,
     run_id: &str,
@@ -486,6 +576,14 @@ fn snapshot_for_undo(
     }
     if record.undone_at.is_some() {
         return Err("这个任务已经撤销过了。".into());
+    }
+    if let Some(wt) = &record.worktree {
+        if wt.pending() {
+            return Err("这个任务在独立工作区里，还没搬回项目：不用撤销，丢掉就行。".into());
+        }
+        if wt.discarded_at.is_some() {
+            return Err("独立工作区已经丢掉了，项目里没有这个任务的改动。".into());
+        }
     }
     let snapshot = match saved_snapshot(run_id) {
         Some(found) => found,
@@ -507,7 +605,7 @@ pub async fn run_undo_preview(
     state: State<'_, AppState>,
 ) -> Result<UndoPreview, String> {
     let (_, snapshot) = snapshot_for_undo(&state, &run_id)?;
-    tokio::task::spawn_blocking(move || crate::snapshot::undo_preview(&snapshot).map(|(_, p)| p))
+    tokio::task::spawn_blocking(move || crate::snapshot::undo_preview_all(&snapshot))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -569,7 +667,8 @@ pub async fn term_run(
     if workspace_is_busy(&state, &root) {
         return Err("任务在跑，终端先锁着；做完就解开。".into());
     }
-    state.terminals.run(&workspace_id, &root, &command, move |event| {
+    let env = state.store.lock().ok().and_then(|db| db.workspace(&workspace_id).ok()).map(|w| w.settings.env_pairs()).unwrap_or_default();
+    state.terminals.run_with_env(&workspace_id, &root, &command, &env, move |event| {
         let _ = channel.send(event);
     })
 }
@@ -591,9 +690,10 @@ pub async fn term_state(
 
 /// 菜单栏小图标跟着变：`idle`、`running`、`waiting`。
 #[tauri::command]
-pub async fn shell_set_activity(activity: String, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn shell_set_activity(activity: String, count: Option<u32>, app: tauri::AppHandle) -> Result<(), String> {
     let activity = crate::tray::Activity::parse(&activity).ok_or("没有这个状态。")?;
     crate::tray::set_activity(&app, activity);
+    crate::tray::set_running_count(&app, count.unwrap_or(0));
     Ok(())
 }
 

@@ -180,6 +180,18 @@ impl Terminals {
         command: &str,
         emit: impl Fn(TermEvent) + Send + Sync + 'static,
     ) -> Result<String, String> {
+        self.run_with_env(key, root, command, &[], emit)
+    }
+
+    /// 同上，另外带上这个项目的环境变量（v0.7，项目设置里记的）。
+    pub fn run_with_env(
+        self: &Arc<Self>,
+        key: &str,
+        root: &Path,
+        command: &str,
+        project_env: &[(String, String)],
+        emit: impl Fn(TermEvent) + Send + Sync + 'static,
+    ) -> Result<String, String> {
         let command = command.trim();
         if command.is_empty() {
             return Err("先写一条命令。".into());
@@ -223,6 +235,9 @@ impl Terminals {
                 }
             }
             None => builder.args(["-l", "-c", SCRIPT]),
+        }
+        for (key, value) in project_env {
+            builder.env(key, value);
         }
         builder.cwd(&session.cwd);
         builder.env("PECK_COMMAND", command);

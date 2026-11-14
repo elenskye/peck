@@ -1,6 +1,6 @@
 # 技术架构
 
-> 选型、一个任务怎么跑、数据放哪、Model Gateway、Peck 循环（上下文、后台和验证）、代码位置。界面的用词和样子在 [design.md](./design.md)，怎么测在 [testing.md](./testing.md)。
+> 选型、一个任务怎么跑（项目即环境、独立工作区）、数据放哪、Model Gateway、Peck 循环（上下文、后台和验证）、审阅和预览、代码位置。界面的用词和样子在 [design.md](./design.md)，怎么测在 [testing.md](./testing.md)。
 
 ## 选型
 
@@ -15,7 +15,7 @@
 
 ## 一个任务怎么跑
 
-一句话对应一个**任务**（代码里叫 Run）。任务开始前给项目拍一个**任务前快照**；跑完留着，撤销是站主主动点。同一个项目同时只跑一个任务（v0.7 起不同项目能同时跑）。失败、取消、重开都不自动重发：可能已经生效的请求和命令不重放。
+一句话对应一个**任务**（代码里叫 Run）。任务开始前给项目拍一个**任务前快照**；跑完留着，撤销是站主主动点。同一个项目同时只跑一个任务（两个任务要写的文件夹——项目文件夹和能改的其他文件夹——一样或套着也算同一个，`ActiveRunContext::touches`），不同项目能同时跑（后端按项目锁，界面每个项目自己的「在跑」，菜单栏图标两个以上写个数）。失败、取消、重开都不自动重发：可能已经生效的请求和命令不重放。
 
 「谁来干」是模型列表（IPC `gateway_models`）里的一个 id，决定走哪条路：
 
@@ -31,11 +31,13 @@
 
 - **控制通道**：审批、回答、追加一句、打断都走 `gateway_control(runId, control)`；CLI 引擎、Peck 循环、ONE SHOT 的任务都登记在 `gateway/runner.rs` 的同一张表里。`run_cancel` 先发打断，等它收尾，超时再结束整个进程组。
 - **项目和任务的管理**（`projects.rs`，左栏右键）：改名（项目改的是显示名，文件夹不动；任务改 `sessions.title`）；项目设置（`Workspace.settings`：在这个项目里默认谁来干、默认权限，进项目时换上）；「移出列表」只把 `Workspace.hidden` 设上，文件夹、任务、快照都不动，重新打开这个文件夹就回来；删任务是真删（任务记录、消息、事件日志、Peck 循环的对话），旧 API 层（规划 + 实施、假 Agent）的调用记录只断开和任务的关联、留着照算花费；在跑的不能删。拖动排的顺序存在 `app_settings` 的 `layout`（没拖过的新项目、新任务排在最上面）。
+- **项目即环境**（项目设置）：项目除了主文件夹，还能加最多 8 个文件夹，每个选只读或能改（`ProjectSettings.folders`；不行的：和主文件夹或彼此套着的、根目录、家目录和包着家目录的、和 Peck 数据目录套着的、`.git` 里面的——`workspace::folder_allowed`，每次用之前再查一遍）；项目自己的环境变量最多 60 个（`ProjectSettings.env`，`HOME`、`TMPDIR`、`PWD`、`SHELL`、`CI`、`PAGER`、`TERM` 和 `PECK_*` 不让改）。`workspace_update` 规整、校验这两样。Peck 循环：工具用绝对路径读其他文件夹、写能改的那几个（只读的拒掉；`.git` 一样不碰），命令的沙箱放开能改的那几个，只读的明着不让写；项目文件夹和能改的文件夹下面任何一层的 `.git` 都不让写（正则，挡住 `~/code` 这类文件夹里各个仓库的钩子），环境块里列出文件夹和变量名（值不进上下文）；能改的文件夹各拍一份任务前快照（各自的影子仓库），改动进 CHANGES（写绝对路径）、撤销整个任务一起撤。环境变量带进 Peck 循环的命令、后台命令、验证命令、dev server 和 TERM（同名的盖过站主 shell 里的）。CLI 引擎还只认主文件夹、不带项目的环境变量。
+- **独立工作区**（`worktree.rs`，输入框旁的 WORKTREE，一次一选）：只给 git 项目、不能是 PLAN，Peck 循环和 CLI 引擎都行；所有 git 调用都带 `-c core.hooksPath=/dev/null`（不跑仓库的钩子，它们是沙箱里就能改的项目文件）；任务里项目的其他文件夹一律只读（不在独立工作区里，改了就是真改）。发出去时 `git worktree add --detach <数据目录>/worktrees/<项目哈希>/<任务号> HEAD`（不建分支，主文件夹的 index、commit、stash 不动，只在用户仓库的 `.git/worktrees/` 多一份登记），再把主文件夹没提交的改动（改过的、新建没忽略的、删掉的、改名的）照搬进去；任务在它里面做，快照存在项目自己的影子仓库里，CHANGES 照常。做完在 CHANGES 顶上 APPLY / DISCARD：APPLY 先比对——这几个文件在主文件夹里要和任务开始时一样（按 git 的口径比，换行、过滤器照 `.gitattributes`），不一样列成冲突、什么都不动，站主可以 APPLY ANYWAY 覆盖；先全看一遍再动手，复制带上文件权限。搬之前、搬之后各给主文件夹拍一份快照，任务记录换成主文件夹和这两棵树（`RunRecord.worktree.appliedAt`）：撤销整个任务回到搬之前，照样搬时覆盖掉的站主的改动也回得来。DISCARD 删掉独立工作区，记录也换成主文件夹，改动在历史 Diff 里照样能看。没搬回、丢掉了的不能撤销（没有要撤的）；同一个任务上一次的独立工作区没搬回、没丢掉时，不能接着发（先 APPLY 或 DISCARD）；建到一半失败、删不掉时只删自己那一条登记，不 `git worktree prune`；`autostart` 的 dev server 在独立工作区的任务里不起。
 - **文件夹不在了**：每次读项目列表都看一遍文件夹在不在（`ProjectOverview.missing`）；不在的项目不能发任务，中栏换成「重新找文件夹 / 移出列表」。重新找（`workspace_relocate`）：项目 id 和快照目录都按文件夹路径的哈希，所以换到新文件夹时任务、「总是允许」挪到新 id 下，快照目录改名到新哈希（新位置已经有快照就不动）。
 - **撤销整个任务**（`run_undo`）：算出任务前快照到做完之间改过的文件，新建的删掉、改过和删掉的用 `git restore --source=<任务前的树> --worktree` 写回；只动这几个文件，用户仓库的 index、commit、stash 不碰。撤销前再存一份快照；记录上写 `undoneAt`，历史 Diff 照旧能看。
 - **终端**（右栏 TERM，`term.rs`）：每条命令在 pty 里起一个 shell，输出当文字显示（`TERM=dumb`），跑完报退出码和用时；`cd` 记着，`export` 不带到下一条。环境照站主平时的终端：App 打开时在后台起一次交互式登录 shell（`$SHELL -l -i -c`，最多等 8 秒）读出环境变量，这次打开期间每条命令带着它跑；读不出来退回 `$SHELL -l -c`。Peck 循环的 `bash_run` 也用这份环境。这个项目有任务在跑时拒绝新命令。只在内存，退出就没了。
 - **关窗口**（`lib.rs`）：红色关闭只藏窗口，菜单栏图标和在跑的任务都留着；点 Dock 图标或菜单栏图标叫回；⌘Q 或菜单栏「退出 Peck」才退出。
-- **菜单栏图标和通知**（`tray.rs`）：图标跟着空闲、在跑（三帧轮流，每帧 300ms）、等你换；做完、失败、停下、等你批、等你回答时按设置发 macOS 通知（Peck 在最前面时不发）。模板图由 `scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出到 `src-tauri/icons/menubar/`：托盘把高度压成 18pt，脚本先裁掉四周的空，一格出 3 像素，菜单栏里一格 1.5pt。
+- **菜单栏图标和通知**（`tray.rs`）：图标跟着空闲、在跑（三帧轮流，每帧 300ms）、等你换，两个以上在跑时图标旁边写个数（`set_running_count`）；做完、失败、停下、等你批、等你回答时按设置发 macOS 通知（Peck 在最前面时不发）。模板图由 `scripts/menubar-icons.mjs` 从 `src/vendor/peck/marks/menubar/` 出到 `src-tauri/icons/menubar/`：托盘把高度压成 18pt，脚本先裁掉四周的空，一格出 3 像素，菜单栏里一格 1.5pt。
 - **App 图标**（`app_icon.rs`）：打包用 J2；`app_icon_set(j2 | a3)` 用 AppKit 换 Dock 里的图标，选哪个存在界面设置里，打开 App 时再设一次。图标文件由 `scripts/app-icons.sh` 从 `src/vendor/peck/marks/` 出到 `src-tauri/icons/`。
 
 ## 数据存放
@@ -45,7 +47,9 @@
 | 正式数据 / 开发数据（`pnpm app:dev`） | `~/Library/Application Support/Peck/` / `Peck Dev/` |
 | 项目、任务、步骤、消息、调用、用量快照、界面设置、事件日志 | 数据目录的 `peck.db`（**schema 9**，迁移在 `src-tauri/migrations/`）：6 加 `app_settings`（界面设置整段一行 JSON；Gateway 设置、CLI 的模型列表、左栏拖过的顺序 `layout` 也在这里）；7 加 `agent_events`（统一事件，原件另存一列）和 `runs.engine`；8 加 `harness_conversations`（Peck 循环的对话，接着发一句就带上）、`harness_allow`（「这个项目总是允许」）；9 加 `memories`（站主批过的项目记忆） |
 | 项目的验证命令 | 项目里的 `.peck/verify.toml`（`.peck/` 打开项目时已经加进 `.gitignore`）；项目设置里记站主确认过的那一份的 md5（`verifyApproved`）和不要猜（`verifyDismissed`），这两样只由 `verify_save` / `verify_dismiss` 改 |
-| 任务前快照和历史 Diff | `shadow/<项目哈希>/` |
+| 任务前快照和历史 Diff | `shadow/<项目哈希>/`（项目的其他文件夹各有自己的 `shadow/<文件夹哈希>/`；独立工作区的快照存在项目自己的那一个里） |
+| 独立工作区 | `worktrees/<项目哈希>/<任务号>/`（搬回或丢掉时删掉） |
+| 项目的其他文件夹、环境变量 | 项目设置（`workspaces` 表里那一行的 JSON：`folders`、`env`） |
 | Peck 循环命令用的 HOME / 落盘的长输出 | `harness-runtime/<项目>/` / `harness-output/<任务>/`（命令输出、压缩时落的 `ctx-*.log`、验证命令的输出、模型起的后台命令的日志；同一个任务接着发的几次共用；14 天没动过的文件夹打开 App 时删掉）；常驻 dev server 的日志在 `harness-output/servers-<项目哈希>/` |
 | 旧循环（规划 + 实施）命令用的 HOME | `worker-runtime/<项目哈希>/home/` |
 | CLI 清单（接力、假 Agent） | `agents/*.toml`、`flows/*.toml`（第一次从 `src-tauri/defaults/` 复制） |
@@ -131,6 +135,12 @@
 - **目标模式**：发任务时开 GOAL 选一条（或全部），只给 Peck 循环、不能是 PLAN；每次模型停下都跑目标那几条，过了才收尾。Antigravity 只做直接调用，不进目标模式和自动修。
 - **CLI 引擎**：不替 CLI 引擎跑验证、不自动修（它们自己会跑命令；要做的话在 Gateway 的 runner 收尾后接上，记在 HANDOFF）。PLAN 也不跑验证，环境块里不提验证命令。
 
+## 审阅和预览
+
+- **FILES**（`files.rs`、`src/lib/highlight.ts`）：代码上色用 CodeMirror 的语言包（JS / TS / JSX、Rust、Python、CSS、HTML、JSON、YAML、Markdown，TOML、Shell、Go、Swift 走 legacy-modes），按 `@lezer/highlight` 的 `classHighlighter` 出 `tok-*` 类名，颜色在 `src/app.css`（`--code-*`，云端先定的 Peck 配色）；语言包按需加载，超过 20 万字符不上色。md、html、svg 能切 VIEW / SRC（html 在没有脚本的 sandbox iframe 里，前面加一条 CSP，不从网上取东西、`meta refresh` 去掉）。图片和 PDF 读成 data URL（最多 24MB；PDF 换成 blob 地址给 iframe）；Word、Excel、PowerPoint、iWork、RTF、OpenDocument 交给 Quick Look：`qlmanage -t` 出一张缩略图（最多等 20 秒），QUICK LOOK 按钮 `qlmanage -p` 叫出系统窗口（只在 Mac 上）。独立工作区没搬回时 FILES 列的是主文件夹，不标那个任务的改动。
+- **CHANGES 按块接受 / 拒绝**（`snapshot.rs` 的 `parse_hunks` / `revert_hunk`，IPC `changes_hunk_revert`）：拒绝一块是在现在的文件里找到这一块任务后的样子（带上下文；好几处对得上时照行号挑），换回任务前的；后来又改过、对不上就不动；任务新建的文件整块拒掉就删掉，删掉的文件拒掉就放回来（站主后来又建了同名文件就不动）；换行照文件原来的（CRLF 不变）。只认这个任务改过的文件，在跑、撤销了、独立工作区丢掉了都不行；没搬回的独立工作区改的是它里面的文件。接受只是标一下。接受 / 拒绝的标记存在界面这台机器的浏览器存储里（最多 2000 条），批注按任务存、删任务时清掉。
+- **行内批注**：点 Diff 的行号写一条，攒在这个任务下（浏览器存储），TO TASK 把它们整理成一段（文件、第几行、那一行写的什么、批了什么）放进中栏输入框，站主再发。
+
 ## 旧的 API 层（`src-tauri/src/api/`）
 
 规划 + 实施和授权账本还在这里，v0.8 并进 Gateway 和 Peck 循环。
@@ -173,12 +183,12 @@
 | `src-tauri/src/{run,flow,agent,process,mock,mode}.rs` | 旧的任务派发、接力、CLI 清单、子进程、假 Agent、模式 |
 | `src-tauri/src/api/` | Key、授权账本、旧的请求层、规划 + 实施和它的工具、API 记录 |
 | `src-tauri/src/{store,migrations}.rs`、`src-tauri/migrations/` | 历史存储和追加迁移 |
-| `src-tauri/src/{workspace,snapshot,watch,tasks}.rs` | 项目、任务前快照和撤销、文件监听、`.peck/tasks.md` |
+| `src-tauri/src/{workspace,snapshot,watch,tasks,worktree}.rs` | 项目（含其他文件夹、环境变量的校验）、任务前快照和撤销（含其他文件夹、按块拒绝）、文件监听、`.peck/tasks.md`、独立工作区 |
 | `src-tauri/src/{projects,spend}.rs` | 左栏的改名、项目设置、移出列表、重新找文件夹、删任务、顺序；QUOTA 页的图表数据 |
-| `src-tauri/src/{files,term,tray,app_icon}.rs` | 右栏 FILES、TERM 的 pty、菜单栏图标、Dock 图标 |
+| `src-tauri/src/{files,term,tray,app_icon}.rs` | 右栏 FILES（预览、Quick Look）、TERM 的 pty、菜单栏图标（在跑的个数）、Dock 图标 |
 | `src-tauri/src/{usage,export}.rs`、`src-tauri/integrations/` | 旧的用量监控、导出、状态栏脚本 |
 | `src-tauri/defaults/`、`src-tauri/tests/fixtures/gateway/` | 内置 CLI 清单、流程、模型目录；Gateway 的夹具 |
-| `src/App.tsx`、`src/lib/` | 界面编排和状态、类型化 IPC（`ipc.ts` 在浏览器里转给 `?mock`）、设置、统一事件 → 界面（`agentView.ts`） |
+| `src/App.tsx`、`src/lib/` | 界面编排和状态（左栏「待你处理、在跑」从这里算）、类型化 IPC（`ipc.ts` 在浏览器里转给 `?mock`）、设置、统一事件 → 界面（`agentView.ts`）、代码上色（`highlight.ts`） |
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳：顶栏、左栏、左栏下面的 `AgentsPanel`（谁来干）、中栏（`AgentView`、`ModelPicker`（FLOW 的判断、发出去带什么；ONE SHOT 和项目设置还用它的三个按钮）、`Markdown`、`MarkdownEditor`）、右栏四个页签、设置、用量页；布局样式和方案里还没有的身份色 |
 | `src/dev/` | `?mock` 的假数据和假 IPC：`peckMock.ts` 是 Peck 循环的剧本，`gatewayMock.ts` 读 CLI 引擎的夹具 |
 | `src/vendor/peck/` | 同步来的视觉（不手改） |

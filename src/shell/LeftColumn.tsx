@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { ProjectOverview, TaskBrief } from "@/lib/types";
 import { ago, clock, cn, plainLine, runState, STATUS_WORD } from "@/lib/utils";
-import { Btn, FoldBtn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
+import { Btn, FoldBtn, Field, Icon, Info, ModHead, Twinkle, type IconName } from "@/ui";
 
 const RECENT = 3;
 
@@ -150,6 +150,42 @@ const RenameField: React.FC<{ value: string; label: string; onDone: (next: strin
   );
 };
 
+// ---------- 待你处理、在跑（v0.7） ----------
+
+/** 左栏上面一块的一行：等你批或答、做完没看、失败停下没看、在跑。跨项目。 */
+export interface InboxItem {
+  projectId: string;
+  taskId: string;
+  title: string;
+  project: string;
+  kind: "waiting" | "done" | "failed" | "running";
+  at: number;
+}
+
+const INBOX_WORD: Record<InboxItem["kind"], string> = { waiting: "等你", done: "做完了", failed: "停下了", running: "在跑" };
+
+const Inbox: React.FC<{ items: InboxItem[]; taskId: string | null; onSelectTask: (projectId: string, taskId: string) => void }> = ({ items, taskId, onSelectTask }) => {
+  const todo = items.filter((i) => i.kind !== "running").length;
+  return (
+    <div className="pk-mod left-inbox">
+      <ModHead label="NOW" count={todo > 0 ? todo : undefined} note={items.length - todo > 0 ? `${items.length - todo} 个在跑` : undefined} />
+      <ul className="inbox-list">
+        {items.slice(0, 8).map((i) => (
+          <li key={`${i.kind}:${i.taskId}`}>
+            <button type="button" className={cn("task-row inbox-row", `inbox-row--${i.kind}`, i.taskId === taskId && "is-on")} onClick={() => onSelectTask(i.projectId, i.taskId)}>
+              <span className="task-si">{i.kind === "running" ? <Twinkle /> : <Icon size={12} name={i.kind === "waiting" ? "ask" : i.kind === "done" ? "check" : "x"} />}</span>
+              <span className="task-tt">
+                <b>{i.title}</b>
+                <em>{INBOX_WORD[i.kind]} · {i.project}</em>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
 // ---------- 左栏 ----------
 
 export interface LeftActions {
@@ -166,6 +202,8 @@ export interface LeftActions {
 
 /** 左栏：项目和任务（没选项目时每个项目带最近几次任务；选了就是它的任务列表），下面是 AGENTS（谁来干）。两块都能收起，收起的只剩头，另一块占满。 */
 export const LeftColumn: React.FC<{
+  /** 待你处理、在跑（空着不显示）。 */
+  inbox: InboxItem[];
   projects: ProjectOverview[];
   projectId: string | null;
   taskId: string | null;
@@ -179,7 +217,7 @@ export const LeftColumn: React.FC<{
   onOpen: (path?: string) => void;
   native: boolean;
   actions: LeftActions;
-}> = ({ projects, projectId, taskId, busyProjects, agents, folded, onFold, onSelectProject, onSelectTask, onOpen, native, actions }) => {
+}> = ({ inbox, projects, projectId, taskId, busyProjects, agents, folded, onFold, onSelectProject, onSelectTask, onOpen, native, actions }) => {
   const [pathOpen, setPathOpen] = useState(false);
   const [path, setPath] = useState("");
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
@@ -218,6 +256,7 @@ export const LeftColumn: React.FC<{
 
   return (
     <section className="col" aria-label="项目和任务">
+      {inbox.length > 0 && !folded && <Inbox items={inbox} taskId={taskId} onSelectTask={(p, t) => onSelectTask(p, t)} />}
       <div className={cn("pk-mod left-projects", folded && "is-folded")}>
         <ModHead label="PROJECTS" after={<button type="button" className="head-icon" aria-label="新增环境：打开一个项目文件夹" title="新增环境：打开一个项目文件夹" onClick={() => (native ? onOpen() : setPathOpen((v) => !v))}><Icon name="folder" size={12} /></button>} note={folded ? projects.find((p) => p.workspace.id === projectId)?.workspace.name : projectId ? <button type="button" className="link" onClick={() => onSelectProject(null)}>全部项目</button> : undefined} count={projects.length}>
           <FoldBtn name="PROJECTS" folded={folded} onFold={onFold} />
@@ -231,7 +270,7 @@ export const LeftColumn: React.FC<{
         )}
         {projects.length === 0 ? (
           <div className="empty">
-            <p>还没有项目。点 PROJECTS 旁边的文件夹图标，打开一个项目文件夹，Peck 就在里面干活。</p>
+            <p>还没有项目<Info text="点 PROJECTS 旁边的文件夹图标，打开一个项目文件夹，Peck 就在里面干活。" /></p>
           </div>
         ) : (
           <div className={cn("scroll left-list", sort.dragging && "is-sorting")} data-sort-group="projects">

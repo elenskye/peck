@@ -24,6 +24,7 @@ pub mod tray;
 pub mod usage;
 pub mod watch;
 pub mod workspace;
+pub mod worktree;
 
 use state::AppState;
 use tauri::Manager;
@@ -147,6 +148,12 @@ pub fn run() {
             projects::layout_save,
             spend::spend_overview,
             harness::run::harness_allow_remove,
+            commands::dialog_pick_folder,
+            commands::files_quicklook,
+            commands::files_quicklook_open,
+            commands::changes_hunk_revert,
+            worktree::worktree_apply,
+            worktree::worktree_discard,
             harness::history::memory_list,
             harness::history::memory_delete,
             harness::history::memory_review,

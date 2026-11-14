@@ -645,3 +645,76 @@ body { overflow: hidden; }
 .memory-text { font-family: var(--font-body); font-size: var(--text-body); letter-spacing: 0; text-transform: none; }
 .agent-verify-line.is-ok { color: var(--color-ok); }
 .agent-verify-line .t-label { color: inherit; }
+
+/* ---------- 审阅和预览（v0.7 Phase 10，云端取了沉静一边，本地改方案时并进 tokens） ---------- */
+/* Peck 的代码配色：青只给关键字；字符串、数、类型、属性用压低的几种色（不和绿、红、琥珀的意思撞），注释退到暗字。 */
+:root, [data-theme="dark"] { --code-keyword: var(--color-cyan-text); --code-string: #A9C6A0; --code-number: #DDB27A; --code-type: #B6A9E6; --code-prop: #9DBAD8; --code-meta: #C9A3D9; --code-fn: var(--color-text); }
+[data-theme="light"] { --code-keyword: var(--color-cyan-text); --code-string: #3D6B37; --code-number: #8A5718; --code-type: #5A49A6; --code-prop: #2F5A84; --code-meta: #84478F; --code-fn: var(--color-text); }
+.tok-keyword, .tok-operator.tok-keyword { color: var(--code-keyword); }
+.tok-string, .tok-string2, .tok-literal, .tok-inserted { color: var(--code-string); }
+.tok-number, .tok-atom, .tok-bool { color: var(--code-number); }
+.tok-typeName, .tok-className, .tok-namespace { color: var(--code-type); }
+.tok-propertyName, .tok-labelName, .tok-attributeName { color: var(--code-prop); }
+.tok-meta, .tok-macroName { color: var(--code-meta); }
+.tok-definition { color: var(--code-fn); font-weight: 700; }
+.tok-comment { color: var(--color-text-3); font-style: italic; }
+.tok-punctuation, .tok-operator { color: var(--color-text-2); }
+.tok-heading, .tok-strong { color: var(--color-text); font-weight: 700; }
+.tok-emphasis { font-style: italic; }
+.tok-link, .tok-url { color: var(--color-cyan-text); text-decoration: underline; }
+.tok-invalid, .tok-deleted { color: var(--color-bad); }
+
+/* 图片、PDF、Quick Look、md / html 预览 */
+.media-box { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-6); background: var(--color-panel-2); clip-path: var(--pk-clip2); }
+.media-box--checker { background-color: var(--color-panel-2); background-image: linear-gradient(45deg, var(--color-line) 25%, transparent 25%, transparent 75%, var(--color-line) 75%), linear-gradient(45deg, var(--color-line) 25%, transparent 25%, transparent 75%, var(--color-line) 75%); background-size: 12px 12px; background-position: 0 0, 6px 6px; }
+.media-img { max-width: 100%; height: auto; image-rendering: auto; }
+.media-img--page { box-shadow: 0 0 0 1px var(--color-line-strong); }
+.media-box .preview-acts { margin-left: 0; }
+.media-frame { flex: 1 1 0; min-height: 320px; width: 100%; border: 0; background: var(--color-panel-2); }
+.media-frame--html { background: #fff; }
+.files-md { flex: 1 1 0; min-height: 0; padding: var(--space-4) var(--space-2); }
+
+/* CHANGES：按块接受 / 拒绝、行内批注 */
+.dl--hunk { align-items: center; }
+.dl-acts { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.dl--hunk { grid-template-columns: 30px 10px minmax(0, 1fr) auto; }
+.dl--hunk.is-rejected .dl-t { text-decoration: line-through; }
+.dl-acts .is-ok { color: var(--color-ok); }
+.dl-acts .is-bad { color: var(--color-bad); }
+.dl-act { margin: 0; padding: 0 var(--space-2); border: 0; background: none; font-family: var(--font-dots); font-weight: 900; font-size: 11px; letter-spacing: .06em; color: var(--color-text-3); cursor: pointer; }
+.dl-act:hover:not(:disabled) { color: var(--color-cyan-text); }
+.dl-act:disabled { opacity: .5; cursor: default; }
+.dl-n--btn { margin: 0; padding: 0; border: 0; background: none; font: inherit; color: var(--color-text-3); text-align: right; cursor: pointer; }
+.dl-n--btn:hover { color: var(--color-cyan-text); }
+.dl.has-note .dl-n--btn { color: var(--color-warn); }
+.dl-note { display: flex; align-items: flex-start; gap: var(--space-3); margin: var(--space-1) 0 var(--space-2) 43px; padding: var(--space-2) var(--space-4); border-left: 2px solid var(--color-warn-line); background: var(--color-warn-soft); font-family: var(--font-body); font-size: var(--text-small); color: var(--color-text); }
+.dl-note .pk-i { margin-top: 3px; color: var(--color-warn); }
+.dl-note-t { flex: 1; min-width: 0; white-space: pre-wrap; }
+.dl-edit { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3) 43px; }
+.app .dl-edit textarea { width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-panel-2); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); resize: vertical; }
+.dl-edit-acts { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.notes-bar, .wt-bar { flex: none; margin-bottom: var(--space-4); }
+.notes-bar .pk-bar-text, .wt-bar .pk-bar-text { flex: 1; min-width: 0; }
+.wt-conflicts { margin: var(--space-2) 0 var(--space-3); padding-left: var(--space-8); color: var(--color-text-2); }
+
+/* ---------- 会话和项目（v0.7 Phase 9） ---------- */
+.left-inbox { flex: none; display: flex; flex-direction: column; max-height: 38%; }
+.inbox-list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0 calc(-1 * var(--space-4)); padding: 0 var(--space-4); list-style: none; overflow-y: auto; }
+.inbox-row--waiting .task-si .pk-i { color: var(--color-warn); }
+.inbox-row--done .task-si .pk-i { color: var(--color-ok); }
+.inbox-row--failed .task-si .pk-i { color: var(--color-bad); }
+.recap { margin-top: var(--space-3); }
+.recap--stopped .summary-top > .pk-i { color: var(--color-warn); }
+.recap-next { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.recap-next .pk-btn { font-family: var(--font-body); font-weight: 400; letter-spacing: 0; text-transform: none; }
+
+/* ⓘ：说明收进这里（v0.7）。图标是云端的占位：一格像素「i」，等本地在方案里画、站主批了再换。 */
+.info-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin: 0 0 0 var(--space-3); padding: 0; border: 0; background: none; vertical-align: -3px; color: var(--color-text-3); cursor: help; }
+.info-btn:hover, .info-btn.is-on { color: var(--color-cyan-text); }
+.info-btn:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: 0; }
+.info-i { position: relative; display: block; width: 10px; height: 10px; box-shadow: inset 0 0 0 1px currentColor; }
+.info-i::before, .info-i::after { content: ""; position: absolute; left: 4px; width: 2px; background: currentColor; }
+.info-i::before { top: 2px; height: 1px; }
+.info-i::after { top: 4px; height: 4px; }
+.info-pop { position: fixed; z-index: 70; padding: var(--space-4) var(--space-6); background: var(--color-panel-2); box-shadow: 0 0 0 1px var(--color-cyan-line); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); white-space: normal; letter-spacing: 0; text-transform: none; user-select: text; }
+.lbl .info-btn, .pk-mod-head .info-btn { vertical-align: -2px; }

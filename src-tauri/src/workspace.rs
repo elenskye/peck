@@ -33,6 +33,129 @@ pub struct ProjectSettings {
     /// 站主确认过的 `.peck/verify.toml`（原文的 md5）。项目自带的、模型改过的，确认前不替模型跑、不起 server。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify_approved: Option<String>,
+    /// 项目即环境（v0.7）：主文件夹以外的文件夹，每个自己选能改还是只读。Peck 循环的工具和命令都认。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<ProjectFolder>,
+    /// 这个项目的环境变量（v0.7）：Peck 循环的命令、验证命令、dev server、TERM 都带上。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<EnvVar>,
+}
+
+/// 项目的另一个文件夹：能改（`writable`）还是只读。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectFolder {
+    /// 绝对路径（规范化过的）。
+    pub path: String,
+    pub writable: bool,
+}
+
+/// 项目的一个环境变量。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+/// 项目最多加几个文件夹、几个环境变量。
+pub const MAX_FOLDERS: usize = 8;
+pub const MAX_ENV: usize = 60;
+/// 这些变量 Peck 自己管，项目里不能改。
+const RESERVED_ENV: [&str; 7] = ["HOME", "TMPDIR", "PWD", "SHELL", "CI", "PAGER", "TERM"];
+
+/// 一个文件夹能不能当项目的其他文件夹（存的时候查一遍，每次用之前再查一遍：后来换成了符号链接的也挡住）。
+/// 不能是根目录、家目录或者包着家目录的；不能和 Peck 的数据目录套着（里面有影子仓库和数据库）；不能在某个 `.git` 里面。
+pub fn folder_allowed(path: &Path) -> Result<(), String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if path.parent().is_none() || home.as_deref().is_some_and(|h| h.starts_with(path)) {
+        return Err("不能把根目录、家目录或者包着家目录的文件夹加进项目。".into());
+    }
+    if crate::run::overlaps(path, &crate::mode::app_data_dir()) {
+        return Err("不能把 Peck 自己的数据目录加进项目。".into());
+    }
+    if path.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(".git"))) {
+        return Err("不能把 .git 里面的文件夹加进项目。".into());
+    }
+    Ok(())
+}
+
+impl ProjectSettings {
+    /// 文件夹和环境变量规整一遍：文件夹要是在的、不在主文件夹里面也不包着它、不是根目录和家目录本身，去重；
+    /// 变量名只能是字母数字下划线、不以数字开头、不是 Peck 自己管的那几个和 `PECK_*`，同名的后一个算。
+    pub fn normalized(mut self, main: &Path) -> Result<Self, String> {
+        let main = normalize_workspace_path(main);
+        let mut folders: Vec<ProjectFolder> = Vec::new();
+        for f in &self.folders {
+            let raw = f.path.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let expanded = crate::agent::expand_tilde(raw);
+            if !expanded.is_absolute() {
+                return Err(format!("文件夹要写完整的路径：{raw}"));
+            }
+            let path = expanded.canonicalize().map_err(|_| format!("找不到这个文件夹：{raw}"))?;
+            if !path.is_dir() {
+                return Err(format!("这不是文件夹：{raw}"));
+            }
+            folder_allowed(&path).map_err(|e| format!("{raw}：{e}"))?;
+            if path.starts_with(&main) || main.starts_with(&path) {
+                return Err(format!("{raw} 和项目文件夹是套着的，不用另加。"));
+            }
+            let text = path.to_string_lossy().into_owned();
+            // 套着的两个（只读的在能改的里面就成了能改的）：不让。
+            if folders.iter().any(|x| x.path != text && crate::run::overlaps(Path::new(&x.path), &path)) {
+                return Err(format!("{raw} 和另一个加过的文件夹是套着的，留一个就行。"));
+            }
+            match folders.iter_mut().find(|x| x.path == text) {
+                Some(existing) => existing.writable = f.writable,
+                None => folders.push(ProjectFolder { path: text, writable: f.writable }),
+            }
+        }
+        if folders.len() > MAX_FOLDERS {
+            return Err(format!("一个项目最多再加 {MAX_FOLDERS} 个文件夹。"));
+        }
+        let mut env: Vec<EnvVar> = Vec::new();
+        for v in &self.env {
+            let name = v.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid {
+                return Err(format!("变量名只能用字母、数字、下划线，不以数字开头：{name}"));
+            }
+            if RESERVED_ENV.contains(&name) || name.starts_with("PECK_") {
+                return Err(format!("{name} 是 Peck 自己管的，项目里不能改。"));
+            }
+            if v.value.contains('\0') {
+                return Err(format!("{name} 的值里不能有空字符。"));
+            }
+            env.retain(|x| x.name != name);
+            env.push(EnvVar { name: name.to_string(), value: v.value.clone() });
+        }
+        if env.len() > MAX_ENV {
+            return Err(format!("一个项目最多 {MAX_ENV} 个环境变量。"));
+        }
+        self.folders = folders;
+        self.env = env;
+        Ok(self)
+    }
+
+    /// 现在还在的文件夹（不在了的跳过）：（路径，能改）。
+    pub fn live_folders(&self) -> Vec<(PathBuf, bool)> {
+        self.folders
+            .iter()
+            .map(|f| (PathBuf::from(&f.path), f.writable))
+            .filter(|(p, _)| p.is_dir())
+            .collect()
+    }
+
+    pub fn env_pairs(&self) -> Vec<(String, String)> {
+        self.env.iter().map(|v| (v.name.clone(), v.value.clone())).collect()
+    }
 }
 
 /// Normalize a workspace path string (canonicalizing when possible, stripping `/private` prefix on macOS tmp if needed for display consistency).
@@ -270,6 +393,40 @@ pub fn md5_hex(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_folders_and_env_are_checked() {
+        let root = std::env::temp_dir().join(format!("peck-settings-{}", uuid::Uuid::new_v4()));
+        let main = root.join("main");
+        let other = root.join("lib");
+        fs::create_dir_all(main.join("inner")).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let folder = |p: &Path, w: bool| ProjectFolder { path: p.to_string_lossy().into_owned(), writable: w };
+        let env = |n: &str, v: &str| EnvVar { name: n.into(), value: v.into() };
+        let ok = ProjectSettings {
+            folders: vec![folder(&other, false), folder(&other, true), ProjectFolder { path: " ".into(), writable: false }],
+            env: vec![env("API_BASE", "a"), env("API_BASE", "b"), env("", "x")],
+            ..Default::default()
+        }
+        .normalized(&main)
+        .unwrap();
+        assert_eq!(ok.folders.len(), 1);
+        assert!(ok.folders[0].writable, "同一个文件夹后一个算");
+        assert_eq!(ok.env_pairs(), vec![("API_BASE".to_string(), "b".to_string())]);
+        assert_eq!(ok.live_folders().len(), 1);
+        let bad = |s: ProjectSettings| s.normalized(&main).unwrap_err();
+        assert!(bad(ProjectSettings { folders: vec![folder(&main.join("inner"), true)], ..Default::default() }).contains("套着"));
+        assert!(bad(ProjectSettings { folders: vec![folder(&root, true)], ..Default::default() }).contains("套着"));
+        assert!(bad(ProjectSettings { folders: vec![folder(&root.join("nope"), true)], ..Default::default() }).contains("找不到"));
+        assert!(bad(ProjectSettings { folders: vec![ProjectFolder { path: "relative/x".into(), writable: true }], ..Default::default() }).contains("完整"));
+        assert!(bad(ProjectSettings { env: vec![env("1X", "a")], ..Default::default() }).contains("变量名"));
+        assert!(bad(ProjectSettings { env: vec![env("HOME", "a")], ..Default::default() }).contains("Peck 自己管"));
+        assert!(bad(ProjectSettings { env: vec![env("PECK_API_MODE", "real")], ..Default::default() }).contains("Peck 自己管"));
+        // 旧数据（没有这两样）照样读得出来
+        let old: ProjectSettings = serde_json::from_str(r#"{"who":"api:x"}"#).unwrap();
+        assert!(old.folders.is_empty() && old.env.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
     use super::*;
 
     #[test]

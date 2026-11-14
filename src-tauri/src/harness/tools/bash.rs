@@ -7,7 +7,7 @@
 //! - 跑完（或超时、被停）就结束整个进程组，常驻进程不留。输出太长落盘（`spill.rs`）。
 //! - 不是 macOS（云端的测试机）没有沙箱，直接跑；沙箱相关的测试只在 macOS 上跑。
 
-use super::{resolve, str_arg, u64_arg, ToolContext};
+use super::{str_arg, u64_arg, ToolContext};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -129,27 +129,54 @@ fn sb(path: &Path) -> String {
     serde_json::Value::String(path.to_string_lossy().into_owned()).to_string()
 }
 
+/// 这个文件夹下面任何一层的 `.git`（比如 `~/code` 里各个仓库的钩子）：SBPL 的正则。路径里有引号就不写这条。
+fn nested_git(dir: &Path) -> Option<String> {
+    let s = dir.to_string_lossy();
+    if s.contains('"') {
+        return None;
+    }
+    let mut out = String::from("(regex #\"^");
+    for c in s.chars() {
+        if "\\.^$|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push_str("/(.+/)?\\.git(/|$)\")");
+    Some(out)
+}
+
 /// 沙箱规则（Apple 的 SBPL，后面的规则优先）。默认全放开（读、联网、起进程），只管写；
 /// 另外不让开 App（`open -a Terminal x.command`）、不让发 Apple Events（`osascript` 叫别的 App 跑），
 /// 这两条路跑起来的东西在沙箱外、也不在进程组里。
-pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox) -> String {
+pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, extra_writable: &[PathBuf], extra_read_only: &[PathBuf]) -> String {
     let mut writable = vec![format!("(subpath {})", sb(temp)), "(subpath \"/dev\")".to_string()];
+    let mut git = vec![format!("(subpath {})", sb(&root.join(".git")))];
+    git.extend(nested_git(root));
+    // 只读的其他文件夹：明着不让写（它在临时目录这类本来能写的地方时也挡住）。
+    git.extend(extra_read_only.iter().map(|p| format!("(subpath {})", sb(p))));
     if sandbox == Sandbox::Project {
         writable.push(format!("(subpath {})", sb(root)));
         writable.push(format!("(subpath {})", sb(home)));
         writable.push("(subpath \"/private/tmp\")".into());
         writable.push("(subpath \"/private/var/folders\")".into());
+        // 项目里「能改」的其他文件夹（v0.7）：一样能写，它们的 .git 一样只读。
+        for extra in extra_writable {
+            writable.push(format!("(subpath {})", sb(extra)));
+            git.push(format!("(subpath {})", sb(&extra.join(".git"))));
+            git.extend(nested_git(extra));
+        }
     }
     format!(
         "(version 1)(allow default)\
          (deny file-write*)\
          (allow file-write* {})\
-         (deny file-write* (subpath {}))\
+         (deny file-write* {})\
          (deny mach-lookup (global-name \"com.apple.securityd\") (global-name \"com.apple.securityd.xpc\"))\
          (deny lsopen)\
          (deny appleevent-send)",
         writable.join(" "),
-        sb(&root.join(".git")),
+        git.join(" "),
     )
 }
 
@@ -191,7 +218,7 @@ pub async fn run(
     on_output: impl FnMut(String),
 ) -> Result<BashOutcome, String> {
     let command = str_arg(input, "command").map(str::trim).filter(|c| !c.is_empty()).ok_or("缺 command。")?.to_string();
-    let cwd = resolve(&ctx.root, str_arg(input, "cwd").unwrap_or("."))?;
+    let cwd = ctx.resolve_path(str_arg(input, "cwd").unwrap_or("."), false)?;
     let timeout = Duration::from_secs(u64_arg(input, "timeout_sec").unwrap_or(DEFAULT_TIMEOUT).clamp(1, MAX_TIMEOUT));
     run_command(ctx, Exec { command: &command, cwd: &cwd, timeout, sandbox, keep_bytes: KEEP_BYTES, stream_bytes: STREAM_BYTES }, cancel, on_output).await
 }
@@ -230,7 +257,7 @@ pub async fn run_command(
     let real_home = ctx.env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| PathBuf::from(v));
     let mut cmd = if cfg!(target_os = "macos") && sandbox != Sandbox::Off {
         let mut c = tokio::process::Command::new("/usr/bin/sandbox-exec");
-        c.args(["-p", &sandbox_profile(&ctx.root, &temp, &home, sandbox), "/bin/sh", "-c", &command]);
+        c.args(["-p", &sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra()), "/bin/sh", "-c", &command]);
         c
     } else {
         let mut c = tokio::process::Command::new("/bin/sh");
@@ -425,12 +452,18 @@ mod tests {
     #[test]
     fn profile_allows_network_and_limits_writes() {
         let root = Path::new("/Users/x/proj");
-        let p = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::Project);
+        let p = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::Project, &[PathBuf::from("/other/lib")], &[PathBuf::from("/private/tmp/ro")]);
         assert!(p.contains("(allow default)") && !p.contains("deny network"));
         assert!(p.contains("(subpath \"/Users/x/proj\")") && p.contains("(subpath \"/t/home\")"));
-        assert!(p.contains("(deny file-write* (subpath \"/Users/x/proj/.git\"))"));
-        let ro = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::ReadOnly);
+        assert!(p.contains("(deny file-write* (subpath \"/Users/x/proj/.git\")"));
+        assert!(p.contains("(subpath \"/other/lib/.git\")") && p.contains(r#"(regex #"^/other/lib/(.+/)?\.git(/|$)")"#), "{p}");
+        assert!(p.contains(r#"(regex #"^/Users/x/proj/(.+/)?\.git(/|$)")"#));
+        let deny = &p[p.rfind("(deny file-write*").unwrap()..];
+        assert!(deny.contains("(subpath \"/private/tmp/ro\")"), "只读的其他文件夹明着不让写");
+        assert!(p.contains("(subpath \"/other/lib\")"), "能改的其他文件夹也能写");
+        let ro = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::ReadOnly, &[PathBuf::from("/other/lib")], &[]);
         assert!(!ro.contains("(subpath \"/Users/x/proj\")") && ro.contains("/t/tmp-1"));
+        assert!(!ro.contains("(subpath \"/other/lib\")"), "PLAN 里其他文件夹也不能写");
     }
 
     #[tokio::test]
@@ -510,5 +543,24 @@ mod tests {
         assert!(!git.ok());
         let net = run(&ctx, &json!({"command":"/usr/bin/curl -sS -o /dev/null -w '%{http_code}' https://example.com || true"}), Sandbox::Project, never(), |_| {}).await.unwrap();
         assert!(!net.output.contains("Operation not permitted"), "{}", net.output);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn the_sandbox_guards_nested_git_and_read_only_folders() {
+        let p = TempProject::new();
+        // 只读的其他文件夹放在 /private/tmp 下（那里本来谁都能写）
+        let ro = std::path::PathBuf::from(format!("/private/tmp/peck-ro-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&ro).unwrap();
+        let ctx = p.ctx(PermissionLevel::Edit).with_extra(&[(ro.clone(), false)]);
+        std::fs::create_dir_all(p.dir.join("vendor/sub/.git/hooks")).unwrap();
+        std::fs::create_dir_all(p.dir.join(".github")).unwrap();
+        let hook = run(&ctx, &json!({"command":"echo x > vendor/sub/.git/hooks/post-checkout"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        assert!(!hook.ok() && !p.dir.join("vendor/sub/.git/hooks/post-checkout").exists(), "{}", hook.output);
+        let gh = run(&ctx, &json!({"command":"echo x > .github/ok.yml && echo x > vendor/sub/ok.txt"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        assert!(gh.ok(), "{}", gh.output);
+        let write_ro = run(&ctx, &json!({"command": format!("echo x > {}/x.txt", ro.display())}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        assert!(!write_ro.ok() && !ro.join("x.txt").exists(), "{}", write_ro.output);
+        let _ = std::fs::remove_dir_all(&ro);
     }
 }

@@ -1,6 +1,6 @@
 //! 读、列、找、整份写：`list_directory`、`read_file`、`find_files`、`write_file`。
 
-use super::{file_diff, resolve, str_arg, u64_arg, ToolContext, ToolResult};
+use super::{file_diff, str_arg, u64_arg, ToolContext, ToolResult};
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -26,7 +26,7 @@ pub fn walker(base: &Path, depth: Option<usize>) -> ignore::WalkBuilder {
 }
 
 pub fn list_directory(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String> {
-    let dir = resolve(&ctx.root, str_arg(input, "path").unwrap_or("."))?;
+    let dir = ctx.resolve_path(str_arg(input, "path").unwrap_or("."), false)?;
     if !dir.is_dir() {
         return Err(format!("{} 不是文件夹。", ctx.rel(&dir)));
     }
@@ -73,7 +73,7 @@ fn read_file_within(ctx: &ToolContext, input: &Value, whole_file: u64) -> Result
     let file = if given.is_absolute() && ctx.is_spill(given) && !raw.contains("..") {
         given.to_path_buf()
     } else {
-        resolve(&ctx.root, raw)?
+        ctx.resolve_path(raw, false)?
     };
     if file.is_dir() {
         return Err(format!("{} 是文件夹，用 list_directory 看。", ctx.rel(&file)));
@@ -198,7 +198,7 @@ fn read_large(ctx: &ToolContext, file: &Path, size: u64, input: &Value) -> Resul
 
 pub fn find_files(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String> {
     let pattern = str_arg(input, "pattern").map(str::trim).filter(|p| !p.is_empty()).ok_or("缺 pattern。")?;
-    let base = resolve(&ctx.root, str_arg(input, "path").unwrap_or("."))?;
+    let base = ctx.resolve_path(str_arg(input, "path").unwrap_or("."), false)?;
     let glob = globset::GlobBuilder::new(pattern)
         .literal_separator(pattern.contains('/'))
         .build()
@@ -231,7 +231,7 @@ pub fn find_files(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String
 pub fn write_file(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String> {
     let raw = str_arg(input, "path").ok_or("缺 path。")?;
     let content = input.get("content").and_then(Value::as_str).ok_or("缺 content。")?;
-    let file = resolve(&ctx.root, raw)?;
+    let file = ctx.resolve_path(raw, true)?;
     if file.is_dir() {
         return Err(format!("{} 是文件夹。", ctx.rel(&file)));
     }

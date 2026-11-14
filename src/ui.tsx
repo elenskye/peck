@@ -1,5 +1,5 @@
 // 小零件：都是 `src/vendor/peck/bundle.css` 里 pk- 组件的标准写法（照 components/<组件>/preview.html）。
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn, type DotKind } from "@/lib/utils";
 
@@ -154,6 +154,54 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
   );
 }
 
+/** ⓘ（v0.7）：界面上的说明文字都收进这里，悬停、聚焦或点一下看。图标是云端的占位（一格像素「i」），
+ *  等本地在方案里画、站主批了再换。弹层挂在 body 上（模块的像素切角会裁掉放在里面的）。 */
+export const Info: React.FC<{ text: React.ReactNode; label?: string }> = ({ text, label = "说明" }) => {
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [place, setPlace] = useState<React.CSSProperties>({});
+  const ref = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const id = useId();
+  // 从按钮移到弹层上要一点时间：晚一下再收，移进弹层就不收（能选里面的字）。
+  const hideTimer = useRef(0);
+  const hideSoon = () => { if (!pinned) hideTimer.current = window.setTimeout(() => setOpen(false), 150); };
+  const keep = () => window.clearTimeout(hideTimer.current);
+  useEffect(() => () => window.clearTimeout(hideTimer.current), []);
+  const show = () => {
+    keep();
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = 280;
+    const left = Math.max(8, Math.min(r.left - 12, window.innerWidth - width - 8));
+    const below = r.bottom + 6 + 120 < window.innerHeight;
+    setPlace(below ? { left, top: r.bottom + 6, width } : { left, bottom: window.innerHeight - r.top + 6, width });
+    setOpen(true);
+  };
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { const t = e.target as Node; if (pinned && !ref.current?.contains(t) && !pop.current?.contains(t)) { setPinned(false); setOpen(false); } };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setPinned(false); setOpen(false); } };
+    window.addEventListener("mousedown", away);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("keydown", esc); };
+  }, [open, pinned]);
+  return (
+    <>
+      <button ref={ref} type="button" className={cn("info-btn", open && "is-on")} aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined}
+        onMouseEnter={show} onMouseLeave={hideSoon}
+        onFocus={show} onBlur={() => { if (!pinned) setOpen(false); }}
+        onClick={(e) => { e.stopPropagation(); if (pinned) { setPinned(false); setOpen(false); } else { setPinned(true); show(); } }}>
+        <i className="info-i" aria-hidden="true" />
+      </button>
+      {open && createPortal(
+        <div ref={pop} id={id} className="pk-anim-reveal-s info-pop" role="tooltip" style={place} onMouseEnter={keep} onMouseLeave={hideSoon}>{text}</div>,
+        document.querySelector(".app") ?? document.body,
+      )}
+    </>
+  );
+};
+
 /** 输入框（单独的一格）：前面一个 ›。 */
 export const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { off?: boolean; width?: number }> = ({ off, width, className, ...rest }) => (
   <label className={cn("pk-field", off && "is-off", className)} style={width ? { width } : undefined}>
@@ -163,10 +211,11 @@ export const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { off
 );
 
 /** 设置行（K7）：左边名字和一句说明，右边控件。 */
-export const Row: React.FC<{ name: React.ReactNode; desc?: React.ReactNode; off?: boolean; children?: React.ReactNode }> = ({ name, desc, off, children }) => (
+/** 设置里的一行：名字（`info` 是收进 ⓘ 的说明）、一行状态（`desc`，只写现在是什么样）、右边的控件。 */
+export const Row: React.FC<{ name: React.ReactNode; desc?: React.ReactNode; info?: React.ReactNode; off?: boolean; children?: React.ReactNode }> = ({ name, desc, info, off, children }) => (
   <div className={cn("set-row", off && "is-off")}>
     <div>
-      <p className="set-name t-name">{name}</p>
+      <p className="set-name t-name">{name}{info && <Info text={info} />}</p>
       {desc && <p className="set-desc">{desc}</p>}
     </div>
     <div className="set-ctl">{children}</div>

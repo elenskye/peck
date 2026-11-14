@@ -25,6 +25,25 @@ pub struct ActiveRunContext {
     pub plan: DispatchPlan,
     pub agents: Vec<AgentManifest>,
     pub cancel_handle: ProcessCancelHandle,
+    /// 项目文件夹以外这个任务能写的文件夹（项目的「能改」的其他文件夹，v0.7）。
+    pub writable: Vec<PathBuf>,
+}
+
+impl ActiveRunContext {
+    /// 这个任务会写的文件夹和 `folders` 有没有重叠（一样、或者一个在另一个里面）：
+    /// 重叠的两个任务会共用一个影子仓库、互相算进对方的改动，不让同时跑。
+    pub fn touches(&self, folders: &[PathBuf]) -> bool {
+        std::iter::once(&self.workspace_path)
+            .chain(self.writable.iter())
+            .any(|a| folders.iter().any(|b| overlaps(a, b)))
+    }
+}
+
+/// 两个文件夹一样，或者一个在另一个里面（比较前先认真实路径）。
+pub fn overlaps(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let a = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let b = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    a.starts_with(&b) || b.starts_with(&a)
 }
 
 /// Execute a `DispatchPlan` sequentially starting at `start_step_index`.

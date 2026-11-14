@@ -6,7 +6,7 @@ import type { ThemeChoice } from "@/lib/theme";
 import type { CliAccount, CliAccountStatus, CliLoginState, EngineAccounts, GatewayConfig, ModelEntry } from "@/lib/agentEvents";
 import type { AgentInfo, Permission } from "@/lib/types";
 import { PERMISSIONS, agentDot, agentName, ago, cn, engineDot } from "@/lib/utils";
-import { Btn, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
+import { Btn, Dot, Field, Icon, Info, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
 
 const NAV = [
   ["PROVIDERS", "供应商和 Key"],
@@ -85,8 +85,7 @@ export const SettingsPage: React.FC<Props> = (props) => {
 
 const Pane: React.FC<{ title: string; lead: string; children: React.ReactNode }> = ({ title, lead, children }) => (
   <>
-    <h2 className="t-title">{title}</h2>
-    <p className="lead">{lead}</p>
+    <h2 className="t-title">{title}<Info text={lead} /></h2>
     {children}
   </>
 );
@@ -135,14 +134,14 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
                   <Seg label="阿里云服务地域" sm items={[{ id: "beijing", label: "BEIJING" }, { id: "singapore", label: "SINGAPORE" }]} value={config.aliyunRegion} onChange={(aliyunRegion) => change({ ...config, aliyunRegion })} />
                   <Field aria-label="阿里云业务空间 ID" placeholder="业务空间 ID（可以不填）" value={config.aliyunWorkspaceId} onChange={(e) => change({ ...config, aliyunWorkspaceId: e.target.value.trim() })} />
                   <Btn sm disabled={busy || !dirty} onClick={() => void save("百炼的地域存好了")}>SAVE</Btn>
-                  <span className="hint">地域要和 Key 一致</span>
+                  <Info text="地域要和 Key 一致" />
                 </div>
               )}
             </div>
           );
         })}
       </div>
-      <div className="set-inline"><Btn sm disabled={busy} onClick={() => void act(async () => { await api.loadKeys(); await onRefreshApi(); })}>READ KEYS</Btn><span className="hint">打开 App 时自动读。AI 的 Key 一包、其他 Key 一包，Peck 每次更新最多问两次授权；拒了就点这里再问。</span></div>
+      <div className="set-inline"><Btn sm disabled={busy} onClick={() => void act(async () => { await api.loadKeys(); await onRefreshApi(); })}>READ KEYS</Btn><Info text="打开 App 时自动读。AI 的 Key 一包、其他 Key 一包，Peck 每次更新最多问两次授权；拒了就点这里再问。" /></div>
       <Vertex say={say} />
     </Pane>
   );
@@ -172,10 +171,10 @@ const ModelEditor: React.FC<{ model: ModelProfile; status: ApiStatus; onSave: (m
       <Row name="思考能力" desc={known ? "内置模型，能力是核对过的。" : "自己填的能力没在真实服务上验过。"}>
         <Pick label="思考能力" disabled={known} value={model.thinking} options={(Object.keys(THINKING) as Thinking[]).map((id) => ({ id, label: THINKING[id] }))} onChange={(thinking) => setModel({ ...model, thinking, efforts: thinking === "never" ? [] : model.efforts })} />
       </Row>
-      <Row name="思考档位" desc="照这个模型的官方说法填，用逗号隔开，比如 low, high">
+      <Row name="思考档位" info="照这个模型的官方说法填，用逗号隔开，比如 low, high">
         <Field width={260} aria-label="思考档位" off={known || model.thinking === "never" || model.providerId === "aliyun"} value={efforts} onChange={(e) => setEfforts(e.target.value)} />
       </Row>
-      <Row name="支持工具调用" desc="不支持的模型不能干活"><Switch label="支持工具调用" on={model.tools} disabled={known} onChange={(tools) => setModel({ ...model, tools })} /></Row>
+      <Row name="支持工具调用" info="不支持的模型不能干活"><Switch label="支持工具调用" on={model.tools} disabled={known} onChange={(tools) => setModel({ ...model, tools })} /></Row>
       <div className="set-inline">
         <Btn disabled={!model.name.trim() || !model.apiModel.trim()} onClick={() => onSave({ ...model, efforts: known ? model.efforts : model.thinking === "never" ? [] : efforts.split(",").map((s) => s.trim()).filter(Boolean) })}>APPLY</Btn>
         <Btn v="ghost" onClick={onCancel}>CANCEL</Btn>
@@ -197,12 +196,11 @@ const SpendNote: React.FC<{ cap: number | null }> = ({ cap }) => {
 const Limit: React.FC<Props> = ({ settings, onSettings }) => (
   <Pane title="花费上限" lead="一个月里 Peck 循环和 ONE SHOT（API 模型）加起来的钱，按价格表算。CLI 用的是订阅额度，不算在这里。">
     <div className="set-rows">
-      <Row name="每月上限" desc={<SpendNote cap={settings.costCap} />}>
+      <Row name="每月上限" desc={<SpendNote cap={settings.costCap} />} info="设了上限时，价格表里没有价格的模型发不出去（花了多少算不出来）。Peck 循环另有轮数（40）的上限，上下文到压缩线自动压缩；旧的规划 + 实施的上限在开发者选项里。">
         <span className="hint">$</span>
         <Field width={130} type="number" aria-label="每月花费上限（美元）" min={0} value={settings.costCap ?? ""} onChange={(e) => onSettings({ costCap: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })} />
       </Row>
     </div>
-    <p className="hint">设了上限时，价格表里没有价格的模型发不出去（花了多少算不出来）。Peck 循环另有轮数（40）和上下文（85%）的上限；旧的规划 + 实施的上限在开发者选项里。</p>
   </Pane>
 );
 
@@ -236,8 +234,7 @@ const Access: React.FC<Props> = ({ settings, onSettings, say }) => {
       <div className="chips">
         {HIGH_RISK.map((t) => <span key={t} className="chip-quiet"><Icon name="lock" size={12} />{t}</span>)}
       </div>
-      <p className="hint">这几样算高危：不管哪一档都弹卡片，只有 ALLOW 和 DENY，不能「总是允许」。</p>
-      <p className="lbl">ALWAYS ALLOWED</p>
+      <p className="lbl">ALWAYS ALLOWED<Info text="上面几样算高危：不管哪一档都弹卡片，只有 ALLOW 和 DENY，不能「总是允许」。EDIT 档装依赖、起常驻进程时弹卡，点 ALWAYS 就记在这里；撤掉以后下次又会问。" /></p>
       {rules && rules.length > 0 ? (
         <div className="set-rows">
           {rules.map((r) => (
@@ -247,7 +244,7 @@ const Access: React.FC<Props> = ({ settings, onSettings, say }) => {
           ))}
         </div>
       ) : (
-        <p className="hint">{rules ? "还没有。EDIT 档装依赖、起常驻进程时会弹卡，点 ALWAYS 就记在这里；撤掉以后下次又会问。" : "在读…"}</p>
+        <p className="hint">{rules ? "还没有。" : "在读…"}</p>
       )}
     </Pane>
   );
@@ -283,7 +280,7 @@ const AgentRow: React.FC<{ agent: AgentInfo; onRefresh: () => Promise<void>; say
       {toml != null && (
         <div className="set-toml">
           <textarea className="t-code sel" aria-label={`${agent.name} 的清单（TOML）`} rows={11} spellCheck={false} autoCorrect="off" autoCapitalize="off" value={toml} onChange={(e) => setToml(e.target.value)} />
-          <div className="set-inline"><Btn sm v="primary" disabled={busy} onClick={() => void save()}>SAVE</Btn><span className="hint">存了以后下一个任务生效。登录交给 CLI 自己，Key 不要写进清单。</span></div>
+          <div className="set-inline"><Btn sm v="primary" disabled={busy} onClick={() => void save()}>SAVE</Btn><Info text="存了以后下一个任务生效。登录交给 CLI 自己，Key 不要写进清单。" /></div>
         </div>
       )}
     </div>
@@ -350,12 +347,11 @@ const CliAccounts: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
   if (!groups) return null;
   return (
     <>
-      <p className="lbl">登录</p>
-      <p className="hint">Claude Code、Codex 用的就是 Claude 客户端、ChatGPT 客户端那一个账号（CLI 自己的默认位置）。要换账号点 RELOGIN；换了以后让 CLI 和客户端是同一个账号。登录时 Peck 不自动开浏览器，给你链接，自己挑浏览器去登。</p>
+      <p className="lbl">登录<Info text="Claude Code、Codex 用的就是 Claude 客户端、ChatGPT 客户端那一个账号（CLI 自己的默认位置）。要换账号点 RELOGIN；换了以后让 CLI 和客户端是同一个账号。登录时 Peck 不自动开浏览器，给你链接，自己挑浏览器去登。" /></p>
       <div className="set-rows">
         {groups.flatMap((g) => g.accounts.map((a) => <AccountRow key={g.engine} engine={g.engine} engineLabel={g.label} note={g.defaultNote} account={a} say={say} />))}
       </div>
-      <div className="set-inline"><Btn icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("登录状态都看过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn><span className="hint">只跑各家的登录状态命令，不发模型请求、不花额度。</span></div>
+      <div className="set-inline"><Btn icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("登录状态都看过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn><Info text="只跑各家的登录状态命令，不发模型请求、不花额度。" /></div>
     </>
   );
 };
@@ -468,7 +464,7 @@ const Vertex: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
             <Field width={150} aria-label="Vertex AI 的 Location" placeholder="global" value={draft.vertex.location} off={busy} onChange={(e) => set({ location: e.target.value })} />
             <Btn sm disabled={busy || !dirty} onClick={() => void save("Vertex AI 的设置存好了")}>SAVE</Btn>
           </div>
-          <span className="hint">Location 不填就是 global；指定区域写 us-east5 这样的。</span>
+          <Info text="Location 不填就是 global；指定区域写 us-east5 这样的。" />
         </div>
       </div>
     </>
@@ -480,7 +476,7 @@ const CliDir: React.FC<{ say: (m: unknown) => void; onSaved: () => void }> = ({ 
   if (!draft) return null;
   return (
     <div className="set-block">
-      <Row name="CLI 目录" desc="先在这里找。打开 App 时空着，Peck 会自己找一个（旧清单旁边的 bin、你终端的 PATH）存上">{draft.cliDir ? <Tag v="ok">SET</Tag> : <Tag>PATH</Tag>}</Row>
+      <Row name="CLI 目录" info="先在这里找。打开 App 时空着，Peck 会自己找一个（旧清单旁边的 bin、你终端的 PATH）存上">{draft.cliDir ? <Tag v="ok">SET</Tag> : <Tag>PATH</Tag>}</Row>
       <div className="set-inline">
         <Field aria-label="CLI 目录" placeholder="~/…/cli/bin" value={draft.cliDir} off={busy} onChange={(e) => setDraft({ ...draft, cliDir: e.target.value })} />
         <Btn sm disabled={busy || !dirty} onClick={() => void save("CLI 目录存好了").then(onSaved)}>SAVE</Btn>
@@ -494,9 +490,9 @@ const CliDir: React.FC<{ say: (m: unknown) => void; onSaved: () => void }> = ({ 
 const Notify: React.FC<Props> = ({ settings, onSettings }) => (
   <Pane title="通知" lead="菜单栏小图标和 macOS 通知。">
     <div className="set-rows">
-      <Row name="做完发通知" desc="任务做完、失败或停下时发一条 macOS 通知；Peck 就在最前面时不发。"><Switch label="做完发通知" on={settings.notifyDone} onChange={(notifyDone) => onSettings({ notifyDone })} /></Row>
-      <Row name="菜单栏小图标" desc="有任务在跑时变样（三颗点轮流亮）；点它回到 Peck。"><Tag v="ok">ON</Tag></Row>
-      <Row name="要你批、要你答时发通知" desc="弹审批卡片、ASK 卡片时发一条通知；和「做完发通知」一起开关。"><Tag v={settings.notifyDone ? "ok" : undefined}>{settings.notifyDone ? "ON" : "OFF"}</Tag></Row>
+      <Row name="做完发通知" info="任务做完、失败或停下时发一条 macOS 通知；Peck 就在最前面时不发。"><Switch label="做完发通知" on={settings.notifyDone} onChange={(notifyDone) => onSettings({ notifyDone })} /></Row>
+      <Row name="菜单栏小图标" info="有任务在跑时变样（三颗点轮流亮），两个以上旁边写个数；点它回到 Peck。"><Tag v="ok">ON</Tag></Row>
+      <Row name="要你批、要你答时发通知" info="弹审批卡片、ASK 卡片时发一条通知；和「做完发通知」一起开关。"><Tag v={settings.notifyDone ? "ok" : undefined}>{settings.notifyDone ? "ON" : "OFF"}</Tag></Row>
     </div>
   </Pane>
 );
@@ -504,10 +500,10 @@ const Notify: React.FC<Props> = ({ settings, onSettings }) => (
 const Look: React.FC<Props> = ({ settings, onSettings }) => (
   <Pane title="外观" lead="默认跟随系统的明暗。">
     <div className="set-rows">
-      <Row name="明暗" desc="跟随系统，或者固定一种">
+      <Row name="明暗" info="跟随系统，或者固定一种">
         <Seg<ThemeChoice> label="明暗" sm items={[{ id: "system", label: "SYSTEM" }, { id: "dark", label: "DARK" }, { id: "light", label: "LIGHT" }]} value={settings.theme} onChange={(theme) => onSettings({ theme })} />
       </Row>
-      <Row name="App 图标" desc="Dock 里的图标，切了马上换；访达里的还是 J2。">
+      <Row name="App 图标" info="Dock 里的图标，切了马上换；访达里的还是 J2。">
         <Seg<"j2" | "a3"> label="App 图标" sm items={[{ id: "j2", label: "J2" }, { id: "a3", label: "A3" }]} value={settings.appIcon} onChange={(appIcon) => onSettings({ appIcon })} />
       </Row>
     </div>
@@ -522,19 +518,18 @@ const Dev: React.FC<Props> = ({ settings, onSettings, agents, onRefreshAgents, a
   return (
     <Pane title="开发者选项" lead="给测试和验收用，平时不用动。">
       <div className="set-rows">
-        <Row name="假 Agent" desc="开了以后「谁来干」里多一个 FAKE：不推理，照剧本写几个演示文件，几秒跑完。拿临时文件夹当项目来试。">
+        <Row name="假 Agent" info="开了以后「谁来干」里多一个 FAKE：不推理，照剧本写几个演示文件，几秒跑完。拿临时文件夹当项目来试。">
           <Switch label="假 Agent" on={settings.fakeAgent} onChange={(fakeAgent) => onSettings({ fakeAgent })} />
         </Row>
         <Row name="API 请求发到哪" off={!native} desc={!native ? "浏览器演示里不发请求。" : apiStatus?.mode === "real" ? "真实：Peck 循环、ONE SHOT 发真请求、花真钱（受花费上限管）；旧的规划 + 实施另外还占授权次数。" : "模拟：不联网，Peck 循环和 ONE SHOT 用假模型演示，Key 只在内存。"}>
           <Seg<ApiMode> label="API 请求发到哪" sm disabled={!native} items={[{ id: "mock", label: "MOCK" }, { id: "real", label: "REAL" }]} value={apiStatus?.mode ?? "mock"} onChange={(mode) => void api.setMode(mode).then(onRefreshApi).catch(say)} />
         </Row>
-        <Row name="导出调用记录" off={!native} desc="旧的规划 + 实施的调用记录，脱敏的 JSON：不含 Key、路径、提示词和回复，未知费用写空">
+        <Row name="导出调用记录" off={!native} info="旧的规划 + 实施的调用记录，脱敏的 JSON：不含 Key、路径、提示词和回复，未知费用写空">
           <Btn sm disabled={!native} onClick={() => void api.exportCalls().then((path) => say(path ? "调用记录导出好了" : "没有导出")).catch(say)}>EXPORT</Btn>
         </Row>
       </div>
 
-      <p className="lbl">LEGACY</p>
-      <p className="lead">旧的接力（Muse → Grok、Grok → Muse）、规划 + 实施和假 Agent 还跑在旧代码上，v0.8 并进 Peck 循环和多引擎合作；它们的设置先放这里。</p>
+      <p className="lbl">LEGACY<Info text="旧的接力（Muse → Grok、Grok → Muse）、规划 + 实施和假 Agent 还跑在旧代码上，v0.8 并进 Peck 循环和多引擎合作；它们的设置先放这里。" /></p>
       <div className="set-rows">
         {legacy.map((a) => <AgentRow key={a.id} agent={a} onRefresh={onRefreshAgents} say={say} />)}
       </div>
@@ -580,7 +575,7 @@ const PlanModels: React.FC<Pick<Props, "apiStatus" | "onRefreshApi" | "say">> = 
             <Btn sm disabled={busy} onClick={() => setEditor({ ...m })}>EDIT</Btn>
           </Row>
         ))}
-        <Row name="加一个模型" desc="只给规划 + 实施用。思考能力、档位、工具支持要填清楚，不按名字猜。">
+        <Row name="加一个模型" info="只给规划 + 实施用。思考能力、档位、工具支持要填清楚，不按名字猜。">
           <Btn sm icon="plus" disabled={busy} onClick={() => setEditor({ id: crypto.randomUUID(), name: "新模型", providerId: "deepseek", apiModel: "", contextWindow: 131072, maxOutputTokens: 4096, thinking: "unknown", efforts: [], tools: false })}>ADD MODEL</Btn>
         </Row>
       </div>
@@ -600,7 +595,7 @@ const PlanModels: React.FC<Pick<Props, "apiStatus" | "onRefreshApi" | "say">> = 
       )}
       <div className="set-inline set-save">
         <Btn v="primary" disabled={busy || !dirty || !!editor} onClick={() => void save("规划 + 实施的模型存好了，下一个任务生效")}>SAVE</Btn>
-        <span className="hint">{dirty ? "有没存的修改" : "改了要点 SAVE 才生效。"}</span>
+        {dirty && <span className="hint">有没存的修改</span>}
       </div>
     </>
   );
@@ -621,7 +616,7 @@ const PlanLimits: React.FC<Pick<Props, "settings" | "onSettings">> = ({ settings
   const [more, setMore] = useState(false);
   return (
     <div className="set-rows">
-      <Row name="规划 + 实施的上限" desc="轮数、工具次数、上下文、Token、委派和返工；到了哪一个都会停下。平时不用动。">
+      <Row name="规划 + 实施的上限" info="轮数、工具次数、上下文、Token、委派和返工；到了哪一个都会停下。平时不用动。">
         <Btn sm onClick={() => setMore(!more)}>{more ? "HIDE" : "SHOW"}</Btn>
       </Row>
       {more && LIMITS.map(([key, name, desc, min, max]) => (

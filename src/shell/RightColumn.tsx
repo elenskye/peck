@@ -6,8 +6,10 @@ import { ipc } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import type { DiffResult, FileChangeItem, FileListing, FilePreview, ProjectOverview, RunRecord, UndoPreview } from "@/lib/types";
 import { clock, cn, fileSize, isMarkdownFile, runState, shortenHomePath, span, stepName } from "@/lib/utils";
-import { Btn, Icon, ModHead, Twinkle, type IconName } from "@/ui";
+import { Btn, Icon, Info, ModHead, Twinkle, type IconName } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
+import { Md } from "@/shell/Markdown";
+import { highlight, type Token } from "@/lib/highlight";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { EffortPicker, WhoPicker, cliModelOf, defaultEffort, sendEffort } from "@/shell/ModelPicker";
 
@@ -34,8 +36,12 @@ interface Props {
   entries: ModelEntry[];
   settings: AppSettings;
   onSettings: (patch: Partial<AppSettings>) => void;
-  /** 把 ONE SHOT 的回答放进中栏输入框 */
+  /** 把 ONE SHOT 的回答、CHANGES 里攒的批注放进中栏输入框 */
   onToTask: (text: string) => void;
+  /** 任务记录变了（独立工作区搬回、丢掉） */
+  onRunUpdated: (record: RunRecord) => void;
+  /** 原生窗口（Quick Look 只在原生里有） */
+  native: boolean;
 }
 
 const Expand: React.FC<{ wide: boolean; onWide: (wide: boolean) => void }> = ({ wide, onWide }) => (
@@ -178,12 +184,11 @@ const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, setti
   }
   return (
     <div className="pk-mod col-grow oneshot" style={hide}>
-      <ModHead label="ONE SHOT" note="只读 · 不打断任务"><Expand wide={wide} onWide={onWide} /></ModHead>
+      <ModHead label="ONE SHOT" note={<>只读 · 不打断任务<Info text="边干活边问一句。它能读整个项目，但不改文件；任务进度和终端输出它看不到，要带上就贴进问题里。API 模型按次算钱，算进花费上限；CLI 用它们的订阅额度。Antigravity 只做直接调用，不在这里。" /></>}><Expand wide={wide} onWide={onWide} /></ModHead>
       <div className="col-grow scroll oneshot-body">
         {!asked ? (
           <div className="empty">
-            <p>边干活边问一句。它能读整个项目，但不改文件；任务进度和终端输出它看不到，要带上就贴进问题里。</p>
-            <p className="empty-s">API 模型按次算钱，算进花费上限；CLI 用它们的订阅额度。Antigravity 只做直接调用，不在这里。</p>
+            <p>边干活边问一句，只读。</p>
           </div>
         ) : (
           <>
@@ -243,8 +248,39 @@ function addedLines(raw: string): Set<number> {
   return new Set(parseDiff(raw).filter((l) => l.type === "add").map((l) => l.newNo!));
 }
 
-const DiffView: React.FC<{ diff: DiffResult; split: boolean }> = ({ diff, split }) => {
+/** 一条批注：哪个文件、哪一行（任务后的行号；删掉的行用任务前的）、那一行写的什么、批了什么。 */
+export interface DiffComment { id: string; runId: string; path: string; line: number; side: "new" | "old"; quote: string; text: string }
+export type HunkState = "accepted" | "rejected";
+
+/** 浏览器里存一份（只是这台机器上的方便：刷新、重开还在；读不到就从空的开始）。换了 key 当场读新的，不先露一下旧的。 */
+function useStored<T>(key: string, init: T): [T, (next: T) => void] {
+  const read = (): T => { try { const raw = localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : init; } catch { return init; } };
+  const [held, setHeld] = useState<{ key: string; value: T }>(() => ({ key, value: read() }));
+  const value = held.key === key ? held.value : read();
+  useEffect(() => { if (held.key !== key) setHeld({ key, value: read() }); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (next: T) => { setHeld({ key, value: next }); try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* 存不了就只在这次 */ } };
+  return [value, set];
+}
+
+/** 按块接受 / 拒绝的状态只留最近这么多条（键是「任务:文件:第几块」）。 */
+const HUNK_KEEP = 2000;
+
+/** 删任务时把它在这台机器上存的批注一起清掉。 */
+export function forgetTaskNotes(taskId: string) {
+  try { localStorage.removeItem(`peck.comments.${taskId}`); } catch { /* 读不到就算了 */ }
+}
+
+const DiffView: React.FC<{
+  diff: DiffResult;
+  split: boolean;
+  /** 能按块接受 / 拒绝时才有。 */
+  hunks?: { state: (i: number) => HunkState | undefined; act: (i: number, action: HunkState) => void; busy: number | null };
+  /** 能批注时才有。 */
+  notes?: { list: DiffComment[]; add: (line: number, side: "new" | "old", quote: string, text: string) => void; remove: (id: string) => void };
+}> = ({ diff, split, hunks, notes }) => {
   const lines = useMemo(() => parseDiff(diff.unifiedDiff), [diff.unifiedDiff]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
   if (lines.length === 0) return <p className="empty-line">这个文件没有文字上的改动（可能是图片、二进制，或者只是权限变了）。</p>;
   const row = (l: DiffLine, i: number, side?: "old" | "new") => (
     <div key={i} className={cn("dl", `dl--${l.type}`)}>
@@ -261,8 +297,89 @@ const DiffView: React.FC<{ diff: DiffResult; split: boolean }> = ({ diff, split 
       </div>
     );
   }
-  return <div className="diff sel scroll">{lines.map((l, i) => row(l, i))}</div>;
+  let hunk = -1;
+  return (
+    <div className="diff sel scroll">
+      {lines.map((l, i) => {
+        if (l.type === "hunk") {
+          hunk += 1;
+          const h = hunk;
+          const state = hunks?.state(h);
+          return (
+            <div key={i} className={cn("dl dl--hunk", state && `is-${state}`)}>
+              <span className="dl-n" />
+              <span className="dl-m" />
+              <span className="dl-t">⋯ {l.text}</span>
+              {hunks && (
+                <span className="dl-acts">
+                  {state ? <em className={cn("t-label", state === "rejected" ? "is-bad" : "is-ok")}>{state === "rejected" ? "REJECTED" : "ACCEPTED"}</em> : (
+                    <>
+                      <button type="button" className="dl-act" disabled={hunks.busy != null} onClick={() => hunks.act(h, "rejected")}>REJECT</button>
+                      <button type="button" className="dl-act" disabled={hunks.busy != null} onClick={() => hunks.act(h, "accepted")}>ACCEPT</button>
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
+          );
+        }
+        const side: "new" | "old" = l.type === "del" ? "old" : "new";
+        const no = side === "new" ? l.newNo! : l.oldNo!;
+        const key = `${side}:${no}`;
+        const mine = notes?.list.filter((c) => c.side === side && c.line === no) ?? [];
+        return (
+          <React.Fragment key={i}>
+            <div className={cn("dl", `dl--${l.type}`, mine.length > 0 && "has-note")}>
+              {notes ? (
+                <button type="button" className="dl-n dl-n--btn" title="批注这一行" onClick={() => { setEditing(editing === key ? null : key); setDraft(""); }}>{l.newNo ?? l.oldNo ?? ""}</button>
+              ) : <span className="dl-n">{l.newNo ?? l.oldNo ?? ""}</span>}
+              <span className="dl-m">{l.type === "add" ? "+" : l.type === "del" ? "−" : ""}</span>
+              <span className="dl-t">{l.text || " "}</span>
+            </div>
+            {mine.map((c) => (
+              <div key={c.id} className="dl-note">
+                <Icon name="chat" size={12} />
+                <span className="dl-note-t">{c.text}</span>
+                <button type="button" className="dl-act" aria-label="删掉这条批注" onClick={() => notes!.remove(c.id)}><Icon name="x" size={12} /></button>
+              </div>
+            ))}
+            {notes && editing === key && (
+              <div className="dl-edit">
+                <textarea autoFocus rows={2} value={draft} aria-label="批注" spellCheck={false}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setEditing(null);
+                    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
+                      e.preventDefault();
+                      if (draft.trim()) { notes.add(no, side, l.text, draft.trim()); setEditing(null); }
+                    }
+                  }} />
+                <div className="dl-edit-acts">
+                  <Btn v="ghost" sm onClick={() => setEditing(null)}>CANCEL</Btn>
+                  <Btn sm disabled={!draft.trim()} onClick={() => { notes.add(no, side, l.text, draft.trim()); setEditing(null); }}>ADD</Btn>
+                </div>
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
 };
+
+/** 攒着的批注 → 一段话（放进中栏输入框，接着这个任务发）。 */
+export function commentsToPrompt(list: DiffComment[]): string {
+  const byFile = new Map<string, DiffComment[]>();
+  for (const c of list) byFile.set(c.path, [...(byFile.get(c.path) ?? []), c]);
+  const parts = ["针对改动的批注，照这些改："];
+  for (const [path, items] of byFile) {
+    for (const c of items.sort((a, b) => a.line - b.line)) {
+      const quote = c.quote.trim() ? `（\`${c.quote.trim().slice(0, 80)}\`）` : "";
+      parts.push(`- \`${path}\` ${c.side === "old" ? "原来的" : ""}第 ${c.line} 行${quote}：${c.text}`);
+    }
+  }
+  return parts.join("\n");
+}
 
 /** Markdown 只做够看规范和清单的那几样：标题、列表、勾选、引用、代码。 */
 const Markdown: React.FC<{ text: string }> = ({ text }) => {
@@ -301,8 +418,19 @@ const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; o
   </button>
 );
 
-const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePath, onUndo, busy }) => {
+const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePath, onUndo, busy, onToTask, onRunUpdated, say }) => {
   const [stepId, setStepId] = useState<string | null>(null);
+  const [hunkStates, storeHunkStates] = useStored<Record<string, HunkState>>("peck.hunks", {});
+  // 新的放最后，太多了丢最早的。
+  const setHunkStates = (next: Record<string, HunkState>) => {
+    const keys = Object.keys(next);
+    storeHunkStates(keys.length > HUNK_KEEP ? Object.fromEntries(keys.slice(-HUNK_KEEP).map((k) => [k, next[k]])) : next);
+  };
+  const [hunkBusy, setHunkBusy] = useState<number | null>(null);
+  const [comments, setComments] = useStored<DiffComment[]>(`peck.comments.${run?.sessionId ?? "none"}`, []);
+  const [conflicts, setConflicts] = useState<string[] | null>(null);
+  const [moving, setMoving] = useState(false);
+  useEffect(() => { setConflicts(null); }, [run?.id]);
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [diffError, setDiffError] = useState("");
   const [view, setView] = useState<"diff" | "split" | "view">("diff");
@@ -358,6 +486,44 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
   };
 
   const canView = !!diff && isMarkdownFile(diff.filePath) && !!diff.contentAfter;
+  const wt = run?.worktree ?? null;
+  const wtPending = !!wt && !wt.appliedAt && !wt.discardedAt;
+  // 按块接受 / 拒绝：做完了、没撤销、独立工作区没丢掉、这个项目没在跑，看的是整个任务（不是某一步）时才能点。
+  const hunkKey = (i: number) => `${run?.id}:${selected?.path}:${i}`;
+  const canAct = !!run && !!selected && state !== "running" && state !== "undone" && !wt?.discardedAt && !busy && !stepId;
+  const actHunk = async (i: number, action: HunkState) => {
+    if (!run || !selected) return;
+    if (action === "accepted") { setHunkStates({ ...hunkStates, [hunkKey(i)]: action }); return; }
+    setHunkBusy(i);
+    try {
+      await ipc.changesHunkRevert(run.id, undefined, selected.path, i);
+      setHunkStates({ ...hunkStates, [hunkKey(i)]: action });
+    } catch (e) { say(e); } finally { setHunkBusy(null); }
+  };
+  const fileNotes = comments.filter((c) => c.runId === run?.id && c.path === selected?.path);
+  const addNote = (line: number, side: "new" | "old", quote: string, text: string) => {
+    if (!run || !selected) return;
+    setComments([...comments, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, runId: run.id, path: selected.path, line, side, quote, text }]);
+  };
+  const sendNotes = () => {
+    if (comments.length === 0) return;
+    onToTask(commentsToPrompt(comments));
+    setComments([]);
+  };
+  const apply = async (force: boolean) => {
+    if (!run) return;
+    setMoving(true);
+    try {
+      const r = await ipc.worktreeApply(run.id, force);
+      if (r.conflicts.length && !force) setConflicts(r.conflicts);
+      else { setConflicts(null); onRunUpdated(r.record); say(`搬回了 ${r.applied.length} 个文件`); }
+    } catch (e) { say(e); } finally { setMoving(false); }
+  };
+  const discard = async () => {
+    if (!run) return;
+    setMoving(true);
+    try { onRunUpdated(await ipc.worktreeDiscard(run.id)); setConflicts(null); } catch (e) { say(e); } finally { setMoving(false); }
+  };
   const list = (
     <div className="changes-list">
       <p className="snap"><Icon name="clock" size={12} /><span>{run ? `任务 ${run.number} · 任务前快照 · ${clock(run.startedAt)}` : "发任务时先存一份快照"}</span></p>
@@ -395,14 +561,49 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
         </div>
         <Btn v="ghost" sm onClick={copy} disabled={!diff}>{copied ? "COPIED" : "COPY"}</Btn>
       </div>
-      {diffError ? <p className="empty-line is-err sel">读不出这个文件的改动：{diffError}</p> : !diff ? <p className="empty-line">在读这个文件的改动…</p> : view === "view" && canView ? <Markdown text={diff.contentAfter!} /> : <DiffView diff={diff} split={view === "split"} />}
+      {diffError ? <p className="empty-line is-err sel">读不出这个文件的改动：{diffError}</p> : !diff ? <p className="empty-line">在读这个文件的改动…</p> : view === "view" && canView ? <Markdown text={diff.contentAfter!} /> : (
+        <DiffView diff={diff} split={view === "split"}
+          hunks={canAct ? { state: (i) => hunkStates[hunkKey(i)], act: (i, a) => void actHunk(i, a), busy: hunkBusy } : undefined}
+          notes={run && state !== "undone" ? { list: fileNotes, add: addNote, remove: (id) => setComments(comments.filter((c) => c.id !== id)) } : undefined} />
+      )}
     </div>
   );
   const changed = confirm?.files.filter((f) => f.changedSince).length ?? 0;
   const restored = confirm?.files.filter((f) => f.kind === "delete").length ?? 0;
+  const notesBar = comments.length > 0 && (
+    <div className="pk-bar notes-bar">
+      <Icon name="chat" />
+      <span className="pk-bar-text">{comments.length} 条批注</span>
+      <Btn v="ghost" sm onClick={() => setComments([])}>CLEAR</Btn>
+      <Btn v="primary" sm onClick={sendNotes}>TO TASK</Btn>
+    </div>
+  );
+  const worktreeBar = run && wt && (
+    <div className={cn("pk-bar wt-bar", wtPending && "pk-bar--wait")}>
+      <Icon name={wtPending ? "folder" : wt.appliedAt ? "check" : "trash"} />
+      <span className="pk-bar-text">{wtPending ? (state === "running" ? "在独立工作区里做，项目文件夹不动" : "在独立工作区里做完了，项目文件夹还没动") : wt.appliedAt ? `搬回了项目 · ${clock(wt.appliedAt)}` : `丢掉了独立工作区 · ${clock(wt.discardedAt!)}`}</span>
+      {wtPending && state !== "running" && !conflicts && (
+        <>
+          <Btn v="ghost" sm disabled={moving || busy} onClick={() => void discard()}>DISCARD</Btn>
+          <Btn v="primary" sm disabled={moving || busy} onClick={() => void apply(false)}>APPLY</Btn>
+        </>
+      )}
+    </div>
+  );
+  const conflictBox = conflicts && (
+    <div className="confirm">
+      <p className="confirm-t"><Icon name="bang" /><b className="t-name">{conflicts.length} 个文件在项目里也改过了</b></p>
+      <ul className="wt-conflicts t-code">{conflicts.map((c) => <li key={c}>{c}</li>)}</ul>
+      <div className="confirm-row">
+        <Btn v="fill" disabled={moving} onClick={() => void apply(true)}>APPLY ANYWAY</Btn>
+        <Btn disabled={moving} onClick={() => setConflicts(null)}>CANCEL</Btn>
+      </div>
+    </div>
+  );
   const foot = run && (
     <div className="changes-foot">
-      {state === "undone" ? (
+      {conflictBox}
+      {wtPending || wt?.discardedAt ? null : state === "undone" ? (
         fx === "out" ? null : <p className={cn("back", fx === "back" && "fx-back")}><Icon name="check" size={12} /><span>已撤销。要再做一次，点左边 NEW TASK。</span></p>
       ) : confirm ? (
         <div className="confirm">
@@ -419,15 +620,19 @@ const Changes: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFile
         </div>
       ) : state !== "running" && run.files.length > 0 ? (
         <>
-          <Btn v="danger" icon="undo" disabled={busy} onClick={() => void askUndo()}>UNDO TASK</Btn>
-          <p className="hint">{busy ? "这个项目有任务在跑，等它做完再撤销。" : `回到 ${clock(run.startedAt)} 开始前的样子，你的 Git 不动。`}</p>
+          <p className="set-inline undo-row">
+            <Btn v="danger" icon="undo" disabled={busy} onClick={() => void askUndo()}>UNDO TASK</Btn>
+            {busy ? <span className="hint">这个项目有任务在跑</span> : <Info text={`回到 ${clock(run.startedAt)} 开始前的样子；只动这个任务改过的文件，你的 Git 不动。`} />}
+          </p>
         </>
       ) : null}
     </div>
   );
   return (
     <div className="pk-mod col-grow changes">
-      <ModHead label="CHANGES" note={project ? "直接写进项目" : undefined}><Expand wide={wide} onWide={onWide} /></ModHead>
+      <ModHead label="CHANGES" note={project ? (wtPending ? "独立工作区" : "直接写进项目") : undefined}><Expand wide={wide} onWide={onWide} /></ModHead>
+      {worktreeBar}
+      {notesBar}
       <div className={cn("changes-body", wide && "changes-body--wide")}>
         <div className="changes-side">{list}{wide && foot}</div>
         {preview}
@@ -458,16 +663,63 @@ function buildTree(paths: Array<{ path: string; size: number }>): TreeNode[] {
   return root.children;
 }
 
-const WHY: Record<string, string> = { image: "图片不在这里预览。", binary: "二进制文件，不预览。", large: "文件太大（超过 400 KB），不预览。", missing: "这个文件现在不在了。" };
+const WHY: Record<string, string> = { binary: "二进制文件，不预览。", large: "文件太大，不预览。", missing: "这个文件现在不在了。" };
 
-const Files: React.FC<Props> = ({ project, run, wide, onWide, onTab, onFilePath, say }) => {
+/** 能切源码 / 预览的几种。 */
+const previewable = (path: string) => /\.(md|markdown|html?|svg)$/i.test(path);
+
+/** 项目里的 html 只看样子：沙箱里本来就不跑脚本；再不让它从网上取东西、不让它自己跳走。 */
+const htmlPreview = (html: string) =>
+  `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">${html.replace(/<meta[^>]*http-equiv\s*=\s*["']?refresh[^>]*>/gi, "")}`;
+
+/** 一行代码：上了色的片段，没有就原样。 */
+const CodeText: React.FC<{ text: string; tokens?: Token[] }> = ({ text, tokens }) => (
+  <span className="code-t">{tokens ? tokens.map((t, j) => <span key={j} className={t.cls || undefined}>{t.text}</span>) : text || " "}</span>
+);
+
+/** PDF：data URL 换成 blob 地址给 iframe（WebKit 里比 data URL 稳）。 */
+function useBlobUrl(dataUrl: string | null | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!dataUrl) { setUrl(null); return; }
+    let made: string | null = null;
+    let stop = false;
+    void fetch(dataUrl).then((r) => r.blob()).then((b) => { if (stop) return; made = URL.createObjectURL(b); setUrl(made); }).catch(() => { if (!stop) setUrl(dataUrl); });
+    return () => { stop = true; if (made) URL.revokeObjectURL(made); };
+  }, [dataUrl]);
+  return url;
+}
+
+/** Word、Excel 这类：Quick Look 的缩略图。 */
+const OfficePreview: React.FC<{ workspaceId: string; path: string; native: boolean; say: (m: unknown) => void }> = ({ workspaceId, path, say }) => {
+  const [img, setImg] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let stop = false;
+    setImg(null); setErr("");
+    void ipc.filesQuicklook(workspaceId, path).then((u) => { if (!stop) setImg(u); }).catch((e) => { if (!stop) setErr(String(e instanceof Error ? e.message : e).replace(/^Error:\s*/, "")); });
+    return () => { stop = true; };
+  }, [workspaceId, path]);
+  return (
+    <div className="media-box scroll">
+      {img ? <img src={img} alt={path} className="media-img media-img--page" /> : err ? <p className="empty-line">{err}</p> : <p className="empty-line"><Twinkle /> Quick Look…</p>}
+      <div className="preview-acts"><Btn v="ghost" sm onClick={() => void ipc.filesQuicklookOpen(workspaceId, path).catch(say)}>QUICK LOOK</Btn></div>
+    </div>
+  );
+};
+
+const Files: React.FC<Props> = ({ project, run, wide, onWide, onTab, onFilePath, say, native }) => {
   const [listing, setListing] = useState<FileListing | null>(null);
+  const [tokens, setTokens] = useState<Token[][] | null>(null);
+  const [view, setView] = useState<"src" | "view">("view");
   const [closed, setClosed] = useState<Set<string> | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [marks, setMarks] = useState<Set<number>>(new Set());
   const workspaceId = project?.workspace.id;
-  const changed = useMemo(() => new Map((run?.files ?? []).map((f) => [f.path, f])), [run?.files]);
+  // 独立工作区里做的、还没搬回：FILES 列的是项目文件夹，改动不在这里，就不标。
+  const elsewhere = !!run?.worktree && !run.worktree.appliedAt && !run.worktree.discardedAt;
+  const changed = useMemo(() => new Map(elsewhere ? [] : (run?.files ?? []).map((f) => [f.path, f])), [run?.files, elsewhere]);
   const undone = !!run?.undoneAt;
   // 任务一动文件就重列一遍（接着现有的文件监听推来的事件）。
   const stamp = `${run?.id ?? ""}:${run?.files.length ?? 0}:${run?.status ?? ""}:${run?.undoneAt ?? ""}`;
@@ -511,7 +763,8 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, onTab, onFilePath,
       void ipc.changesGetDiff(run.id, undefined, path).then((d) => { if (!cancelled) setMarks(addedLines(d.unifiedDiff)); }).catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [workspaceId, path, run?.id, mark?.kind, mark?.additions, stamp, say]); // eslint-disable-line react-hooks/exhaustive-deps
+    // 只有这个任务改到的文件才跟着任务重读（图片、PDF、Office 不在任务里改就不反复读、不反复起 Quick Look）。
+  }, [workspaceId, path, run?.id, mark?.kind, mark?.additions, mark ? stamp : "", say]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows: React.ReactNode[] = [];
   const walk = (nodes: TreeNode[], depth: number) => nodes.forEach((node) => {
@@ -526,7 +779,36 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, onTab, onFilePath,
   walk(tree, 0);
 
   const lines = preview?.kind === "text" ? (preview.content ?? "").replace(/\n$/, "").split("\n") : [];
-  const note = !preview ? "" : preview.deleted ? "这个任务删了它。预览的是删之前的样子；撤销整个任务能放回来。" : mark?.kind === "create" ? "新文件，整份都是这个任务写的。" : mark ? "改过的行左边一条绿；完整的 Diff 在 CHANGES。" : "";
+  // 代码上色（按需加载语言包）；换文件先清掉上一份。
+  useEffect(() => {
+    let stop = false;
+    setTokens(null);
+    if (preview?.kind === "text" && preview.content) void highlight(preview.content, preview.path).then((t) => { if (!stop) setTokens(t); }).catch(() => {});
+    return () => { stop = true; };
+  }, [preview?.path, preview?.content, preview?.kind]);
+  const pdfUrl = useBlobUrl(preview?.kind === "pdf" ? preview.dataUrl : null);
+  const canView = !!path && previewable(path) && preview?.kind === "text";
+  const showing = canView && view === "view";
+  const body = !preview ? <p className="empty-line">在读…</p>
+    : preview.kind === "image" && preview.dataUrl ? <div className="media-box media-box--checker scroll"><img src={preview.dataUrl} alt={preview.path} className="media-img" /></div>
+    : preview.kind === "pdf" ? (pdfUrl ? <iframe className="media-frame" src={pdfUrl} title={preview.path} /> : <p className="empty-line">在读…</p>)
+    : preview.kind === "office" && workspaceId ? <OfficePreview workspaceId={workspaceId} path={preview.path} native={native} say={say} />
+    : preview.kind !== "text" ? <p className="empty-line">{WHY[preview.kind] ?? "预览不了。"}{preview.kind !== "missing" ? `（${fileSize(preview.size)}）` : ""}</p>
+    : showing && /\.(md|markdown)$/i.test(preview.path) ? <Md text={preview.content ?? ""} className="files-md scroll" />
+    : showing && /\.html?$/i.test(preview.path) ? <iframe className="media-frame media-frame--html" sandbox="" srcDoc={htmlPreview(preview.content ?? "")} title={preview.path} />
+    : showing && /\.svg$/i.test(preview.path) ? <div className="media-box media-box--checker scroll"><img className="media-img" alt={preview.path} src={`data:image/svg+xml;utf8,${encodeURIComponent(preview.content ?? "")}`} /></div>
+    : (
+      <div className={cn("code-lines sel scroll", preview.deleted && "is-dim")}>
+        {lines.map((text, i) => (
+          <div key={i}>
+            <i className={marks.has(i + 1) || (mark?.kind === "create" && !preview.deleted) ? "is-add" : undefined} />
+            <span className="code-n">{i + 1}</span>
+            <CodeText text={text} tokens={tokens?.[i]} />
+          </div>
+        ))}
+      </div>
+    );
+  const note = !preview ? "" : elsewhere ? "这个任务的改动还在独立工作区，这里是项目文件夹现在的样子；APPLY 以后才进来。" : preview.deleted ? "这个任务删了它。预览的是删之前的样子；撤销整个任务能放回来。" : mark?.kind === "create" ? "新文件，整份都是这个任务写的。" : mark ? "改过的行左边一条绿；完整的 Diff 在 CHANGES。" : "";
   return (
     <div className="pk-mod col-grow files">
       <ModHead label="FILES" note="只看，不改"><Expand wide={wide} onWide={onWide} /></ModHead>
@@ -544,20 +826,16 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, onTab, onFilePath,
               <p className="preview-head">
                 <span className="t-code preview-path" title={path}>{path}</span>
                 <span className="grow" />
+                {canView && (
+                  <span className="pk-seg pk-seg--sm" role="group" aria-label="怎么看">
+                    <button type="button" className={view === "view" ? "is-on" : undefined} onClick={() => setView("view")}>VIEW</button>
+                    <button type="button" className={view === "src" ? "is-on" : undefined} onClick={() => setView("src")}>SRC</button>
+                  </span>
+                )}
                 <span className="t-label preview-meta">{preview?.deleted ? "DEL" : mark?.kind === "create" ? `NEW +${mark.additions}` : mark ? `+${mark.additions} −${mark.deletions}` : preview ? fileSize(preview.size) : ""}</span>
               </p>
               {note && <p className="hint">{note}</p>}
-              {!preview ? <p className="empty-line">在读…</p> : preview.kind !== "text" ? <p className="empty-line">{WHY[preview.kind]}{preview.kind !== "missing" ? `（${fileSize(preview.size)}）` : ""}</p> : (
-                <div className={cn("code-lines sel scroll", preview.deleted && "is-dim")}>
-                  {lines.map((text, i) => (
-                    <div key={i}>
-                      <i className={marks.has(i + 1) || (mark?.kind === "create" && !preview.deleted) ? "is-add" : undefined} />
-                      <span className="code-n">{i + 1}</span>
-                      <span className="code-t">{text || " "}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {body}
               {mark && <div className="preview-acts"><Btn v="ghost" sm onClick={() => { onFilePath(path); onTab("changes"); }}>DIFF</Btn></div>}
             </div>
           )}
@@ -606,8 +884,7 @@ const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, o
           <div className="term-out sel scroll">
             {term.entries.length === 0 && (
               <div className="empty">
-                <p>你自己的终端，开在 {shortenHomePath(project.workspace.path)}。</p>
-                <p className="empty-s">不经过权限三档，也不进模型上下文；Agent 跑的命令在中间的步骤里看。</p>
+                <p>你自己的终端，开在 {shortenHomePath(project.workspace.path)}<Info text="不经过权限三档，也不进模型上下文；Agent 跑的命令在中间的步骤里看。cd 到哪儿会记着，export 的变量不带到下一条；项目设置里的环境变量都带上。" /></p>
               </div>
             )}
             {term.entries.map((entry) => (
@@ -629,11 +906,12 @@ const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, o
             <input className="t-code" aria-label="一条命令" autoCorrect="off" autoCapitalize="off" value={locked ? "" : draft} disabled={locked || running} placeholder={locked ? "任务在跑，终端锁着" : running ? "" : "打一条命令"} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} spellCheck={false} autoComplete="off" />
             {running ? <Btn v="danger" icon="stop" onClick={onTermStop}>STOP</Btn> : locked ? <span className="term-lock t-label"><Icon name="lock" size={12} />LOCKED</span> : <><span className="kbd">⏎</span><Btn v={draft.trim() ? "primary" : undefined} disabled={!draft.trim()} onClick={run}>RUN</Btn></>}
           </div>
-          <p className="hint term-note">
-            {locked
-              ? running ? "发任务前就在跑的命令接着跑，STOP 一直能点；它改的项目文件算进这次改动。跑完以后输入行锁着，任务做完才解锁。" : "模型在跑任务，终端先锁着：做完或 STOP 就解锁。输出照样能看。"
-              : `在 ${shortenHomePath(project.workspace.path)} 里跑；cd 到哪儿会记着，export 的变量不带到下一条。`}
-          </p>
+          {locked && (
+            <p className="hint term-note">
+              {running ? "任务在跑：这条接着跑，STOP 一直能点" : "任务在跑，终端锁着"}
+              <Info text={running ? "发任务前就在跑的命令接着跑；它改的项目文件算进这次改动。跑完以后输入行锁着，任务做完才解锁。" : "模型在跑任务，终端先锁着：做完或 STOP 就解锁。输出照样能看。"} />
+            </p>
+          )}
         </>
       )}
     </div>

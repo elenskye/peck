@@ -368,4 +368,6 @@ export interface GatewayRunArgs {
   effort?: string;
   /** 上一次的会话号（session.started 的 sessionRef），续接用。 */
   resume?: string;
+  /** 在独立工作区（git worktree）里做（v0.7）。 */
+  worktree?: boolean;
 }

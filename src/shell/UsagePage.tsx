@@ -4,7 +4,7 @@ import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, isMockMode, type QuotaPoint, type SpendOverview, type SpendPoint } from "@/lib/ipc";
 import { usageApi, type BalanceCard, type ClientCard, type UsageListResult } from "@/lib/usage";
 import { agentName, cn } from "@/lib/utils";
-import { Btn, Field, MenuChip, ModHead, Row, Seg } from "@/ui";
+import { Btn, Field, Info, MenuChip, ModHead, Row, Seg } from "@/ui";
 
 // 额度与花费（usage.rs + spend.rs 的事件日志）。原来要等站主用 Peck 另做一个（src/quota/），2026-11-13 站主改了主意：这一页就是它，本地的 Claude 接着做。
 
@@ -108,16 +108,13 @@ export const UsagePage: React.FC<{ onClose: () => void; say: (message: unknown) 
               action={<Btn sm v="ghost" onClick={() => void act(async () => { const card = await usageApi.balance("deepseek"); setBalances((prev) => [...prev.filter((x) => x.provider !== "deepseek"), card]); })}>CHECK</Btn>} />
           </div>
 
-          <h2 className="t-title">每天花了多少</h2>
-          <p className="lead">近 {days} 天，按谁花的叠起来。Peck 循环和 ONE SHOT 按价格表算；CLI 的是它们自己估的。悬停看每天的明细。</p>
+          <h2 className="t-title">每天花了多少<Info text={`近 ${days} 天，按谁花的叠起来。Peck 循环和 ONE SHOT 按价格表算；CLI 的是它们自己估的。悬停看每天的明细。`} /></h2>
           <DailyChart points={points} days={Number(days)} />
 
-          <h2 className="t-title">花在哪</h2>
-          <p className="lead">近 {days} 天，按模型和引擎。</p>
+          <h2 className="t-title">花在哪<Info text={`近 ${days} 天，按模型和引擎。`} /></h2>
           <Breakdown points={points} label={label} />
 
-          <h2 className="t-title">订阅额度</h2>
-          <p className="lead">刻度和数字都是还剩多少。客户端的读数只在它运行时读，退出就停，留最后一次的快照；CLI 在 Peck 的任务里报的也记着，折线是近 7 天还剩的。读不到的不推算。</p>
+          <h2 className="t-title">订阅额度<Info text="刻度和数字都是还剩多少。客户端的读数只在它运行时读，退出就停，留最后一次的快照；CLI 在 Peck 的任务里报的也记着，折线是近 7 天还剩的。读不到的不推算。" /></h2>
           <div className="q-clients">
             {clients.map((c) => <ClientQuota key={c.client} card={c} history={(spend?.quota ?? []).filter((q) => q.engine === (c.client === "muse-code" ? "muse" : c.client))} say={say} onCard={(card) => setClients((prev) => prev.map((x) => (x.client === card.client ? card : x)))} />)}
           </div>
@@ -395,7 +392,6 @@ const LegacyCalls: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
   const s = list?.summary;
   return (
     <>
-      <p className="hint">规划 + 实施还在旧的 API 层上（v0.8 并进新循环），它的请求记在这里；Peck 循环和 ONE SHOT 的在上面的图里。</p>
       <div className="set-inline">
         <Filter label="哪种请求" value={mode} onChange={setMode} options={[["real", "真实"], ["mock", "模拟"], ["all", "全部"]]} />
         <Filter label="项目" value={project} onChange={setProject} options={[["", "全部项目"], ...(list?.projects ?? []).map((p): [string, string] => [p, p])]} />

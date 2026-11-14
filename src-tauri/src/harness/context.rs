@@ -109,6 +109,12 @@ pub struct EnvInput {
     pub background: Vec<String>,
     /// 目标模式：要过的那几条。
     pub goal: Vec<String>,
+    /// 项目的其他文件夹（v0.7）：路径、能不能改。
+    pub folders: Vec<(String, bool)>,
+    /// 项目自己的环境变量的名字（值不写进上下文）。
+    pub env_names: Vec<String>,
+    /// 在独立工作区里做：主文件夹（v0.7）。
+    pub worktree_of: Option<String>,
 }
 
 /// 环境块：系统、git、任务清单、改过的文件、验证命令、后台命令。给模型看，写英文。
@@ -120,6 +126,25 @@ pub fn environment_block(root: &Path, input: &EnvInput) -> String {
         std::env::consts::ARCH,
         root.display()
     ));
+    if let Some(main) = &input.worktree_of {
+        lines.push(format!(
+            "You are working in a separate git worktree of the project (the main folder is {main}). Work only here; the user applies your changes back to the main folder after reviewing them."
+        ));
+    }
+    if !input.folders.is_empty() {
+        let list: Vec<String> = input
+            .folders
+            .iter()
+            .map(|(p, w)| format!("{p} ({})", if *w { "writable" } else { "read-only" }))
+            .collect();
+        lines.push(format!(
+            "Other folders in this project (use absolute paths with the file tools; read-only ones cannot be written): {}",
+            list.join(" · ")
+        ));
+    }
+    if !input.env_names.is_empty() {
+        lines.push(format!("Project environment variables set for commands: {}", input.env_names.join(", ")));
+    }
     if let Some(git) = git_summary(root) {
         lines.push(git);
     } else {
@@ -356,12 +381,16 @@ mod tests {
             checks: vec![("check".into(), "cargo check".into())],
             background: vec!["dev server `pnpm dev` running".into()],
             goal: vec![],
+            folders: vec![("/other/lib".into(), false)],
+            env_names: vec!["API_BASE".into()],
+            worktree_of: None,
         };
         let block = environment_block(&p.dir, &input);
         assert!(block.contains("Git branch: main"), "{block}");
         assert!(block.contains("?? b.txt") && block.contains("first commit"), "{block}");
         assert!(block.contains("[>] 改标题") && block.contains("a.txt") && block.contains("check: `cargo check`") && block.contains("pnpm dev"));
         assert!(block.ends_with("</peck-context>"));
+        assert!(block.contains("/other/lib (read-only)") && block.contains("API_BASE"));
         let index_after = std::fs::metadata(p.dir.join(".git/index")).unwrap().modified().unwrap();
         assert_eq!(index_before, index_after, "不动用户仓库的 index");
     }

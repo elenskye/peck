@@ -205,11 +205,13 @@ pub struct Spec {
     pub runtime_dir: PathBuf,
     /// 日志放哪（模型起的放这个任务的输出目录，`read_file` 读得到）。
     pub log_dir: PathBuf,
+    /// 项目的其他文件夹（能改的放进沙箱的可写表、能当 cwd），和 `bash_run` 一样。
+    pub extra: Vec<(PathBuf, bool)>,
 }
 
 pub fn start(spec: Spec, on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
-    let ctx = ToolContext::new(&spec.workspace, PermissionLevel::Auto, spec.log_dir.clone(), spec.runtime_dir.clone(), spec.env.clone())?;
-    let cwd = super::tools::resolve(&ctx.root, spec.cwd.as_deref().unwrap_or("."))?;
+    let ctx = ToolContext::new(&spec.workspace, PermissionLevel::Auto, spec.log_dir.clone(), spec.runtime_dir.clone(), spec.env.clone())?.with_extra(&spec.extra);
+    let cwd = ctx.resolve_path(spec.cwd.as_deref().unwrap_or("."), false)?;
     if !cwd.is_dir() {
         return Err(format!("{} 不是文件夹。", ctx.rel(&cwd)));
     }
@@ -388,11 +390,12 @@ pub fn background_stop(id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn server_start(workspace_id: String, name: String, state: tauri::State<'_, crate::state::AppState>) -> Result<BgInfo, String> {
     let (root, approved) = workspace_of(&state, &workspace_id)?;
-    start_server(&root, &name, approved.as_deref(), None).map(|p| p.info())
+    let env = state.store.lock().ok().and_then(|db| db.workspace(&workspace_id).ok()).map(|w| w.settings.env_pairs()).unwrap_or_default();
+    start_server(&root, &name, approved.as_deref(), &env, None).map(|p| p.info())
 }
 
 /// 起常驻的 dev server（只认站主确认过的 verify.toml）。看在不在跑和起是一起的，站主点 DEV 和发任务时自动起不会起两份。
-pub fn start_server(root: &Path, name: &str, approved: Option<&str>, on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
+pub fn start_server(root: &Path, name: &str, approved: Option<&str>, project_env: &[(String, String)], on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
     static STARTING: Mutex<()> = Mutex::new(());
     let _one = STARTING.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(p) = server(root, name) {
@@ -410,9 +413,10 @@ pub fn start_server(root: &Path, name: &str, approved: Option<&str>, on_update: 
             kind: BackgroundKind::Server,
             ready: s.ready.clone(),
             sandbox: Sandbox::Project,
-            env: bash::shell_env(),
+            env: super::run::with_project_env(bash::shell_env(), project_env),
             runtime_dir: super::run::runtime_dir(root),
             log_dir: super::run::spill_root().join(format!("servers-{}", crate::workspace::workspace_hash(root))),
+            extra: vec![],
         },
         on_update,
     )
@@ -436,6 +440,7 @@ mod tests {
             env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
             runtime_dir: p.dir.with_extension("runtime"),
             log_dir: p.dir.with_extension("spill"),
+            extra: vec![],
         }
     }
 

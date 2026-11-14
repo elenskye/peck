@@ -765,6 +765,14 @@ export const MOCK_FILES: Record<string, Record<string, string>> = {
     "README.md": "# Peck\n\n只在我自己的 Mac 上用的本地 Coding Agent。\n",
     "src-tauri/src/settings.rs": "pub struct Settings {\n    pub notifications: bool,\n}\n\nimpl Default for Settings {\n    fn default() -> Self {\n        Self { notifications: true }\n    }\n}\n",
     "src-tauri/src/notify.rs": "pub fn notify(settings: &Settings, title: &str) {\n    if !settings.notifications {\n        return;\n    }\n    send(title);\n}\n",
+    // v0.7 FILES 的几种预览（图片、PDF、Word、Excel 的内容在 mockIpc 里给）
+    "docs/screenshot.png": "",
+    "docs/spec.pdf": "",
+    "docs/plan.docx": "",
+    "docs/budget.xlsx": "",
+    "docs/guide.md": "# 使用说明\n\n- **FILES** 能给代码上色\n- md、html 能切源码和预览\n\n| 文件 | 怎么看 |\n| --- | --- |\n| 图片、PDF | 直接显示 |\n| Word、Excel | Quick Look |\n",
+    "public/index.html": "<!doctype html>\n<html lang=\"zh\">\n<head><meta charset=\"utf-8\"><title>Peck</title>\n<style>body{font-family:sans-serif;background:#06121F;color:#E6EEF8;padding:24px}h1{color:#00E5FF}</style></head>\n<body>\n  <h1>Peck</h1>\n  <p>只在我自己的 Mac 上用的本地 Coding Agent。</p>\n</body>\n</html>\n",
+    "public/bird.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 8 8\">\n  <rect width=\"8\" height=\"8\" fill=\"#06121F\"/>\n  <rect x=\"2\" y=\"2\" width=\"4\" height=\"3\" fill=\"#00E5FF\"/>\n  <rect x=\"5\" y=\"3\" width=\"2\" height=\"1\" fill=\"#FFC857\"/>\n</svg>\n",
   },
   "ws-gateway": {
     "README.md": "# edge-gateway\n",

@@ -9,7 +9,7 @@ import { withAgentModel, type ApiConfig, type ApiStatus } from "@/lib/api";
 import { ipc, type CliModel, type CliModels } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import { ago, cn, entryDot } from "@/lib/utils";
-import { Dot, FoldBtn, Icon, MenuChip, ModHead } from "@/ui";
+import { Dot, FoldBtn, Icon, Info, MenuChip, ModHead } from "@/ui";
 import { cliEngine, defaultEffort, firstOf, flowOf, labelOf, pickable, whoText, type FlowKind } from "@/shell/ModelPicker";
 
 const money = (v: number) => `$${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(2).replace(/\.?0+$/, "") : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}`;
@@ -117,7 +117,7 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
           {flow === "cli" && value && <CliBody entries={entries} value={value} settings={settings} onSettings={onSettings} choose={choose} disabled={disabled} say={say} />}
           {flow === "relay" && value && <PickList items={entries.filter((e) => e.group === "flow" && flowOf(e) === "relay")} value={value} choose={choose} disabled={disabled} note={relayNote} />}
           {flow === "plan" && <PlanBody apiStatus={apiStatus} onApiConfig={onApiConfig} disabled={disabled} />}
-          {flow === "fake" && <p className="hint agents-hint">不推理，照剧本写几个演示文件，几秒跑完。只在开发和验收时用。</p>}
+          {flow === "fake" && <p className="hint agents-hint">假 Agent<Info text="不推理，照剧本写几个演示文件，几秒跑完。只在开发和验收时用。" /></p>}
           {!value && <p className="hint agents-hint">没有能用的：先配 Key 或装 CLI。</p>}
           <button type="button" className="pk-menu-action agents-more" onClick={onOpenSettings}>
             <Icon name="plus" size={12} />配 Key、看 CLI 检测<em>设置</em>

@@ -1,10 +1,10 @@
 // 一次任务的过程（Peck 循环和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, Control } from "@/lib/agentEvents";
-import { COMPACT_STEP, foldEvents, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type ToolView, type VerifyCheckView, type VerifyRoundView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type ToolView, type VerifyCheckView, type VerifyRoundView, type ViewItem } from "@/lib/agentView";
 import { ipc } from "@/lib/ipc";
 import { cn, span } from "@/lib/utils";
-import { Btn, Icon, ModHead, useNow } from "@/ui";
+import { Btn, Icon, Info, ModHead, useNow } from "@/ui";
 import { Md } from "@/shell/Markdown";
 
 interface Props {
@@ -19,11 +19,15 @@ interface Props {
   runId?: string;
   /** 往这次的事件里追加一条（批完记忆）。 */
   onAppend?: (event: AgentEvent) => void;
+  /** 最后一段回答末尾的「→ 下一步」交给 recap 做成按钮、正文里藏起来（只有任务最新一次的 Peck 循环）。 */
+  nextSteps?: boolean;
 }
 
-export const AgentView: React.FC<Props> = ({ events, running, who, onControl, onShowFile, say, runId, onAppend }) => {
+export const AgentView: React.FC<Props> = ({ events, running, who, onControl, onShowFile, say, runId, onAppend, nextSteps }) => {
   // 任务已经不在跑（App 退出过、引擎没起来）却没有收尾事件：照收尾看，卡片不再能点、工具不再转。
   const view = useMemo(() => foldEvents(events, !running), [events, running]);
+  // 最后一段回答末尾的「→ 下一步」交给 recap 卡片做成按钮，正文里不再显示。
+  const lastText = useMemo(() => [...view.items].reverse().find((i) => i.kind === "text")?.id, [view.items]);
   const now = useNow(running);
   if (events.length === 0) {
     return <p className="empty-line">{running ? "在起…" : "这次没有记下过程。"}</p>;
@@ -31,7 +35,7 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
   return (
     <div className="agent">
       {view.plan && view.plan.length > 0 && <Plan steps={view.plan} />}
-      {view.items.map((item) => <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} />)}
+      {view.items.map((item) => <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} hideSteps={!!nextSteps && !!view.ended && item.id === lastText} />)}
       {view.approvals.map((a) => <ApprovalCard key={a.requestId} approval={a} who={who} onControl={onControl} say={say} />)}
       {view.asks.map((a) => <AskCard key={a.requestId} ask={a} who={who} onControl={onControl} say={say} />)}
       {view.memory && view.ended && !running && runId && <MemoryCard runId={runId} notes={view.memory.notes} reviewed={view.memory.reviewed} onAppend={onAppend} say={say} />}
@@ -40,10 +44,10 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
   );
 };
 
-const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ item, now, onShowFile, say }) => {
+const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void; hideSteps?: boolean }> = ({ item, now, onShowFile, say, hideSteps }) => {
   switch (item.kind) {
     case "text":
-      return <Md text={item.text} className={cn("agent-text", !item.done && "is-live")} />;
+      return <Md text={hideSteps ? splitNextSteps(item.text).body : item.text} className={cn("agent-text", !item.done && "is-live")} />;
     case "reasoning":
       return <Thought text={item.text} done={item.done} ms={(item.endedAt ?? now) - item.startedAt} />;
     case "tools":
@@ -192,7 +196,7 @@ const MemoryCard: React.FC<{ runId: string; notes: string[]; reviewed: { saved: 
     <section className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="想记住这几条">
       <Edge />
       <div className="pk-anim-reveal">
-        <ModHead label="MEMORY" note="想记住这几条" />
+        <ModHead label="MEMORY" note={<>想记住这几条<Info text="勾了的存进这个项目的记忆，以后每次发任务都带上；不要的不记。项目设置里能看、能删。" /></>} />
         <ul className="checklist agent-memory sel">
           {notes.map((n, i) => (
             <li key={i}>
@@ -204,7 +208,6 @@ const MemoryCard: React.FC<{ runId: string; notes: string[]; reviewed: { saved: 
             </li>
           ))}
         </ul>
-        <p className="pk-ask-d">勾了的存进这个项目的记忆，以后每次发任务都带上；不要的不记。</p>
         <div className="pk-ask-foot">
           <Btn v="ghost" disabled={sent} onClick={() => void decide(false)}>SKIP</Btn>
           <span className="grow" />
@@ -350,10 +353,9 @@ const ApprovalCard: React.FC<{ approval: ApprovalView; who: string; onControl: P
     <section className={cn("pk-mod pk-mod--wait pk-ask agent-card", approval.highRisk && "agent-card--risk")} aria-label="要你批">
       <Edge />
       <div className="pk-anim-reveal">
-        <ModHead label={approval.highRisk ? "RISK" : "ALLOW?"} note={<span className="pk-who">{who}</span>} />
+        <ModHead label={approval.highRisk ? "RISK" : "ALLOW?"} note={<><span className="pk-who">{who}</span><Info text={approval.highRisk ? "高危：不管哪档都要你批。只这一次，不能总是允许。" : "批了就跑；选「总是允许」以后这个项目里这一类不再问（设置 → 权限里能撤）。"} /></>} />
         <p className="pk-ask-q">{approval.title}</p>
         {approval.detail && <pre className="pk-mod pk-mod--sunk agent-card-detail t-code sel">{approval.detail}</pre>}
-        <p className="pk-ask-d">{approval.highRisk ? "高危：不管哪档都要你批。只这一次，不能总是允许。" : "批了就跑；选「总是允许」以后这个项目里这一类不再问。"}</p>
         <div className="pk-ask-foot">
           {has("deny_once") && <Btn v="danger" disabled={sent} onClick={() => void decide("deny_once")}>DENY</Btn>}
           <span className="grow" />
