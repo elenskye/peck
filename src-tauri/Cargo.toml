@@ -1,0 +1,49 @@
+[package]
+name = "peck"
+version = "1.0.0"
+description = "Peck — 只在自己 Mac 上用的本地 Coding Agent"
+authors = ["Peck Team"]
+edition = "2021"
+
+[lib]
+name = "peck_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-notification = "^2.8.1"
+portable-pty = "^0.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+rusqlite = { version = "0.32.1", features = ["bundled", "backup"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "system-proxy", "json"] }
+zeroize = "1"
+time = { version = "0.3", features = ["parsing"] }
+rfd = "0.16.0"
+ignore = "^0.4.34"
+grep-searcher = "^0.1.17"
+grep-regex = "^0.1.14"
+globset = "^0.4.21"
+similar = "^2.7.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+objc2 = "^0.6.5"
+objc2-app-kit = { version = "^0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
+objc2-foundation = { version = "^0.3.2", default-features = false, features = ["std", "NSData"] }
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

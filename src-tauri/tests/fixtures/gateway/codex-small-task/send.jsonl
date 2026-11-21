@@ -1,0 +1,7 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "peck", "title": "Peck", "version": "0.5.0"}, "capabilities": null}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "{{WORKSPACE}}", "approvalPolicy": "untrusted", "sandbox": "workspace-write", "ephemeral": true}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a1cde8-386e-7ae0-85f0-88094adfe84e", "input": [{"type": "text", "text": "In this folder: 1) read notes.txt; 2) append one line `- 测试通过` to the end of notes.txt; 3) run exactly `echo done > stamp.txt`; 4) reply with one short sentence. Do nothing else.", "text_elements": []}]}}
+{"jsonrpc": "2.0", "id": 0, "result": {"decision": "accept"}}
+{"jsonrpc": "2.0", "id": 1, "result": {"decision": "accept"}}
+{"jsonrpc": "2.0", "id": 2, "result": {"decision": "accept"}}

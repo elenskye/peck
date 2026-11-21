@@ -1,0 +1,744 @@
+import { Channel, invoke } from "@tauri-apps/api/core";
+import { mockIpc } from "@/dev/mockIpc";
+import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, PriceTier } from "@/lib/agentEvents";
+import type {
+  Activity,
+  DiffResult,
+  FileListing,
+  FilePreview,
+  Permission,
+  ProjectOverview,
+  RunRecord,
+  Session,
+  TermEvent,
+  TermState,
+  UndoPreview,
+  ProjectSettings,
+  Workspace,
+} from "@/lib/types";
+
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: unknown;
+  }
+}
+
+export function isMockMode(): boolean {
+  if (typeof window === "undefined") return true;
+  // A native window always uses Rust IPC, including native API mock mode.
+  return typeof window.__TAURI_INTERNALS__ === "undefined";
+}
+
+export const ipc = {
+  async workspaceChoose(): Promise<Workspace | null> {
+    if (isMockMode()) return null;
+    return invoke<Workspace | null>("workspace_choose");
+  },
+  async workspaceOpen(path: string): Promise<Workspace> {
+    if (isMockMode()) {
+      return mockIpc.workspaceOpen(path);
+    }
+    return invoke<Workspace>("workspace_open", { path });
+  },
+
+  /** 改项目的名字、项目设置。 */
+  async workspaceUpdate(id: string, patch: { name?: string; settings?: ProjectSettings }): Promise<Workspace> {
+    if (isMockMode()) return mockIpc.workspaceUpdate(id, patch);
+    return invoke<Workspace>("workspace_update", { id, name: patch.name ?? null, settings: patch.settings ?? null });
+  },
+  /** 移出列表：文件夹、任务、快照都不动，重新打开这个文件夹就回来。 */
+  async workspaceRemove(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.workspaceRemove(id);
+    return invoke<void>("workspace_remove", { id });
+  },
+  /** 文件夹不在了：换一个文件夹（不给路径就弹选文件夹的窗）。 */
+  async workspaceRelocate(id: string, path?: string): Promise<Workspace | null> {
+    if (isMockMode()) return mockIpc.workspaceRelocate(id, path);
+    return invoke<Workspace | null>("workspace_relocate", { id, path: path ?? null });
+  },
+  async workspaceReveal(id: string): Promise<void> {
+    if (isMockMode()) return;
+    return invoke<void>("workspace_reveal", { id });
+  },
+  async sessionRename(id: string, title: string): Promise<void> {
+    if (isMockMode()) return mockIpc.sessionRename(id, title);
+    return invoke<void>("session_rename", { id, title });
+  },
+  /** 删一个任务和它的全部记录（项目里的文件不动）。 */
+  async sessionDelete(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.sessionDelete(id);
+    return invoke<void>("session_delete", { id });
+  },
+  /** 归档一个任务：不在左栏列，记录全留着（在跑的不能归档）。 */
+  async sessionArchive(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.sessionArchive(id);
+    return invoke<void>("session_archive", { id });
+  },
+  /** 拿回左栏；项目移出列表了就一起放回。返回这个项目。 */
+  async sessionUnarchive(id: string): Promise<Workspace> {
+    if (isMockMode()) return mockIpc.sessionUnarchive(id);
+    return invoke<Workspace>("session_unarchive", { id });
+  },
+  /** 一个项目里不在跑的任务全归档，返回归档了几个。 */
+  async workspaceArchiveTasks(id: string): Promise<number> {
+    if (isMockMode()) return mockIpc.workspaceArchiveTasks(id);
+    return invoke<number>("workspace_archive_tasks", { id });
+  },
+  /** 设置 → ARCHIVE：归档了的任务，按项目分组（移出列表的项目也在）。 */
+  async archiveList(): Promise<ProjectOverview[]> {
+    if (isMockMode()) return mockIpc.archiveList();
+    return invoke<ProjectOverview[]>("archive_list");
+  },
+  /** 存拖动排好的顺序。 */
+  async layoutSave(args: { projects?: string[]; workspaceId?: string; tasks?: string[] }): Promise<void> {
+    if (isMockMode()) return mockIpc.layoutSave(args);
+    return invoke<void>("layout_save", { projects: args.projects ?? null, workspaceId: args.workspaceId ?? null, tasks: args.tasks ?? null });
+  },
+  /** QUOTA 页的图表：近几天的花费和额度读数。 */
+  async spendOverview(days: number): Promise<SpendOverview> {
+    if (isMockMode()) return mockIpc.spendOverview(days);
+    return invoke<SpendOverview>("spend_overview", { days });
+  },
+
+  async sessionCreate(workspaceId: string, title?: string): Promise<Session> {
+    if (isMockMode()) {
+      return mockIpc.sessionCreate(workspaceId, title);
+    }
+    return invoke<Session>("session_create", { workspaceId, title });
+  },
+
+  async sessionGetRuns(sessionId: string): Promise<RunRecord[]> {
+    if (isMockMode()) {
+      return mockIpc.sessionGetRuns(sessionId);
+    }
+    return invoke<RunRecord[]>("session_get_runs", { sessionId });
+  },
+
+  async runCancel(runId: string): Promise<void> {
+    if (isMockMode()) {
+      return mockIpc.runCancel(runId);
+    }
+    return invoke<void>("run_cancel", { runId });
+  },
+
+  async changesGetDiff(
+    runId: string,
+    stepId?: string,
+    filePath?: string,
+  ): Promise<DiffResult> {
+    if (isMockMode()) {
+      return mockIpc.changesGetDiff(runId, stepId, filePath);
+    }
+    return invoke<DiffResult>("changes_get_diff", {
+      runId,
+      stepId,
+      filePath,
+    });
+  },
+
+  async overview(): Promise<ProjectOverview[]> {
+    if (isMockMode()) return mockIpc.overview();
+    return invoke<ProjectOverview[]>("projects_overview");
+  },
+  async filesList(workspaceId: string): Promise<FileListing> {
+    if (isMockMode()) return mockIpc.filesList(workspaceId);
+    return invoke<FileListing>("files_list", { workspaceId });
+  },
+  async filesRead(workspaceId: string, path: string, runId?: string): Promise<FilePreview> {
+    if (isMockMode()) return mockIpc.filesRead(workspaceId, path, runId);
+    return invoke<FilePreview>("files_read", { workspaceId, path, runId });
+  },
+  /** 系统选文件夹的窗（只返回路径；浏览器里没有）。 */
+  async pickFolder(): Promise<string | null> {
+    if (isMockMode()) return null;
+    return invoke<string | null>("dialog_pick_folder");
+  },
+  /** Quick Look 的缩略图（Word、Excel 这类，PNG 的 data URL）。只在 Mac 上有。 */
+  async filesQuicklook(workspaceId: string, path: string): Promise<string> {
+    if (isMockMode()) return mockIpc.filesQuicklook(workspaceId, path);
+    return invoke<string>("files_quicklook", { workspaceId, path });
+  },
+  /** 叫出系统的 Quick Look 窗口。 */
+  async filesQuicklookOpen(workspaceId: string, path: string): Promise<void> {
+    if (isMockMode()) return mockIpc.filesQuicklookOpen(workspaceId, path);
+    return invoke<void>("files_quicklook_open", { workspaceId, path });
+  },
+  /** CHANGES：拒绝一块改动（在现在的文件里换回任务前的样子）。 */
+  async changesHunkRevert(runId: string, stepId: string | undefined, filePath: string, hunk: number): Promise<void> {
+    if (isMockMode()) return mockIpc.changesHunkRevert(runId, stepId, filePath, hunk);
+    return invoke<void>("changes_hunk_revert", { runId, stepId, filePath, hunk });
+  },
+  /** 独立工作区：搬回项目（有冲突、没让照样搬时什么都不动，返回冲突的文件）。 */
+  async worktreeApply(runId: string, force = false): Promise<WorktreeApply> {
+    if (isMockMode()) return mockIpc.worktreeApply(runId, force);
+    return invoke<WorktreeApply>("worktree_apply", { runId, force });
+  },
+  async worktreeDiscard(runId: string): Promise<RunRecord> {
+    if (isMockMode()) return mockIpc.worktreeDiscard(runId);
+    return invoke<RunRecord>("worktree_discard", { runId });
+  },
+  async runUndoPreview(runId: string): Promise<UndoPreview> {
+    if (isMockMode()) return mockIpc.runUndoPreview(runId);
+    return invoke<UndoPreview>("run_undo_preview", { runId });
+  },
+  async runUndo(runId: string): Promise<RunRecord> {
+    if (isMockMode()) return mockIpc.runUndo(runId);
+    return invoke<RunRecord>("run_undo", { runId });
+  },
+  async settingsGet(): Promise<string | null> {
+    if (isMockMode()) return mockIpc.settingsGet();
+    return invoke<string | null>("settings_get");
+  },
+  async settingsSet(value: string): Promise<void> {
+    if (isMockMode()) return mockIpc.settingsSet(value);
+    return invoke<void>("settings_set", { value });
+  },
+  async termRun(workspaceId: string, command: string, onEvent: (event: TermEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.termRun(workspaceId, command, onEvent);
+    const channel = new Channel<TermEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("term_run", { workspaceId, command, channel });
+  },
+  async termStop(workspaceId: string): Promise<void> {
+    if (isMockMode()) return mockIpc.termStop(workspaceId);
+    return invoke<void>("term_stop", { workspaceId });
+  },
+  async termState(workspaceId: string): Promise<TermState> {
+    if (isMockMode()) return mockIpc.termState(workspaceId);
+    return invoke<TermState>("term_state", { workspaceId });
+  },
+  /** 菜单栏小图标跟着变。浏览器里没有菜单栏，不做事。 */
+  /** 菜单栏图标的状态；`count` 是在跑几个（两个以上图标旁边写个数，v0.7）。 */
+  async setActivity(activity: Activity, count = 0): Promise<void> {
+    if (isMockMode()) return;
+    return invoke<void>("shell_set_activity", { activity, count });
+  },
+  async notify(title: string, body: string): Promise<void> {
+    if (isMockMode()) return mockIpc.notify(title, body);
+    return invoke<void>("notify", { title, body });
+  },
+
+  // ── Model Gateway（v0.5 契约，src-tauri/src/gateway/）──
+  /** 模型列表：API 模型（配了 Key 的能用）、CLI 引擎（检测到的能用）、接力。 */
+  /** 一家 CLI 能选的模型（从 CLI 自己那里读，存着；refresh 才重读）。 */
+  async cliModels(engine: string, refresh = false): Promise<CliModels> {
+    if (isMockMode()) return mockCliModels(engine);
+    return invoke<CliModels>("cli_models", { engine, refresh });
+  },
+  async gatewayModels(): Promise<ModelEntry[]> {
+    if (isMockMode()) return mockIpc.gatewayModels();
+    return invoke<ModelEntry[]>("gateway_models");
+  },
+  async gatewayConfigGet(): Promise<GatewaySettings> {
+    if (isMockMode()) return mockIpc.gatewayConfigGet();
+    return invoke<GatewaySettings>("gateway_config_get");
+  },
+  /** 存 Vertex 的 Project ID / Location、CLI 目录；格式不对会报错（中文一句）。 */
+  async gatewayConfigSet(config: GatewayConfig): Promise<GatewayConfig> {
+    if (isMockMode()) return mockIpc.gatewayConfigSet(config);
+    return invoke<GatewayConfig>("gateway_config_set", { config });
+  },
+  /** API 价格表（v0.10 Refine）：内置的 + 站主改的 + 刷新来的、汇率。 */
+  async pricesGet(): Promise<PriceBook> {
+    if (isMockMode()) return mockIpc.pricesGet();
+    return invoke<PriceBook>("prices_get");
+  },
+  /** 改一行（没有的就是加）、退回一行、改汇率：一次一样。 */
+  async pricesSet(args: { row?: PriceRow; reset?: string; fxRate?: number }): Promise<PriceBook> {
+    if (isMockMode()) return mockIpc.pricesSet(args);
+    return invoke<PriceBook>("prices_set", { row: args.row ?? null, reset: args.reset ?? null, fxRate: args.fxRate ?? null });
+  },
+  /** 从 models.dev 取一次美元价（人民币的不刷新）。 */
+  async pricesRefresh(): Promise<PriceRefresh> {
+    if (isMockMode()) return mockIpc.pricesRefresh();
+    return invoke<PriceRefresh>("prices_refresh");
+  },
+  /** 一个任务的统一事件（事件日志）。旧任务为空。 */
+  async gatewayEvents(runId: string): Promise<AgentEvent[]> {
+    if (isMockMode()) return mockIpc.gatewayEvents(runId);
+    return invoke<AgentEvent[]>("gateway_events", { runId });
+  },
+
+  // ── CLI 账号（v0.5，src-tauri/src/gateway/accounts.rs）──
+  async cliAccountsList(checkAll: boolean): Promise<EngineAccounts[]> {
+    if (isMockMode()) return mockIpc.cliAccountsList(checkAll);
+    return invoke<EngineAccounts[]>("cli_accounts_list", { checkAll });
+  },
+  async cliAccountCheck(engine: string, id: string): Promise<CliAccountStatus> {
+    if (isMockMode()) return mockIpc.cliAccountCheck(engine, id);
+    return invoke<CliAccountStatus>("cli_account_check", { engine, id });
+  },
+  async cliAccountLogin(engine: string, id: string): Promise<CliLoginState> {
+    if (isMockMode()) return mockIpc.cliAccountLogin(engine, id);
+    return invoke<CliLoginState>("cli_account_login", { engine, id });
+  },
+  async cliAccountLoginState(engine: string, id: string): Promise<CliLoginState> {
+    if (isMockMode()) return mockIpc.cliAccountLoginState(engine, id);
+    return invoke<CliLoginState>("cli_account_login_state", { engine, id });
+  },
+  async cliAccountLoginInput(engine: string, id: string, text: string): Promise<void> {
+    if (isMockMode()) return mockIpc.cliAccountLoginInput(engine, id, text);
+    return invoke<void>("cli_account_login_input", { engine, id, text });
+  },
+  async cliAccountLoginCancel(engine: string, id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.cliAccountLoginCancel(engine, id);
+    return invoke<void>("cli_account_login_cancel", { engine, id });
+  },
+
+  // ── 发任务（Gateway 版，src-tauri/src/gateway/runner.rs）：「谁来干」是 cli:<引擎> 的走这里 ──
+  /** 返回任务 id；过程是统一事件，经 onEvent 来（第一条 session.started，最后一条 turn.completed）。 */
+  async gatewayRunStart(args: GatewayRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.gatewayRunStart(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("gateway_run_start", { ...args, channel });
+  },
+  /** 审批、回答、追加、打断。任务已经结束会报错。 */
+  async gatewayControl(runId: string, control: Control): Promise<void> {
+    if (isMockMode()) return mockIpc.gatewayControl(runId, control);
+    return invoke<void>("gateway_control", { runId, control });
+  },
+
+  // ── Peck 循环（v0.5 Phase 6，src-tauri/src/harness/）：「谁来干」是 api:<供应商>/<模型> 的走这里 ──
+  /** 返回任务 id；过程是统一事件（和 CLI 引擎同一套）。审批、回答、打断照旧用 gatewayControl。 */
+  async harnessRunStart(args: HarnessRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessRunStart(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("harness_run_start", { ...args, channel });
+  },
+  /** 合作（v0.8）：接力（planBy 写规范）和 / 或交叉审查（reviewBy），who 是实施的那一个。一个任务、一条事件流。 */
+  async teamRunStart(args: TeamRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.teamRunStart(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("team_run_start", { ...args, channel });
+  },
+  /** 外部 MCP 服务器（v0.8，设置里配）。 */
+  async mcpServersGet(): Promise<McpServerConfig[]> {
+    if (isMockMode()) return mockIpc.mcpServersGet();
+    return invoke<McpServerConfig[]>("mcp_servers_get");
+  },
+  async mcpServersSet(servers: McpServerConfig[]): Promise<McpServerConfig[]> {
+    if (isMockMode()) return mockIpc.mcpServersSet(servers);
+    return invoke<McpServerConfig[]>("mcp_servers_set", { servers });
+  },
+  /** 起一次、列工具、停掉。 */
+  async mcpServerTest(server: McpServerConfig): Promise<McpToolInfo[]> {
+    if (isMockMode()) return mockIpc.mcpServerTest(server);
+    return invoke<McpToolInfo[]>("mcp_server_test", { server });
+  },
+  /** 一台服务器的一个环境变量存进钥匙串（value 空着是删掉）。 */
+  async mcpSecretSet(server: string, name: string, value: string | null): Promise<McpServerConfig[]> {
+    if (isMockMode()) return mockIpc.mcpSecretSet(server, name, value);
+    return invoke<McpServerConfig[]>("mcp_secret_set", { server, name, value });
+  },
+  /** 输入框打 `/`：命令文件和 Skills（v0.10 C2）。 */
+  async slashList(workspaceId: string): Promise<SlashList> {
+    if (isMockMode()) return mockIpc.slashList(workspaceId);
+    return invoke<SlashList>("slash_list", { workspaceId });
+  },
+  /** 批一条 Skill 提议（v0.10 C3）：save（draft 是卡片上改过的）或 skip；返回追加的那条 skill.reviewed。 */
+  async skillReview(runId: string, proposalId: string, decision: "save" | "skip", draft?: SkillDraft | null): Promise<AgentEvent> {
+    if (isMockMode()) return mockIpc.skillReview(runId, proposalId, decision, draft ?? null);
+    return invoke<AgentEvent>("skill_review", { runId, proposalId, decision, draft: draft ?? null });
+  },
+  /** 项目设置的 SKILLS：读到的、用了几次、最近一次、旧版几份。 */
+  async skillOverview(workspaceId: string): Promise<SkillRow[]> {
+    if (isMockMode()) return mockIpc.skillOverview(workspaceId);
+    return invoke<SkillRow[]>("skill_overview", { workspaceId });
+  },
+  /** 一个 Skill 存过的旧版（新的在前）。 */
+  async skillVersions(workspaceId: string, name: string): Promise<SkillVersion[]> {
+    if (isMockMode()) return mockIpc.skillVersions(workspaceId, name);
+    return invoke<SkillVersion[]>("skill_versions", { workspaceId, name });
+  },
+  /** 退回一份旧版（现在的也先存一份）；返回新的列表。 */
+  async skillRestore(workspaceId: string, name: string, id: string): Promise<SkillRow[]> {
+    if (isMockMode()) return mockIpc.skillRestore(workspaceId, name, id);
+    return invoke<SkillRow[]>("skill_restore", { workspaceId, name, id });
+  },
+  /** 选了一个命令文件：展开成要发出去的这句话。 */
+  async slashExpand(workspaceId: string, name: string, args: string): Promise<string> {
+    if (isMockMode()) return mockIpc.slashExpand(workspaceId, name, args);
+    return invoke<string>("slash_expand", { workspaceId, name, args });
+  },
+  /** `/compact`：压一压这个任务存着的 Peck 循环对话（不叫模型）。 */
+  async harnessCompact(sessionId: string): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessCompact(sessionId);
+    return invoke<string>("harness_compact", { sessionId });
+  },
+  /** `/verify`：现在跑一遍确认过的验证命令。 */
+  async verifyRunNow(workspaceId: string): Promise<VerifyResult[]> {
+    if (isMockMode()) return mockIpc.verifyRunNow(workspaceId);
+    return invoke<VerifyResult[]>("verify_run_now", { workspaceId });
+  },
+  /** 项目设置：这个项目的 Peck 循环会用到的 MCP（设置里的 + 项目 .mcp.json 里的）。 */
+  async projectMcpList(workspaceId: string): Promise<ProjectMcpView> {
+    if (isMockMode()) return mockIpc.projectMcpList(workspaceId);
+    return invoke<ProjectMcpView>("project_mcp_list", { workspaceId });
+  },
+  async projectMcpTest(workspaceId: string, name: string): Promise<McpToolInfo[]> {
+    if (isMockMode()) return mockIpc.projectMcpTest(workspaceId, name);
+    return invoke<McpToolInfo[]>("project_mcp_test", { workspaceId, name });
+  },
+  /** ONE SHOT：只读回答一句（API 模型或 CLI，Antigravity 除外）；不占任务、不锁终端。返回 id（oneshot-…）。 */
+  async harnessOneshot(args: OneshotArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessOneshot(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("harness_oneshot", { ...args, channel });
+  },
+  // ── 定时任务（v0.8）──
+  async scheduleList(workspaceId?: string): Promise<Schedule[]> {
+    if (isMockMode()) return mockIpc.scheduleList(workspaceId);
+    return invoke<Schedule[]>("schedule_list", { workspaceId: workspaceId ?? null });
+  },
+  async scheduleSave(schedule: Schedule): Promise<Schedule> {
+    if (isMockMode()) return mockIpc.scheduleSave(schedule);
+    return invoke<Schedule>("schedule_save", { schedule });
+  },
+  async scheduleDelete(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.scheduleDelete(id);
+    return invoke<void>("schedule_delete", { id });
+  },
+  /** 现在就发一次（不改下一次的时间）。 */
+  async scheduleRunNow(id: string): Promise<ScheduleFired> {
+    if (isMockMode()) return mockIpc.scheduleRunNow(id);
+    return invoke<ScheduleFired>("schedule_run_now", { id });
+  },
+  /** 定时任务发出去的任务：发了一次（fired）、过程里的每条事件（event）。返回取消监听的函数。 */
+  async onSchedule(onFired: (f: ScheduleFired) => void, onEvent: (e: ScheduleEvent) => void): Promise<() => void> {
+    if (isMockMode()) return mockIpc.onSchedule(onFired, onEvent);
+    const { listen } = await import("@tauri-apps/api/event");
+    const a = await listen<ScheduleFired>("schedule-fired", (e) => onFired(e.payload));
+    const b = await listen<ScheduleEvent>("schedule-event", (e) => onEvent(e.payload));
+    return () => { a(); b(); };
+  },
+  /** 预览面板（v0.8）：给这个本机地址起代理，返回面板要开的地址。 */
+  async previewStart(url: string): Promise<string> {
+    if (isMockMode()) return mockIpc.previewStart(url);
+    return invoke<string>("preview_start", { url });
+  },
+  /** 截图、附图（Peck 输出目录里的）→ data URL。 */
+  async harnessImageRead(path: string): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessImageRead(path);
+    return invoke<string>("harness_image_read", { path });
+  },
+  /** 用编辑器（app 空着用系统默认）或访达打开项目里的文件（v0.8）。 */
+  async openPath(workspaceId: string, path: string, how: "editor" | "finder", app?: string): Promise<void> {
+    if (isMockMode()) return mockIpc.openPath(workspaceId, path, how, app);
+    return invoke<void>("open_path", { workspaceId, path, how, app: app || null });
+  },
+  /** 打开落盘的完整命令输出。 */
+  async harnessOutputRead(path: string): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessOutputRead(path);
+    return invoke<string>("harness_output_read", { path });
+  },
+  /** 这个月 Peck 循环（API）花了多少。 */
+  async harnessSpend(): Promise<{ monthUsd: number; since: number }> {
+    if (isMockMode()) return mockIpc.harnessSpend();
+    return invoke<{ monthUsd: number; since: number }>("harness_spend");
+  },
+  /** 设置 → 权限：哪些项目「总是允许」了哪一类（装依赖、起常驻进程）。 */
+  async harnessAllowList(): Promise<AllowRule[]> {
+    if (isMockMode()) return mockIpc.harnessAllowList();
+    return invoke<AllowRule[]>("harness_allow_list");
+  },
+  /** 撤掉一条「总是允许」，返回剩下的。 */
+  async harnessAllowRemove(workspaceId: string, rule: string): Promise<AllowRule[]> {
+    if (isMockMode()) return mockIpc.harnessAllowRemove(workspaceId, rule);
+    return invoke<AllowRule[]>("harness_allow_remove", { workspaceId, rule });
+  },
+  // ── 上下文（v0.6 Phase 7）：记忆 ──
+  /** 这个项目站主批过的记忆。 */
+  async memoryList(workspaceId: string): Promise<MemoryNote[]> {
+    if (isMockMode()) return mockIpc.memoryList(workspaceId);
+    return invoke<MemoryNote[]>("memory_list", { workspaceId });
+  },
+  async memoryDelete(workspaceId: string, id: string): Promise<MemoryNote[]> {
+    if (isMockMode()) return mockIpc.memoryDelete(workspaceId, id);
+    return invoke<MemoryNote[]>("memory_delete", { workspaceId, id });
+  },
+  /** 「想记住这几条」：keep 存进项目记忆，skip 不要；返回追加进事件日志的那条 memory.reviewed。 */
+  async memoryReview(runId: string, keep: string[], skip: string[]): Promise<AgentEvent> {
+    if (isMockMode()) return mockIpc.memoryReview(runId, keep, skip);
+    return invoke<AgentEvent>("memory_review", { runId, keep, skip });
+  },
+
+  // ── 验证和后台（v0.6 Phase 8）──
+  /** .peck/verify.toml：有没有、内容、写错了没有、猜的、站主说过不要没有。 */
+  async verifyGet(workspaceId: string): Promise<VerifyState> {
+    if (isMockMode()) return mockIpc.verifyGet(workspaceId);
+    return invoke<VerifyState>("verify_get", { workspaceId });
+  },
+  /** 校验后写进 .peck/verify.toml。 */
+  async verifySave(workspaceId: string, text: string): Promise<VerifyState> {
+    if (isMockMode()) return mockIpc.verifySave(workspaceId, text);
+    return invoke<VerifyState>("verify_save", { workspaceId, text });
+  },
+  /** 不要猜的那几条：中栏不再问。 */
+  async verifyDismiss(workspaceId: string): Promise<VerifyState> {
+    if (isMockMode()) return mockIpc.verifyDismiss(workspaceId);
+    return invoke<VerifyState>("verify_dismiss", { workspaceId });
+  },
+  /** 这个项目的后台命令和常驻 dev server。 */
+  async backgroundList(workspaceId: string): Promise<BgInfo[]> {
+    if (isMockMode()) return mockIpc.backgroundList(workspaceId);
+    return invoke<BgInfo[]>("background_list", { workspaceId });
+  },
+  async backgroundStop(id: string): Promise<void> {
+    if (isMockMode()) return mockIpc.backgroundStop(id);
+    return invoke<void>("background_stop", { id });
+  },
+  /** 起 verify.toml 里的一个 dev server（已经在跑就返回它）。 */
+  async serverStart(workspaceId: string, name: string): Promise<BgInfo> {
+    if (isMockMode()) return mockIpc.serverStart(workspaceId, name);
+    return invoke<BgInfo>("server_start", { workspaceId, name });
+  },
+
+  /** 换 Dock 里的 App 图标（j2 / a3）。浏览器里不做事。 */
+  async appIconSet(icon: "j2" | "a3"): Promise<void> {
+    if (isMockMode()) return;
+    return invoke<void>("app_icon_set", { icon });
+  },
+};
+
+export interface HarnessRunArgs {
+  sessionId: string;
+  prompt: string;
+  /** api:<供应商>/<模型> */
+  who: string;
+  permission?: Permission;
+  effort?: string;
+  /** 每月花费上限（美元）；空着不管。 */
+  costCap?: number | null;
+  /** 目标模式：要过的验证命令的名字（* 是全部）。 */
+  goal?: string[];
+  /** 在独立工作区（git worktree）里做（v0.7）。 */
+  worktree?: boolean;
+  /** 委派（v0.8）：子任务交给这个 API 模型（api:…）。 */
+  delegate?: string;
+  /** 这一句附的图（v0.8）。 */
+  images?: ImageInput[];
+}
+
+/** 定时任务（v0.8）。时间按本机时区：offsetMin 是和 UTC 差几分钟（东八区 480）。 */
+export type ScheduleWhen = { kind: "daily"; time: string; weekdays?: boolean } | { kind: "interval"; hours: number };
+
+export interface Schedule {
+  id: string;
+  workspaceId: string;
+  title: string;
+  prompt: string;
+  who: string;
+  model?: string | null;
+  effort?: string | null;
+  permission: Permission;
+  when: ScheduleWhen;
+  offsetMin: number;
+  enabled: boolean;
+  nextAt?: number | null;
+  lastRunAt?: number | null;
+  lastSession?: string | null;
+  lastNote?: string | null;
+  createdAt?: number;
+}
+
+export interface ScheduleFired { scheduleId: string; workspaceId: string; sessionId: string; runId: string; prompt: string }
+export interface ScheduleEvent { runId: string; workspaceId: string; sessionId: string; prompt: string; event: AgentEvent }
+
+/** 附的图（base64，不带 data: 前缀）。 */
+export interface ImageInput {
+  mediaType: string;
+  data: string;
+}
+
+/** 合作里的一个人（v0.8）。 */
+export interface TeamPick {
+  who: string;
+  model?: string;
+  effort?: string;
+}
+
+export interface TeamRunArgs {
+  sessionId: string;
+  prompt: string;
+  /** 实施的那一个（api:… 或 cli:…）。 */
+  who: string;
+  permission?: Permission;
+  model?: string;
+  effort?: string;
+  costCap?: number | null;
+  worktree?: boolean;
+  delegate?: string;
+  planBy?: TeamPick;
+  reviewBy?: TeamPick;
+  images?: ImageInput[];
+}
+
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+  enabled: boolean;
+  /** 值放在钥匙串里的环境变量（v0.10，只有名字）。 */
+  secretEnv?: string[];
+  /** 从项目 .mcp.json 读来的：那一项的指纹。 */
+  project?: string | null;
+}
+
+export type ToolHint = "read" | "write" | "destructive";
+
+/** 一个斜杠命令文件（.claude/commands/*.md，v0.10 C2）。 */
+export interface CommandFile { name: string; description: string; hint?: string | null; scope: "project" | "user"; folder?: string | null }
+/** 一个 Skill（SKILL.md，v0.10 C2）。 */
+export interface SkillInfo { name: string; description: string; scope: "project" | "project-skills" | "user"; off: boolean }
+export interface SlashList { commands: CommandFile[]; skills: SkillInfo[] }
+/** 一条 Skill 的草稿（v0.10 C3）：模型提的，或者卡片上改过的。 */
+export interface SkillDraft { name: string; description: string; body: string; scope: SkillInfo["scope"] }
+/** 项目设置里的一行 Skill（v0.10 C3）。 */
+export interface SkillRow { name: string; description: string; scope: SkillInfo["scope"]; off: boolean; loads: number; lastUsed?: number | null; changedAt?: number | null; stale: boolean; versions: number }
+/** 一份旧版。 */
+export interface SkillVersion { id: string; at: number; description: string; lines: number }
+/** `/verify` 的一条结果。 */
+export interface VerifyResult { name: string; command: string; passed: boolean; exitCode?: number | null; timedOut: boolean; durationMs: number; output: string }
+
+/** 项目设置里的一行 MCP（v0.10 A2）。 */
+export interface ProjectMcpRow {
+  name: string;
+  command: string;
+  args: string[];
+  source: "project" | "settings";
+  on: boolean;
+  offInSettings: boolean;
+  overridden: boolean;
+  allowed: boolean;
+  tools: [string, ToolHint][];
+}
+
+export interface ProjectMcpView { rows: ProjectMcpRow[]; skipped: [string, string][]; error?: string | null }
+
+export interface McpToolInfo {
+  server: string;
+  name: string;
+  description: string;
+  readOnly: boolean;
+  destructive: boolean;
+}
+
+export interface WorktreeApply { applied: string[]; conflicts: string[]; record: RunRecord }
+
+/** 站主批过的一条记忆（harness/history.rs）。 */
+export interface MemoryNote { id: string; text: string; sourceRun?: string | null; createdAt: number }
+
+/** .peck/verify.toml（harness/verify.rs）。TOML 里是 [[check]]、[[server]]。 */
+export interface VerifyCheck { name: string; run: string; when?: string[]; timeout?: number | null }
+export interface VerifyServer { name: string; run: string; ready?: string | null; autostart: boolean }
+export interface VerifyConfig { check: VerifyCheck[]; server: VerifyServer[] }
+export interface VerifyState {
+  exists: boolean;
+  text?: string | null;
+  config?: VerifyConfig | null;
+  /** 写错了：原因。 */
+  error?: string | null;
+  /** 没有文件时猜的（TOML 原文）。 */
+  guessed?: string | null;
+  dismissed: boolean;
+  /** 文件和站主确认过的那一份一样；不一样（项目自带的、改过的）就不替模型跑、不起 server。 */
+  approved: boolean;
+}
+
+/** 后台命令（harness/background.rs）。 */
+export interface BgInfo {
+  id: string;
+  name: string;
+  command: string;
+  kind: "command" | "server";
+  status: "running" | "exited" | "stopped";
+  exitCode?: number | null;
+  ready: boolean;
+  startedAt: number;
+  endedAt?: number | null;
+  owner?: string | null;
+  log: string;
+  /** 输出里头一个本机地址（预览面板用，v0.8）。 */
+  url?: string | null;
+}
+
+export interface OneshotArgs {
+  workspaceId: string;
+  prompt: string;
+  /** api:… 或 cli:…（Antigravity 不行） */
+  who: string;
+  /** CLI 引擎里的模型名（AGENTS 里选的；不填用 CLI 默认）。 */
+  model?: string;
+  effort?: string;
+  costCap?: number | null;
+}
+
+/** CLI 能选的一个模型（`gateway/cli_models.rs`）。 */
+export interface CliModel { id: string; label: string; efforts: string[]; defaultEffort: string | null; isDefault: boolean }
+export interface CliModels { engine: string; models: CliModel[]; source: "cli" | "builtin" | "mock"; readAt: number | null; error: string | null }
+
+/** 浏览器演示：照夹具里录到的。 */
+function mockCliModels(engine: string): Promise<CliModels> {
+  const m = (id: string, efforts: string[], isDefault = false): CliModel => ({ id, label: id, efforts, defaultEffort: null, isDefault });
+  const list: Record<string, CliModel[]> = {
+    "claude-code": [["claude-opus-5-5", "Opus 5.5"], ["claude-fable-5-2", "Fable 5.2"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"], ["claude-opus-4-8", "Opus 4.8"]].map(([id, label], i) => ({ ...m(id, ["low", "medium", "high", "xhigh", "max"], i === 0), label })),
+    codex: [m("gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], true), m("gpt-6-luna", ["low", "medium", "high"])],
+    muse: [m("muse-wonder-1.0", ["minimal", "low", "medium", "high", "max"], true), m("muse-ember-1.0", ["low", "medium", "high"]), m("muse-spark-1.3", ["low", "medium", "high"])],
+    grok: [m("grok-4.6", ["medium", "high", "xhigh"], true), m("grok-4.5", ["medium", "high", "xhigh"])],
+    antigravity: [m("gemini-4-argon", ["low", "medium", "high"], true), m("gemini-3.8-flash", ["low", "medium", "high"]), m("claude-opus-5-5", ["low", "medium", "high"])],
+  };
+  return Promise.resolve({ engine, models: list[engine] ?? [], source: "mock", readAt: Date.now(), error: null });
+}
+
+/** 「这个项目总是允许」的一条。 */
+export interface AllowRule {
+  workspaceId: string;
+  /** 项目文件夹（家目录写成 ~）；项目不在列表里了为空。 */
+  workspace?: string | null;
+  /** install-deps（装依赖）、long-running（起常驻进程）。 */
+  rule: string;
+  createdAt: number;
+}
+
+/** 一次请求花的（spend.rs）。 */
+export interface SpendPoint {
+  at: number;
+  /** peck（Peck 循环和 ONE SHOT）或 CLI 引擎 id。 */
+  engine: string;
+  /** Peck 循环：目录里的模型 id；ONE SHOT：oneshot；CLI：引擎 id。 */
+  key: string;
+  usd: number | null;
+  estimated: boolean;
+  input: number | null;
+  output: number | null;
+  cacheRead: number | null;
+  cacheWrite?: number | null;
+}
+
+// ── API 价格表（prices.rs）──
+export type Currency = "USD" | "CNY";
+/** 一个模型的价格：每百万 tokens，币种见 currency。 */
+export interface PriceRow {
+  model: string;
+  label: string;
+  vendor: string;
+  currency: Currency;
+  input: number;
+  output: number;
+  cacheRead?: number | null;
+  cacheWrite?: number | null;
+  tiers?: PriceTier[];
+  /** 高峰倍数（DeepSeek：北京时间工作日 9–12、14–18 点）。 */
+  peak?: number | null;
+}
+export interface PriceView extends PriceRow { origin: "builtin" | "online" | "edited" | "custom" }
+export interface PriceVendor { id: string; label: string; modelsDev?: string | null }
+export interface PriceBook { fxRate: number; defaultFx: number; vendors: PriceVendor[]; rows: PriceView[]; builtinDate: string; refreshedAt: number | null }
+export interface PriceRefresh { book: PriceBook; report: { changed: string[]; same: number; missing: string[]; skippedCny: number } }
+export interface QuotaPoint { at: number; engine: string; label: string; usedPercent: number; resetsAt: number | null }
+export interface SpendOverview { since: number; points: SpendPoint[]; quota: QuotaPoint[] }

@@ -1,0 +1,429 @@
+//! 事件日志和 `EventSink`：引擎发出的每条事件编号、存进 `agent_events`（连同原件），再交给界面。
+
+use super::event::{AgentEvent, EventBody};
+use crate::store::{now_ms, Store, StoreResult};
+use rusqlite::{params, OptionalExtension};
+use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+type Out = Box<dyn Fn(&AgentEvent) + Send + Sync>;
+
+/// 引擎往外发事件的唯一出口。克隆便宜（共享同一个序号）。
+#[derive(Clone)]
+pub struct EventSink {
+    inner: Arc<Inner>,
+    subagent_id: Option<String>,
+    /// 接力、审查的一段（v0.8）：这一段的引擎（事件日志的 `engine` 列按它记，花费上限才认得出 Peck 循环）；
+    /// 引擎自己收尾的 `turn.completed` 不发，记在这里，由发任务的那一层发 `stage.completed`。
+    stage: Option<Arc<StageSlot>>,
+    /// 委派出去的子任务（v0.9 B1，`for_delegate`）：它自己的 `session.started`、`turn.started`、`turn.completed`
+    /// 不发（它挂在那一步下面，不是一个新回合），收尾记在这里。
+    quiet: Option<Arc<Mutex<Option<(super::event::TurnEndReason, Option<String>)>>>>,
+    /// 委派的子任务另外旁听一份（收它最后的报告、改了哪些文件）。
+    tap: Option<Arc<dyn Fn(&AgentEvent) + Send + Sync>>,
+    /// CLI 做完 Peck 替它跑验证（v0.10 C1，`holding_end`）：引擎每一轮的 `turn.completed` 先扣下（记着），
+    /// 验证过了、停下了，整个任务最后那一条由发任务的那一层发。
+    hold: Option<Arc<Mutex<Option<HeldEnd>>>>,
+}
+
+/// 扣下的那一条收尾：回合号、原因、错误。
+pub type HeldEnd = (String, super::event::TurnEndReason, Option<String>);
+
+/// 一段的引擎和它怎么收尾的。
+pub struct StageSlot {
+    pub engine: String,
+    pub ended: Mutex<Option<(super::event::TurnEndReason, Option<String>)>>,
+}
+
+struct Inner {
+    run_id: String,
+    step_id: Option<String>,
+    engine: String,
+    seq: AtomicU64,
+    store: Option<Arc<Mutex<Store>>>,
+    out: Out,
+    /// 存日志失败只报一次，事件照常发给界面。
+    store_failed: std::sync::atomic::AtomicBool,
+    /// `quota.updated` 顺手写进顶栏 QUOTA 的额度卡片（用非默认账号跑时关掉，免得两个账号的额度混在一起）。
+    quota_sync: std::sync::atomic::AtomicBool,
+}
+
+impl EventSink {
+    /// `store` 为空时不落日志（测试、ONE SHOT 之类不记的）。序号接着这个任务已有的往后编。
+    pub fn new(
+        run_id: impl Into<String>,
+        step_id: Option<String>,
+        engine: impl Into<String>,
+        store: Option<Arc<Mutex<Store>>>,
+        out: impl Fn(&AgentEvent) + Send + Sync + 'static,
+    ) -> Self {
+        let run_id = run_id.into();
+        let next = store
+            .as_ref()
+            .and_then(|s| s.lock().ok().and_then(|s| s.next_agent_event_seq(&run_id).ok()))
+            .unwrap_or(0);
+        Self {
+            inner: Arc::new(Inner {
+                run_id,
+                step_id,
+                engine: engine.into(),
+                seq: AtomicU64::new(next),
+                store,
+                out: Box::new(out),
+                store_failed: Default::default(),
+                quota_sync: std::sync::atomic::AtomicBool::new(true),
+            }),
+            subagent_id: None,
+            stage: None,
+            quiet: None,
+            tap: None,
+            hold: None,
+        }
+    }
+
+    /// 收进内存的 sink（测试、夹具回放）。
+    #[cfg(test)]
+    pub fn memory(engine: impl Into<String>) -> (Self, Arc<Mutex<Vec<AgentEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = events.clone();
+        let sink = Self::new("memory", None, engine, None, move |e: &AgentEvent| {
+            if let Ok(mut v) = sink_events.lock() {
+                v.push(e.clone());
+            }
+        });
+        (sink, events)
+    }
+
+    /// 子任务里的事件用这个 sink 发：自动带上 `subagent_id`，序号和主线共用。
+    pub fn for_subagent(&self, subagent_id: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            subagent_id: Some(subagent_id.into()),
+            stage: self.stage.clone(),
+            quiet: None,
+            tap: self.tap.clone(),
+            hold: self.hold.clone(),
+        }
+    }
+
+    /// 委派出去、整段跑一个 Peck 循环的子任务（v0.9 B1）：带 `subagent_id`，子任务自己的开头和收尾不发；
+    /// 发出去的每一条再给 `tap` 一份。
+    pub fn for_delegate(&self, subagent_id: impl Into<String>, tap: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            subagent_id: Some(subagent_id.into()),
+            stage: self.stage.clone(),
+            quiet: Some(Arc::new(Mutex::new(None))),
+            tap: Some(Arc::new(tap)),
+            hold: None,
+        }
+    }
+
+    /// 委派的子任务收尾时报的（原因、错误）；没报过为空。
+    pub fn delegate_end(&self) -> Option<(super::event::TurnEndReason, Option<String>)> {
+        self.quiet.as_ref().and_then(|q| q.lock().ok().and_then(|e| e.clone()))
+    }
+
+    /// 接力、审查的一段用这个 sink 发：序号和整个任务共用，日志里记这一段的引擎；
+    /// 引擎自己收尾的 `turn.completed` 换成 `stage.completed`（整个任务的收尾由发任务的那一层发）。
+    pub fn for_stage(&self, engine: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            subagent_id: self.subagent_id.clone(),
+            stage: Some(Arc::new(StageSlot { engine: engine.into(), ended: Mutex::new(None) })),
+            quiet: None,
+            tap: self.tap.clone(),
+            hold: None,
+        }
+    }
+
+    /// 引擎每一轮的 `turn.completed` 先扣下（v0.10 C1：CLI 做完以后 Peck 还要替它跑验证、可能交回去修）。
+    pub fn holding_end(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            subagent_id: self.subagent_id.clone(),
+            stage: self.stage.clone(),
+            quiet: None,
+            tap: self.tap.clone(),
+            hold: Some(Arc::new(Mutex::new(None))),
+        }
+    }
+
+    /// 扣下的最后那一条收尾；没扣过为空。
+    pub fn held_end(&self) -> Option<HeldEnd> {
+        self.hold.as_ref().and_then(|h| h.lock().ok().and_then(|e| e.clone()))
+    }
+
+    /// 这一段的引擎收尾时报的（原因、错误）；没报过为空。
+    pub fn stage_end(&self) -> Option<(super::event::TurnEndReason, Option<String>)> {
+        self.stage.as_ref().and_then(|s| s.ended.lock().ok().and_then(|e| e.clone()))
+    }
+
+    pub fn run_id(&self) -> &str {
+        &self.inner.run_id
+    }
+
+    pub fn engine(&self) -> &str {
+        self.stage.as_ref().map(|s| s.engine.as_str()).unwrap_or(&self.inner.engine)
+    }
+
+    /// 这次用的不是 CLI 的默认账号：引擎报的额度不写进顶栏 QUOTA 的卡片（卡片只认默认账号）。
+    pub fn without_quota_sync(self) -> Self {
+        self.inner.quota_sync.store(false, Ordering::SeqCst);
+        self
+    }
+
+    pub fn emit(&self, body: EventBody) -> AgentEvent {
+        self.emit_raw(body, None)
+    }
+
+    /// 带原件发：原件只进日志，不发给界面。
+    pub fn emit_raw(&self, body: EventBody, raw: Option<Value>) -> AgentEvent {
+        if let Some(quiet) = &self.quiet {
+            match &body {
+                EventBody::TurnCompleted { reason, error, .. } => {
+                    if let Ok(mut e) = quiet.lock() {
+                        *e = Some((*reason, error.clone()));
+                    }
+                    return AgentEvent { seq: 0, at: now_ms(), subagent_id: self.subagent_id.clone(), body };
+                }
+                EventBody::SessionStarted { .. } | EventBody::TurnStarted { .. } => {
+                    return AgentEvent { seq: 0, at: now_ms(), subagent_id: self.subagent_id.clone(), body };
+                }
+                _ => {}
+            }
+        }
+        if let (EventBody::TurnCompleted { turn_id, reason, error }, Some(hold), None) = (&body, &self.hold, &self.subagent_id) {
+            if let Ok(mut e) = hold.lock() {
+                *e = Some((turn_id.clone(), *reason, error.clone()));
+            }
+            return AgentEvent { seq: 0, at: now_ms(), subagent_id: None, body };
+        }
+        if let (EventBody::TurnCompleted { reason, error, .. }, Some(slot), None) = (&body, &self.stage, &self.subagent_id) {
+            if let Ok(mut e) = slot.ended.lock() {
+                *e = Some((*reason, error.clone()));
+            }
+            // 不编号、不进日志、不发给界面：只是还给调用方一条（没人用）。
+            return AgentEvent { seq: 0, at: now_ms(), subagent_id: None, body };
+        }
+        let event = AgentEvent {
+            seq: self.inner.seq.fetch_add(1, Ordering::SeqCst),
+            at: now_ms(),
+            subagent_id: self.subagent_id.clone(),
+            body,
+        };
+        if let Some(store) = &self.inner.store {
+            let saved = store
+                .lock()
+                .map_err(|_| "事件日志锁坏了".to_string())
+                .and_then(|s| {
+                    s.append_agent_event(
+                        &self.inner.run_id,
+                        self.inner.step_id.as_deref(),
+                        self.engine(),
+                        &event,
+                        raw.as_ref(),
+                    )
+                    .map_err(|e| e.to_string())
+                });
+            if let Err(error) = saved {
+                if !self.inner.store_failed.swap(true, Ordering::SeqCst) {
+                    eprintln!("Peck 事件日志写不进去（{}）：{error}", self.inner.run_id);
+                }
+            }
+            if let EventBody::QuotaUpdated { provider, windows } = &event.body {
+                if self.inner.quota_sync.load(Ordering::SeqCst) {
+                    if let Ok(s) = store.lock() {
+                        let _ = s.usage_record_gateway_quota(provider, windows);
+                    }
+                }
+            }
+        }
+        (self.inner.out)(&event);
+        if let Some(tap) = &self.tap {
+            tap(&event);
+        }
+        event
+    }
+}
+
+impl Store {
+    pub fn next_agent_event_seq(&self, run_id: &str) -> StoreResult<u64> {
+        let max: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT MAX(seq) FROM agent_events WHERE run_id = ?1",
+                params![run_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(max.map(|m| m as u64 + 1).unwrap_or(0))
+    }
+
+    pub fn append_agent_event(
+        &self,
+        run_id: &str,
+        step_id: Option<&str>,
+        engine: &str,
+        event: &AgentEvent,
+        raw: Option<&Value>,
+    ) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO agent_events(run_id, seq, step_id, at, engine, type, event, raw)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                run_id,
+                event.seq as i64,
+                step_id,
+                event.at,
+                engine,
+                event.body.type_name(),
+                serde_json::to_string(event)?,
+                raw.map(|r| r.to_string()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 一个任务的全部事件，按序号。读不懂的行（以后的版本写的）变成 `raw` 事件，不丢。
+    pub fn agent_events(&self, run_id: &str) -> StoreResult<Vec<AgentEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, at, engine, type, event FROM agent_events WHERE run_id = ?1 ORDER BY seq",
+        )?;
+        let rows = stmt.query_map(params![run_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (seq, at, engine, kind, json) = row?;
+            out.push(serde_json::from_str(&json).unwrap_or(AgentEvent {
+                seq: seq as u64,
+                at,
+                subagent_id: None,
+                body: EventBody::Raw {
+                    source: engine,
+                    kind: Some(kind),
+                },
+            }));
+        }
+        Ok(out)
+    }
+
+    /// 一个事件的原件（看不懂的事件、排查格式问题时用）。
+    #[cfg(test)]
+    pub fn agent_event_raw(&self, run_id: &str, seq: u64) -> StoreResult<Option<Value>> {
+        let raw: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT raw FROM agent_events WHERE run_id = ?1 AND seq = ?2",
+                params![run_id, seq as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(raw.flatten().and_then(|s| serde_json::from_str(&s).ok()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::event::{NoticeLevel, ToolKind};
+    use serde_json::json;
+
+    fn temp_store() -> Arc<Mutex<Store>> {
+        let root = std::env::temp_dir().join(format!("peck-gw-log-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        Arc::new(Mutex::new(Store::open(&root.join("peck.db")).unwrap()))
+    }
+
+    #[test]
+    fn engine_quota_reaches_the_quota_cards_only_for_the_default_account() {
+        use crate::gateway::event::QuotaWindow;
+        let store = temp_store();
+        let windows = vec![
+            QuotaWindow { label: "5 小时".into(), used_percent: Some(6.0), resets_at: Some(1) },
+            QuotaWindow { label: "每周".into(), used_percent: Some(2.0), resets_at: Some(2) },
+        ];
+        let other = EventSink::new("r-other", None, "muse", Some(store.clone()), |_| {}).without_quota_sync();
+        other.emit(EventBody::QuotaUpdated { provider: "muse".into(), windows: windows.clone() });
+        assert!(store.lock().unwrap().usage_snapshots().unwrap().get("muse-code").is_none(), "非默认账号不写");
+
+        let sink = EventSink::new("r-default", None, "muse", Some(store.clone()), |_| {});
+        sink.emit(EventBody::QuotaUpdated { provider: "muse".into(), windows });
+        let cards = store.lock().unwrap().usage_snapshots().unwrap();
+        let card = cards.get("muse-code").expect("Muse 的卡片");
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.windows.len(), 2);
+        assert_eq!(card.windows[0].window_duration_mins, Some(300));
+        assert_eq!(card.windows[1].used_percent, Some(2.0));
+    }
+
+    #[test]
+    fn sink_numbers_events_stores_raw_and_continues_after_reopen() {
+        let store = temp_store();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        let sink = EventSink::new("run-1", Some("s1".into()), "codex", Some(store.clone()), move |e| {
+            seen2.lock().unwrap().push(e.seq)
+        });
+        sink.emit(EventBody::TurnStarted { turn_id: "t1".into() });
+        sink.for_subagent("sub-1").emit_raw(
+            EventBody::ToolCallStarted {
+                call_id: "c1".into(),
+                name: "Read".into(),
+                kind: ToolKind::Read,
+                title: "读 a.txt".into(),
+                input: json!({"path":"a.txt"}),
+            },
+            Some(json!({"method":"item/started"})),
+        );
+        assert_eq!(*seen.lock().unwrap(), vec![0, 1]);
+
+        let again = EventSink::new("run-1", None, "codex", Some(store.clone()), |_| {});
+        assert_eq!(
+            again
+                .emit(EventBody::Notice {
+                    level: NoticeLevel::Info,
+                    text: "接着编号".into()
+                })
+                .seq,
+            2
+        );
+
+        let s = store.lock().unwrap();
+        let events = s.agent_events("run-1").unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1].subagent_id.as_deref(), Some("sub-1"));
+        assert_eq!(s.agent_event_raw("run-1", 1).unwrap(), Some(json!({"method":"item/started"})));
+        assert_eq!(s.agent_event_raw("run-1", 0).unwrap(), None);
+        assert!(s.agent_events("run-2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn unreadable_rows_come_back_as_raw() {
+        let store = temp_store();
+        let s = store.lock().unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO agent_events(run_id, seq, at, engine, type, event) VALUES('r', 0, 5, 'grok', 'future.thing', '{\"type\":\"future.thing\"}')",
+                [],
+            )
+            .unwrap();
+        let events = s.agent_events("r").unwrap();
+        assert_eq!(
+            events[0].body,
+            EventBody::Raw {
+                source: "grok".into(),
+                kind: Some("future.thing".into())
+            }
+        );
+    }
+}

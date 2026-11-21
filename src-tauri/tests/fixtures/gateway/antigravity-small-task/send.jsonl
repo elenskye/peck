@@ -1,0 +1,6 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false}, "clientInfo": {"name": "peck", "title": "Peck", "version": "0.5.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {"cwd": "{{WORKSPACE}}", "mcpServers": []}}
+{"jsonrpc": "2.0", "id": 3, "method": "session/set_config_option", "params": {"sessionId": "064da5cc-a95d-4c18-8f42-c95a555f78b2", "configId": "model", "value": "gemini-3.8-flash"}}
+{"jsonrpc": "2.0", "id": 4, "method": "session/set_config_option", "params": {"sessionId": "064da5cc-a95d-4c18-8f42-c95a555f78b2", "configId": "thought_level", "value": "low"}}
+{"jsonrpc": "2.0", "id": 5, "method": "session/prompt", "params": {"sessionId": "064da5cc-a95d-4c18-8f42-c95a555f78b2", "prompt": [{"type": "text", "text": "Read notes.txt, then run exactly `echo agy > stamp.txt` in this folder, then reply with one short sentence. Do nothing else."}]}}
+{"jsonrpc": "2.0", "id": "1", "result": {"outcome": {"outcome": "selected", "optionId": "allow"}}}

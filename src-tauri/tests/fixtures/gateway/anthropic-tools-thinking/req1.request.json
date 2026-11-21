@@ -1,0 +1,39 @@
+{
+ "model": "claude-haiku-5-5",
+ "max_tokens": 4000,
+ "stream": true,
+ "thinking": {
+  "type": "adaptive",
+  "display": "summarized"
+ },
+ "output_config": {
+  "effort": "high"
+ },
+ "system": "You are a coding agent in a small project. Read files with the tool before answering. Answer briefly in Chinese.",
+ "tools": [
+  {
+   "name": "read_file",
+   "description": "Read a text file in the project. Returns its lines with line numbers.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "description": "Path relative to the project root"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "additionalProperties": false
+   },
+   "eager_input_streaming": true
+  }
+ ],
+ "messages": [
+  {
+   "role": "user",
+   "content": "读 notes.txt，然后算：以「- 」开头的条目数 × 17，再加上最后一条条目文字（去掉「- 」）的字数的平方，结果是多少？只给结果和一句算式。"
+  }
+ ]
+}

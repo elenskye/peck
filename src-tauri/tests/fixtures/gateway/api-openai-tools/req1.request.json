@@ -1,0 +1,47 @@
+{
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "notes.txt 里有几条以「- 」开头的条目？",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "instructions": "You are a coding agent in a small project. Read files with the tool before answering. Answer briefly in Chinese.",
+  "max_output_tokens": 2000,
+  "model": "gpt-6-luna",
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto"
+  },
+  "store": false,
+  "stream": true,
+  "tools": [
+    {
+      "description": "Read a text file in the project. Returns its lines with line numbers.",
+      "name": "read_file",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Path relative to the project root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    }
+  ]
+}

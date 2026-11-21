@@ -1,0 +1,12 @@
+# agents/grok.toml
+id          = "grok"
+name        = "Grok Build"
+description = "读取意图与任务文档，并在工作区实施代码构建"
+command     = "grok"
+args        = ["-p", "{{prompt}}", "--output-format", "plain", "--no-auto-update"]
+cwd         = "{{workspace}}"
+stdin       = "none"
+timeout     = "45m"
+path        = []
+
+[env]

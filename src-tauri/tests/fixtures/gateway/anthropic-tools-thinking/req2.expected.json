@@ -1,0 +1,173 @@
+{
+  "events": [
+    {
+      "text": "I'm counting the entries",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " that",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " begin with a",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " dash, which g",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "ives three.",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " The last entry,",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " \"测试通过\", has four",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " characters, so the square term",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " is 16 and ",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "3 times",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " 17 is",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " 51, b",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "ringing the total to 67.",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " The",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " word-",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "count question is also",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " about characters here",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": ", which",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " is",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " four, and",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " the answer st",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "ays at 67 ",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "under the",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": " one-sentence formula.",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "\n\n",
+      "type": "reasoning_delta"
+    },
+    {
+      "text": "结",
+      "type": "text_delta"
+    },
+    {
+      "text": "果是",
+      "type": "text_delta"
+    },
+    {
+      "text": " **67**。",
+      "type": "text_delta"
+    },
+    {
+      "text": "\n\n算式：3 × 17",
+      "type": "text_delta"
+    },
+    {
+      "text": " + ",
+      "type": "text_delta"
+    },
+    {
+      "text": "4² = 51",
+      "type": "text_delta"
+    },
+    {
+      "text": " + 16 = 67",
+      "type": "text_delta"
+    }
+  ],
+  "response": {
+    "cost": {
+      "source": "priced",
+      "usd": 0.0001314
+    },
+    "message": {
+      "parts": [
+        {
+          "opaque": {
+            "data": {
+              "signature": "CAQS3AYKEAgTGAI4AUIIdGhpbmtpbmcSDGGwYHZn2RY2rOF1yxoM5P/68Z8jFkgYHS62IjCClpGAaRWJNscTWz0g7dfHiLT60ne9iGuI/pNj33BnPoY/UV6cTerEv3stH6cHu7oq+QUKVTww4ZMHwjMkzozIFTBJ1MvUzUtwk14aX2/Gz9caoOsWdil+rtZL623UDYIaYUwEEfU3pto63PWnJktvTGIkYLPH2ugnpzfitmctE+ZDJ/+9jkB3ws+Fj40Y7Ipl9X2N8k6RijB3UZ9Nc2GHjDEAMtQKTDk8lkk/z81yuKu8um8FjvKdCProhCZDND03DNbqOo9op+y6cWCbHvQAPak26+jsg1+1jtY/ZlC1lcwdQi69yHYpc75ym0p6+GjYOHRR7AQTwpSRYo/aG0j8Gt+GgGaU1TVai6WmH5DnuBIekcL0j64EPASb4SBqeUHo1nEs8VCzo1f1id+cnsATq52IbOoZdhDWHJfJYiDqhigzYTM95n6U0yncAcx3K5KdaNEH+h8JH81VR71u01LaP9JEoO7Rf1mUvh90MDP/3GWoMKVWvlZg7kYc5c2gdHCwrJHNwx8D1+mDn3/AbmlOlTXdzZ05XDX52QIyOdnPxF99DM+hh5Rg7Fh3NryfoxVowSWguB7tkx+4HBLQW0Y+s4sJX3y56pK9xUgUzNmv8R60G6QlbwtO6dA73emxXEAH9YsPgD2ePffbkK47pCT45cnva4KW1GYqtrWRSWBK1jq30Ugnn7Dm4apfgA1EMvsBaQbAuW/HmlKUV2/yKbQC+QLpCFxOcGiFX6To9AvnNQojoHxntmAefuljIqCcK1A2AFmDktDGK558AqUNWSbOdZ+9biRjPCi7irtkTc8QFLO/dTRVrCvvRYoYPFN7GophPZbjAGmkKgGpWB3AgfQDcZTfGC/jrByjiEIHbVRNlTJkjX9rvnd+9OwT5JcsprMZA244PE3UeQ+os4s52kUvPYyge9t77DlyOX8xQ07otqI9fdI72FCXUgDPJFa6DURVh09gp3gxdMImJmZO/WJ03jiZ9dDxE9gRFn+cCTdP8KJRX8Xs2MP6LIA91n6KPk1CaA2gKftBl9l2ycaUSLSxManE80mSlMSmmh58ABZi+8x6iVe2ZX+hRC2QeBgB",
+              "type": "thinking"
+            },
+            "origin": {
+              "model": "claude-haiku-5-5",
+              "provider": "anthropic",
+              "wire": "messages"
+            }
+          },
+          "text": "I'm counting the entries that begin with a dash, which gives three. The last entry, \"测试通过\", has four characters, so the square term is 16 and 3 times 17 is 51, bringing the total to 67. The word-count question is also about characters here, which is four, and the answer stays at 67 under the one-sentence formula.\n\n",
+          "type": "reasoning"
+        },
+        {
+          "text": "结果是 **67**。\n\n算式：3 × 17 + 4² = 51 + 16 = 67",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    "responseModel": "claude-haiku-5-5",
+    "stop": "end_turn",
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "contextUsed": null,
+      "contextWindow": null,
+      "input": 599,
+      "output": 143,
+      "reasoning": 108
+    }
+  }
+}
