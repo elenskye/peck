@@ -1,6 +1,6 @@
 # 界面
 
-> 用词对照、布局、各处的样子。定值都在 `src/vendor/peck/`（visual-atelier 方案 `peck` 同步来的，不手改）：`DESIGN.md` 是视觉基线，`peck-rules.md` 是外框规则，`DESIGN-SYSTEM.md` 和 `components/` 是组件怎么写。行为在 [architecture.md](./architecture.md)。
+> 用词对照、默认取舍、布局、各处的样子。定值都在 `src/vendor/peck/`：`DESIGN.md` 是视觉基线，`peck-rules.md` 是外框规则，`DESIGN-SYSTEM.md` 和 `components/` 是组件怎么写。行为在 [architecture.md](./architecture.md)。
 
 ## 用词对照
 
@@ -53,7 +53,11 @@
 
 - 专有名词保留英文：Muse、Grok、API、Key、Diff、MCP、CLI、Token。不写开发者口径：Worker、Run、Step、影子、台账、IPC、schema。
 - 状态词：在跑、等你回答、完成、失败、已停止、已撤销。时间写「3 分钟前」「11-10 14:02」。
+## 默认取舍
+
+- **先保留功能、再收界面**：入口一个不少，旧组件能删就删。
 - **界面只留必要的字**：解释「这是什么、会怎样」的收进标题、模块头或行名后面的 ⓘ（悬停、聚焦或点一下看）；界面上只留状态、错误和确认时的那一句。设置页、AGENTS、输入框不放 ⓘ、不写说明；设置的分组名只写英文。
+- 看不准的视觉细节照 `src/vendor/peck/DESIGN.md`；没写到的取沉静的那一边。
 
 ## 布局
 
@@ -70,7 +74,7 @@
   - 文件夹不在了：那一行琥珀感叹号和「文件夹不在了」，中栏是 MISSING：FIND FOLDER 或 REMOVE。
 - PROJECTS、AGENTS 都能收起（模块头最右的小三角），收起的只剩模块头和一行要紧的（当前项目 / 现在是谁），另一块占满；记在设置里。
 - **归档**：任务收起来不在左栏列，记录、快照都留着。设置 → ARCHIVE 按项目分组列出，每行 OPEN / RESTORE / DELETE；OPEN 在中栏只读地看，输入框的位置换成一条「几时归档的，只能看」和 RESTORE，右栏 CHANGES 只看。
-- **菜单栏**：在跑变样，等你批或答换成问号，两个以上在跑旁边写个数；通知能关。
+- **菜单栏**：在跑变样，等你批或答换成问号，两个以上在跑旁边写个数；通知默认开，能关。
 
 ## 设置
 
@@ -129,6 +133,7 @@ Peck 循环和 CLI 引擎同一套显示（`src/shell/AgentView.tsx`）：
 - **回答**按 Markdown 显示。任务清单在过程最上面。
 - **工具调用**（学 Claude Code，英文）：连着的折成一组，头上一行「Read 3 files, edited 2 files, ran 1 command · 38s」（按出现的先后：read / listed / searched for / edited / ran / fetched / searched the web / recalled memory / used N skills / ran N subagents / used N tools…），失败的组标 FAIL；点开每步一行，标题也是英文（Run pnpm test、Edit src/a.ts），改的带 Diff 入口和 +/−，跑的带 exit 码、能看输出。各引擎给的中文标题在前端翻（`englishTitle`），旧记录一样。
 - **思考**不算一步、不单独占行，也不打断上下的工具调用：在想时那一组下面一行「Thinking… 3s」，想完就不显示。
+- 英文只到工具调用的组和 Thinking 为止；卡片、验证、recap、提醒行这些细的信息用中文。
 - **卡片**：审批（`[ RISK ]` 高危 / `[ ALLOW? ]`）、ASK（问题 + 选项 + 自己写）；Peck 不在最前面时发通知。任务结束了卡片不能再点。
 - **花费**：每次任务下面一行（进、出、缓存命中、花费；CLI 估的标「估」，算不出写「花费未知」）。
 - **`[ VERIFY ]`**：每条一行（名字、耗时、命令和结果），没过的展开输出；头上写结论：都过了（绿）、没过交回去修第几次（琥珀）、停下的原因（红）。

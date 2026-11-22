@@ -11,7 +11,7 @@
 | 后端 | Rust | 模型请求、工具、CLI 进程、快照、SQLite 都在这里，界面只经 IPC |
 | 存储 | SQLite（WAL）+ 影子 Git 仓库 | 记录和历史 Diff 分开存 |
 
-不做：常驻辅助服务、通用插件框架、本地模型、云同步、开机自启。
+不做：常驻辅助服务、通用插件框架、开机自启。
 
 ## 一个任务怎么跑
 
@@ -26,7 +26,7 @@
 | 接力、审查 | 两三个合作，任务上记 `team:<写规范>\|<实施>\|<审查>` | `team_run_start` |
 | ONE SHOT | Peck 循环只给读的工具，或 CLI 按 PLAN 档；不占任务号、不锁项目和终端 | `harness_oneshot` |
 
-- **Antigravity 只做直接调用**：不进 ONE SHOT、接力、审查、委派、定时任务、目标模式、自动修（`caps.rs` 的 `direct_only`）。
+- **直接调用的引擎**（`caps.rs` 的 `direct_only`，现在是 Antigravity）挡在 ONE SHOT、接力、审查、委派、定时任务、目标模式、自动修之外。
 - **发出去前**（`src/App.tsx` 的 `send`）：存着的接力、审查、委派只认 AGENTS 里现在能选的；GOAL 不能和接力、审查一起发，PLAN 不能开接力和审查，都提示一句、不悄悄丢掉。
 - **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/verify` `/cost`，加上项目和站主的 `.claude/commands/**/*.md`（同名项目的为准）。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
 - **控制通道**：审批、回答、追加、打断都走 `gateway_control(runId, control)`（`gateway/runner.rs`）。`run_cancel` 先发打断，超时结束整个进程组。
@@ -70,7 +70,7 @@
 | Key | 钥匙串服务 `Peck API` / `Peck API Dev`（开发包）/ `Peck API Test`（设了 `PECK_DATA_DIR`） |
 
 - `PECK_DATA_DIR`、`PECK_SHADOW_ROOT` 把数据和快照指到别处；`PECK_API_MODE=mock|real` 强制模拟或真实，开发包和设了 `PECK_DATA_DIR` 的默认模拟。
-- **升级**：先用 SQLite Backup API 备份；比自己新的 schema 拒绝写入。
+- **迁移和升级**：改数据库结构就在 `src-tauri/migrations/` 加迁移，不改旧记录的含义；升级前先用 SQLite Backup API 备份；比自己新的 schema 拒绝写入。
 - **影子仓库**：独立的 `GIT_DIR`、`GIT_WORK_TREE`，每个任务存前后两棵树。`peck.db` 和 `shadow/` 要一起备份。
 
 ## Model Gateway（`src-tauri/src/gateway/`）
@@ -113,7 +113,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck 循环同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示；Antigravity 不查。
 - **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌。工具：`create_skill`（五家都给）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）。只对这一次进程挂上、不改 CLI 的配置；Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
-- **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。Peck 不读、不复用任何凭据。
+- **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。
 
 ## Peck 循环（`src-tauri/src/harness/`）
 
@@ -218,7 +218,7 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 
 ## 视觉、打包和签名
 
-- 视觉基线是 visual-atelier 的 `schemes/peck/`，按 tag 单向同步进 `src/vendor/peck/`，不手改（命令在 `CLAUDE.md`「边界」）。现在是那边的 `peck-v0.1.0`，是方案自己的版本号；Peck 自己的 tag 也叫 `peck-v<版本>`，两边各算各的。字体打进包里，不联网。
+- 视觉基线是 visual-atelier 的 `schemes/peck/`，按 tag 单向同步进 `src/vendor/peck/`：改方案 → 站主批、打 tag → 在 visual-atelier 里跑 `VA_BROWSER_CHANNEL=chrome npm run sync -- --scheme peck --to peck --tag peck-v<版本>`。现在是那边的 `peck-v0.1.0`，是方案自己的版本号；Peck 自己的 tag 也叫 `peck-v<版本>`，两边各算各的。方案里还没有的样式先写在 `src/app.css`（清单在 HANDOFF「视觉基线要补的」）。字体打进包里，不联网。
 - `pnpm app:package` 打包、校验签名；`pnpm app:install` 再装进 /Applications。`PECK_INSTALL_DIR` 改目标。
 - 签名默认用本机自签名证书 **Peck Self-Signed**；`APPLE_SIGNING_IDENTITY` 换别的，`-` 是 ad-hoc。不是 Developer ID、没公证。
 

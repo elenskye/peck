@@ -1,6 +1,21 @@
 # 验证方法
 
-> 怎么测、用什么命令。原则在 [CLAUDE.md](../CLAUDE.md)「验证」「额度」：平时只用 `?mock` 和本地夹具；真 CLI、真 API 照 [roadmap](./roadmap.md#现行授权) 的授权；不碰正式数据目录。模拟、自动测试、原生交互、真实服务的结果分开记，没验过的不写「通过」。
+> 怎么测、用什么命令、怎么更新正式版。平时只用 `?mock` 和本地夹具，不发真请求、不碰正式数据目录；真跑见 [roadmap「现行授权」](./roadmap.md#现行授权)。模拟、自动测试、原生交互、真实服务的结果分开记。
+
+## 每次改完
+
+- 前端：`pnpm check`；改了界面开 `?mock` 看改到的地方，明暗各一次。
+- 后端：只跑改到的模块（见「后端」）。
+
+## 更新正式版
+
+什么时候做见 [CLAUDE.md「版本」](../CLAUDE.md)。
+
+1. 版本号四处一起改。
+2. `pnpm check`、`pnpm build`、全量 `cargo test`；`?mock` 明暗各看一遍这一版改的地方。
+3. 分 Phase 的版本另加：两个只读子代理分头审这一版的改动（Rust、前端各一个），真缺陷修掉；做一次「升级测试」。
+4. `pnpm app:install` 装进 /Applications（打包、校验签名，旧包自动备份一份）。
+5. 更新 HANDOFF，提交。
 
 ## 界面：`?mock`
 
@@ -26,7 +41,7 @@
 
 - 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（头上的 dev server 小片起停 → GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、MCP、SKILLS、COMMANDS、verify.toml、记忆、SCHEDULE）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件）；CHANGES 的按块 REJECT / ACCEPT 和行号批注。
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
-- 改了界面明暗各看一次（内置浏览器 `resize_window` 切 `colorScheme`），截图只放会话临时目录。
+- 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
 
@@ -84,7 +99,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 
 ## 真 CLI、真 API
 
-- 次数照 roadmap「现行授权」，用之前和之后都记账，失败不静默重试，用完先停下问站主。一律最便宜的模型、无关紧要的小任务，项目用仓库外的 `personal-cli-studio/projects/gateway-smoke`。
+- 规矩和次数见 roadmap「现行授权」；项目用仓库外的 `personal-cli-studio/projects/gateway-smoke`。
 - 入口是各模块 `#[ignore]` 的 `live_*` 测试，按环境变量拿参数（Key 从 Key 目录的文件读，不打印；列 Key 目录会被权限检查拦，真 API 要站主给路径或自己跑）：
   - API：`gateway::providers` 的 `live_two_requests`。`PECK_LIVE_MODEL`、`PECK_LIVE_KEYS`（Key 目录）、可选 `PECK_LIVE_REGION`、`PECK_LIVE_EFFORT`。
   - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`。审批一律批准一次，提问答「好」。
@@ -103,4 +118,4 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 | DeepSeek API | [GET `/user/balance`](https://api-docs.deepseek.com/api/get-user-balance/) | 用已配置的 Key；换 Key 清旧余额 |
 | Anthropic API | [Usage/Cost Analytics](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api) | 要 Admin 权限，普通 Key 显示未知 |
 
-要点：只在对应客户端运行时监测，退出就停并留最后一次快照；未知不填 0，币种不直接相加，估算标出来；不采集提示词、会话正文、环境变量；不为查额度启动已关闭的客户端或发模型 turn。
+要点：只在对应客户端运行时监测，退出就停并留最后一次快照；未知不填 0，币种不直接相加，估算标出来；不采集提示词、会话正文、环境变量；不为查额度启动已关闭的客户端，不用「你好」探针或模型 turn 查额度、余额。
