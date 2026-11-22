@@ -4,6 +4,8 @@
 //!   「问站主」）；Codex（`requestUserInput`）、Claude Code（`AskUserQuestion`）、Muse（`userInput/request`）有自己的通道。
 //! - `delegate_task`：选了委派时（v0.9 B1，见 `harness/delegate.rs`）。
 //! - `create_skill`：提议存一条 Skill（v0.10 C3，见 `skill_propose`），五家 CLI 都给（站主 2026-11-16 定）。
+//! - `restore_snapshot`、`schedule_task`、`list_schedules`、`cancel_schedule`（v1.0.2，见 `harness/extras.rs`）：
+//!   快照回退和定时任务，和 Peck 循环同一套；回退先弹高危卡片，站主批了才动。
 //!
 //! 所以 v0.10 起每个 CLI 任务都挂这个入口（只这一次进程，不改 CLI 的配置）。
 //!
@@ -32,6 +34,10 @@ pub struct Offer {
     pub delegate: Option<Arc<crate::harness::delegate::CliDelegate>>,
     /// 给 `create_skill`（v0.10 C3）：项目根，提议的 Skill 写进它的 `.claude/skills`。
     pub skill_root: Option<std::path::PathBuf>,
+    /// 给快照回退和定时任务那四个（v1.0.2）。
+    pub extras: Option<Arc<crate::harness::extras::Extras>>,
+    /// 这一段只读（PLAN、合作里写规范和审查的）：不回退文件。
+    pub read_only: bool,
 }
 
 /// 一个任务登记的入口：事件往哪发、给哪些工具。
@@ -220,6 +226,9 @@ impl McpHub {
                 if offer.skill_root.is_some() {
                     lines.push("create_skill proposes saving a reusable procedure you worked out as a skill (SKILL.md); the user approves it. Use it instead of writing skill files yourself.");
                 }
+                if offer.extras.is_some() {
+                    lines.push("restore_snapshot goes back to Peck's snapshot of the project from before or after an earlier task (undo / redo what a task changed); use it when the user asks to undo, revert or restore a task's changes, never on your own. schedule_task, list_schedules and cancel_schedule manage scheduled tasks in this project; use them when the user asks for something to happen at a time or on a schedule. For both, restate what you are about to do and get the user's yes first.");
+                }
                 ok(json!({
                     "protocolVersion": m["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
                     "capabilities": {"tools": {}},
@@ -272,7 +281,25 @@ impl McpHub {
                         "annotations": {"readOnlyHint": true}
                     }));
                 }
+                if offer.extras.is_some() {
+                    use crate::harness::extras as x;
+                    tools.push(json!({"name": x::RESTORE_SNAPSHOT, "title": "Task snapshots", "description": x::RESTORE_DESCRIPTION, "inputSchema": x::restore_schema(), "annotations": {"readOnlyHint": false, "destructiveHint": true}}));
+                    tools.push(json!({"name": x::SCHEDULE_TASK, "title": "Schedule a task", "description": x::SCHEDULE_DESCRIPTION, "inputSchema": x::schedule_schema(), "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
+                    tools.push(json!({"name": x::LIST_SCHEDULES, "title": "List scheduled tasks", "description": x::LIST_SCHEDULES_DESCRIPTION, "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": true}}));
+                    tools.push(json!({"name": x::CANCEL_SCHEDULE, "title": "Cancel a scheduled task", "description": x::CANCEL_SCHEDULE_DESCRIPTION, "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}, "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
+                }
                 ok(json!({"tools": tools}))
+            }
+            "tools/call" if offer.extras.is_some() && crate::harness::extras::NAMES.contains(&m["params"]["name"].as_str().unwrap_or("")) => {
+                let Some(x) = offer.extras.clone() else { return None };
+                let name = m["params"]["name"].as_str().unwrap_or("").to_string();
+                let args = m["params"]["arguments"].clone();
+                let n = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
+                let said = extras_call(x, &name, args, sink, offer.read_only, n).await;
+                match said {
+                    Ok(text) => ok(json!({"content": [{"type": "text", "text": text}]})),
+                    Err(why) => ok(json!({"content": [{"type": "text", "text": why}], "isError": true})),
+                }
             }
             "tools/call" if m["params"]["name"] == "create_skill" => {
                 let Some(root) = offer.skill_root.clone() else {
@@ -361,6 +388,54 @@ async fn respond(
     socket.write_all(head.as_bytes()).await?;
     socket.write_all(body.as_bytes()).await?;
     socket.shutdown().await
+}
+
+/// 快照回退、定时任务那四个工具（CLI 调过来）。回退先算好动哪些文件、弹高危卡片（编号 `peck-tool-<n>-approve`，
+/// 站主的回答按这个前缀从任务的控制通道转过来，和委派的子任务同一条路），批了才放回去。
+async fn extras_call(x: Arc<crate::harness::extras::Extras>, name: &str, args: Value, sink: &EventSink, read_only: bool, n: u64) -> Result<String, String> {
+    use super::event::{ApprovalDecision, ResolvedBy, ToolKind};
+    use crate::harness::extras as e;
+    let blocking = |f: Box<dyn FnOnce() -> Result<String, String> + Send>| async move { tokio::task::spawn_blocking(f).await.unwrap_or_else(|_| Err("出错了。".into())) };
+    if name != e::RESTORE_SNAPSHOT {
+        let name = name.to_string();
+        return blocking(Box::new(move || match name.as_str() {
+            e::SCHEDULE_TASK => x.schedule_task(&args),
+            e::LIST_SCHEDULES => x.list_schedules(),
+            _ => x.cancel_schedule(&args),
+        }))
+        .await;
+    }
+    if args["action"] != "restore" {
+        return blocking(Box::new(move || x.list_snapshots())).await;
+    }
+    if read_only {
+        return Err("PLAN 只读：不回退文件。请站主换成 EDIT 或 AUTO 再说一次。".into());
+    }
+    let planner = x.clone();
+    let plan = tokio::task::spawn_blocking(move || planner.plan_restore(&args)).await.map_err(|_| "算要回退哪些文件时出错了。".to_string())??;
+    let prefix = format!("peck-tool-{n}-");
+    let request_id = format!("{prefix}approve");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    super::runner::register_sub_control(&x.run_id, &prefix, tx);
+    let options = vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce];
+    sink.emit(EventBody::ApprovalRequested { request_id: request_id.clone(), call_id: None, kind: ToolKind::Edit, title: plan.title.clone(), detail: Some(plan.detail.clone()), high_risk: true, options });
+    // 等站主点；按了停、任务收尾（`interrupt_subs`）、通道断了都算没批。
+    let decision = loop {
+        match rx.recv().await {
+            Some(super::Control::Approve { decision, .. }) => break Some(if decision.allows() { ApprovalDecision::AllowOnce } else { ApprovalDecision::DenyOnce }),
+            Some(super::Control::Interrupt) | None => break None,
+            Some(_) => {}
+        }
+    };
+    super::runner::unregister_sub_control(&x.run_id, &prefix);
+    let Some(decision) = decision else {
+        return Err("任务停了，站主没批这次回退，文件都没动。".into());
+    };
+    sink.emit(EventBody::ApprovalResolved { request_id, decision, by: ResolvedBy::User });
+    if !decision.allows() {
+        return Err("站主没批这次回退，文件都没动。".into());
+    }
+    tokio::task::spawn_blocking(move || x.restore(&plan)).await.unwrap_or_else(|_| Err("回退出错了。".into()))
 }
 
 /// 引擎的控制通道收到一个回答：是 Peck 的 `ask_user` 的就交过去，并发 `user_input.resolved`。
@@ -460,6 +535,59 @@ mod tests {
         assert_eq!(result["result"]["isError"], true);
         let (status, _) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 5, "method": "ping"})).await;
         assert_eq!(status, 401);
+    }
+
+    #[tokio::test]
+    async fn snapshots_and_schedules_reach_a_cli_and_restoring_waits_for_the_user() {
+        use crate::harness::extras::testing as x;
+        let w = x::world();
+        w.p.write("a.txt", "a0\n");
+        x::task(&w, 940_001, |p| {
+            p.write("a.txt", "a1\n");
+        });
+        let hub = McpHub::start().await.unwrap();
+        let seen: Arc<Mutex<Vec<AgentEvent>>> = Arc::default();
+        let s2 = seen.clone();
+        let sink = EventSink::new("run-mcp-x", None, "codex", None, move |e: &AgentEvent| s2.lock().unwrap().push(e.clone()));
+        let mcp = hub.register_offer(sink, Offer { extras: Some(Arc::new(x::extras(&w, "run-mcp-x"))), ..Default::default() });
+        let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
+        let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(names, crate::harness::extras::NAMES);
+        let call = |id: u64, name: &str, args: Value| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": name, "arguments": args}});
+        let (_, r) = post(&mcp.url, &mcp.token, call(2, "schedule_task", json!({"prompt": "看一下 CI", "repeat": "interval", "every_hours": 2}))).await;
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("每隔 2 小时"), "{r}");
+        let (_, r) = post(&mcp.url, &mcp.token, call(3, "list_schedules", json!({}))).await;
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("看一下 CI"));
+        let (_, r) = post(&mcp.url, &mcp.token, call(4, "restore_snapshot", json!({"action": "list"}))).await;
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("#940001"));
+
+        // 回退：先弹高危卡片，站主的回答从任务的控制通道按编号转过来；批了才动。
+        for (decision, text) in [(crate::gateway::event::ApprovalDecision::DenyOnce, "a1\n"), (crate::gateway::event::ApprovalDecision::AllowOnce, "a0\n")] {
+            seen.lock().unwrap().clear();
+            let (url, token) = (mcp.url.clone(), mcp.token.clone());
+            let body = call(5, "restore_snapshot", json!({"action": "restore", "task": 940_001, "to": "before"}));
+            let pending = tokio::spawn(async move { post(&url, &token, body).await });
+            let request_id = loop {
+                if let Some(id) = seen.lock().unwrap().iter().find_map(|e| match &e.body {
+                    EventBody::ApprovalRequested { request_id, high_risk: true, options, .. } if options.len() == 2 => Some(request_id.clone()),
+                    _ => None,
+                }) {
+                    break id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            };
+            assert_eq!(w.p.read("a.txt"), "a1\n", "没批之前不动");
+            crate::gateway::runner::route_control("run-mcp-x", crate::gateway::Control::Approve { request_id, decision }).unwrap();
+            let (_, r) = pending.await.unwrap();
+            assert_eq!(r["result"]["isError"].as_bool().unwrap_or(false), !decision.allows(), "{r}");
+            assert_eq!(w.p.read("a.txt"), text);
+        }
+        // 只读的那一段（PLAN）：不回退。
+        let sink = EventSink::new("run-mcp-y", None, "codex", None, |_: &AgentEvent| {});
+        let ro = hub.register_offer(sink, Offer { extras: Some(Arc::new(x::extras(&w, "run-mcp-y"))), read_only: true, ..Default::default() });
+        let (_, r) = post(&ro.url, &ro.token, call(6, "restore_snapshot", json!({"action": "restore", "task": 940_001, "to": "after"}))).await;
+        assert!(r["result"]["isError"] == true && r["result"]["content"][0]["text"].as_str().unwrap().contains("PLAN"));
+        let _ = std::fs::remove_dir_all(&w.root);
     }
 
     #[tokio::test]

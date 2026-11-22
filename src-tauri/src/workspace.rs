@@ -12,7 +12,6 @@ pub struct Workspace {
     pub name: String,
     pub last_opened_at: i64,
     pub git_branch: Option<String>,
-    pub gitignore_configured: bool,
     /// 「移出列表」了：文件夹、任务、快照都不动，重新打开这个文件夹就回来。
     #[serde(default)]
     pub hidden: bool,
@@ -30,24 +29,15 @@ pub struct ProjectSettings {
     /// 这个项目默认用哪套合作预设（v0.9 B2，预设的 id；预设本身存在界面设置里）。有它就不看 `who`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
-    /// 站主不要 Peck 猜的验证命令（v0.6）：中栏不再问；项目设置里照样能写 `.peck/verify.toml`。
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub verify_dismissed: bool,
-    /// 站主确认过的 `.peck/verify.toml`（原文的 md5）。项目自带的、模型改过的，确认前不替模型跑、不起 server。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verify_approved: Option<String>,
     /// 项目即环境（v0.7）：主文件夹以外的文件夹，每个自己选能改还是只读。Peck 循环的工具和命令都认。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<ProjectFolder>,
-    /// 这个项目的环境变量（v0.7）：Peck 循环的命令、验证命令、dev server、TERM 都带上；v0.10 起 CLI 引擎也带。
+    /// 这个项目的环境变量（v0.7）：Peck 循环的命令、后台命令、TERM 都带上；v0.10 起 CLI 引擎也带。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvVar>,
     /// 这个项目里 Peck 循环不起的 MCP 服务器（v0.10 A2）：项目 `.mcp.json` 里的、设置里的都按名字关。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mcp_off: Vec<String>,
-    /// CLI 引擎做完不替它跑验证命令（v0.10 C1；默认跑）。
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub cli_verify_off: bool,
     /// 这个项目里不用的 Skills（v0.10 C2，按名字）。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills_off: Vec<String>,
@@ -192,52 +182,6 @@ pub fn workspace_hash(workspace_path: &Path) -> String {
     md5_hex(normalized.to_string_lossy().as_bytes())
 }
 
-/// Check if a `.gitignore` content string already ignores `.peck/`.
-pub fn gitignore_contains_peck(content: &str) -> bool {
-    content.lines().any(|line| {
-        let trimmed = line.trim();
-        matches!(
-            trimmed,
-            ".peck" | ".peck/" | "/.peck" | "/.peck/" | ".peck/**" | "/.peck/**"
-        )
-    })
-}
-
-/// Ensure `.peck/` is present in `<workspace_path>/.gitignore` idempotently.
-/// Returns `Ok(true)` if `.peck/` was newly added, or `Ok(false)` if it was already present.
-pub fn ensure_peck_in_gitignore(workspace_path: &Path) -> Result<bool, String> {
-    if !workspace_path.exists() {
-        return Err(format!(
-            "Workspace directory does not exist: {}",
-            workspace_path.display()
-        ));
-    }
-
-    let gitignore_path = workspace_path.join(".gitignore");
-    let existing = if gitignore_path.exists() {
-        fs::read_to_string(&gitignore_path)
-            .map_err(|e| format!("Failed to read .gitignore: {e}"))?
-    } else {
-        String::new()
-    };
-
-    if gitignore_contains_peck(&existing) {
-        return Ok(false);
-    }
-
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    if !updated.is_empty() && !updated.ends_with("\n\n") {
-        updated.push('\n');
-    }
-    updated.push_str("# Peck runtime handoff & task artifacts\n.peck/\n");
-
-    fs::write(&gitignore_path, updated).map_err(|e| format!("Failed to write .gitignore: {e}"))?;
-
-    Ok(true)
-}
 
 /// Detect the current Git branch of `workspace_path` without modifying the repository.
 pub fn detect_git_branch(workspace_path: &Path) -> Option<String> {
@@ -282,11 +226,7 @@ pub fn detect_git_branch(workspace_path: &Path) -> Option<String> {
     None
 }
 
-/// Open a workspace directory:
-/// 1. Validates directory existence;
-/// 2. Detects Git status and current branch;
-/// 3. Automatically injects `.peck/` into `.gitignore` idempotently;
-/// 4. Returns a populated `Workspace` descriptor.
+/// 打开一个项目文件夹：确认它在、认出 git 分支，回一份 `Workspace`。不动项目里的任何文件。
 pub fn open_workspace(path_str: &str) -> Result<Workspace, String> {
     let raw_path = Path::new(path_str.trim());
     if !raw_path.exists() {
@@ -307,7 +247,6 @@ pub fn open_workspace(path_str: &str) -> Result<Workspace, String> {
         .to_string();
 
     let git_branch = detect_git_branch(raw_path);
-    let gitignore_configured = ensure_peck_in_gitignore(raw_path).is_ok();
 
     let now_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -320,7 +259,6 @@ pub fn open_workspace(path_str: &str) -> Result<Workspace, String> {
         name,
         last_opened_at: now_ts,
         git_branch,
-        gitignore_configured,
         hidden: false,
         settings: ProjectSettings::default(),
     })
@@ -460,55 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_peck_in_gitignore_idempotent() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("peck-ws-gitignore-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&temp_dir).unwrap();
-
-        // 1st call creates .gitignore with .peck/
-        let added_first = ensure_peck_in_gitignore(&temp_dir).unwrap();
-        assert!(added_first);
-
-        let content_first = fs::read_to_string(temp_dir.join(".gitignore")).unwrap();
-        assert!(gitignore_contains_peck(&content_first));
-
-        // 2nd call is idempotent and does not duplicate .peck/
-        let added_second = ensure_peck_in_gitignore(&temp_dir).unwrap();
-        assert!(!added_second);
-
-        let content_second = fs::read_to_string(temp_dir.join(".gitignore")).unwrap();
-        assert_eq!(content_first, content_second);
-        let peck_count = content_second
-            .lines()
-            .filter(|l| l.trim() == ".peck/")
-            .count();
-        assert_eq!(peck_count, 1);
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn test_ensure_peck_in_gitignore_preserves_existing_lines_without_trailing_newline() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("peck-ws-existing-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&temp_dir).unwrap();
-
-        let gitignore_path = temp_dir.join(".gitignore");
-        fs::write(&gitignore_path, "node_modules/\ndist/").unwrap();
-
-        let added = ensure_peck_in_gitignore(&temp_dir).unwrap();
-        assert!(added);
-
-        let updated = fs::read_to_string(&gitignore_path).unwrap();
-        assert!(updated.contains("node_modules/\n"));
-        assert!(updated.contains("dist/\n"));
-        assert!(updated.contains(".peck/\n"));
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn test_open_workspace_detects_git_branch_and_injects_gitignore() {
+    fn test_open_workspace_detects_git_branch_and_leaves_the_project_alone() {
         let temp_dir = std::env::temp_dir().join(format!("peck-ws-open-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).unwrap();
 
@@ -519,8 +409,7 @@ mod tests {
 
         let ws = open_workspace(&temp_dir.to_string_lossy()).unwrap();
         assert_eq!(ws.git_branch, Some("feat/shadow-git".to_string()));
-        assert!(ws.gitignore_configured);
-        assert!(temp_dir.join(".gitignore").exists());
+        assert!(!temp_dir.join(".gitignore").exists(), "打开项目不改项目里的文件");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

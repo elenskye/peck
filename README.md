@@ -1,6 +1,6 @@
 # Peck
 
-只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok、Antigravity）接进来；Peck 自己的循环带工具箱和上下文管理去改代码；后台替模型盯着测试和检查。改动看得见，整个任务能一键撤回。
+只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok、Antigravity）接进来；Peck 自己的循环带工具箱和上下文管理去改代码。每个任务前后都有快照，说一声就能回到任何一次之前；定时任务也是说一声就设好。
 
 Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](docs/roadmap.md)，规则和文档分工见 [CLAUDE.md](CLAUDE.md)。
 
@@ -9,13 +9,13 @@ Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](doc
 | 模块 | 用途 |
 |---|---|
 | 项目和任务 | 没选项目时中间是全部项目页（每个项目带最近几次任务），左栏一整块是 AGENTS；选了项目，左栏上面是「待你处理、在跑」（NOW，跨项目）和 PROJECTS（这个项目的任务列表，头上的放大图标回全部项目页）；不同项目的任务能同时跑；任务能归档（设置 → ARCHIVE 里看、拿回来） |
-| 发任务 | 一句话（↵ 发送，`@` 引用旧任务，`/` 斜杠命令）+ 权限（PLAN / EDIT / AUTO）+ 目标模式（GOAL）+ 独立工作区（WORKTREE）；谁来干在左栏 AGENTS 里选（API、CLI、接力；思考强度），输入框下一行短的写现在是谁；贴图、拖图进输入框 |
+| 发任务 | 一句话（↵ 发送，`@` 引用旧任务，`/` 斜杠命令）+ 权限（PLAN / EDIT / AUTO）+ 独立工作区（WORKTREE，做完在对话里 APPLY / DISCARD）；谁来干在左栏 AGENTS 里选（API、CLI、接力；思考强度），输入框下一行短的写现在是谁；贴图、拖图进输入框 |
 | 多引擎合作 | 接力（前一个只读写规范，后一个实施）、交叉审查（要改就交回修一次）、委派（子任务交给便宜的模型）；合作预设一键切换；收尾一张按段花费表；中途换引擎带上前面的经过；Peck 循环接外部 MCP 服务器（设置里的和项目 `.mcp.json` 里的） |
-| 看任务 | 回答按 Markdown 显示，连着的工具调用折成一行英文（像 Claude Code），在想时一行 Thinking；要批的事、要问的事弹卡片，下面一行花费；验证卡片、压缩上下文、「想记住这几条」；每轮末尾一块 recap，带下一步按钮；进任务停在最新一轮、回来回到上次的位置 |
-| 上下文 | 项目说明（AGENTS.md / CLAUDE.md）和记忆、Skills（按需读全文；模型能提议存成 Skill，批了才写）、每次带上的环境和 git；输入框旁的小环看用了多少，到压缩线自动压缩 |
-| 后台和验证 | `.peck/verify.toml`（第一次打开项目 Peck 猜，确认了才用）：改了文件后台跑，没过交回模型修（最多 3 次）；CLI 做完也跑；目标模式；常驻 dev server（右栏 PREVIEW 头上起停） |
-| 右栏 | 六个页签：CHANGES（Diff、按块接受 / 拒绝、行内批注、「撤销整个任务」、独立工作区的搬回 / 丢掉）、LOG、ONE SHOT（边干活边问，不改文件）、FILES、PREVIEW（开 dev server 的页面，点元素写批注）、TERM（我自己的终端） |
-| 本机 | 截 App 窗口给模型看、剪贴板、定时任务（项目设置 → SCHEDULE）、键盘（⌘N、⌘L、⌘.、⌘1–⌘6……）、菜单栏图标和通知 |
+| 看任务 | 回答按 Markdown 显示，连着的工具调用折成一行英文（像 Claude Code），在想时一行 Thinking；要批的事、要问的事弹卡片，下面一行花费；压缩上下文、「想记住这几条」；每轮末尾一块 recap，带下一步按钮；进任务停在最新一轮、回来回到上次的位置 |
+| 上下文 | 项目说明（AGENTS.md / CLAUDE.md，改完跑什么测试也写在这里，模型自己跑）和记忆、Skills（按需读全文；模型能提议存成 Skill，批了才写）、每次带上的环境和 git；输入框旁的小环看用了多少，到压缩线自动压缩 |
+| 在对话里做的 | **反悔**：「撤掉刚才的改动」「回到任务 12 之前」，模型列出快照、复述，弹一张高危卡片，批了才放回去（整个任务、其中几个文件，或整个项目）。**定时任务**：「每周一早上九点帮我检查依赖更新」，模型拆成时间加一句话、复述确认后设好；默认用当时选的谁来干、AUTO、每次开新对话；PROJECTS 头上的钟里看；App 关着错过的，重开时弹卡片 RUN NOW / SKIP。**dev server**：「起一下 dev server」，模型起的会留着，右栏 PREVIEW 里看、点一下停 |
+| 右栏 | 五个页签：FILES（标出这次改了哪些）、LOG、ONE SHOT（边干活边问，不改文件）、PREVIEW（开 dev server 的页面，流式的也行；点元素写批注）、TERM（我自己的终端） |
+| 本机 | 截 App 窗口给模型看、剪贴板、键盘（⌘N、⌘L、⌘.、⌘1–⌘5……）、菜单栏图标和通知 |
 | 设置 | GENERAL、PROVIDERS、AGENTS、QUOTA、ACCESS、CLI、LOOK、MCP、ARCHIVE、KEYS；项目自己的在右键 → 项目设置 |
 | 额度与花费 | 顶栏 QUOTA：各家订阅还剩多少、API 平台余额、本机花费（按 API 价格表算，CLI 折成 API 价；国内的模型按人民币） |
 

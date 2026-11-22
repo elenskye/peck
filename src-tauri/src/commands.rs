@@ -2,11 +2,10 @@ use std::path::PathBuf;
 use tauri::{ipc::Channel, State};
 
 use crate::snapshot::{
-    get_diff_for_run, restore_snapshot, saved_snapshot, DiffResult, ShadowRepo, UndoPreview,
+    get_diff_for_run, restore_snapshot, saved_snapshot, DiffResult, ShadowRepo,
 };
-use crate::events::RunStatus;
 use crate::state::AppState;
-use crate::store::{now_ms, ProjectOverview, RunRecord, Session};
+use crate::store::{ProjectOverview, RunRecord, Session};
 use crate::workspace::{open_workspace, Workspace};
 
 #[tauri::command]
@@ -218,132 +217,6 @@ pub async fn files_quicklook(workspace_id: String, path: String, state: State<'_
 pub async fn files_quicklook_open(workspace_id: String, path: String, state: State<'_, AppState>) -> Result<(), String> {
     let root = workspace_root(&state, &workspace_id)?;
     crate::files::quicklook_open(&crate::files::inside(&root, &path)?)
-}
-
-/// CHANGES：拒绝一块改动（v0.7）。在现在的文件里把这一块换回任务前的样子；后来又改过、对不上就不动。
-/// 独立工作区里还没搬回的任务，改的是独立工作区里的文件。
-#[tauri::command]
-pub async fn changes_hunk_revert(
-    run_id: String,
-    step_id: Option<String>,
-    file_path: String,
-    hunk: usize,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let (record, snapshot) = {
-        let db = state.store.lock().map_err(|e| e.to_string())?;
-        let record = db.run(&run_id).map_err(|_| "没找到这个任务。".to_string())?;
-        let snapshot = db.snapshot(&run_id).map_err(|e| e.to_string())?.ok_or("这个任务没有任务前快照。")?;
-        (record, snapshot)
-    };
-    if record.status == RunStatus::Running {
-        return Err("任务还在跑，跑完再拒绝。".into());
-    }
-    if record.undone_at.is_some() {
-        return Err("这个任务已经撤销了。".into());
-    }
-    if record.worktree.as_ref().is_some_and(|w| w.discarded_at.is_some()) {
-        return Err("独立工作区已经丢掉了。".into());
-    }
-    if workspace_is_busy(&state, &snapshot.workspace_path) {
-        return Err("这个项目有任务在跑，等它做完。".into());
-    }
-    restore_snapshot(snapshot.clone());
-    // 其他文件夹的写绝对路径；项目里的照记录里的文件夹（独立工作区还没搬回时是它）。
-    let full = if std::path::Path::new(&file_path).is_absolute() {
-        if !snapshot.extras.iter().any(|e| e.rel_of(&file_path).is_some()) {
-            return Err("只能改这个任务改过的文件。".into());
-        }
-        std::path::PathBuf::from(&file_path)
-    } else {
-        crate::files::check_relative(&file_path)?;
-        snapshot.workspace_path.join(&file_path)
-    };
-    if !record.files.iter().any(|f| f.path == file_path) {
-        return Err("这个文件不是这个任务改的。".into());
-    }
-    let created = record.files.iter().any(|f| f.path == file_path && f.kind == "create");
-    let diff = get_diff_for_run(&run_id, step_id.as_deref(), Some(&file_path), None)?;
-    tokio::task::spawn_blocking(move || {
-        let current = std::fs::read_to_string(&full).ok();
-        match crate::snapshot::revert_hunk(current.as_deref(), &diff.unified_diff, hunk, created)? {
-            None => std::fs::remove_file(&full).map_err(|e| format!("删不掉：{e}")),
-            Some(text) => {
-                if let Some(parent) = full.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                std::fs::write(&full, text).map_err(|e| format!("写不进：{e}"))
-            }
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-fn snapshot_for_undo(
-    state: &AppState,
-    run_id: &str,
-) -> Result<(RunRecord, crate::snapshot::RunSnapshotRecord), String> {
-    let db = state.store.lock().map_err(|e| e.to_string())?;
-    let record = db.run(run_id).map_err(|_| "没找到这个任务。".to_string())?;
-    if record.status == RunStatus::Running {
-        return Err("任务还在跑，先停下来再撤销。".into());
-    }
-    if record.undone_at.is_some() {
-        return Err("这个任务已经撤销过了。".into());
-    }
-    if let Some(wt) = &record.worktree {
-        if wt.pending() {
-            return Err("这个任务在独立工作区里，还没搬回项目：不用撤销，丢掉就行。".into());
-        }
-        if wt.discarded_at.is_some() {
-            return Err("独立工作区已经丢掉了，项目里没有这个任务的改动。".into());
-        }
-    }
-    let snapshot = match saved_snapshot(run_id) {
-        Some(found) => found,
-        None => db
-            .snapshot(run_id)
-            .map_err(|e| e.to_string())?
-            .ok_or("这个任务没有任务前快照，撤销不了。")?,
-    };
-    if !snapshot.workspace_path.is_dir() {
-        return Err("项目文件夹不在了，重新打开一次。".into());
-    }
-    Ok((record, snapshot))
-}
-
-/// 撤销前先看：会动哪些文件，哪些在任务做完以后又变过。
-#[tauri::command]
-pub async fn run_undo_preview(
-    run_id: String,
-    state: State<'_, AppState>,
-) -> Result<UndoPreview, String> {
-    let (_, snapshot) = snapshot_for_undo(&state, &run_id)?;
-    tokio::task::spawn_blocking(move || crate::snapshot::undo_preview_all(&snapshot))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// 撤销整个任务：任务改过的文件回到任务前快照；别的文件、用户自己的 Git 都不动。
-#[tauri::command]
-pub async fn run_undo(run_id: String, state: State<'_, AppState>) -> Result<RunRecord, String> {
-    let (mut record, snapshot) = snapshot_for_undo(&state, &run_id)?;
-    if workspace_is_busy(&state, &snapshot.workspace_path) {
-        return Err("这个项目有任务在跑，等它做完再撤销。".into());
-    }
-    restore_snapshot(snapshot.clone());
-    tokio::task::spawn_blocking(move || crate::snapshot::undo_run(&snapshot))
-        .await
-        .map_err(|e| e.to_string())??;
-    record.undone_at = Some(now_ms());
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .save_run(&record)
-        .map_err(|e| e.to_string())?;
-    Ok(record)
 }
 
 /// 界面设置：一整段 JSON，界面自己定里面有什么。

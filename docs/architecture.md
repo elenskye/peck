@@ -15,7 +15,7 @@
 
 ## 一个任务怎么跑
 
-一句话对应一个**任务**（代码里叫 Run），开始前拍**任务前快照**，跑完留着，撤销由站主点。一个项目同时只跑一个任务（要写的文件夹一样或套着也算，`ActiveRunContext::touches`），不同项目能同时跑。失败、取消、重开都不自动重发。
+一句话对应一个**任务**（代码里叫 Run），开始前、结束后各拍一份**快照**，一直留着；要回退跟模型说（见「Peck 自己的工具」）。一个项目同时只跑一个任务（要写的文件夹一样或套着也算，`ActiveRunContext::touches`），不同项目能同时跑。失败、取消、重开都不自动重发。
 
 「谁来干」是模型列表（IPC `gateway_models`）里的一个 id：
 
@@ -26,11 +26,10 @@
 | 接力、审查 | 两三个合作，任务上记 `team:<写规范>\|<实施>\|<审查>` | `team_run_start` |
 | ONE SHOT | Peck 循环只给读的工具，或 CLI 按 PLAN 档；不占任务号、不锁项目和终端 | `harness_oneshot` |
 
-- **直接调用的引擎**（`caps.rs` 的 `direct_only`，现在是 Antigravity）挡在 ONE SHOT、接力、审查、委派、定时任务、目标模式、自动修之外。
-- **发出去前**（`src/App.tsx` 的 `send`）：存着的接力、审查、委派只认 AGENTS 里现在能选的；GOAL 不能和接力、审查一起发，PLAN 不能开接力和审查，都提示一句、不悄悄丢掉。
-- **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/verify` `/cost`，加上项目和站主的 `.claude/commands/**/*.md`（同名项目的为准）。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
+- **直接调用的引擎**（`caps.rs` 的 `direct_only`，现在是 Antigravity）挡在 ONE SHOT、接力、审查、委派、定时任务之外。
+- **发出去前**（`src/App.tsx` 的 `send`）：存着的接力、审查、委派只认 AGENTS 里现在能选的；PLAN 不能开接力和审查，提示一句、不悄悄丢掉。
+- **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/cost`（`/undo` 是发一句「撤销任务 N 的改动」给模型），加上项目和站主的 `.claude/commands/**/*.md`（同名项目的为准）。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
 - **控制通道**：审批、回答、追加、打断都走 `gateway_control(runId, control)`（`gateway/runner.rs`）。`run_cancel` 先发打断，超时结束整个进程组。
-- **撤销**（`run_undo`）：新建的删掉，其余 `git restore --source=<任务前的树> --worktree`；不碰用户仓库的 index、commit、stash。撤销前再存一份快照。
 - **项目和任务**（`projects.rs`）：「移出列表」只设 `Workspace.hidden`，「归档」只设 `sessions.archived_at`（`search_tasks`、@ 引用照样读得到）；删任务真删；在跑的不能归档、不能删。
 - **文件夹不在了**（`ProjectOverview.missing`）不能发任务；`workspace_relocate` 把任务、「总是允许」和快照挪到新位置。
 - **旧记录**：v0.8 以前的任务（旧接力、规划 + 实施、假 Agent、旧 API 层）只读，照旧按步骤显示；接着做是用现在选的谁发一句新的。旧 API 调用记录在 QUOTA 页底。
@@ -40,19 +39,24 @@
 项目设置里的其他文件夹（各选只读或能改）和环境变量（`ProjectSettings.folders` / `env`，`workspace_update` 校验）。
 
 - 不能加（`workspace::folder_allowed`）：和主文件夹或彼此套着的、根目录、家目录、数据目录、`.git` 里的。`HOME`、`SHELL`、`PECK_*` 这类变量不能设。
-- Peck 循环只写能改的；能改的各有影子仓库和快照，改动进 CHANGES、一起撤销。环境变量带进它的命令、后台命令、验证命令、dev server 和 TERM。
+- Peck 循环只写能改的；能改的各有影子仓库和快照，改动记在任务上、一起回退。环境变量带进它的命令、后台命令和 TERM。
 - CLI 引擎：环境变量带进 CLI 进程；能改的文件夹只对这一次进程挂上（Claude Code `--add-dir`、Codex `writableRoots`），并在这一句后面写一段 `<peck-folders>`。
 
 ### 独立工作区（`worktree.rs`）
 
 - git 项目、不是 PLAN，一次一选。其他文件夹一律只读。
 - 建：`git worktree add --detach <数据目录>/worktrees/<项目哈希>/<任务号> HEAD`（不建分支），再把主文件夹没提交的改动搬进去。
-- APPLY：要搬的文件在主文件夹里和任务开始时不一样就列成冲突、不动，可 APPLY ANYWAY；撤销回到搬之前。
+- APPLY：要搬的文件在主文件夹里和任务开始时不一样就列成冲突、不动，可 APPLY ANYWAY；回退回到搬之前。APPLY / DISCARD 在对话里那一次的结果下面。
 - DISCARD：删掉，历史 Diff 还在。上一次的没 APPLY 或 DISCARD 不能接着发。
 
 ### 定时任务（`schedule.rs`）
 
-项目设置的 SCHEDULE，一个项目最多 12 个，各用一个 API 模型或 CLI；到点开一个新任务（标题前 ⏰）。App 开着才跑；关着错过的 12 小时以内补一次；项目有任务在跑就等，等 2 小时跳过。受花费上限管。
+到点了 Peck 替站主在这个项目里发一句话。设、改、取消都在对话里（模型的 `schedule_task` / `list_schedules` / `cancel_schedule`，见「Peck 自己的工具」）；界面只在 PROJECTS 头上列出来看（IPC `schedule_list`、`schedule_delete`、`schedule_missed`，变了发 `schedules-changed`）。
+
+- **时间规则**：只一次（哪天几点）、每天、每周几、每月几号（没有那一天用月底）、每隔几小时。按这台 Mac 现在的时区算（每次算下一次时读 `date +%z`）。一个项目最多 12 个。
+- **谁来干**：设的时候这个任务是谁在干就记谁（接力、审查、委派一起记）；站主点了名的只记点名的那一个（名字对目录里的模型和 CLI，对得上不止一个就让模型去问）。默认 AUTO，高危照样等站主批。
+- **在哪跑**：默认每次开一个新任务（标题前 ⏰）；记了对话的在那个对话里接着发（CLI 续上一次的会话），对话不在了、归档了就开新的。
+- App 开着才跑：每 30 秒看一眼到点的；项目有任务在跑就等，等了 2 小时算错过。**错过的不补跑**（App 关着的、等太久的、没发出去的）：记 `missed_at`（重复的任务错过多次只记最近那一次），界面弹卡片，RUN NOW 补跑一次、SKIP 跳过，都不动下一次的时间。只跑一次的跑完、跳过就删。受花费上限管。
 
 ## 数据存放
 
@@ -61,23 +65,23 @@
 | 数据目录 | 正式 `~/Library/Application Support/Peck/`；开发（`pnpm app:dev`）`Peck Dev/` |
 | 项目、任务、消息、事件日志、设置、记忆、定时任务 | `peck.db`（schema 11，迁移在 `src-tauri/migrations/`）；设置在 `app_settings`，一样一行 JSON |
 | 项目设置 | `workspaces` 表那一行的 JSON（加字段不加迁移） |
-| 验证命令 | 项目里的 `.peck/verify.toml`（打开项目时把 `.peck/` 加进 `.gitignore`） |
 | 快照、历史 Diff | `shadow/<项目哈希>/`，其他文件夹各自 `shadow/<文件夹哈希>/` |
 | 独立工作区 | `worktrees/<项目哈希>/<任务号>/` |
 | Peck 循环命令的 HOME | `harness-runtime/<项目>/` |
-| 落盘的输出 | `harness-output/<任务>/`（长输出、验证输出、后台日志、附图、截图），14 天没动的打开 App 时删 |
+| 落盘的输出 | `harness-output/<任务>/`（长输出、后台日志、附图、截图），14 天没动的打开 App 时删 |
 | 其他 | `skill-history/`（Skill 旧版）、`login-shim/`（CLI 登录时只记链接的小脚本）、`cli-probe/`（跑 Claude `/usage`）、`agents/*.toml`（旧清单，只用来找 CLI 目录） |
 | Key | 钥匙串服务 `Peck API` / `Peck API Dev`（开发包）/ `Peck API Test`（设了 `PECK_DATA_DIR`） |
 
 - `PECK_DATA_DIR`、`PECK_SHADOW_ROOT` 把数据和快照指到别处；`PECK_API_MODE=mock|real` 强制模拟或真实，开发包和设了 `PECK_DATA_DIR` 的默认模拟。
 - **迁移和升级**：改数据库结构就在 `src-tauri/migrations/` 加迁移，不改旧记录的含义；升级前先用 SQLite Backup API 备份；比自己新的 schema 拒绝写入。
 - **影子仓库**：独立的 `GIT_DIR`、`GIT_WORK_TREE`，每个任务存前后两棵树。`peck.db` 和 `shadow/` 要一起备份。
+- 打开项目不改项目里的文件。旧版本往 `.gitignore` 加的 `.peck/` 和项目里旧的 `.peck/verify.toml` 留在原处，Peck 不读。
 
 ## Model Gateway（`src-tauri/src/gateway/`）
 
 各家 API 和 CLI 转成同一套事件。契约：`mod.rs`（`ModelProvider` 裸模型、`AgentBackend` 整包引擎、控制通道）、`event.rs`、`caps.rs`、`catalog.rs`；TS 对照 `src/lib/agentEvents.ts`。
 
-- **事件**：`AgentEvent` = `seq` + `at` + 可选 `subagentId` + 本体（`session.*`、`turn.*`、`message.*`、`tool_call.*`、`approval.*`、`stage.*`、`verify.*`、`usage.updated` 等，全的在 `event.rs`）。`EventSink`（`log.rs`）编号、存 `agent_events`、交给界面；`gateway_events(runId)` 读。
+- **事件**：`AgentEvent` = `seq` + `at` + 可选 `subagentId` + 本体（`session.*`、`turn.*`、`message.*`、`tool_call.*`、`approval.*`、`stage.*`、`background.updated`、`usage.updated` 等，全的在 `event.rs`）。`EventSink`（`log.rs`）编号、存 `agent_events`、交给界面；`gateway_events(runId)` 读。读不懂的行（旧版本的 `verify.*`、以后版本的）当 `raw`，界面不显示。
 - **用量**：`input` 不含缓存，`cacheRead`、`cacheWrite` 另算；`output` 含思考。花费分实报 / 按价格表估 / CLI 估 / 未知，没有就 `usd: null`，不填 0。
 - **模型目录**：`src-tauri/defaults/models.json`，`node scripts/models-snapshot.mjs` 从 models.dev 重取。
 - **价格表**（`prices.rs`）：花费都按「用量 × 价格表」算。内置 `src-tauri/defaults/prices.json`（美元价取 models.dev，DeepSeek、Aliyun 是官网人民币价），站主改的、刷新来的、汇率存 `app_settings`，盖在内置的上面。`prices_refresh` 只更新美元价，站主改过的行不动。
@@ -112,7 +116,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck 循环同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示；Antigravity 不查。
-- **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌。工具：`create_skill`（五家都给）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）。只对这一次进程挂上、不改 CLI 的配置；Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
+- **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌。工具：`create_skill`（五家都给）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）、`restore_snapshot` 和定时任务那三个（五家都给，见「Peck 自己的工具」）。只对这一次进程挂上、不改 CLI 的配置；Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
 - **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。
 
 ## Peck 循环（`src-tauri/src/harness/`）
@@ -134,7 +138,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | `update_plan`、`ask_user` | 任务清单；停下来问站主 |
 | `screenshot_app`（`shot.rs`） | Mac、能看图的模型，PLAN 也有：截这个 App 最前面的窗口 |
 
-其余（`bash_run`、`bash_background`、`memory`、`search_tasks`、`delegate_task`、`load_skill`、`create_skill`、`mcp__*`）见下面各节。**附图**最多 6 张：Peck 循环放进这一句（看不了图的模型不发、写一句），CLI 引擎存成文件、在句末写路径。
+其余（`bash_run`、`bash_background`、`memory`、`search_tasks`、`delegate_task`、`load_skill`、`create_skill`、`restore_snapshot`、`schedule_task` 等、`mcp__*`）见下面各节。**附图**最多 6 张：Peck 循环放进这一句（看不了图的模型不发、写一句），CLI 引擎存成文件、在句末写路径。
 
 ### 命令（`tools/bash.rs`）
 
@@ -145,7 +149,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 ### 权限和高危（`permission.rs`、`risk.rs`）
 
 - **PLAN** 只给读的工具、`update_plan`、`ask_user`，命令在只读沙箱。**EDIT** 全部工具，装依赖、起常驻进程前问一次（「这个项目总是允许」存 `harness_allow`）。**AUTO** 除高危都不问。
-- **高危**（哪档都弹，只有批准、不行）：删文件、推送和改历史、写到项目外、改系统设置、看不出会做什么的命令。`sh -c`、`$(…)` 里的也看。黑名单只挡常见写法，兜底靠沙箱和撤销。
+- **高危**（哪档都弹，只有批准、不行）：删文件、推送和改历史、写到项目外、改系统设置、看不出会做什么的命令。`sh -c`、`$(…)` 里的也看。黑名单只挡常见写法，兜底靠沙箱和快照。
 
 ### 外部 MCP 服务器（`mcp_client.rs`）
 
@@ -157,26 +161,29 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 ### 上下文（`context.rs`、`compact.rs`、`history.rs`）
 
 - **系统提示**两块，都打缓存断点：Peck 的说明 + 工具定义；项目层 = 项目根的 `AGENTS.md`（没有就 `CLAUDE.md`）+ 站主批过的记忆 + Skills 的名字和描述。
-- **环境块** `<peck-context>` 放在这一句前面：系统和项目根、git、任务清单、之前几次改过的文件、验证命令、目标模式、在跑的后台命令。
+- **环境块** `<peck-context>` 放在这一句前面：系统和项目根、本机时间（带星期几和时区）、git、任务清单、之前几次改过的文件、在跑的后台命令。
 - **自动压缩**：到窗口 80% 时，下一次请求前依次做，降到 60% 以下就停：① 长的工具输出落盘；② 最近两轮以外的输出换成一句「做过什么」；③ 让模型写交接摘要，对话换成「摘要 + 站主最近三句」。压完还满就停下写明原因。
 - **记忆**：`memory` 工具只提议；站主 SAVE 才存 `memories`（按项目）。
-- **Skills**（`skills.rs`）：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`、站主的 `~/.claude/skills/*/SKILL.md`；`load_skill` 按需读全文。CLI 原厂会读的自己读。
+- **Skills**（`skills.rs`）：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`、站主的 `~/.claude/skills/*/SKILL.md`，加上 Peck 自带的两个（`src-tauri/defaults/skills/`，嵌在程序里；同名的以项目和站主的为准，项目设置里能关）；`load_skill` 按需读全文。CLI 原厂会读的自己读。
 - **自己写 Skill**（`skill_propose.rs`）：模型用 `create_skill` 提议，站主 SAVE 才写。像 Key 的存不进去，同名的是替换那一份（旧版留着能退回）。任务还在跑、要写进项目里的排到收尾快照之后，所以不算进这次的改动、撤销也撤不掉。
 - **@ 旧任务**：`[@标题](peck:task/<任务 id>)`，`history::task_refs` 把那个任务最近几次的请求、结果、改的文件放在这句前面（只认本项目），CLI 也带。`search_tasks` 让模型自己按关键词或任务号查。
 
-### 后台和验证（`verify.rs`、`monitor.rs`、`cli_verify.rs`、`background.rs`）
+### 后台命令（`background.rs`）
 
-- **`.peck/verify.toml`**：`[[check]]`（name、run、when：glob，空着都跑；timeout）最多 8 条；`[[server]]`（name、run、ready、autostart）最多 4 个。没有这份文件时按 `package.json`、`Cargo.toml` 这类猜（不跑命令）。
-- **只认站主确认过的那一份**（`verify::load_approved` 比 md5）：项目自带的、被改过的，不跑、不起 dev server、不开目标模式。
-- **改了就跑**：Peck 循环（不是 PLAN、ONE SHOT）每轮改过东西后，改到哪条的 `when` 就在后台起它；跑着时文件又改了就记 `stale`、重跑。
-- **模型停下时**：要看的几条（目标模式是选的那几条；平时是改过的文件管得到的）都过就收尾；没过包成 `<peck-verify>` 交回修，最多 3 次（目标模式 8 次）。同一个失败连续两次、或两次之间没改文件就停（`monitor::FixGate`）。
-- **CLI 也一样**：CLI 做完一轮，Peck 跑管得到的那几条，没过续接同一个会话交回去；项目设置能关。Antigravity 和续接不了的只跑一遍、不交回。
+- **验证交给模型**：Peck 不替模型跑检查。改完跑什么写在项目的 `AGENTS.md` / `CLAUDE.md` 里（「改完跑 `pnpm check`」），模型自己用 `bash_run` 跑；系统提示里写明这是它的事。
 - **后台命令**（`bash_background`）：EDIT 下当「起常驻进程」问一次；一个任务最多 4 个，任务结束一起停。
-- **dev server**（`[[server]]`）：在右栏 PREVIEW 头上起停（`server_start` / `background_stop`），跨任务一直在，退出 Peck 才停。`autostart = true` 的发任务时先起（PLAN 不起）；模型能读输出、不能停。PREVIEW 页签开着、窗口看得见时每 3 秒读一次状态（`background_list`）。
+- **留着的 dev server**：起的时候 `keep: true`（PLAN 不给）。任务结束不停、跨任务一直在，退出 Peck 才停；一个项目最多 4 个，同一条命令不起第二份。后来的任务看得到、能读输出、能停；右栏 PREVIEW 头上列出来、点一下停（开着时每 3 秒读一次 `background_list`）。
+
+### Peck 自己的工具（`extras.rs`）
+
+以前在界面上点的两件事，现在在对话里让模型做。Peck 循环直接调，CLI 经本机 MCP 调，同一套；ONE SHOT、委派的子任务、合作里只读的两段不给。怎么用写在自带的两个 Skill（`peck-snapshots`、`peck-schedules`）和工具说明里。
+
+- **`restore_snapshot`**：`list` 列这个项目最近 15 次任务的快照；`restore` 按任务号回到它开始前（撤销）或结束后（重做）。默认只动那次任务改过、现在和那时不一样的文件；`paths` 只放回其中几个；`scope: "project"` 是整个项目回到那时（之后的任务、站主自己改的一起回去）。哪一档都当高危：先算好动哪些文件，弹卡片列出来，批了才 `git restore --source=<那棵树> --worktree`（那时没有的删掉）；不碰用户仓库的 index、commit、stash，回退前再存一份快照。PLAN 不回退。整个任务回到开始前记「已撤销」，回到结束后去掉。
+- **`schedule_task` / `list_schedules` / `cancel_schedule`**：见「定时任务」。只管这个任务所在的项目。
 
 ## 多引擎合作（`harness/team.rs`）
 
-FLOW 选「接力」，或任何干法下开「审查」，走 `team_run_start`：一个任务号、一份快照、一条事件日志，一段一段来：
+FLOW 选「接力」，或任何干法下开「审查」，走 `team_run_start`：一个任务号、一份快照、一条事件日志，一段一段来。只读的两段（写规范、审查）在提示里写明「只读的是你这一段，任务本身是 EDIT / AUTO」，免得把 PLAN 当成任务的权限写进规范：
 
 1. **写规范**（接力才有，只读）：按固定的五个标题写（目标、改哪些文件、步骤、验收标准、不做什么），验收标准是编号的、能查的条目；没写让它补一次。
 2. **实施**（照选的档）：这句话 + `<peck-spec>`。
@@ -184,14 +191,13 @@ FLOW 选「接力」，或任何干法下开「审查」，走 `team_run_start`�
 4. **按审查改**（要改才有，只一次）：交回实施的那一个，接着原对话；逐条判过的只给没过的那几条。
 
 - 每段都是新会话，带上这个任务前面几次的经过。每段 `stage.started` → 这段引擎的事件 → `stage.completed`；一段没做完后面不开；打断停整个任务。
-- **委派**（`delegate_task`，选了「委派」才给）：子任务交给那个 API 模型，同项目、同工具和权限（不能再委派、不问站主），审批照样弹给站主；事件带 `subagentId`，用量算进任务和花费上限。**一个任务最多 6 次**。实施的是 API 模型，或 Claude Code、Codex、Grok、Muse（经本机 MCP，`harness/delegate.rs`；PLAN 不委派）时能用。
+- **委派**（`delegate_task`，选了「委派」才给）：子任务交给那个 API 模型，同项目、同工具和权限（不能再委派、不问站主；思考强度用它自己的默认），审批照样弹给站主；事件带 `subagentId`，用量算进任务和花费上限。**一个任务最多 6 次**。实施的是 API 模型，或 Claude Code、Codex、Grok、Muse（经本机 MCP，`harness/delegate.rs`；PLAN 不委派）时能用。
 - **换引擎接着发**（`history::fork_context`）：Peck 循环所有模型算一家，每个 CLI 一家，合作一家。这一家上次以后别家做的几次做成 `<peck-fork>` 放在这句前面；原来的会话留着，换回去接得上。
 
 ## 审阅和预览
 
 - **FILES**（`files.rs`、`src/lib/highlight.ts`）：CodeMirror 语言包按需加载；html 在 `sandbox=""` 的 iframe 里看；Office 这类用 `qlmanage` 出缩略图。
-- **按块接受 / 拒绝**（`snapshot.rs` 的 `revert_hunk`）：拒绝是把现在文件里的这一块换回任务前的，对不上不动；接受只是标记。标记和行内批注存浏览器存储。
-- **PREVIEW**（`preview.rs` + `preview.js`）：地址默认是在跑的 dev server 输出里头一个本机地址，也能自己写（只认本机 http）。iframe 开的是 Peck 在 `127.0.0.1` 上起的代理：只认发给自己的 `Host`（挡 DNS rebinding），HTML 里插 `preview.js`（批注用）；iframe 带 `sandbox`，不能导走顶层窗口。
+- **PREVIEW**（`preview.rs` + `preview.js`）：地址默认是留着的 dev server 输出里头一个本机地址，也能自己写（只认本机 http）。iframe 开的是 Peck 在 `127.0.0.1` 上起的代理：只认发给自己的 `Host`（挡 DNS rebinding），HTML 里插 `preview.js`（批注用）；iframe 带 `sandbox`，不能导走顶层窗口。一条连接办一个请求，回应边读边转（SSE、分块的流式输出来一段到一段）；HTML 攒到 `</head>` 插好脚本就放行。
 - **OPEN / FINDER**（IPC `open_path`）：用设置 → LOOK 的「编辑器」（空着用系统默认；会运行的文件不直接打开）或 `open -R`；只认项目和其他文件夹里的。
 
 ## 本机
@@ -201,7 +207,7 @@ FLOW 选「接力」，或任何干法下开「审查」，走 `team_run_start`�
 - **菜单栏和通知**（`tray.rs`）：空闲、在跑、等你；做完、失败、停下、等你批或答发通知（Peck 在最前面时不发）。
 - **图标**：`scripts/menubar-icons.mjs`、`scripts/app-icons.sh` 从 `src/vendor/peck/marks/` 出图到 `src-tauri/icons/`。
 - **贴图、拖图**：`tauri.conf.json` 设 `dragDropEnabled: false`，HTML5 拖放才能把图拖进输入框。
-- **键盘**（`src/App.tsx`）：⌘N、⌘L、⌘.、⌘[ ⌘]（上一个 / 下一个任务）、⌘1–⌘6、⌘,、Esc。
+- **键盘**（`src/App.tsx`）：⌘N、⌘L、⌘.、⌘[ ⌘]（上一个 / 下一个任务）、⌘1–⌘5、⌘,、Esc。
 
 ## Key 和模拟 / 真实（`src-tauri/src/api/`）
 
@@ -230,7 +236,7 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 |---|---|
 | `src-tauri/src/{lib,commands,state,events}.rs` | 启动和恢复、IPC、共享状态、推给界面的事件 |
 | `src-tauri/src/{run,flow,agent,process,mode}.rs` | 在跑的登记、任务记录里的计划、找 CLI 和旧清单、进程组、数据目录和模拟 / 真实 |
-| `src-tauri/src/{store,migrations,workspace,snapshot,watch}.rs` | 存储和迁移、项目和校验、快照和撤销、忽略规则 |
+| `src-tauri/src/{store,migrations,workspace,snapshot,watch}.rs` | 存储和迁移、项目和校验、快照、忽略规则 |
 | `src-tauri/{defaults,integrations,tests/fixtures/gateway}/` | 模型目录、价格表和旧清单；状态栏脚本；Gateway 夹具 |
 | `src/App.tsx`、`src/lib/` | 编排和状态；IPC（`ipc.ts`，浏览器里转给 `?mock`）、设置、事件 → 界面（`agentView.ts`） |
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳和各页；方案里还没有的样式和身份色 |

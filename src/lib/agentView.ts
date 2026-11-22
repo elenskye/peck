@@ -4,9 +4,8 @@
 //   在跑的那一步露出来；思考不算一步：在想时那一组下面一行「Thinking… 3s」，想完就不显示，也不打断上下的步骤；
 // - 没批、没答的审批和 ASK 单独拿出来做卡片；任务清单取最新的一份；
 // - 花费：这一次的进、出、缓存命中、美元（CLI 估的标「估」，不知道的写「未知」，不当 0）。
-// - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、验证卡片（Peck 替模型跑的验证命令）、
-//   后台命令、模型想记住的几条。
-import type { AgentEvent, ApprovalDecision, BackgroundKind, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, CriterionCheck, FileDiff, PlanStep, ResolvedBy, ReviewVerdict, SkillReviewStatus, SkillScope, StageRole, TokenUsage, ToolKind, ToolStatus, TurnEndReason, VerifyOutcome, VerifyStatus, VerifyTrigger } from "@/lib/agentEvents";
+// - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、后台命令、模型想记住的几条。
+import type { AgentEvent, ApprovalDecision, BackgroundKind, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, CriterionCheck, FileDiff, PlanStep, ResolvedBy, ReviewVerdict, SkillReviewStatus, SkillScope, StageRole, TokenUsage, ToolKind, ToolStatus, TurnEndReason } from "@/lib/agentEvents";
 
 export interface ToolView {
   callId: string;
@@ -47,29 +46,6 @@ export interface AskView {
   options: string[];
   freeText: boolean;
   answer?: string;
-}
-
-/** 一条验证命令这一次跑的样子。 */
-export interface VerifyCheckView {
-  checkId: string;
-  name: string;
-  command: string;
-  trigger: VerifyTrigger;
-  attempt: number;
-  status: "running" | VerifyStatus;
-  exitCode?: number | null;
-  durationMs?: number | null;
-  output?: string | null;
-  startedAt: number;
-  endedAt?: number;
-}
-
-export interface VerifyRoundView {
-  attempt: number;
-  maxAttempts: number;
-  outcome: VerifyOutcome;
-  reason?: string | null;
-  goal: boolean;
 }
 
 export interface ContextView {
@@ -118,7 +94,6 @@ export type ViewItem =
   | { kind: "error"; id: string; text: string }
   | { kind: "compacted"; id: string; step: CompactStep; text: string; before: number; after: number; summary?: string | null }
   /** 一组验证命令（连着跑的放一张卡片；模型停下后的那一轮带 round）。 */
-  | { kind: "verify"; id: string; checks: VerifyCheckView[]; round?: VerifyRoundView; reused?: boolean }
   | { kind: "background"; id: string; bg: BackgroundView }
   /** 模型提议存一条 Skill（v0.10 C3）：不打断，卡片留在提的地方，跑着、跑完都能批。 */
   | { kind: "skill"; id: string; skill: SkillProposalView };
@@ -168,8 +143,6 @@ export interface AgentView {
   context: ContextView | null;
   /** 模型想记住的几条；reviewed 是站主批过的结果。 */
   memory: { notes: string[]; reviewed: { saved: string[]; skipped: string[] } | null } | null;
-  /** 最后一轮验证（收尾时挂 ✓ 用）。 */
-  verified: VerifyRoundView | null;
   /** 这个任务里的后台命令（最新的状态）。 */
   background: BackgroundView[];
   /** 接力、审查的几段（v0.8；一个引擎干的任务为空）。 */
@@ -188,9 +161,8 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, verified: null, background: [], stages: [] };
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], stages: [] };
   let stageNow: StageView | null = null;
-  const checks = new Map<string, VerifyCheckView>();
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
@@ -211,10 +183,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   const lastGroup = (): Extract<ViewItem, { kind: "tools" }> | null => {
     const last = view.items[view.items.length - 1];
     return last && last.kind === "tools" ? last : null;
-  };
-  const lastVerify = (): Extract<ViewItem, { kind: "verify" }> | null => {
-    const last = view.items[view.items.length - 1];
-    return last && last.kind === "verify" && !last.round ? last : null;
   };
   for (const e of events) {
     switch (e.type) {
@@ -387,37 +355,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         if (skill) skill.reviewed = { status: e.status, name: e.name, location: e.location, error: e.error ?? null };
         break;
       }
-      case "verify.started": {
-        const check: VerifyCheckView = { checkId: e.checkId, name: e.name, command: e.command, trigger: e.trigger, attempt: e.attempt, status: "running", startedAt: e.at };
-        checks.set(e.checkId, check);
-        const group = lastVerify();
-        if (group) group.checks.push(check);
-        else view.items.push({ kind: "verify", id: `v-${e.checkId}-${e.seq}`, checks: [check] });
-        break;
-      }
-      case "verify.completed": {
-        const check = checks.get(e.checkId);
-        if (!check) break;
-        check.status = e.status;
-        check.exitCode = e.exitCode;
-        check.durationMs = e.durationMs ?? e.at - check.startedAt;
-        check.output = e.output;
-        check.endedAt = e.at;
-        break;
-      }
-      case "verify.round": {
-        const round: VerifyRoundView = { attempt: e.attempt, maxAttempts: e.maxAttempts, outcome: e.outcome, reason: e.reason, goal: e.goal };
-        view.verified = round;
-        // 挂在刚跑的那组上；结果是现成的（没再跑）就单独一张，列出最近每条的结果。
-        const group = lastVerify();
-        if (group) group.round = round;
-        else {
-          const latest = new Map<string, VerifyCheckView>();
-          for (const c of checks.values()) if (c.status !== "stale" && c.status !== "cancelled") latest.set(c.name, c);
-          view.items.push({ kind: "verify", id: `vr-${e.seq}`, checks: [...latest.values()], round, reused: true });
-        }
-        break;
-      }
       case "background.updated": {
         const known = bgs.get(e.id);
         const bg: BackgroundView = { id: e.id, name: e.name, command: e.command, kind: e.kind, status: e.status, exitCode: e.exitCode };
@@ -495,9 +432,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
     item.text = item.text.trim();
   }
   if (view.ended) {
-    // 回合结束了还在跑的验证命令：收成「停了」（Peck 收尾时会停掉它们）。
-    for (const c of checks.values()) if (c.status === "running") { c.status = "cancelled"; c.endedAt = c.endedAt ?? events[events.length - 1].at; }
-    // 模型起的后台命令跟着任务停了；dev server 以后的变化不进任务记录，只记到起过。
+    // 模型起的后台命令跟着任务停了；留着的 dev server 以后的变化不进任务记录，只记到起过。
     for (const item of view.items) {
       if (item.kind !== "background" || item.bg.status !== "running") continue;
       item.bg = item.bg.kind === "server" ? { ...item.bg, past: true } : { ...item.bg, status: "stopped" };
@@ -613,6 +548,12 @@ const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^后台跑 (.*)$/s, "Run in background $1"],
   [/^停后台命令 ?(.*)$/s, "Stop background command $1"],
   [/^看后台命令 ?(.*)$/s, "Check background command $1"],
+  [/^看任务快照$/, "List task snapshots"],
+  [/^回到任务 (\d+) 开始前$/, "Restore to before task $1"],
+  [/^回到任务 (\d+) 结束后$/, "Restore to after task $1"],
+  [/^设定时任务[：:]\s*(.*)$/s, "Schedule: $1"],
+  [/^看定时任务$/, "List schedules"],
+  [/^取消定时任务 ?(.*)$/s, "Cancel schedule $1"],
   [/^看任务 (\d+)$/, "Recall task $1"],
   [/^搜旧任务「(.*)」$/s, "Recall past tasks “$1”"],
   [/^看最近的任务$/, "Recall recent tasks"],

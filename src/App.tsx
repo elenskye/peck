@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type ApiStatus } from "@/lib/api";
-import { ipc, isMockMode, type ImageInput, type TeamPick } from "@/lib/ipc";
+import { ipc, isMockMode, type ImageInput, type Schedule, type TeamPick } from "@/lib/ipc";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { DEFAULT_SETTINGS, loadSettings, migratePick, saveSettings, type AppSettings } from "@/lib/settings";
 import { applyPreset, canDelegate, presetProblems } from "@/lib/presets";
@@ -14,7 +14,7 @@ import { waitingOnYou } from "@/lib/agentView";
 import { TopBar } from "@/shell/TopBar";
 import { LeftColumn, ProjectsPage } from "@/shell/LeftColumn";
 import { chosenEntry, MiddleColumn } from "@/shell/MiddleColumn";
-import { RightColumn, forgetTaskNotes, type RightTab } from "@/shell/RightColumn";
+import { RightColumn, type RightTab } from "@/shell/RightColumn";
 import { SettingsPage, type SettingsSection } from "@/shell/SettingsPage";
 import { ProjectPage } from "@/shell/ProjectPage";
 import type { InboxItem, LeftActions } from "@/shell/LeftColumn";
@@ -63,10 +63,12 @@ const App: React.FC = () => {
   const [live, setLive] = useState<Record<string, { projectId: string; taskId: string }>>({});
   const liveRef = useRef(live);
   liveRef.current = live;
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
   const [page, setPage] = useState<"" | "settings" | "quota" | "project">("");
   /** 设置打开时先到哪一组（AGENTS 面板的「管理预设」到 AGENTS）。 */
   const [settingsAt, setSettingsAt] = useState<SettingsSection | undefined>(undefined);
-  const [tab, setTab] = useState<RightTab>("changes");
+  const [tab, setTab] = useState<RightTab>("files");
   const [wide, setWide] = useState(false);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [terms, setTerms] = useState<Record<string, TermView>>({});
@@ -248,6 +250,11 @@ const App: React.FC = () => {
     setShownRunId(null);
     if (taskId) void loadTask(taskId);
   }, [taskId, loadTask]);
+  const taskIdRef = useRef(taskId);
+  taskIdRef.current = taskId;
+  /** 别处（定时任务）往一个对话里发了一次：正看着它就重读。 */
+  const loadTaskRef = useRef((_id: string) => Promise.resolve());
+  loadTaskRef.current = async (id: string) => { if (taskIdRef.current === id) await loadTask(id); };
 
   /** Peck 循环、CLI 引擎的任务（统一事件）：收事件；要你批、要你答时 Peck 不在前面就发通知；做完重读任务。 */
   // 流式的事件一条一条来（每个字一条）：攒 40ms 一起放进去，不然每来一条整个任务就重算、重画一遍。
@@ -301,25 +308,60 @@ const App: React.FC = () => {
     }
   }, [refreshProjects, queueAgentEvent]);
 
-  // 定时任务（v0.8）发出去的任务：和自己发的一样进「在跑」、收事件；做完进左栏 NOW。
+  // 定时任务：设、改、取消都在对话里（模型的工具），这里只读列表。发出去的任务和自己发的一样进「在跑」、收事件；
+  // 做完进左栏 NOW。`null` 是还没读回来。
+  const [schedules, setSchedules] = useState<Schedule[] | null>(null);
+  const refreshSchedules = useCallback(() => { void ipc.scheduleList().then(setSchedules).catch(() => setSchedules((prev) => prev ?? [])); }, []);
   const onAgentEventRef = useRef(onAgentEvent);
   onAgentEventRef.current = onAgentEvent;
   useEffect(() => {
     let off: (() => void) | null = null;
     let closed = false;
+    refreshSchedules();
     void ipc.onSchedule(
       (f) => {
         setLive((prev) => ({ ...prev, [f.runId]: { projectId: f.workspaceId, taskId: f.sessionId } }));
         setAgentEvents((prev) => ({ ...prev, [f.runId]: prev[f.runId] ?? [] }));
         void refreshProjects();
+        // 正看着的那个对话里接着跑的：把这一次读进来。
+        void loadTaskRef.current(f.sessionId);
       },
       (e) => onAgentEventRef.current({ projectId: e.workspaceId, taskId: e.sessionId, prompt: e.prompt }, e.runId, e.event),
+      refreshSchedules,
     ).then((f) => { if (closed) f(); else off = f; }).catch(() => {});
     return () => { closed = true; off?.(); };
-  }, [refreshProjects]);
+  }, [refreshProjects, refreshSchedules]);
+  /** 去这个定时任务跑的地方：它记着的那个对话，或这个项目的新任务页（错过的卡片在那里）。 */
+  const goSchedule = useCallback((s: Schedule) => {
+    const p = projectsRef.current.find((x) => x.workspace.id === s.workspaceId);
+    if (!p) { say("这个定时任务的项目不在列表里了"); return; }
+    setPeek(null);
+    setProjectId(p.workspace.id);
+    setTaskId(s.session && p.tasks.some((t) => t.id === s.session) ? s.session : null);
+    setPage("");
+    setWide(false);
+  }, [say]);
+  // 打开 App 时有错过的（App 关着时到点的）：跳到第一个的项目里，卡片就在眼前。只在刚打开时跳一次。
+  const popped = useRef(false);
+  useEffect(() => {
+    if (popped.current || !ready || schedules === null || (schedules.length > 0 && projects.length === 0)) return;
+    popped.current = true;
+    const missed = schedules.filter((s) => s.missedAt && projects.some((p) => p.workspace.id === s.workspaceId));
+    if (!missed.length) return;
+    goSchedule(missed[0]);
+    say(missed.length > 1 ? `有 ${missed.length} 个定时任务错过了：点 PROJECTS 头上的钟挨个看` : `定时任务「${missed[0].title}」错过了：RUN NOW 补跑，或 SKIP`);
+  }, [ready, schedules, projects, goSchedule, say]);
+  const onMissed = useCallback(async (s: Schedule, run: boolean) => {
+    try {
+      const fired = await ipc.scheduleMissed(s.id, run);
+      refreshSchedules();
+      if (fired) { setProjectId(fired.workspaceId); setTaskId(fired.sessionId); setPage(""); }
+      else say("跳过了这一次");
+    } catch (e) { say(e); }
+  }, [refreshSchedules, say]);
 
   /** 发任务：没选任务就新开一个（任务名是这句话），选着任务就接着在里面发。发出去了回 true（输入框这才清掉附图）。 */
-  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, goal?: string[], worktree?: boolean, images?: ImageInput[]): Promise<boolean> => {
+  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[]): Promise<boolean> => {
     if (!project) return false;
     if (project.missing) { say("这个项目的文件夹不在了：先重新找文件夹"); return false; }
     if (busy) { say("同一个项目一次跑一个任务"); return false; }
@@ -352,7 +394,6 @@ const App: React.FC = () => {
     const reviewId = automatable && permission !== "plan" ? usable(swapped(s.review)) : undefined;
     // 委派（v0.9 B1）：实施的是 API 模型或能经本机 MCP 委派的 CLI（Claude Code、Codex、Grok）。
     const delegate = canDelegate(entries.find((e) => e.id === builder)) ? usable(s.delegate) : undefined;
-    if (goal?.length && (relay || reviewId)) { say("目标模式不能和接力、审查一起用：关掉 GOAL，或在 AGENTS 里把审查关了"); return false; }
     try {
       let target = taskId;
       if (!target) {
@@ -370,9 +411,9 @@ const App: React.FC = () => {
       if (relay || reviewBy) {
         id = await ipc.teamRunStart({ sessionId: target, prompt, who: builderPick.who, model: builderPick.model, effort: builderPick.effort, permission, costCap: s.costCap, worktree, delegate, planBy: spec ? pickOf(spec) : undefined, reviewBy, images }, onEvent);
       } else if (who.startsWith("api:")) {
-        id = await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap, goal, worktree, delegate, images }, onEvent);
+        id = await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap, worktree, delegate, images }, onEvent);
       } else {
-        id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images, delegate, costCap: s.costCap, goal }, onEvent);
+        id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images, delegate, costCap: s.costCap }, onEvent);
       }
       runId = id;
       if (swap) setSwapOnce(null);
@@ -384,7 +425,6 @@ const App: React.FC = () => {
       setDraft("");
       setShownRunId(null);
       setTaskId(target);
-      setTab((t) => (t === "term" || t === "oneshot" || t === "log" ? t : "changes"));
       await refreshProjects();
       return true;
     } catch (e) { say(e); void refreshProjects(); return false; }
@@ -418,14 +458,6 @@ const App: React.FC = () => {
       await send(`接着做上一个任务：先核对现在的文件，再做完。不要直接重放旧的步骤，被打断的那一步可能已经改过文件。\n原来要做的：${target.prompt}\n上次的结果：${target.summary ?? ""}${evidence ? `\n最后几次工具调用：\n${evidence}` : ""}`, who, (target.permission as Permission | undefined) ?? settingsRef.current.permission);
     } catch (e) { say(e); }
   }, [project, taskId, peekTask, busy, entries, send, say]);
-
-  const undo = useCallback(async (target: RunRecord) => {
-    try {
-      const updated = await ipc.runUndo(target.id);
-      setRunsByTask((prev) => ({ ...prev, [updated.sessionId]: (prev[updated.sessionId] ?? []).map((r) => (r.id === updated.id ? { ...r, undoneAt: updated.undoneAt } : r)) }));
-      await refreshProjects();
-    } catch (e) { say(e); throw e; }
-  }, [refreshProjects, say]);
 
   const openProject = useCallback(async (path?: string) => {
     try {
@@ -533,7 +565,6 @@ const App: React.FC = () => {
   };
   const deleteArchived = async (id: string) => {
     await ipc.sessionDelete(id);
-    forgetTaskNotes(id);
     if (taskId === id) setTaskId(null);
     setPeek((p) => (p?.tasks.some((t) => t.id === id) ? null : p));
     setRunsByTask((prev) => { const next = { ...prev }; delete next[id]; return next; });
@@ -554,7 +585,6 @@ const App: React.FC = () => {
     onArchiveProjectTasks: archiveProjectTasks,
     onDeleteTask: (_pid, id) => act(async () => {
       await ipc.sessionDelete(id);
-      forgetTaskNotes(id);
       if (taskId === id) setTaskId(null);
       setRunsByTask((prev) => { const next = { ...prev }; delete next[id]; return next; });
       await refreshProjects();
@@ -571,12 +601,12 @@ const App: React.FC = () => {
   };
   const selectTask = (pid: string, id: string | null) => { setPeek(null); setProjectId(pid); setTaskId(id); setPage(""); };
 
-  // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–6 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
+  // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–5 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
   // ⌘N、⌘[ ⌘] 只认左栏里的项目（看归档的任务时不在归档里翻）。
   const keysRef = useRef({ project: listed, taskId, page, wide, stop, selectTask, selectTab });
   keysRef.current = { project: listed, taskId, page, wide, stop, selectTask, selectTab };
   useEffect(() => {
-    const TABS: RightTab[] = ["changes", "log", "oneshot", "files", "preview", "term"];
+    const TABS: RightTab[] = ["files", "log", "oneshot", "preview", "term"];
     const onKey = (e: KeyboardEvent) => {
       const k = keysRef.current;
       if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
@@ -593,7 +623,7 @@ const App: React.FC = () => {
       else if (key === "." && !e.shiftKey) { e.preventDefault(); void k.stop(); }
       else if (key === "," && !e.shiftKey) { e.preventDefault(); setSettingsAt(undefined); setPage((p) => (p === "settings" ? "" : "settings")); }
       else if (key === "l" && !e.shiftKey) { e.preventDefault(); setPage(""); window.setTimeout(() => document.querySelector<HTMLElement>(".md-editor .cm-content")?.focus(), 0); }
-      else if (/^[1-6]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); }
+      else if (/^[1-5]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); }
       else if ((key === "[" || key === "]") && k.project) {
         const list = k.project.tasks;
         if (!list.length) return;
@@ -610,6 +640,7 @@ const App: React.FC = () => {
   if (!ready) return <div className="pk pk-dots app" />;
 
   const native = !isMockMode();
+  const schedule = { list: schedules ?? [], entries, onGo: goSchedule, onRemove: (id: string) => act(async () => { await ipc.scheduleDelete(id); refreshSchedules(); say("定时任务取消了"); }) };
   return (
     <div className="pk pk-dots app">
       <div className="app-drag" data-tauri-drag-region />
@@ -649,6 +680,7 @@ const App: React.FC = () => {
           onOpen={openProject}
           native={native}
           actions={leftActions}
+          schedules={schedule}
         />
         {page === "project" && project ? (
           <ProjectPage
@@ -662,7 +694,6 @@ const App: React.FC = () => {
             onRemove={removeProject}
             onArchiveAll={archiveProjectTasks}
             presets={settings.presets}
-            pick={settings.pick}
             onClose={() => setPage("")}
             say={say}
           />
@@ -687,7 +718,7 @@ const App: React.FC = () => {
         ) : (
           <>
             {!wide && !project && (
-              <ProjectsPage inbox={inbox} projects={projects} taskId={taskId} busyProjects={busyProjects} onSelectProject={selectProject} onSelectTask={selectTask} onOpen={openProject} native={native} actions={leftActions} />
+              <ProjectsPage inbox={inbox} projects={projects} taskId={taskId} busyProjects={busyProjects} onSelectProject={selectProject} onSelectTask={selectTask} onOpen={openProject} native={native} actions={leftActions} schedules={schedule} />
             )}
             {!wide && project && (
               <MiddleColumn
@@ -730,11 +761,12 @@ const App: React.FC = () => {
                   onUndo: () => setSwapOnce(null),
                   onDismiss: () => { setQuotaDismissed(`${hint.from}|${hint.text}`); setSwapOnce(null); },
                 } : null}
-                onProjectsChanged={() => void refreshProjects()}
                 onNewTask={() => { if (project) selectTask(project.workspace.id, null); }}
-                onUndo={undo}
                 shownRunId={run?.id ?? null}
-                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("changes"); }}
+                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab(path ? "files" : "log"); }}
+                onRunUpdated={(record) => { setRunsByTask((prev) => ({ ...prev, [record.sessionId]: (prev[record.sessionId] ?? []).map((r) => (r.id === record.id ? { ...r, ...record } : r)) })); void refreshProjects(); }}
+                missed={(schedules ?? []).filter((x) => x.workspaceId === project.workspace.id && !!x.missedAt)}
+                onMissed={onMissed}
               />
             )}
             <RightColumn
@@ -747,7 +779,6 @@ const App: React.FC = () => {
               busy={busy}
               filePath={filePath}
               onFilePath={setFilePath}
-              onUndo={undo}
               term={term}
               onTermRun={termRun}
               onTermStop={termStop}
@@ -757,8 +788,6 @@ const App: React.FC = () => {
               settings={settings}
               onSettings={updateSettings}
               onToTask={(text) => setDraft((d) => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text))}
-              readOnly={!!peekTask}
-              onRunUpdated={(record) => { setRunsByTask((prev) => ({ ...prev, [record.sessionId]: (prev[record.sessionId] ?? []).map((r) => (r.id === record.id ? { ...r, ...record } : r)) })); void refreshProjects(); }}
             />
           </>
         )}

@@ -118,7 +118,7 @@ export function fixRounds(runId: string, builder: Member, editPath: string): Rou
       tool(`${runId}-f1`, "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: "// 待办", new_text: "// 已改" }] }),
       done(`${runId}-f1`, `改好了 1 处：${editPath} 第 1 行`, { diff: [{ path: editPath, change: "modified", additions: 1, deletions: 1, patch }] }),
     ],
-    [...say(`${runId}-fix`, `按审查改了：\`${editPath}\` 的说明换成「已改」。审查的另一处没有意见。\n\n→ 看一眼 CHANGES\n→ 跑一遍 pnpm check`), usage(0.003)],
+    [...say(`${runId}-fix`, `按审查改了：\`${editPath}\` 的说明换成「已改」。审查的另一处没有意见。\n\n→ 在 FILES 里看一眼改过的文件\n→ 跑一遍 pnpm check`), usage(0.003)],
   ]);
 }
 

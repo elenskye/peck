@@ -251,40 +251,13 @@ body { overflow: hidden; }
 .right--wide .pk-tabs { align-self: flex-start; display: inline-flex; width: auto; }
 .right--wide .pk-tabs > button { flex: none; padding: 0 var(--space-7); }
 .right > .pk-bar { flex: none; }
-.changes-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); }
 .changes-body--wide { flex-direction: row; gap: var(--space-9); }
-.changes-side { display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; max-height: 100%; }
-.changes-body:not(.changes-body--wide) .changes-side:only-child { flex: 1 1 0; }
-.changes-body:not(.changes-body--wide) .changes-side:not(:only-child) { max-height: 42%; }
-.changes-body--wide .changes-side { width: 320px; flex: none; }
-.changes-list { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-.changes-list .pk-tree { flex: 1 1 auto; }
-.pk-tree.is-undone .pk-row-name { color: var(--color-text-3); text-decoration: line-through; }
-/* 撤销的招牌时刻（DESIGN.md 动效表 dissolve + scan-once）：改动一行行从左往右溶掉，扫一道光，再以已撤销的样子露出来。 */
-.changes-fx { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 2; }
-.pk-tree.fx-out > * { animation: pk-dissolve .4s steps(8, end) both; }
-.pk-tree.fx-out > :nth-child(2) { animation-delay: 50ms; }
-.pk-tree.fx-out > :nth-child(3) { animation-delay: 100ms; }
-.pk-tree.fx-out > :nth-child(4) { animation-delay: 150ms; }
-.pk-tree.fx-out > :nth-child(5) { animation-delay: 200ms; }
-.pk-tree.fx-out > :nth-child(6) { animation-delay: 250ms; }
-.pk-tree.fx-out > :nth-child(n+7) { animation-delay: 300ms; }
-.pk-tree.fx-back > *, .changes-foot .back.fx-back { animation: pk-reveal-y .2s steps(4, end) both; }
 @media (prefers-reduced-motion: reduce) { .pk-tree.fx-out > *, .pk-tree.fx-back > *, .changes-foot .back.fx-back { animation: none !important; } .changes-fx { display: none; } }
-.snap { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
-.snap .pk-i { color: var(--color-cyan-text); }
-.nums { display: flex; align-items: baseline; gap: var(--space-4); margin: var(--space-5) 0; }
-.nums span { font-size: var(--text-small); color: var(--color-text-3); margin-right: var(--space-4); }
-.nums-del { color: var(--color-bad); text-shadow: none; }
-.nums-off { color: var(--color-text-3); text-shadow: none; }
-.step-filter { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
 .preview { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
 .preview-head { flex: none; display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
 .preview-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .preview-meta { color: var(--color-text-2); white-space: nowrap; }
 .preview-acts { flex: none; display: flex; gap: var(--space-1); margin-left: calc(-1 * var(--space-4)); }
-.changes-foot { flex: none; display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px dotted var(--color-line-strong); }
-.changes-foot:empty { display: none; }
 .confirm { display: flex; flex-direction: column; gap: var(--space-4); }
 .confirm-t { display: flex; align-items: center; gap: var(--space-4); color: var(--color-bad); }
 .confirm-t b { color: var(--color-text); }
@@ -296,21 +269,8 @@ body { overflow: hidden; }
 .dl-n { color: var(--color-text-3); text-align: right; user-select: none; -webkit-user-select: none; }
 .dl-m { user-select: none; -webkit-user-select: none; }
 .dl-t { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text); }
-.dl--add { background: var(--color-ok-soft); }
-.dl--add .dl-m { color: var(--color-ok); }
-.dl--del { background: var(--color-bad-soft); }
-.dl--del .dl-m { color: var(--color-bad); }
-.dl--del .dl-t { color: var(--color-text-2); }
-.dl--hunk .dl-t { color: var(--color-text-3); }
-.diff--split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); }
 .md { flex: 1 1 0; display: flex; flex-direction: column; gap: var(--space-3); font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-text-2); }
-.md-h { color: var(--color-text); margin-top: var(--space-3); }
-.md-quote { padding-left: var(--space-5); border-left: 2px solid var(--color-line-strong); }
-.md-li { display: flex; align-items: flex-start; gap: var(--space-4); }
-.md-li.is-done { color: var(--color-text-3); }
-.md-dot { flex: none; width: 4px; height: 4px; margin: 8px 2px 0 4px; background: var(--color-text-3); }
 .md code, .md-code { color: var(--color-text); background: var(--color-raised); padding: 0 var(--space-2); }
-.md-code { margin: 0; padding: var(--space-4) var(--space-5); white-space: pre-wrap; }
 
 .files-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .files-tree { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
@@ -652,22 +612,8 @@ body { overflow: hidden; }
 .agent-summary { margin: var(--space-2) 0 var(--space-3) var(--space-10); padding-left: var(--space-6); border-left: 1px dotted var(--color-line-strong); font-size: var(--text-small); color: var(--color-text-2); }
 
 /* 验证卡片：Peck 替模型跑的验证命令 */
-.agent-verify { padding: var(--space-4) var(--space-6) var(--space-2); }
-.agent-verify-head { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
-.agent-verify-head .t-label { color: var(--color-text-3); }
-.agent-verify-note { min-width: 0; flex: 1; }
-.agent-verify-head .is-ok { color: var(--color-ok); }
-.agent-verify-head .is-warn { color: var(--color-warn); }
-.agent-verify-head .is-bad { color: var(--color-bad); }
-.agent-verify.is-ok .agent-verify-head .t-label { color: var(--color-ok); }
-.agent-verify.is-bad .agent-verify-head .t-label { color: var(--color-bad); }
-.agent-verify .agent-calls { margin-left: 0; }
 
 /* 第一次打开项目：Peck 猜的验证命令 */
-.verify-guess { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-7); }
-.verify-list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.verify-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-5); font-size: var(--text-small); color: var(--color-text-2); }
-.verify-list em { font-style: normal; color: var(--color-text-3); }
 .app .verify-text { display: block; width: 100%; min-height: 96px; margin: var(--space-3) 0 0; padding: var(--space-5) var(--space-6); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: vertical; font-family: var(--font-code); font-size: var(--text-code); line-height: var(--leading-code); color: var(--color-text); }
 .app .verify-text:disabled { opacity: .6; }
 .app .verify-text:focus { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
@@ -702,8 +648,6 @@ body { overflow: hidden; }
 .skill-history { margin: 0 0 var(--space-3) var(--space-8); border-left: 1px dotted var(--color-line-strong); padding-left: var(--space-6); }
 .skill-history .set-row:first-child { border-top: 0; }
 .memory-text { font-family: var(--font-body); font-size: var(--text-body); letter-spacing: 0; text-transform: none; }
-.agent-verify-line.is-ok { color: var(--color-ok); }
-.agent-verify-line .t-label { color: inherit; }
 
 /* ---------- 审阅和预览（v0.7 Phase 10，云端取了沉静一边，本地改方案时并进 tokens） ---------- */
 /* Peck 的代码配色：青只给关键字；字符串、数、类型、属性用压低的几种色（不和绿、红、琥珀的意思撞），注释退到暗字。 */
@@ -734,24 +678,9 @@ body { overflow: hidden; }
 .files-md { flex: 1 1 0; min-height: 0; padding: var(--space-4) var(--space-2); }
 
 /* CHANGES：按块接受 / 拒绝、行内批注 */
-.dl--hunk { align-items: center; }
-.dl-acts { display: flex; justify-content: flex-end; gap: var(--space-2); }
-.dl--hunk { grid-template-columns: 30px 10px minmax(0, 1fr) auto; }
-.dl--hunk.is-rejected .dl-t { text-decoration: line-through; }
-.dl-acts .is-ok { color: var(--color-ok); }
-.dl-acts .is-bad { color: var(--color-bad); }
 .dl-act { margin: 0; padding: 0 var(--space-2); border: 0; background: none; font-family: var(--font-dots); font-weight: 900; font-size: 11px; letter-spacing: .06em; color: var(--color-text-3); cursor: pointer; }
 .dl-act:hover:not(:disabled) { color: var(--color-cyan-text); }
 .dl-act:disabled { opacity: .5; cursor: default; }
-.dl-n--btn { margin: 0; padding: 0; border: 0; background: none; font: inherit; color: var(--color-text-3); text-align: right; cursor: pointer; }
-.dl-n--btn:hover { color: var(--color-cyan-text); }
-.dl.has-note .dl-n--btn { color: var(--color-warn); }
-.dl-note { display: flex; align-items: flex-start; gap: var(--space-3); margin: var(--space-1) 0 var(--space-2) 43px; padding: var(--space-2) var(--space-4); border-left: 2px solid var(--color-warn-line); background: var(--color-warn-soft); font-family: var(--font-body); font-size: var(--text-small); color: var(--color-text); }
-.dl-note .pk-i { margin-top: 3px; color: var(--color-warn); }
-.dl-note-t { flex: 1; min-width: 0; white-space: pre-wrap; }
-.dl-edit { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3) 43px; }
-.app .dl-edit textarea { width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-panel-2); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); resize: vertical; }
-.dl-edit-acts { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .notes-bar, .wt-bar { flex: none; margin-bottom: var(--space-4); }
 .notes-bar .pk-bar-text, .wt-bar .pk-bar-text { flex: 1; min-width: 0; }
 .wt-conflicts { margin: var(--space-2) 0 var(--space-3); padding-left: var(--space-8); color: var(--color-text-2); }
@@ -841,8 +770,6 @@ body { overflow: hidden; }
 .preview-list li { display: flex; align-items: baseline; gap: var(--space-3); font-size: var(--text-small); }
 .preview-list .t-code { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-3); }
 .preview-note { flex: 1; min-width: 0; color: var(--color-text); }
-.app .sched-prompt { width: 360px; font-family: var(--font-body); background: var(--color-panel); box-shadow: inset 0 0 0 1px var(--color-line-strong); }
-.app .sched-prompt:focus { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
 /* 一格里竖着摆几行（设置 → MCP 的钥匙串变量）。 */
 .set-stack { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .set-stack .set-inline { margin-top: 0; }
@@ -886,15 +813,31 @@ body { overflow: hidden; }
 .slash-note > .t-label { flex: none; padding-top: 1px; }
 .slash-note-body { flex: 1; min-width: 0; }
 .slash-note-body > p { margin: 0; white-space: pre-wrap; }
-.slash-results { margin: var(--space-2) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
-.slash-results li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); font-size: var(--text-small); }
-.slash-results .t-code { color: var(--color-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
-.slash-results em { font-style: normal; color: var(--color-text-2); }
-.slash-results details { flex-basis: 100%; }
-.slash-results pre { margin: var(--space-2) 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font-size: var(--text-code); }
 .quota-bar .pk-bar-text { flex: 1; min-width: 0; }
 
 /* 交出去的子任务（v0.9 B1）：挂在那一步下面，左边一道虚线。 */
 .agent-sub { margin-top: var(--space-2); padding-left: var(--space-4); border-left: 1px dashed var(--color-line); }
 .agent-sub-head { font-size: var(--text-small); color: var(--color-text-2); }
 .agent-sub .agent-calls { margin-top: var(--space-2); }
+
+/* 定时任务（v1.0.2）：PROJECTS 头上的钟（几个、有没有错过的），点开一个个看；错过的在项目里弹卡片。 */
+.sched-chip { width: auto; gap: 3px; padding: 0 3px; margin-left: 0; }
+.sched-chip em { font-family: var(--font-code); font-style: normal; font-size: 11px; line-height: 1; color: inherit; }
+.sched-chip.is-on { color: var(--color-cyan-text); }
+.sched-chip .pk-badge { margin-left: 1px; }
+.pk-mod-head .menu-anchor + .head-icon--end { margin-left: 0; }
+.sched-pop { width: 380px; max-width: calc(100vw - 16px); }
+.sched-item + .sched-item { border-top: 1px dotted var(--color-line); }
+.sched-item .pk-menu-item { width: 100%; }
+.sched-detail { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-2) var(--space-6) var(--space-6) var(--space-10); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); letter-spacing: 0; text-transform: none; }
+.sched-say { margin: 0; padding: var(--space-3) var(--space-5); background: var(--color-panel); color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sched-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-6); margin: 0; }
+.sched-detail dt { color: var(--color-text-3); }
+.sched-detail dd { margin: 0; overflow-wrap: anywhere; }
+.missed { flex: none; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-7); }
+.missed .pk-mod-note { gap: var(--space-2); }
+.missed-when { margin: 0; font-size: var(--text-small); color: var(--color-text-2); }
+.missed-prompt { margin: 0; font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-stack > .missed { margin-top: var(--space-4); }
+.task > .wt-bar { margin-top: var(--space-5); margin-bottom: 0; }
+.task > .wt-bar + .confirm { margin-top: var(--space-4); }

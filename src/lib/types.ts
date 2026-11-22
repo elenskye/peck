@@ -21,16 +21,12 @@ export interface ProjectSettings {
   permission?: string | null;
   /** 这个项目默认用哪套合作预设（v0.9 B2）；有它就不看 who。 */
   preset?: string | null;
-  /** 站主不要 Peck 猜的验证命令（v0.6）：中栏不再问。 */
-  verifyDismissed?: boolean;
   /** 项目即环境（v0.7）：主文件夹以外的文件夹，能改还是只读。 */
   folders?: ProjectFolder[];
   /** 这个项目的环境变量（v0.7；v0.10 起 CLI 引擎也带）。 */
   env?: EnvVar[];
   /** 这个项目里 Peck 循环不起的 MCP 服务器（v0.10 A2，按名字）。 */
   mcpOff?: string[];
-  /** CLI 引擎做完不替它跑验证命令（v0.10 C1）。 */
-  cliVerifyOff?: boolean;
   /** 这个项目里不用的 Skills（v0.10 C2，按名字）。 */
   skillsOff?: string[];
 }

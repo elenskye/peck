@@ -3,7 +3,7 @@
 //! 由 Phase 6 的 `harness/` 接。
 //!
 //! 和旧的一样的地方：任务记录（runs 表，多记一个 `engine`）、一个项目一次一个任务、影子仓库的快照
-//! （CHANGES 和撤销照旧能用）、`run_cancel` 能停。旧的任务事件（`RunEvent`）只发开始、结束这几条进
+//! （改动记录和按快照回退照旧能用）、`run_cancel` 能停。旧的任务事件（`RunEvent`）只发开始、结束这几条进
 //! 任务记录；过程是统一事件（`AgentEvent`），经 `channel` 发给界面、存进事件日志。
 //!
 //! 审批和提问的回答：IPC `gateway_control(runId, control)`。Grok、Antigravity 跑的时候顺手开 Peck 的
@@ -50,8 +50,6 @@ pub async fn gateway_run_start(
     delegate: Option<String>,
     // 花费上限（委派的子任务是 Peck 循环，照算）。
     cost_cap: Option<f64>,
-    // 目标模式（v0.10 C1：CLI 也能开）：要过的验证命令（`*` 是全部）。
-    goal: Option<Vec<String>>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
@@ -93,7 +91,6 @@ pub async fn gateway_run_start(
             attachments,
             delegate,
             cost_cap,
-            goal: goal.unwrap_or_default(),
         },
         backend,
         move |e: &AgentEvent| {
@@ -124,8 +121,6 @@ pub(crate) struct EngineRun {
     /// 委派（v0.9 B1）：给 CLI 的本机 MCP 加 `delegate_task`。Antigravity、PLAN 不委派。
     pub delegate: Option<crate::harness::r#loop::Delegate>,
     pub cost_cap: Option<f64>,
-    /// 目标模式（v0.10 C1）：要过的验证命令（`*` 是全部）；空着是平时。
-    pub goal: Vec<String>,
 }
 
 /// 占任务号、记任务、起引擎（后台跑），返回任务 id。
@@ -152,21 +147,13 @@ pub(crate) fn start_engine_run(
         attachments,
         delegate,
         cost_cap,
-        goal,
     } = run;
     if worktree && level == PermissionLevel::Plan {
         return Err("PLAN 只读，不用独立工作区。".into());
     }
-    let direct_only = super::caps::AgentCaps::for_engine(&engine).direct_only;
-    if !goal.is_empty() && level == PermissionLevel::Plan {
-        return Err("PLAN 只读，不能开目标模式。".into());
-    }
-    if !goal.is_empty() && direct_only {
-        return Err(format!("{label} 只做直接调用，不开目标模式。"));
-    }
 
     // 任务记录：和旧的发任务一样占一个号、一个项目一次一个。
-    let (run_id, step_id, workspace, cancel_rx, mut refs, fork, allowed, hints, settings, folders, verify_config, verify_error) = {
+    let (run_id, step_id, workspace, workspace_id, cancel_rx, mut refs, fork, allowed, hints, settings, folders) = {
         let mut active = active_runs.lock().map_err(|e| e.to_string())?;
         let mut db = store.lock().map_err(|e| e.to_string())?;
         let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
@@ -185,12 +172,6 @@ pub(crate) fn start_engine_run(
         if active.values().any(|r| r.touches(&touching)) {
             return Err("同一个项目一次跑一个任务（项目的文件夹、能改的其他文件夹和在跑的任务重叠也算）。".into());
         }
-        // 后台验证（v0.10 C1）：站主确认过的 verify.toml；写错了照常跑、不验，开头记一条。目标模式要有才行。
-        let (verify_config, verify_error) = match crate::harness::verify::load_approved(&workspace, ws.settings.verify_approved.as_deref()) {
-            Ok(c) => (c, None),
-            Err(e) => (None, Some(e)),
-        };
-        crate::harness::run::check_goal(&goal, &verify_config)?;
         let number = db.next_run_number().map_err(|e| e.to_string())?;
         let run_id = format!("run-{number}");
         let step_id = format!("{run_id}-step-1");
@@ -233,7 +214,7 @@ pub(crate) fn start_engine_run(
         let fork = crate::harness::history::fork_context(&db, &session_id, &format!("cli:{engine}"), &run_id);
         let allowed = db.harness_allowed(&ws.id).unwrap_or_default();
         let hints = crate::harness::mcp_client::hints_for(&db, &ws.id);
-        (run_id, step_id, workspace, cancel_rx, refs, fork, allowed, hints, ws.settings.clone(), folders, verify_config, verify_error)
+        (run_id, step_id, workspace, ws.id.clone(), cancel_rx, refs, fork, allowed, hints, ws.settings.clone(), folders)
     };
     if let Some(f) = &fork {
         refs.insert(0, f.text.clone());
@@ -241,10 +222,11 @@ pub(crate) fn start_engine_run(
     let fork_note = fork.as_ref().map(|f| crate::harness::history::fork_notice(f, &label));
     let engine_prompt = if refs.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", refs.join("\n\n")) };
     let engine_prompt = format!("{engine_prompt}{}{}", crate::harness::run::attachment_note(&attachments), folders_note(&folders, level));
-    let verify_checks: Vec<crate::harness::verify::Check> = if settings.cli_verify_off && goal.is_empty() { vec![] } else { verify_config.map(|c| c.check).unwrap_or_default() };
     let project_env = settings.env_pairs();
     // 独立工作区：先建好；建不了这个任务就算失败。
     let cwd = crate::harness::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
+    // 这个任务是谁在干（对话里设定时任务时默认照它）。
+    let setup = crate::schedule::Setup { who: who.clone(), model: model.clone(), effort: effort.clone(), plan_by: None, review_by: None, delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) };
     // 委派（v0.9 B1）：能委派的 CLI、不是 PLAN 才开；这一句后面告诉它有 delegate_task。
     let cli_delegate = match delegate {
         Some(d) if level != PermissionLevel::Plan && supports_delegate(&engine) => {
@@ -319,9 +301,6 @@ pub(crate) fn start_engine_run(
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Info, text });
         }
-        if let Some(e) = verify_error {
-            sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: format!("{e} 这次不替它跑验证命令。") });
-        }
         let started = Instant::now();
         let repo = if worktree { crate::worktree::shadow_repo(&cwd, &workspace).ok() } else { ShadowRepo::open_or_init(&workspace).ok() };
         let before = repo.as_ref().and_then(|r| {
@@ -330,7 +309,7 @@ pub(crate) fn start_engine_run(
             record_step_start(&id, &step_id, r, tree.clone());
             Some(tree)
         });
-        // 能改的其他文件夹（v0.10）也拍快照：改动进 CHANGES、跟着任务撤销。
+        // 能改的其他文件夹（v0.10）也拍快照：改动记在任务上、跟着任务回退。
         let extras = crate::harness::run::snapshot_extras(&id, &folders, level);
         let descriptor = |status| {
             ResolvedStepPlan {
@@ -382,6 +361,14 @@ pub(crate) fn start_engine_run(
             ask_user: matches!(engine.as_str(), "grok" | "antigravity"),
             delegate: cli_delegate.clone(),
             skill_root: Some(workspace.clone()),
+            extras: Some(Arc::new(crate::harness::extras::Extras {
+                store: store.clone(),
+                workspace_id: workspace_id.clone(),
+                session_id: session_id.clone(),
+                run_id: id.clone(),
+                setup: setup.clone(),
+            })),
+            read_only: level == PermissionLevel::Plan,
         };
         let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
         let token = peck_mcp.as_ref().map(|m| m.token.clone());
@@ -395,112 +382,20 @@ pub(crate) fn start_engine_run(
         if engine == "muse" && super::project_mcp::muse_trusted(&cwd) == Some(false) {
             sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: super::project_mcp::muse_untrusted_notice() });
         }
-        // 后台验证（v0.10 C1）：开跑前记下项目文件的样子；做完比出改了什么、跑要看的几条，没过续接同一个会话交回去修。
-        // Antigravity 只做直接调用、续接不了的 CLI：只跑一遍、显示结果。
-        let mut verify = crate::harness::cli_verify::CliVerify::prepare(
-            crate::harness::cli_verify::Setup {
-                checks: verify_checks,
-                goal,
-                cwd: &cwd,
-                level,
-                env: crate::harness::run::with_project_env(crate::harness::tools::bash::shell_env(), &project_env),
-                folders: &folders,
-                spill_dir: crate::harness::run::spill_root().join(&session_id),
-                runtime_dir: crate::harness::run::runtime_dir(&workspace),
-                once: direct_only || !backend.caps().resume,
-            },
-            sink.clone(),
-        )
-        .await;
-        let engine_sink = if verify.is_some() { sink.holding_end() } else { sink.clone() };
-        let engine_prompt = match verify.as_ref().and_then(|v| v.goal_note()) {
-            Some(note) => format!("{engine_prompt}{note}"),
-            None => engine_prompt,
+        // 控制通道直接交给引擎；按停在引擎起来之前也收得到（通道里先放着）。
+        let task = AgentTask {
+            run_id: id.clone(),
+            prompt: engine_prompt,
+            cwd: cwd.clone(),
+            permission: level,
+            model: model.clone(),
+            effort: effort.clone(),
+            resume,
+            peck_mcp: peck_mcp.clone(),
+            env: project_env.clone(),
+            folders: folders.clone(),
         };
-        // 控制通道：一次一个引擎进程（交回去修是续接同一个会话的又一次），转给正在跑的那一个；按停记一笔。
-        let current: Arc<Mutex<Option<mpsc::UnboundedSender<Control>>>> = Arc::default();
-        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-        let fwd_current = current.clone();
-        let forwarder = tokio::spawn(async move {
-            let mut control_rx = control_rx;
-            while let Some(c) = control_rx.recv().await {
-                if c == Control::Interrupt {
-                    let _ = stop_tx.send(true);
-                }
-                if let Some(tx) = fwd_current.lock().ok().and_then(|g| g.clone()) {
-                    let _ = tx.send(c);
-                }
-            }
-        });
-        let mut prompt_now = engine_prompt;
-        let mut resume_now = resume;
-        let mut verdict: Option<(TurnEndReason, Option<String>)> = None;
-        let outcome = loop {
-            let (tx, rx) = mpsc::unbounded_channel();
-            // 引擎还没起来时按的停：先放进这一次的通道，它一起来就收到（和以前直接读通道一样）。
-            if *stop_rx.borrow() {
-                let _ = tx.send(Control::Interrupt);
-            }
-            if let Ok(mut c) = current.lock() {
-                *c = Some(tx);
-            }
-            let task = AgentTask {
-                run_id: id.clone(),
-                prompt: prompt_now.clone(),
-                cwd: cwd.clone(),
-                permission: level,
-                model: model.clone(),
-                effort: effort.clone(),
-                resume: resume_now.clone(),
-                peck_mcp: peck_mcp.clone(),
-                env: project_env.clone(),
-                folders: folders.clone(),
-            };
-            let outcome = backend.run(task, engine_sink.clone(), rx).await;
-            if let Ok(mut c) = current.lock() {
-                *c = None;
-            }
-            let Some(v) = verify.as_mut() else { break outcome };
-            let done = matches!(&outcome, Ok(o) if o.reason == TurnEndReason::Done) && !*stop_rx.borrow();
-            if !done {
-                break outcome;
-            }
-            match v.after_turn(&mut stop_rx.clone()).await {
-                crate::harness::cli_verify::After::Done => break outcome,
-                crate::harness::cli_verify::After::Interrupted => {
-                    verdict = Some((TurnEndReason::Interrupted, None));
-                    break outcome;
-                }
-                crate::harness::cli_verify::After::Stop(why) => {
-                    verdict = Some((TurnEndReason::Limit, Some(why)));
-                    break outcome;
-                }
-                crate::harness::cli_verify::After::Fix(text) => {
-                    let session = outcome.as_ref().ok().and_then(|o| o.session_ref.clone());
-                    if session.is_none() {
-                        verdict = Some((TurnEndReason::Limit, Some(format!("验证没过，{label} 这次没给会话号、接不上，没法交回去修；失败的输出在验证卡片里。"))));
-                        break outcome;
-                    }
-                    prompt_now = text;
-                    resume_now = session;
-                }
-            }
-        };
-        forwarder.abort();
-        if let Some(v) = verify.as_mut() {
-            v.stop();
-        }
-        // 扣下的收尾补一条（验证停下、按了停的按验证的写）；整个任务的结果也照它。
-        let outcome = match outcome {
-            Ok(o) if verify.is_some() => {
-                let held = engine_sink.held_end();
-                let (reason, error) = verdict.clone().unwrap_or_else(|| held.as_ref().map(|(_, r, e)| (*r, e.clone())).unwrap_or((o.reason, None)));
-                let turn_id = held.map(|(t, _, _)| t).unwrap_or_else(|| "turn-1".into());
-                sink.emit(EventBody::TurnCompleted { turn_id, reason, error });
-                Ok(super::RunOutcome { reason, session_ref: o.session_ref })
-            }
-            other => other,
-        };
+        let outcome = backend.run(task, sink.clone(), control_rx).await;
         // 引擎起都没起来（找不到程序、起不了进程）时一条事件都没有：补一条出错的收尾，
         // 界面和别的结束一样收掉「在跑」，不然这个项目一直占着。
         if let Err(e) = &outcome {
@@ -596,7 +491,8 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
     // Peck 自己的本机 MCP（`ask_user`、`delegate_task`，v0.9 B1；`create_skill`，v0.10 C3）：CLI 问要不要用，直接批
     // （子任务里每一步照 Peck 的档位问）。`create_skill` 只是提议、不写盘，PLAN 也批。
     let peck_tool = *kind == ToolKind::Mcp && title.contains("MCP peck · ");
-    if peck_tool && title.contains("create_skill") {
+    // 定时任务那三个不碰项目文件，PLAN 也批；`restore_snapshot` 在 PLAN 下给站主（它自己也会拒掉回退）。
+    if peck_tool && ["create_skill", "schedule_task", "list_schedules", "cancel_schedule"].iter().any(|t| title.contains(t)) {
         return Some(request_id.clone());
     }
     if level == PermissionLevel::Plan {
@@ -725,7 +621,7 @@ pub(crate) fn register_sub_control(run_id: &str, prefix: &str, tx: mpsc::Unbound
 }
 
 /// 按 STOP、任务收尾：这个任务还在跑的委派子任务都打断（以前 STOP 只停 CLI，子任务在本机 MCP 里接着改文件，
-/// 改动不进这次的 CHANGES、撤销也撤不掉；v0.10 收尾审查）。
+/// 改动不进这次的记录、回退也放不回去；v0.10 收尾审查）。
 pub(crate) fn interrupt_subs(run_id: &str) {
     let subs: Vec<mpsc::UnboundedSender<Control>> = sub_controls().lock().ok().and_then(|c| c.get(run_id).map(|l| l.iter().map(|(_, tx)| tx.clone()).collect())).unwrap_or_default();
     for tx in subs {
@@ -814,7 +710,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };
@@ -847,7 +742,6 @@ mod tests {
             attachments: vec![],
             delegate: None,
             cost_cap: None,
-            goal: vec![],
         };
         let run_id = start_engine_run(run, backend.clone(), move |e| {
             let _ = tx.send(e.clone());
@@ -873,7 +767,6 @@ mod tests {
             attachments: vec![],
             delegate: None,
             cost_cap: None,
-            goal: vec![],
         };
         assert!(start_engine_run(again, backend, |_| {}).unwrap_err().contains("一次跑一个"));
 
@@ -914,114 +807,6 @@ mod tests {
         assert_eq!(logged.iter().filter(|e| matches!(e.body, EventBody::ApprovalResolved { .. })).count(), 3, "三次都批了");
         drop(db);
         assert!(gateway_control(run_id, Control::Interrupt).await.is_err(), "结束了就收不到控制");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// 假 CLI：第一次写一个过不了验证的文件，续接同一个会话（拿到 `<peck-verify>`）再改好。
-    struct FixingCli {
-        root: PathBuf,
-        prompts: Arc<Mutex<Vec<(String, Option<String>, Vec<(String, String)>)>>>,
-    }
-
-    impl super::super::AgentBackend for FixingCli {
-        fn caps(&self) -> super::super::caps::AgentCaps {
-            super::super::caps::AgentCaps::claude_code()
-        }
-        fn run(&self, task: AgentTask, sink: crate::gateway::log::EventSink, _control: mpsc::UnboundedReceiver<Control>) -> super::super::BoxFuture<Result<super::super::RunOutcome, super::super::GatewayError>> {
-            let root = self.root.clone();
-            let prompts = self.prompts.clone();
-            Box::pin(async move {
-                let n = {
-                    let mut p = prompts.lock().unwrap();
-                    p.push((task.prompt.clone(), task.resume.clone(), task.env.clone()));
-                    p.len()
-                };
-                sink.emit(EventBody::SessionStarted { engine: "claude-code".into(), model: None, caps: super::super::caps::AgentCaps::claude_code(), tools: vec![], mcp: vec![], session_ref: Some("s1".into()), version: None });
-                std::fs::write(root.join("note.txt"), if n == 1 { "bad" } else { "ok" }).unwrap();
-                sink.emit(EventBody::MessageCompleted { item_id: format!("m{n}"), text: format!("第 {n} 次做完了") });
-                sink.emit(EventBody::TurnCompleted { turn_id: format!("turn-{n}"), reason: TurnEndReason::Done, error: None });
-                Ok(super::super::RunOutcome { reason: TurnEndReason::Done, session_ref: Some("s1".into()) })
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn a_cli_task_is_verified_and_a_failure_goes_back_to_the_same_session() {
-        let root = std::env::temp_dir().join(format!("peck-runner-verify-{}", uuid::Uuid::new_v4()));
-        let ws_dir = root.join("ws");
-        std::fs::create_dir_all(ws_dir.join(".peck")).unwrap();
-        let toml = "[[check]]\nname = \"note\"\nrun = \"grep -q ok note.txt\"\n";
-        std::fs::write(ws_dir.join(".peck/verify.toml"), toml).unwrap();
-        let mut store = crate::store::Store::open(&root.join("peck.db")).unwrap();
-        let mut settings = crate::workspace::ProjectSettings { verify_approved: Some(crate::harness::verify::approval_of(toml)), ..Default::default() };
-        settings.env = vec![crate::workspace::EnvVar { name: "API_BASE".into(), value: "http://x".into() }];
-        let ws = crate::workspace::Workspace {
-            id: "wv".into(),
-            path: ws_dir.to_string_lossy().into_owned(),
-            name: "验".into(),
-            last_opened_at: 0,
-            git_branch: None,
-            gitignore_configured: false,
-            hidden: false,
-            settings,
-        };
-        store.save_workspace(&ws).unwrap();
-        let session = store.create_session(&ws.id, None).unwrap();
-        let filler = DispatchPlan { flow_id: "x".into(), flow_name: "x".into(), clean_input: "x".into(), steps: vec![] };
-        store.create_run(&session.id, "占号", 912_001, &filler).unwrap();
-        let store = Arc::new(Mutex::new(store));
-        let prompts: Arc<Mutex<Vec<(String, Option<String>, Vec<(String, String)>)>>> = Arc::default();
-        let backend: Arc<dyn super::super::AgentBackend> = Arc::new(FixingCli { root: ws_dir.clone(), prompts: prompts.clone() });
-        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
-        let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
-        let make = |goal: Vec<String>| EngineRun {
-            store: store.clone(),
-            active_runs: active_runs.clone(),
-            session_id: session.id.clone(),
-            prompt: "改 note".into(),
-            who: "cli:claude-code".into(),
-            permission: Some("edit".into()),
-            level: PermissionLevel::Edit,
-            engine: "claude-code".into(),
-            label: "Claude Code".into(),
-            model: None,
-            effort: None,
-            resume: None,
-            default_account: true,
-            worktree: false,
-            attachments: vec![],
-            delegate: None,
-            cost_cap: None,
-            goal,
-        };
-        // 目标模式里写了没有的检查：发不出去，也不占任务号。
-        assert!(start_engine_run(make(vec!["nope".into()]), backend.clone(), |_| {}).unwrap_err().contains("没有叫「nope」"));
-        start_engine_run(make(vec![]), backend, move |e| {
-            let _ = tx.send(e.clone());
-        })
-        .unwrap();
-        let mut events = Vec::new();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
-        loop {
-            let e = tokio::time::timeout_at(deadline, rx.recv()).await.expect("跑太久了").expect("事件断了");
-            let end = matches!(e.body, EventBody::TurnCompleted { .. });
-            events.push(e);
-            if end {
-                break;
-            }
-        }
-        // 第二次是续接同一个会话、带着失败的输出；两次都带上了项目的环境变量。
-        let sent = prompts.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2);
-        assert!(sent[1].0.contains("<peck-verify>") && sent[1].0.contains("note"), "{}", sent[1].0);
-        assert_eq!(sent[1].1.as_deref(), Some("s1"));
-        assert!(sent.iter().all(|(_, _, env)| env.contains(&("API_BASE".to_string(), "http://x".to_string()))));
-        let rounds: Vec<crate::gateway::event::VerifyOutcome> = events.iter().filter_map(|e| match &e.body { EventBody::VerifyRound { outcome, .. } => Some(*outcome), _ => None }).collect();
-        assert_eq!(rounds, vec![crate::gateway::event::VerifyOutcome::Fixing, crate::gateway::event::VerifyOutcome::Passed]);
-        // 引擎每一次自己的收尾扣下了，只发最后那一条（做完）。
-        let ends: Vec<&EventBody> = events.iter().filter(|e| matches!(e.body, EventBody::TurnCompleted { .. })).map(|e| &e.body).collect();
-        assert_eq!(ends.len(), 1);
-        assert!(matches!(ends[0], EventBody::TurnCompleted { reason: TurnEndReason::Done, .. }));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1092,7 +877,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };

@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { ProjectOverview, TaskBrief } from "@/lib/types";
+import type { ModelEntry } from "@/lib/agentEvents";
+import type { Schedule } from "@/lib/ipc";
+import { dayClock, scheduleWhen, scheduleWho } from "@/lib/schedules";
 import { ago, clock, cn, plainLine, runState, STATUS_WORD } from "@/lib/utils";
 import { Btn, Float, FoldBtn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
 
@@ -328,6 +331,81 @@ type Shared = ListProps & {
   /** 待你处理、在跑（空着不显示）。 */
   inbox: InboxItem[];
   onOpen: (path?: string) => void;
+  /** 设好的定时任务（PROJECTS 头上一个钟，点开看）。 */
+  schedules: ScheduleBundle;
+};
+
+export interface ScheduleBundle {
+  list: Schedule[];
+  entries: ModelEntry[];
+  /** 去它跑的地方（错过的卡片在那里）。 */
+  onGo: (s: Schedule) => void;
+  onRemove: (id: string) => void;
+}
+
+/** PROJECTS 头上的钟：设好的定时任务有几个，点开一个个看（什么时候、发哪句话、谁来干、上一次怎么样）。
+ *  设、改、取消都在对话里跟模型说；这里只留一个 REMOVE（到点没人看着自己跑的东西，要有个不用开对话就能关掉的地方）。 */
+const ScheduleChip: React.FC<ScheduleBundle & { projects: ProjectOverview[]; end?: boolean }> = ({ list, entries, onGo, onRemove, projects, end }) => {
+  const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState<string | null>(null);
+  const [armed, setArmed] = useState<string | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  if (list.length === 0) return null;
+  const missed = list.filter((s) => s.missedAt).length;
+  const sorted = [...list].sort((a, b) => Number(!!b.missedAt) - Number(!!a.missedAt) || (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity));
+  const projectOf = (s: Schedule) => projects.find((p) => p.workspace.id === s.workspaceId);
+  const close = () => { setOpen(false); setArmed(null); };
+  return (
+    <span className="menu-anchor" ref={ref}>
+      <button type="button" className={cn("head-icon sched-chip", end && "head-icon--end", open && "is-on")} aria-haspopup="dialog" aria-expanded={open}
+        aria-label={`定时任务 ${list.length} 个${missed ? `，${missed} 个错过了` : ""}`} title={`定时任务 ${list.length} 个${missed ? `，${missed} 个错过了` : ""}`} onClick={() => (open ? close() : setOpen(true))}>
+        <Icon name="clock" size={12} /><em>{list.length}</em>{missed > 0 && <i className="pk-badge pk-badge--wait" />}
+      </button>
+      {open && (
+        <Float anchor={ref} side="bottom" onClose={close} className="pk-anim-reveal-s menu-pop sched-pop">
+          <div className="pk-menu" role="dialog" aria-label="定时任务">
+            <div className="pk-menu-scroll">
+              <p className="pk-menu-group">定时任务<em className="menu-group-note">在对话里跟模型说，就能设、改、取消</em></p>
+              {sorted.map((s) => {
+                const p = projectOf(s);
+                const target = s.session ? p?.tasks.find((t) => t.id === s.session) : undefined;
+                const last = s.lastSession ? p?.tasks.find((t) => t.id === s.lastSession) : undefined;
+                return (
+                  <div key={s.id} className={cn("sched-item", shown === s.id && "is-open")}>
+                    <button type="button" className={cn("pk-menu-item", shown === s.id && "is-on")} aria-expanded={shown === s.id} onClick={() => { setShown(shown === s.id ? null : s.id); setArmed(null); }}>
+                      <Icon name={shown === s.id ? "triD" : "triR"} size={12} />
+                      <b>{s.title}</b>
+                      <span>{s.missedAt ? "错过了" : s.nextAt ? dayClock(s.nextAt) : "没有下一次"}</span>
+                    </button>
+                    {shown === s.id && (
+                      <div className="sched-detail">
+                        <p className="sched-say sel">{s.prompt}</p>
+                        <dl>
+                          <dt>项目</dt><dd>{p?.workspace.name ?? "不在列表里了"}</dd>
+                          <dt>什么时候</dt><dd>{scheduleWhen(s)}</dd>
+                          <dt>下一次</dt><dd>{s.nextAt ? dayClock(s.nextAt) : "没有了"}</dd>
+                          <dt>谁来干</dt><dd>{scheduleWho(s, entries)} · {s.permission.toUpperCase()}</dd>
+                          <dt>在哪跑</dt><dd>{target ? `接在「${plainLine(target.title)}」里` : "每次开一个新任务"}</dd>
+                          {(s.lastNote || s.lastRunAt) && <><dt>上一次</dt><dd>{[s.lastNote, s.lastRunAt ? dayClock(s.lastRunAt) : null].filter(Boolean).join(" · ")}</dd></>}
+                          {s.missedAt && <><dt>错过的</dt><dd>原定 {dayClock(s.missedAt)}</dd></>}
+                        </dl>
+                        <div className="set-inline">
+                          {s.missedAt && p && <Btn sm v="primary" onClick={() => { onGo(s); close(); }}>去点卡片</Btn>}
+                          {!s.missedAt && last && p && <Btn sm v="ghost" onClick={() => { onGo({ ...s, session: last.id }); close(); }}>上一次的任务</Btn>}
+                          <span className="grow" />
+                          <Btn sm v="danger" onClick={() => { if (armed !== s.id) { setArmed(s.id); return; } setArmed(null); setShown(null); onRemove(s.id); }}>{armed === s.id ? "CONFIRM" : "REMOVE"}</Btn>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Float>
+      )}
+    </span>
+  );
 };
 
 /** 左栏：PROJECTS（选中的项目列全部任务，别的只带最近一次）和下面的 AGENTS（谁来干）。两块都能收起，收起的只剩头，另一块占满。
@@ -340,7 +418,7 @@ export const LeftColumn: React.FC<Omit<Shared, "all" | "onSelectProject"> & {
   agents: React.ReactNode;
   folded: boolean;
   onFold: (folded: boolean) => void;
-}> = ({ inbox, all, agents, folded, onFold, onOpen, ...list }) => {
+}> = ({ inbox, all, agents, folded, onFold, onOpen, schedules, ...list }) => {
   const [pathOpen, setPathOpen] = useState(false);
   if (all) return <section className="col" aria-label="谁来干">{agents}</section>;
   const { projects, projectId, native, onSelectProject, onSelectTask } = list;
@@ -349,6 +427,7 @@ export const LeftColumn: React.FC<Omit<Shared, "all" | "onSelectProject"> & {
       {inbox.length > 0 && !folded && <Inbox items={inbox} taskId={list.taskId} onSelectTask={onSelectTask} />}
       <div className={cn("pk-mod left-projects", folded && "is-folded")}>
         <ModHead label="PROJECTS" after={<button type="button" className="head-icon" aria-label="新增环境：打开一个项目文件夹" title="新增环境：打开一个项目文件夹" onClick={() => (native ? onOpen() : setPathOpen((v) => !v))}><Icon name="folder" size={12} /></button>} note={folded ? projects.find((p) => p.workspace.id === projectId)?.workspace.name : undefined}>
+          <ScheduleChip {...schedules} projects={projects} end />
           <button type="button" className="head-icon head-icon--end" aria-label="全部项目" title="全部项目" onClick={() => onSelectProject(null)}><Icon name="expand" size={12} /></button>
           <FoldBtn name="PROJECTS" folded={folded} onFold={onFold} />
         </ModHead>
@@ -361,7 +440,7 @@ export const LeftColumn: React.FC<Omit<Shared, "all" | "onSelectProject"> & {
 };
 
 /** 全部项目页（中栏）：所有项目，每个带最近几次任务；点一个项目或任务就进去。 */
-export const ProjectsPage: React.FC<Omit<Shared, "all" | "projectId">> = ({ inbox, onOpen, ...list }) => {
+export const ProjectsPage: React.FC<Omit<Shared, "all" | "projectId">> = ({ inbox, onOpen, schedules, ...list }) => {
   const [pathOpen, setPathOpen] = useState(false);
   const { projects, native } = list;
   return (
@@ -369,6 +448,7 @@ export const ProjectsPage: React.FC<Omit<Shared, "all" | "projectId">> = ({ inbo
       {inbox.length > 0 && <Inbox items={inbox} taskId={list.taskId} onSelectTask={list.onSelectTask} />}
       <div className="pk-mod col-grow all-projects">
         <ModHead label="PROJECTS">
+          <ScheduleChip {...schedules} projects={projects} />
           <Btn sm icon="folder" onClick={() => (native ? onOpen() : setPathOpen((v) => !v))}>OPEN FOLDER</Btn>
         </ModHead>
         {pathOpen && !native && <PathForm onOpen={(path) => { onOpen(path); setPathOpen(false); }} />}

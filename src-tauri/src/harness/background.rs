@@ -1,9 +1,9 @@
 //! 后台命令通道（v0.6 Phase 8）：不再一刀切 120 秒超时。
 //!
 //! - **模型起的**（`bash_background` 工具）：起了就回来，模型接着干活，回头再读它的输出、停掉它；
-//!   这个任务结束时一起停（常驻的不留，和 `bash_run` 一样）。同一个任务最多同时 4 个。
-//! - **常驻的 dev server**（`.peck/verify.toml` 的 `[[server]]`）：站主在中栏起、停，跨任务一直在，
-//!   退出 Peck 才停；`autostart = true` 的发任务时没在跑就先起。模型能读它的输出，不能停它。
+//!   这个任务结束时一起停。同一个任务最多同时 4 个。
+//! - **留着的 dev server**（起的时候 `keep: true`）：任务结束不停，跨任务一直在，退出 Peck 才停；
+//!   右栏 PREVIEW 头上看得到、能点停，后来的任务也能读它的输出、停它。一个项目最多 4 个。
 //!
 //! 沙箱、环境、进程组照 `bash_run`（[`super::tools::bash::run_command`]）。输出整份写进日志文件，内存里留最近 512KB。
 
@@ -25,10 +25,12 @@ const RING: usize = 512 * 1024;
 const READ_LIMIT: usize = 8 * 1024;
 /// 模型起的后台命令最长跑这么久（实际上就是不限；任务结束一起停）。
 const LONGEST: Duration = Duration::from_secs(12 * 3600);
-/// 常驻的 dev server 不限时：退出 Peck 才停。
+/// 留着的 dev server 不限时：退出 Peck 才停。
 const FOREVER: Duration = Duration::from_secs(365 * 24 * 3600);
 /// 一个任务里同时在跑的后台命令最多几个。
 pub const PER_RUN: usize = 4;
+/// 一个项目里同时留着的 dev server 最多几个。
+pub const KEPT_PER_PROJECT: usize = 4;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,11 +41,11 @@ pub struct BgInfo {
     pub kind: BackgroundKind,
     pub status: BackgroundStatus,
     pub exit_code: Option<i32>,
-    /// 起好了（server 配了 `ready` 时，看到那段文字才算）。
+    /// 起好了（给了 `ready` 时，看到那段文字才算）。
     pub ready: bool,
     pub started_at: i64,
     pub ended_at: Option<i64>,
-    /// 谁起的：任务 id；常驻的为空。
+    /// 谁起的：任务 id；留着的 dev server 为空（不跟任务停）。
     pub owner: Option<String>,
     /// 完整输出的日志文件。
     pub log: String,
@@ -350,12 +352,12 @@ pub fn list(workspace: &Path) -> Vec<Arc<BgProc>> {
     mine
 }
 
-/// 这个项目里叫这个名字、还在跑的常驻 server。
-pub fn server(workspace: &Path, name: &str) -> Option<Arc<BgProc>> {
-    list(workspace).into_iter().find(|p| p.kind == BackgroundKind::Server && p.name == name && p.running())
+/// 这个项目里还在跑的、留着的 dev server。
+pub fn kept(workspace: &Path) -> Vec<Arc<BgProc>> {
+    list(workspace).into_iter().filter(|p| p.kind == BackgroundKind::Server && p.running()).collect()
 }
 
-/// 任务结束：它起的后台命令都停掉（常驻的 server 不动）。
+/// 任务结束：它起的后台命令都停掉（留着的 dev server 不动）。
 pub fn stop_owned(run_id: &str) {
     if let Ok(r) = registry().lock() {
         for p in r.values().filter(|p| p.owner.as_deref() == Some(run_id) && p.running()) {
@@ -387,29 +389,21 @@ pub fn event_of(info: &BgInfo) -> EventBody {
 /// 给模型看的一行（环境块里）。
 pub fn describe_for_model(p: &BgProc) -> String {
     let kind = match p.kind {
-        BackgroundKind::Server => "dev server (resident; read only)",
+        BackgroundKind::Server => "dev server (kept running across tasks)",
         BackgroundKind::Command => "your background command",
     };
     let i = p.info();
     format!("{kind} \"{}\" `{}` id {} — {}", i.name, i.command, i.id, if i.ready { "running" } else { "starting" })
 }
 
-// ───────────────────────── IPC：常驻的 dev server ─────────────────────────
-
-fn workspace_path(state: &crate::state::AppState, workspace_id: &str) -> Result<PathBuf, String> {
-    workspace_of(state, workspace_id).map(|(root, _)| root)
-}
-
-/// 项目的文件夹和站主确认过的 verify.toml（md5）。
-fn workspace_of(state: &crate::state::AppState, workspace_id: &str) -> Result<(PathBuf, Option<String>), String> {
-    let db = state.store.lock().map_err(|_| "读不到项目。")?;
-    let ws = db.workspace(workspace_id).map_err(|_| "没找到这个项目。")?;
-    Ok((PathBuf::from(ws.path), ws.settings.verify_approved))
-}
+// ───────────────────────── IPC ─────────────────────────
 
 #[tauri::command]
 pub fn background_list(workspace_id: String, state: tauri::State<'_, crate::state::AppState>) -> Result<Vec<BgInfo>, String> {
-    let root = workspace_path(&state, &workspace_id)?;
+    let root = {
+        let db = state.store.lock().map_err(|_| "读不到项目。")?;
+        PathBuf::from(db.workspace(&workspace_id).map_err(|_| "没找到这个项目。")?.path)
+    };
     Ok(list(&root).iter().map(|p| p.info()).collect())
 }
 
@@ -417,42 +411,6 @@ pub fn background_list(workspace_id: String, state: tauri::State<'_, crate::stat
 pub fn background_stop(id: String) -> Result<(), String> {
     get(&id).ok_or("这个后台命令不在了。")?.stop();
     Ok(())
-}
-
-/// 起 verify.toml 里的一个 server（已经在跑就返回它）。
-#[tauri::command]
-pub async fn server_start(workspace_id: String, name: String, state: tauri::State<'_, crate::state::AppState>) -> Result<BgInfo, String> {
-    let (root, approved) = workspace_of(&state, &workspace_id)?;
-    let env = state.store.lock().ok().and_then(|db| db.workspace(&workspace_id).ok()).map(|w| w.settings.env_pairs()).unwrap_or_default();
-    start_server(&root, &name, approved.as_deref(), &env, None).map(|p| p.info())
-}
-
-/// 起常驻的 dev server（只认站主确认过的 verify.toml）。看在不在跑和起是一起的，站主点 DEV 和发任务时自动起不会起两份。
-pub fn start_server(root: &Path, name: &str, approved: Option<&str>, project_env: &[(String, String)], on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
-    static STARTING: Mutex<()> = Mutex::new(());
-    let _one = STARTING.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(p) = server(root, name) {
-        return Ok(p);
-    }
-    let config = super::verify::load_approved(root, approved)?.ok_or("这个项目还没有 .peck/verify.toml。")?;
-    let s = config.server.iter().find(|s| s.name == name).ok_or_else(|| format!("verify.toml 里没有叫「{name}」的 server。"))?;
-    start(
-        Spec {
-            workspace: root.to_path_buf(),
-            owner: None,
-            name: s.name.clone(),
-            command: s.run.clone(),
-            cwd: None,
-            kind: BackgroundKind::Server,
-            ready: s.ready.clone(),
-            sandbox: Sandbox::Project,
-            env: super::run::with_project_env(bash::shell_env(), project_env),
-            runtime_dir: super::run::runtime_dir(root),
-            log_dir: super::run::spill_root().join(format!("servers-{}", crate::workspace::workspace_hash(root))),
-            extra: vec![],
-        },
-        on_update,
-    )
 }
 
 #[cfg(test)]
@@ -525,7 +483,7 @@ mod tests {
         let server = start(spec(&p, "sleep 30", BackgroundKind::Server, None), None).unwrap();
         stop_owned("any-run");
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(server.running(), "常驻的不跟任务停");
+        assert!(server.running(), "留着的不跟任务停");
         server.stop();
         let quick = start(spec(&p, "echo hi; exit 3", BackgroundKind::Command, Some("r")), None).unwrap();
         for _ in 0..100 {

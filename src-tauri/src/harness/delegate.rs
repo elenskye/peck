@@ -6,7 +6,7 @@
 //! 改了的文件回给 CLI。一个任务（会话）最多 6 次，前几句用掉的也算。
 
 use super::context::ProjectLayer;
-use super::r#loop::{ContextConfig, Delegate, LoopConfig, PeckBackend, VerifyPlan, MAX_DELEGATIONS};
+use super::r#loop::{ContextConfig, Delegate, LoopConfig, PeckBackend, MAX_DELEGATIONS};
 use super::run::{budget, live_spend, memories_of, model_label, runtime_dir, spill_root, with_project_env};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, ToolStatus, TurnEndReason};
 use crate::gateway::log::EventSink;
@@ -78,9 +78,10 @@ pub(crate) fn prepare(
             worktree_of,
             ..Default::default()
         },
-        verify: VerifyPlan::default(),
         delegate: None,
         brief: Some(SUB_BRIEF.into()),
+        extras: None,
+        task_level: None,
         mcp: vec![],
         mcp_slot: None,
         mcp_seen: None,
@@ -230,7 +231,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };

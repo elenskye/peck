@@ -608,7 +608,7 @@ const KEYS: Array<[string, string]> = [
   ["↵ / ⇧↵", "发出去 / 换行"],
   ["⌘.", "停下在跑的任务"],
   ["⌘[ / ⌘]", "上一个 / 下一个任务"],
-  ["⌘1 – ⌘6", "右栏：CHANGES、LOG、ONE SHOT、FILES、PREVIEW、TERM"],
+  ["⌘1 – ⌘5", "右栏：FILES、LOG、ONE SHOT、PREVIEW、TERM"],
   ["⌘,", "设置（再按一次关上）"],
   ["Esc", "关菜单和弹层；收回宽栏；关设置、项目设置"],
   ["↑ ↓ ↵", "@ 旧任务的弹层里选"],

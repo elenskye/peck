@@ -1,19 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiTask } from "@/lib/api";
 import { canAutomate, type AgentEvent, type Control, type ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
-import { ipc, type ImageInput, type SlashList, type VerifyResult, type VerifyState } from "@/lib/ipc";
-import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, type SlashItem } from "@/lib/slash";
+import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
+import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
 import type { AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
 import { canDelegate } from "@/lib/presets";
 import type { Permission, ProjectOverview, RunRecord, StepDescriptor, TaskBrief } from "@/lib/types";
 import { PERMISSIONS, agentDot, ago, clock, cn, copyText, engineDot, entryDot, isAgentRun, isPeckRun, runState, span, stepName, timer, whoDots, whoLabel , shortenHomePath } from "@/lib/utils";
-import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, MenuChip, ModHead, Seg, useNow } from "@/ui";
+import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { useScrollMemory } from "@/lib/scrollMemory";
+import { dayClock, scheduleWhen } from "@/lib/schedules";
 import { RELAY_ID, cliModelOf, pickable, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
 
 interface Props {
@@ -31,7 +32,7 @@ interface Props {
   runningRunId: string | null;
   draft: string;
   onDraft: (text: string) => void;
-  onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string, goal?: string[], worktree?: boolean, images?: ImageInput[]) => Promise<boolean>;
+  onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[]) => Promise<boolean>;
   /** 往某一次的事件里追加一条（批完「想记住这几条」）。 */
   onAppendEvent: (runId: string, event: AgentEvent) => void;
   onStop: () => void;
@@ -49,14 +50,15 @@ interface Props {
   quota: QuotaBar | null;
   /** `/new`（v0.10 C2）：这个项目里新开一个任务。 */
   onNewTask: () => void;
-  /** `/undo`：撤销某一次的改动。 */
-  onUndo: (run: RunRecord) => Promise<void>;
-  /** 项目的设置变了（NOT NOW、确认了验证命令）：重读项目列表。 */
-  onProjectsChanged: () => void;
   /** 右栏现在看的是哪一次记录 */
   shownRunId: string | null;
-  /** 让右栏看这一次的改动（带上文件就直接开它的 Diff） */
+  /** 让右栏看这一次的记录（带上文件就在 FILES 里打开它） */
   onShowRun: (runId: string, path?: string) => void;
+  /** 独立工作区搬回、丢掉了：任务记录变了。 */
+  onRunUpdated: (record: RunRecord) => void;
+  /** 这个项目错过的定时任务（卡片：RUN NOW / SKIP）。 */
+  missed: Schedule[];
+  onMissed: (schedule: Schedule, run: boolean) => Promise<void>;
   say: (message: unknown) => void;
 }
 
@@ -152,80 +154,10 @@ const MissingFolder: React.FC<{ project: ProjectOverview; onRelocate: (id: strin
   );
 };
 
-/** 这个项目的 .peck/verify.toml（切项目、任务跑完时重读）。按项目记：切过去以后、读回来之前不拿上一个项目的。 */
-function useVerify(projectId: string | null, busy: boolean, say: (m: unknown) => void): [VerifyState | null, (id: string, v: VerifyState) => void] {
-  const [held, setHeld] = useState<{ id: string; state: VerifyState } | null>(null);
-  const sayRef = useRef(say);
-  sayRef.current = say;
-  useEffect(() => {
-    if (!projectId) { setHeld(null); return; }
-    let stop = false;
-    ipc.verifyGet(projectId).then((v) => { if (!stop) setHeld({ id: projectId, state: v }); }).catch((e) => { if (!stop) { setHeld(null); sayRef.current(e); } });
-    return () => { stop = true; };
-  }, [projectId, busy]);
-  const set = useCallback((id: string, v: VerifyState) => setHeld({ id, state: v }), []);
-  return [held && held.id === projectId ? held.state : null, set];
-}
-
-/** 第一次打开项目：Peck 猜的验证命令，站主确认（能改）才写进 .peck/verify.toml。 */
-const VerifyBanner: React.FC<{ projectId: string; state: VerifyState; onState: (id: string, v: VerifyState) => void; onChanged: () => void; say: (m: unknown) => void }> = ({ projectId, state, onState, onChanged, say }) => {
-  // 没有文件：Peck 猜的；有文件但没确认过（项目自带的、模型或别人改过的）：现在的原文。
-  const [text, setText] = useState(state.guessed ?? state.text ?? "");
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const config = useMemo(() => parseGuess(text), [text]);
-  const act = async (f: () => Promise<VerifyState>) => {
-    setBusy(true);
-    try { onState(projectId, await f()); onChanged(); } catch (e) { say(e); } finally { setBusy(false); }
-  };
-  return (
-    <div className="pk-mod pk-mod--wait verify-guess">
-      <ModHead label="VERIFY" note={<>{state.exists ? "还没确认的验证命令" : "Peck 猜的验证命令"}<Info text={state.exists
-        ? "项目里的 .peck/verify.toml 是自带的或者改过了：确认了 Peck 才在后台替模型跑这些、才起 dev server。"
-        : "改了文件，Peck 在后台替模型跑这些；模型停下时没过，就把失败交回去修（最多 3 次）。确认了才写进 .peck/verify.toml，以后在项目设置里改。"} /></>} />
-      {editing ? (
-        <textarea className="verify-text" value={text} spellCheck={false} onChange={(e) => setText(e.target.value)} rows={Math.min(16, text.split("\n").length + 1)} aria-label="verify.toml" />
-      ) : (
-        <ul className="verify-list">
-          {config.checks.map((c) => <li key={c.name}><b className="t-name">{c.name}</b><span className="t-code">{c.run}</span>{c.when && <em>{c.when}</em>}</li>)}
-          {config.servers.map((c) => <li key={c.name}><b className="t-name">{c.name}</b><span className="t-code">{c.run}</span><em>dev server</em></li>)}
-        </ul>
-      )}
-      <div className="set-inline">
-        <Btn v="primary" icon="check" disabled={busy || !text.trim()} onClick={() => void act(() => ipc.verifySave(projectId, text))}>CONFIRM</Btn>
-        <Btn v="ghost" icon="pen" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? "DONE" : "EDIT"}</Btn>
-        <span className="grow" />
-        <Btn v="ghost" disabled={busy} onClick={() => void act(() => ipc.verifyDismiss(projectId))}>NOT NOW</Btn>
-      </div>
-    </div>
-  );
-};
-
-/** 猜的 TOML 粗读一遍给站主看（名字、命令、when）；写错了照样能 EDIT，CONFIRM 时由 Peck 校验。 */
-function parseGuess(text: string): { checks: { name: string; run: string; when?: string }[]; servers: { name: string; run: string }[] } {
-  const checks: { name: string; run: string; when?: string }[] = [];
-  const servers: { name: string; run: string }[] = [];
-  let cur: { name: string; run: string; when?: string } | null = null;
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (t === "[[check]]") { cur = { name: "", run: "" }; checks.push(cur); continue; }
-    if (t === "[[server]]") { cur = { name: "", run: "" }; servers.push(cur); continue; }
-    const m = t.match(/^(name|run|when)\s*=\s*(.+)$/);
-    if (!cur || !m) continue;
-    const v = m[2].replace(/^"|"$/g, "").replace(/\\"/g, '"');
-    if (m[1] === "name") cur.name = v;
-    else if (m[1] === "run") cur.run = v;
-    else cur.when = m[2].trim().replace(/^\[|\]$/g, "").split(/"\s*,\s*"/).map((x) => x.replace(/"/g, "").trim()).join("  ");
-  }
-  return { checks, servers };
-}
-
 export const MiddleColumn: React.FC<Props> = (props) => {
   const { project, task, runs, settings, entries, busy } = props;
   const [permission, setPermission] = useState<Permission>(settings.permission);
   useEffect(() => setPermission(settings.permission), [settings.permission]);
-  const projectId = project.missing ? null : project.workspace.id;
-  const [verify, setVerify] = useVerify(projectId, busy, props.say);
   // 对话的位置记忆（v1.0.1）：进来到最新一轮、回来回到上次的位置。
   const stackRef = useRef<HTMLDivElement>(null);
   useScrollMemory(stackRef, task?.id ?? null, runs.length);
@@ -239,12 +171,16 @@ export const MiddleColumn: React.FC<Props> = (props) => {
     <Composer
       {...props}
       who={who}
-      verify={verify}
       permission={permission}
       onPermission={setPermission}
       placeholder={task ? (busy ? "下一句话…（这个任务跑完再发）" : "下一句话…") : "一句话说要做什么…"}
     />
   );
+
+  // 错过的定时任务：接在某个对话里跑的，卡片出在那个对话里；别的（每次开新任务的、那个对话不在了的）出在新任务页。
+  const taskIds = new Set(project.tasks.map((t) => t.id));
+  const missedHere = props.missed.filter((s) => (task ? s.session === task.id : !s.session || !taskIds.has(s.session)));
+  const missedCards = missedHere.length > 0 && !archivedAt ? <MissedCards list={missedHere} busy={busy} onMissed={props.onMissed} /> : null;
 
   if (!task) {
     const flow = who ? describe(who, entries, settings) : [];
@@ -252,7 +188,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
       <section className="col" aria-label="对话">
         <div className="pk-mod col-grow home scroll">
           <ModHead label="NEW TASK" />
-          <h1 className="t-hero">{project.workspace.name} 要做什么？<Info text="一句话说清楚，谁来干在左栏 AGENTS 里选。开始前先存一份快照，做完默认留着；不满意，一键撤销整个任务。WORKTREE 是在项目的一个 git worktree 里做，做完再搬回。" /></h1>
+          <h1 className="t-hero">{project.workspace.name} 要做什么？<Info text="一句话说清楚，谁来干在左栏 AGENTS 里选。每个任务开始前、结束后各存一份快照；不满意，跟模型说一声「撤掉刚才的改动」。WORKTREE 是在项目的一个 git worktree 里做，做完再搬回。" /></h1>
           {who ? (
             <div>
               <p className="lbl">WHO</p>
@@ -270,10 +206,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
               <div><Btn icon="gear" onClick={props.onOpenSettings}>SETTINGS</Btn></div>
             </div>
           )}
-          {verify && !verify.dismissed && !verify.error && ((!verify.exists && verify.guessed) || (verify.exists && !verify.approved)) && projectId && (
-            <VerifyBanner key={`${projectId}:${verify.guessed ?? verify.text}`} projectId={projectId} state={verify} onState={setVerify} onChanged={props.onProjectsChanged} say={props.say} />
-          )}
-          {verify?.error && <div className="pk-bar pk-bar--bad task-bar sel"><Icon name="bang" /><span className="pk-bar-text">{verify.error} 在项目设置里改好之前，Peck 不替模型跑验证命令。</span></div>}
+          {missedCards}
         </div>
         {composer}
       </section>
@@ -306,9 +239,11 @@ export const MiddleColumn: React.FC<Props> = (props) => {
               onAppend={(e) => props.onAppendEvent(run.id, e)}
               onNext={(text) => props.onDraft(props.draft.trim() ? `${props.draft.trimEnd()}\n${text}` : text)}
               say={props.say}
+              onRunUpdated={props.onRunUpdated}
             />
           </React.Fragment>
         ))}
+        {missedCards}
       </div>
       {archivedAt && task ? (
         <div className="pk-bar archived-bar" role="status">
@@ -419,61 +354,31 @@ const AbovePop: React.FC<{ anchor: React.RefObject<HTMLDivElement | null>; label
 interface SlashNote {
   title: string;
   text: string;
-  results?: VerifyResult[];
-  confirm?: { label: string; run: () => Promise<void> };
 }
 
-/** 输入框上方一块：/verify、/cost、/compact 的结果，/undo 的确认。 */
-const SlashNoteBar: React.FC<{ note: SlashNote; onClose: () => void; say: (m: unknown) => void }> = ({ note, onClose, say }) => {
-  const [busy, setBusy] = useState(false);
-  const bad = note.results?.some((r) => !r.passed);
-  return (
-    <div className={cn("pk-bar slash-note", bad ? "pk-bar--bad" : note.results ? "pk-bar--ok" : note.confirm ? "" : "slash-note--quiet")} role="status">
-      <b className="t-label">{note.title}</b>
-      <div className="slash-note-body">
-        <p>{note.text}</p>
-        {note.results && (
-          <ul className="slash-results">
-            {note.results.map((r) => (
-              <li key={r.name}>
-                <Icon name={r.passed ? "check" : "x"} size={12} />
-                <b>{r.name}</b>
-                <span className="t-code">{r.command}</span>
-                <em>{r.passed ? "过了" : r.timedOut ? "超时" : `退出码 ${r.exitCode ?? "?"}`} · {(r.durationMs / 1000).toFixed(1)}s</em>
-                {!r.passed && r.output.trim() && <details><summary>输出</summary><pre className="t-code">{r.output}</pre></details>}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      {note.confirm && <Btn sm v="danger" disabled={busy} onClick={() => { setBusy(true); void note.confirm!.run().catch(say).finally(() => setBusy(false)); }}>{note.confirm.label}</Btn>}
-      <button type="button" className="head-icon" aria-label="关上" title="关上" onClick={onClose}><Icon name="x" size={12} /></button>
+/** 输入框上方一块：/cost、/compact 的结果。 */
+const SlashNoteBar: React.FC<{ note: SlashNote; onClose: () => void }> = ({ note, onClose }) => (
+  <div className="pk-bar slash-note slash-note--quiet" role="status">
+    <b className="t-label">{note.title}</b>
+    <div className="slash-note-body">
+      <p>{note.text}</p>
     </div>
-  );
-};
-
+    <button type="button" className="head-icon" aria-label="关上" title="关上" onClick={onClose}><Icon name="x" size={12} /></button>
+  </div>
+);
 // ---------- 输入位 ----------
 
 const Composer: React.FC<Props & {
   who: ModelEntry | null;
-  verify: VerifyState | null;
   permission: Permission;
   onPermission: (p: Permission) => void;
   placeholder: string;
-}> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, verify, say, quota, onNewTask, onUndo }) => {
-  const [goal, setGoal] = useState<string | null>(null);
+}> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, say, quota, onNewTask }) => {
   // 独立工作区（v0.7）：git 项目、Peck 循环或 CLI 引擎、不是 PLAN；发出去以后关掉（一次一选）。
   const [worktree, setWorktree] = useState(false);
   const worktreeable = !!project.workspace.gitBranch && !!who && (who.group === "peck" || who.group === "cli") && permission !== "plan";
   useEffect(() => { if (!worktreeable) setWorktree(false); }, [worktreeable]);
-  // 换了项目：上一个项目选的目标不带过来。
   const projectKey = project.workspace.id;
-  useEffect(() => setGoal(null), [projectKey]);
-  // 只认站主确认过的那一份（项目自带的、改过的，确认前不跑、不起）。
-  const checks = (verify?.approved && verify.config?.check) || [];
-  // 目标模式：Peck 循环和 CLI（v0.10 C1；Antigravity 这类直接调用的不进）；PLAN 只读，不开。
-  const goalable = !!who && (who.group === "peck" || (who.group === "cli" && !who.directOnly)) && checks.length > 0 && permission !== "plan";
-  useEffect(() => { if (!goalable) setGoal(null); }, [goalable]);
   const ready = !!draft.trim() && !!who && !busy;
   // Esc 关掉的那一稿不再弹；接着打字又弹。
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -515,7 +420,7 @@ const Composer: React.FC<Props & {
   };
   const sendText = (text: string, level: Permission) => {
     if (!who) return Promise.resolve(false);
-    return onSend(text, who.id, level, sendEffort(who, settings), cliModelOf(who, settings), goal ? [goal] : undefined, worktree || undefined, shots.length ? shots.map((s) => ({ mediaType: s.mediaType, data: s.data })) : undefined)
+    return onSend(text, who.id, level, sendEffort(who, settings), cliModelOf(who, settings), worktree || undefined, shots.length ? shots.map((s) => ({ mediaType: s.mediaType, data: s.data })) : undefined)
       .then((ok) => { if (ok) { setWorktree(false); setShots([]); } return ok; });
   };
   const send = () => {
@@ -554,24 +459,10 @@ const Composer: React.FC<Props & {
         return;
       }
       case "undo": {
+        // 撤销交给模型（v1.0.2）：它用任务快照放回去，动之前弹一张卡片等你批。
         const last = lastChanged(runs);
-        if (!last) { say("这个任务没有能撤销的改动"); return; }
-        onDraft("");
-        setNote({
-          title: "UNDO",
-          text: `撤销第 ${last.index + 1} 次的改动？${last.run.files.length} 个文件回到那一次开始前的样子。`,
-          confirm: { label: "UNDO", run: async () => { await onUndo(last.run); setNote({ title: "UNDO", text: `第 ${last.index + 1} 次的改动撤销了。` }); } },
-        });
-        return;
-      }
-      case "verify": {
-        onDraft("");
-        setNote({ title: "VERIFY", text: "在跑…" });
-        try {
-          const results = await ipc.verifyRunNow(pid);
-          const failed = results.filter((r) => !r.passed).length;
-          setNote({ title: "VERIFY", text: failed ? `${failed} 条没过` : "都过了", results });
-        } catch (e) { setNote(null); say(e); }
+        if (!last && !args) { say("这个任务没有能撤销的改动"); return; }
+        await sendText(undoPrompt(last?.run.number, args), permission === "plan" ? "edit" : permission);
         return;
       }
       case "cost": {
@@ -627,7 +518,7 @@ const Composer: React.FC<Props & {
   return (
     <div className="pk-mod composer" ref={boxRef}>
       {quota && !busy && <QuotaLine quota={quota} />}
-      {note && <SlashNoteBar note={note} onClose={() => setNote(null)} say={say} />}
+      {note && <SlashNoteBar note={note} onClose={() => setNote(null)} />}
       {popKind === "slash" && (
         <AbovePop anchor={boxRef} label="斜杠命令">
           <div className="pk-menu-scroll">
@@ -682,26 +573,10 @@ const Composer: React.FC<Props & {
         <Seg label="权限" sm disabled={busy} items={PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))} value={permission} onChange={onPermission} />
         {worktreeable && (
           <button type="button" className={cn("pk-chip pk-chip--sm", worktree && "is-on")} aria-pressed={worktree} disabled={busy}
-            title="独立工作区：在项目的一个 git worktree 里做，项目文件夹不动；做完在 CHANGES 里 APPLY 搬回或 DISCARD 丢掉"
+            title="独立工作区：在项目的一个 git worktree 里做，项目文件夹不动；做完在对话里 APPLY 搬回或 DISCARD 丢掉"
             onClick={() => setWorktree(!worktree)}>
             <span className="pk-chip-label">WORKTREE</span>
           </button>
-        )}
-        {goalable && (
-          <MenuChip sm label={goal ? `GOAL · ${goal === "*" ? "ALL" : goal.toUpperCase()}` : "GOAL"} ariaLabel="目标模式" title="目标模式：一直做到这条验证命令过了（最多修 8 次）" disabled={busy}>
-            {(close) => (
-              <>
-                <p className="pk-menu-group menu-note">做到这条过了为止，最多修 8 次</p>
-                {checks.map((c) => (
-                  <button key={c.name} type="button" role="menuitemradio" aria-checked={goal === c.name} className={cn("pk-menu-item", goal === c.name && "is-on")} onClick={() => { setGoal(c.name); close(); }}>
-                    <Dot kind="" /><b>{c.name.toUpperCase()}</b><span className="t-code">{c.run}</span>
-                  </button>
-                ))}
-                {checks.length > 1 && <button type="button" role="menuitemradio" aria-checked={goal === "*"} className={cn("pk-menu-item", goal === "*" && "is-on")} onClick={() => { setGoal("*"); close(); }}><Dot kind="" /><b>ALL</b><span /></button>}
-                <button type="button" role="menuitemradio" aria-checked={!goal} className={cn("pk-menu-item", !goal && "is-on")} onClick={() => { setGoal(null); close(); }}><Dot kind="" /><b>OFF</b><span /></button>
-              </>
-            )}
-          </MenuChip>
         )}
         <span className="grow" />
         {context && <ContextRing context={context} />}
@@ -726,7 +601,7 @@ const STATE: Record<string, { word: string; cls: string }> = {
   undone: { word: "UNDONE", cls: "pk-state--off" },
 };
 
-/** 每轮的 recap（v0.7）：做完 / 停下、改了几个文件、验证（花费在过程最后一行，清单进度在头上）；最新的一轮带下一步按钮（模型建议的，点了放进输入框）。 */
+/** 每轮的 recap（v0.7）：做完 / 停下、改了几个文件（花费在过程最后一行，清单进度在头上）；最新的一轮带下一步按钮（模型建议的，点了放进输入框）。 */
 const Recap: React.FC<{
   run: RunRecord;
   view: ReturnType<typeof foldEvents> | null;
@@ -747,7 +622,6 @@ const Recap: React.FC<{
   const wt = run.worktree;
   const facts: string[] = [];
   facts.push(run.files.length ? `改了 ${run.files.length} 个文件` : "没改文件");
-  if (view?.verified) facts.push(view.verified.outcome === "passed" ? (view.verified.goal ? "目标达到了" : "验证都过了") : view.verified.outcome === "stopped" ? "验证没过" : "验证在修");
   if (wt && !wt.appliedAt && !wt.discardedAt) facts.push("在独立工作区，还没搬回");
   const nexts = steps.length ? steps : done ? [] : ["继续"];
   return (
@@ -804,7 +678,7 @@ const TaskModule: React.FC<{
   latest: boolean;
   /** 右栏正看着这一次 */
   shown: boolean;
-  /** 这个任务里发过好几次才有：让右栏看这一次的改动 */
+  /** 这个任务里发过好几次才有：让右栏看这一次的记录 */
   onShow?: () => void;
   busy: boolean;
   onRetryStep: (run: RunRecord, stepId: string) => void;
@@ -820,7 +694,9 @@ const TaskModule: React.FC<{
   say: (message: unknown) => void;
   /** 归档的任务只读：不重跑、卡片不能批。 */
   readOnly?: boolean;
-}> = ({ run, latest, shown, onShow, busy, onRetryStep, onShowFile, events, live, onControl, onAppend, onNext, say, readOnly }) => {
+  /** 独立工作区搬回、丢掉了。 */
+  onRunUpdated: (record: RunRecord) => void;
+}> = ({ run, latest, shown, onShow, busy, onRetryStep, onShowFile, events, live, onControl, onAppend, onNext, say, readOnly, onRunUpdated }) => {
   const state = runState(run);
   const running = state === "running";
   const now = useNow(running);
@@ -849,7 +725,7 @@ const TaskModule: React.FC<{
         count={agent ? (plan && plan.length ? `${donePlan}/${plan.length}` : undefined) : `${doneSteps}/${run.steps.length}`}
       >
         {onShow && (
-          <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏看任务 ${run.number} 的改动`} onClick={onShow}>CHANGES</Btn>
+          <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏看任务 ${run.number} 的记录`} onClick={onShow}>LOG</Btn>
         )}
       </ModHead>
       <div className="task-st">
@@ -896,10 +772,78 @@ const TaskModule: React.FC<{
       {agent && !running && state !== "undone" && (
         <Recap run={run} view={view} events={events} adds={adds} dels={dels} latest={latest} busy={busy} onNext={onNext} />
       )}
+      {run.worktree && !running && <WorktreeBar run={run} busy={busy} readOnly={readOnly} onRunUpdated={onRunUpdated} say={say} />}
       {state === "undone" && run.undoneAt && (
         <p className="back"><Icon name="undo" size={12} /><span>已回到 {clock(run.startedAt)} 开始前的样子</span><span className="back-n">你的 Git 没动</span></p>
       )}
     </section>
+  );
+};
+
+/** 独立工作区做完了（v1.0.2 从右栏 CHANGES 挪到对话里）：APPLY 搬回项目、DISCARD 丢掉；项目里也改过的文件列成冲突。 */
+const WorktreeBar: React.FC<{ run: RunRecord; busy: boolean; readOnly?: boolean; onRunUpdated: (record: RunRecord) => void; say: (m: unknown) => void }> = ({ run, busy, readOnly, onRunUpdated, say }) => {
+  const [conflicts, setConflicts] = useState<string[] | null>(null);
+  const [moving, setMoving] = useState(false);
+  const wt = run.worktree;
+  if (!wt) return null;
+  const pending = !wt.appliedAt && !wt.discardedAt;
+  const apply = async (force: boolean) => {
+    setMoving(true);
+    try {
+      const r = await ipc.worktreeApply(run.id, force);
+      if (r.conflicts.length && !force) setConflicts(r.conflicts);
+      else { setConflicts(null); onRunUpdated(r.record); say(`搬回了 ${r.applied.length} 个文件`); }
+    } catch (e) { say(e); } finally { setMoving(false); }
+  };
+  const discard = async () => {
+    setMoving(true);
+    try { onRunUpdated(await ipc.worktreeDiscard(run.id)); setConflicts(null); } catch (e) { say(e); } finally { setMoving(false); }
+  };
+  return (
+    <>
+      <div className={cn("pk-bar wt-bar", pending && "pk-bar--wait")}>
+        <Icon name={pending ? "folder" : wt.appliedAt ? "check" : "trash"} />
+        <span className="pk-bar-text">{pending ? "在独立工作区里做完了，项目文件夹还没动" : wt.appliedAt ? `搬回了项目 · ${clock(wt.appliedAt)}` : `丢掉了独立工作区 · ${clock(wt.discardedAt!)}`}</span>
+        {pending && !conflicts && !readOnly && (
+          <>
+            <Btn v="ghost" sm disabled={moving || busy} onClick={() => void discard()}>DISCARD</Btn>
+            <Btn v="primary" sm disabled={moving || busy} onClick={() => void apply(false)}>APPLY</Btn>
+          </>
+        )}
+      </div>
+      {conflicts && (
+        <div className="confirm">
+          <p className="confirm-t"><Icon name="bang" /><b className="t-name">{conflicts.length} 个文件在项目里也改过了</b></p>
+          <ul className="wt-conflicts t-code">{conflicts.map((c) => <li key={c}>{c}</li>)}</ul>
+          <div className="confirm-row">
+            <Btn v="fill" disabled={moving} onClick={() => void apply(true)}>APPLY ANYWAY</Btn>
+            <Btn disabled={moving} onClick={() => setConflicts(null)}>CANCEL</Btn>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+/** 错过的定时任务（App 关着、或项目一直在忙）：不自己补跑，在这个项目里弹一张卡片，站主点 RUN NOW 或 SKIP。 */
+const MissedCards: React.FC<{ list: Schedule[]; busy: boolean; onMissed: (s: Schedule, run: boolean) => Promise<void> }> = ({ list, busy, onMissed }) => {
+  const [acting, setActing] = useState<string | null>(null);
+  const act = (s: Schedule, run: boolean) => { setActing(s.id); void onMissed(s, run).finally(() => setActing(null)); };
+  return (
+    <>
+      {list.map((s) => (
+        <div key={s.id} className="pk-mod pk-mod--wait missed" role="status" aria-label={`错过的定时任务：${s.title}`}>
+          <ModHead label="MISSED" note={<><Icon name="clock" size={12} /> {s.title} · {scheduleWhen(s)}</>} />
+          <p className="missed-when">原定 {dayClock(s.missedAt ?? 0)}{s.lastNote ? `：${s.lastNote}` : ""}</p>
+          <p className="missed-prompt sel">{s.prompt}</p>
+          <div className="set-inline">
+            <Btn v="primary" icon="play" disabled={busy || acting === s.id} onClick={() => act(s, true)}>RUN NOW</Btn>
+            <Btn v="ghost" disabled={acting === s.id} onClick={() => act(s, false)}>SKIP</Btn>
+            {busy && <span className="hint">这个项目有任务在跑，跑完再点 RUN NOW</span>}
+          </div>
+        </div>
+      ))}
+    </>
   );
 };
 
@@ -1025,7 +969,7 @@ const ApiHistory: React.FC<{ run: RunRecord; onShowFile: (path: string) => void 
                   {t.paths?.length > 0 && <p className="hint">能改：<span className="t-code">{t.paths.join("、")}</span> · 验收：{t.acceptance}</p>}
                   {t.review && <p className="note">{REVIEW[t.review.decision]}：{t.review.feedback}</p>}
                   {t.summary && <p className="note">{t.summary}</p>}
-                  {!!t.changeset?.files.length && <Btn v="ghost" sm onClick={() => onShowFile(t.changeset.files[0].path)}>DIFF · {t.changeset.files.length}</Btn>}
+                  {!!t.changeset?.files.length && <Btn v="ghost" sm onClick={() => onShowFile(t.changeset.files[0].path)}>FILES · {t.changeset.files.length}</Btn>}
                   {t.tools.map((tool, i) => (
                     <details key={`${tool.callId}-${i}`} className="api-tool">
                       <summary className={tool.status === "failed" || tool.status === "interrupted" ? "is-err" : undefined}>

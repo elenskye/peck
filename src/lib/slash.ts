@@ -23,8 +23,7 @@ export const PECK_COMMANDS: SlashItem[] = [
   { name: "new", description: "这个项目里新开一个任务", kind: "peck", instant: true },
   { name: "review", description: "审查上一次的改动（AGENTS 里选的审查；没选就用现在这个），只读", kind: "peck", instant: true },
   { name: "compact", description: "压一压这个任务的对话（Peck 循环；不叫模型、不花钱）", kind: "peck", instant: true },
-  { name: "undo", description: "撤销上一次的改动（要确认）", kind: "peck", instant: true },
-  { name: "verify", description: "现在跑一遍验证命令", kind: "peck", instant: true },
+  { name: "undo", description: "撤销上一次的改动：交给模型用任务快照放回去，动之前等你批", kind: "peck", instant: true },
   { name: "cost", description: "这个任务、这个月花了多少", kind: "peck", instant: true },
 ];
 
@@ -63,6 +62,12 @@ export function lastChanged(runs: RunRecord[]): { run: RunRecord; index: number 
     if (r.status !== "running" && !r.undoneAt && (r.files?.length ?? 0) > 0) return { run: r, index: i };
   }
   return null;
+}
+
+/** `/undo` 发出去的那句话（v1.0.2：撤销交给模型，它用 `restore_snapshot`，动之前弹卡片等站主批）。 */
+export function undoPrompt(number: number | undefined, args: string): string {
+  if (args) return `撤销改动：${args}`;
+  return `撤销任务 ${number} 的改动：把它改过的文件放回它开始前的样子。`;
 }
 
 /** `/review` 发出去的那句话：只读地审上一次的改动，最后一行写结论。 */

@@ -234,7 +234,7 @@ pub struct Exec<'a> {
     pub stream_bytes: usize,
 }
 
-/// 跑一条命令（`bash_run`、后台命令、验证命令共用）：沙箱、环境、进程组都一样。
+/// 跑一条命令（`bash_run`、后台命令共用）：沙箱、环境、进程组都一样。
 pub async fn run_command(
     ctx: &ToolContext,
     exec: Exec<'_>,
@@ -509,7 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_the_command_future_ends_the_whole_group() {
-        // 验证命令被作废时是直接丢掉 future（abort）：孙进程也不能留下。
+        // 调用方直接丢掉 future（abort）时：孙进程也不能留下。
         let p = TempProject::new();
         let ctx = p.ctx(PermissionLevel::Edit);
         let task = tokio::spawn(async move {

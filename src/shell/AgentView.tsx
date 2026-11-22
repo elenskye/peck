@@ -1,7 +1,7 @@
 // 一次任务的过程（Peck 循环和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, Control } from "@/lib/agentEvents";
-import { COMPACT_STEP, englishTitle, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type VerifyCheckView, type VerifyRoundView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, englishTitle, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
 import { cn, copyText, engineDot, span } from "@/lib/utils";
@@ -68,8 +68,6 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
       return <div className="pk-bar pk-bar--bad task-bar sel"><Icon name="x" /><span className="pk-bar-text">{item.text}</span></div>;
     case "compacted":
       return <Compacted item={item} />;
-    case "verify":
-      return <VerifyCard checks={item.checks} round={item.round} reused={item.reused} now={now} />;
     case "background":
       return <BackgroundLine bg={item.bg} />;
     case "stage":
@@ -165,83 +163,10 @@ const Compacted: React.FC<{ item: Extract<ViewItem, { kind: "compacted" }> }> = 
   );
 };
 
-const VERIFY_ICON: Record<VerifyCheckView["status"], React.ReactNode> = {
-  running: <span className="pk-run" />,
-  passed: <Icon name="check" size={12} />,
-  failed: <Icon name="x" size={12} />,
-  stale: <Icon name="undo" size={12} />,
-  cancelled: <Icon name="stop" size={12} />,
-};
-
-const VERIFY_WORD: Record<VerifyCheckView["status"], string> = { running: "在跑", passed: "过了", failed: "没过", stale: "过期了", cancelled: "停了" };
-
-function roundLine(r: VerifyRoundView): { text: string; cls: string } {
-  // Peck 循环和 CLI（v0.10 C1）都用这一行：过了就收尾，没过交回给做的那一个。
-  if (r.outcome === "passed") return { text: r.goal ? "目标达到了" : "都过了", cls: "is-ok" };
-  if (r.outcome === "fixing") return { text: `没过，交回去修（第 ${r.attempt}/${r.maxAttempts} 次）`, cls: "is-warn" };
-  return { text: r.reason ?? "停下了", cls: "is-bad" };
-}
-
-/** 验证卡片：Peck 替模型跑的验证命令（改了文件后台跑的、模型停下后收尾跑的）。 */
-const VerifyCard: React.FC<{ checks: VerifyCheckView[]; round?: VerifyRoundView; reused?: boolean; now: number }> = ({ checks, round, reused, now }) => {
-  const live = checks.some((c) => c.status === "running");
-  // 收尾时结果是现成的（上面后台已经跑过）：只写一行结论，不再把同一条列一遍。
-  if (round && reused && round.outcome === "passed") {
-    return (
-      <p className="agent-line agent-verify-line is-ok">
-        <Icon name="check" size={12} />
-        <span className="t-label">{round.goal ? "GOAL" : "VERIFY"}</span>
-        {roundLine(round).text} · {checks.map((c) => c.name).join("、")}
-      </p>
-    );
-  }
-  const failed = checks.some((c) => c.status === "failed");
-  const background = !round && checks.every((c) => c.trigger === "edit");
-  const head = round ? roundLine(round) : null;
-  return (
-    <section className={cn("pk-mod pk-mod--sunk agent-verify", round?.outcome === "passed" && "is-ok", (round?.outcome === "stopped" || (failed && !live)) && "is-bad")} aria-label="验证">
-      <div className="agent-verify-head">
-        <span className="t-label">{round?.goal ? "GOAL" : "VERIFY"}</span>
-        <span className="agent-verify-note">{background ? "改了文件，后台先跑一遍" : head ? head.text : "模型停下了，收尾前看一遍"}</span>
-        {head && <Icon name={round!.outcome === "passed" ? "check" : round!.outcome === "fixing" ? "undo" : "bang"} size={12} className={head.cls} />}
-      </div>
-      <ol className="agent-calls">{checks.map((c) => <VerifyRow key={c.checkId} check={c} now={now} />)}</ol>
-    </section>
-  );
-};
-
-const VerifyRow: React.FC<{ check: VerifyCheckView; now: number }> = ({ check, now }) => {
-  const [open, setOpen] = useState(check.status === "failed");
-  // 在跑时挂上的一行，跑完没过也自己展开。
-  useEffect(() => { if (check.status === "failed") setOpen(true); }, [check.status]);
-  const kind = check.status === "passed" ? "ok" : check.status === "running" ? "run" : check.status === "failed" ? "fail" : "todo";
-  const time = check.status === "running" ? span(now - check.startedAt) : check.durationMs != null ? span(check.durationMs) : "";
-  return (
-    <li className={cn("pk-step", `pk-step--${kind}`, "agent-call")}>
-      <span className="pk-step-node">{VERIFY_ICON[check.status]}</span>
-      <div className="step-body">
-        <button type="button" className="step-head" aria-expanded={open} onClick={() => setOpen(!open)} disabled={!check.output}>
-          <b className="pk-step-name agent-call-title">{check.name}</b>
-          <span className="pk-step-time">{time}</span>
-        </button>
-        <p className="pk-step-desc">
-          <span className="t-code">{check.command}</span>
-          <span className={cn(check.status === "failed" && "is-bad")}>{VERIFY_WORD[check.status]}{check.exitCode != null && check.status === "failed" ? ` · 退出码 ${check.exitCode}` : ""}</span>
-        </p>
-        {open && check.output && (
-          <div className="pk-mod pk-mod--sunk out out--full sel">
-            <pre className="out-lines scroll t-code">{check.output}</pre>
-          </div>
-        )}
-      </div>
-    </li>
-  );
-};
-
 const BackgroundLine: React.FC<{ bg: BackgroundView }> = ({ bg }) => {
   const who = bg.kind === "server" ? "dev server" : "后台命令";
   const live = bg.status === "running" && !bg.past;
-  const state = bg.past ? "起过（跨任务在跑，现状看右栏 PREVIEW）" : bg.status === "running" ? "在跑" : bg.status === "stopped" ? "已停" : `结束了${bg.exitCode != null ? ` · 退出码 ${bg.exitCode}` : ""}`;
+  const state = bg.past || (bg.kind === "server" && bg.status === "running") ? "留着在跑（任务结束不停，右栏 PREVIEW 里看、能停）" : bg.status === "running" ? "在跑" : bg.status === "stopped" ? "已停" : `结束了${bg.exitCode != null ? ` · 退出码 ${bg.exitCode}` : ""}`;
   return (
     <p className={cn("agent-line", bg.status === "exited" && bg.exitCode !== 0 && "is-warn")}>
       {live ? <span className="pk-run" /> : <Icon name={bg.status === "stopped" ? "stop" : "term"} size={12} />}
@@ -457,7 +382,9 @@ function decisionEn(d?: ApprovalDecision, by?: string): string {
 
 const ToolRow: React.FC<{ call: ToolView; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ call, now, onShowFile, say }) => {
   const [open, setOpen] = useState(false);
-  const [subOpen, setSubOpen] = useState(false);
+  // 子任务那几步：站主点过就按站主的；没碰过时在跑摊开、跑完收起（以前在跑时强制摊开，收不起来）。
+  const [subPick, setSubPick] = useState<boolean | null>(null);
+  const subOpen = subPick ?? call.status === "running";
   const [full, setFull] = useState<string | null>(null);
   const kind = call.status === "ok" ? "ok" : call.status === "running" ? "run" : "fail";
   const time = call.status === "running" ? span(now - call.startedAt) : span(call.durationMs ?? 0);
@@ -487,14 +414,14 @@ const ToolRow: React.FC<{ call: ToolView; now: number; onShowFile: (path: string
           ))}
         </p>
         {call.name === "screenshot_app" && call.status === "ok" && <ShotThumb output={call.output} />}
-        {/* 交出去的子任务（v0.9 B1）：它的那几步挂在这一步下面；在跑时摊开，跑完收成一行。 */}
+        {/* 交出去的子任务（v0.9 B1）：它的那几步挂在这一步下面。 */}
         {call.sub && (
           <div className="agent-sub">
-            <button type="button" className="fold-head agent-sub-head" aria-expanded={subOpen || call.status === "running"} onClick={() => setSubOpen(!subOpen)}>
-              <Icon name={subOpen || call.status === "running" ? "triD" : "triR"} size={12} />
+            <button type="button" className="fold-head agent-sub-head" aria-expanded={subOpen} onClick={() => setSubPick(!subOpen)}>
+              <Icon name={subOpen ? "triD" : "triR"} size={12} />
               <span>{call.sub.title}{call.sub.calls.length ? ` · ${groupSummary(call.sub.calls)}` : ""}</span>
             </button>
-            {(subOpen || call.status === "running") && call.sub.calls.length > 0 && (
+            {subOpen && call.sub.calls.length > 0 && (
               <ol className="agent-calls">{call.sub.calls.map((c) => <ToolRow key={c.callId} call={c} now={now} onShowFile={onShowFile} say={say} />)}</ol>
             )}
           </div>

@@ -5,10 +5,10 @@
 //!   index、commit、stash；只在用户仓库的 `.git/worktrees/` 里多一份登记，搬回或丢掉时删掉），再把主文件夹里没提交的
 //!   改动（改过的、新建没忽略的、删掉的）照样搬进去，所以任务开始时两边一样。
 //! - **快照**：独立工作区的任务前快照、做完的快照都存在项目自己的影子仓库里（同一个 `shadow/<项目哈希>/`），
-//!   CHANGES 照常看 Diff。
+//!   FILES 里照常标出改过的文件。
 //! - **搬回**：做完到现在独立工作区改了哪些文件；主文件夹里这些文件要和任务开始时一样（不然是冲突，默认不搬，
 //!   站主可以选「照样搬」覆盖）；搬完删掉独立工作区，任务记录换成主文件夹，撤销整个任务照常能用。
-//! - **丢掉**：删掉独立工作区，改动只在 CHANGES 的历史 Diff 里。
+//! - **丢掉**：删掉独立工作区，改动只留在影子仓库的快照里。
 
 use crate::events::RunStatus;
 use crate::snapshot::{resolve_shadow_dir, ShadowRepo};
@@ -58,7 +58,7 @@ pub fn available(main: &Path) -> bool {
 pub fn pending_in_session(db: &crate::store::Store, session_id: &str) -> Result<(), String> {
     let pending = db.runs(session_id).unwrap_or_default().iter().any(|r| r.worktree.as_ref().is_some_and(|w| w.pending()));
     if pending {
-        return Err("这个任务上一次在独立工作区里做的还没搬回：先在 CHANGES 里 APPLY 或 DISCARD，再接着说。".into());
+        return Err("这个任务上一次在独立工作区里做的还没搬回：先在那一次的结果下面点 APPLY 或 DISCARD，再接着说。".into());
     }
     Ok(())
 }
@@ -350,14 +350,14 @@ pub async fn worktree_apply(run_id: String, force: Option<bool>, state: tauri::S
     Ok(WorktreeApply { applied: result.applied, conflicts: result.conflicts, record })
 }
 
-/// 丢掉独立工作区（改动只留在 CHANGES 的历史 Diff 里）。
+/// 丢掉独立工作区（改动只留在影子仓库的快照里）。
 #[tauri::command]
 pub async fn worktree_discard(run_id: String, state: tauri::State<'_, AppState>) -> Result<RunRecord, String> {
     let (mut record, wt, main) = pending_run(&state, &run_id)?;
     let worktree = PathBuf::from(&wt.path);
     let m = main.clone();
     tokio::task::spawn_blocking(move || remove(&m, &worktree)).await.map_err(|e| e.to_string())?;
-    // 树都在项目的影子仓库里：记录换成项目文件夹，CHANGES 的历史 Diff 照样能看。
+    // 树都在项目的影子仓库里：记录换成项目文件夹，历史 Diff 照样读得出来。
     if let Ok(Some(snapshot)) = state.store.lock().map_err(|_| ()).and_then(|db| db.snapshot(&run_id).map_err(|_| ())) {
         crate::snapshot::restore_snapshot(snapshot);
     }

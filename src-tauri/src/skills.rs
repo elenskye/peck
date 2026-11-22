@@ -40,14 +40,21 @@ pub struct CommandFile {
 pub struct SkillInfo {
     pub name: String,
     pub description: String,
-    /// `project`（`.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`user`（`~/.claude/skills`）。
+    /// `project`（`.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`user`（`~/.claude/skills`）、
+    /// `peck`（Peck 自带的，嵌在程序里）。
     pub scope: &'static str,
     /// Skill 的文件夹（`SKILL.md` 在里面）。
     #[serde(skip)]
     pub dir: PathBuf,
     /// 项目设置里关掉了。
     pub off: bool,
+    /// Peck 自带的：正文嵌在程序里（没有文件夹）。
+    #[serde(skip)]
+    pub builtin: Option<&'static str>,
 }
+
+/// Peck 自带的 Skills（v1.0.2）：教模型用 Peck 自己的工具（快照回退、定时任务）。项目或站主有同名的以它们的为准。
+const BUILTIN: [&str; 2] = [include_str!("../defaults/skills/peck-snapshots/SKILL.md"), include_str!("../defaults/skills/peck-schedules/SKILL.md")];
 
 /// 读开头 `---` 包着的几行 `key: value`（YAML 的最小子集：引号去掉，`>`、`|` 接着缩进的几行并成一行）。返回（字段，正文）。
 pub fn front_matter(text: &str) -> (Vec<(String, String)>, &str) {
@@ -255,7 +262,7 @@ fn skills_in(base: &Path, scope: &'static str, out: &mut Vec<SkillInfo>) {
             continue;
         }
         let description = field(&fields, "description").map(str::to_string).unwrap_or_else(|| first_line(body));
-        out.push(SkillInfo { name, description: clip(&description, 300), scope, dir, off: false });
+        out.push(SkillInfo { name, description: clip(&description, 300), scope, dir, off: false, builtin: None });
     }
 }
 
@@ -275,6 +282,13 @@ pub fn skills(root: &Path, off: &[String]) -> Vec<SkillInfo> {
     if let Some(h) = home() {
         skills_in(&h.join(".claude/skills"), "user", &mut out);
     }
+    for text in BUILTIN {
+        let (fields, _) = front_matter(text);
+        let (Some(name), Some(description)) = (field(&fields, "name"), field(&fields, "description")) else { continue };
+        if !out.iter().any(|s| s.name == name) {
+            out.push(SkillInfo { name: name.to_string(), description: clip(description, 300), scope: "peck", dir: PathBuf::new(), off: false, builtin: Some(text) });
+        }
+    }
     for s in &mut out {
         s.off = off.contains(&s.name);
     }
@@ -292,6 +306,9 @@ pub fn load(skills: &[SkillInfo], name: &str, file: Option<&str>) -> Result<Stri
         let names = skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ");
         return Err(format!("没有叫 {name} 的 Skill（有：{names}）。"));
     };
+    if let Some(text) = skill.builtin {
+        return Ok(text.to_string());
+    }
     if let Some(f) = file.map(str::trim).filter(|f| !f.is_empty() && *f != "SKILL.md") {
         let path = skill.dir.join(f);
         if Path::new(f).is_absolute() || f.split(['/', '\\']).any(|p| p == "..") || !inside(&path, &skill.dir) {
@@ -404,8 +421,14 @@ mod tests {
         std::fs::create_dir_all(root.join("skills/draw")).unwrap();
         std::fs::write(root.join("skills/draw/SKILL.md"), "---\nname: draw\ndescription: Draw a board\n---\nUse dw").unwrap();
         let all = skills(&root, &["draw".into()]);
-        let mine: Vec<_> = all.iter().filter(|s| s.scope != "user").collect();
+        let mine: Vec<_> = all.iter().filter(|s| s.scope != "user" && s.scope != "peck").collect();
         assert_eq!(mine.len(), 2);
+        // Peck 自带的两个：列在最后，正文嵌在程序里；项目设置里一样能关。
+        let own: Vec<_> = all.iter().filter(|s| s.scope == "peck").map(|s| s.name.as_str()).collect();
+        assert_eq!(own, vec!["peck-snapshots", "peck-schedules"]);
+        assert!(load(&all, "peck-snapshots", None).unwrap().contains("restore_snapshot"));
+        assert!(load(&all, "peck-schedules", None).unwrap().contains("schedule_task"));
+        assert!(!for_loop(&root, &["peck-schedules".into()]).iter().any(|s| s.name == "peck-schedules"));
         assert!(mine.iter().any(|s| s.name == "draw" && s.off && s.scope == "project-skills"));
         let on = for_loop(&root, &["draw".into()]);
         assert!(!on.iter().any(|s| s.name == "draw"));

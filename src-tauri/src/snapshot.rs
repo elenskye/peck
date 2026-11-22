@@ -510,7 +510,8 @@ pub struct UndoFile {
     pub changed_since: bool,
 }
 
-/// 撤销前先看一眼：会动哪些文件。
+/// 一次任务从开始到做完改了哪些文件（测试里核对快照记录用）。
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UndoPreview {
@@ -570,8 +571,10 @@ impl ShadowRepo {
     }
 }
 
-/// 这个任务从开始到做完改了哪些文件，以及做完以后哪些又变过。
+/// 测试用：这个任务从开始到做完改了哪些文件，以及做完以后哪些又变过。
+/// （站主要的回退 v1.0.2 起走 `harness/extras.rs` 的 `restore_snapshot`；这几个留着核对快照记录放得回去。）
 /// 返回的第三项是「撤销前」的快照（撤销之前的样子也留一份在影子仓库里）。
+#[cfg(test)]
 pub fn undo_preview(record: &RunSnapshotRecord) -> Result<(ShadowRepo, UndoPreview), String> {
     let repo = ShadowRepo::with_shadow_dir(&record.workspace_path, &record.shadow_dir)?;
     let now_tree = repo.create_snapshot(&format!("{}-before-undo", record.run_id))?;
@@ -607,6 +610,7 @@ pub fn undo_preview(record: &RunSnapshotRecord) -> Result<(ShadowRepo, UndoPrevi
 }
 
 /// 其他文件夹的撤销预览：每个文件夹（仓库，改过的文件用它自己的相对路径）。
+#[cfg(test)]
 fn extra_undo(record: &RunSnapshotRecord) -> Result<Vec<(ShadowRepo, ExtraSnapshot, Vec<UndoFile>)>, String> {
     let mut out = Vec::new();
     for extra in &record.extras {
@@ -628,16 +632,8 @@ fn extra_undo(record: &RunSnapshotRecord) -> Result<Vec<(ShadowRepo, ExtraSnapsh
     Ok(out)
 }
 
-/// 撤销前的预览（主文件夹 + 其他文件夹；其他文件夹的写成绝对路径）。
-pub fn undo_preview_all(record: &RunSnapshotRecord) -> Result<UndoPreview, String> {
-    let (_, mut preview) = undo_preview(record)?;
-    for (_, extra, files) in extra_undo(record)? {
-        preview.files.extend(files.into_iter().map(|f| UndoFile { path: extra.root.join(&f.path).to_string_lossy().into_owned(), ..f }));
-    }
-    Ok(preview)
-}
-
-/// 撤销整个任务：任务改过的文件回到任务前快照，别的文件不动。项目的其他文件夹一起。
+/// 测试用：任务改过的文件回到任务前快照，别的文件不动。项目的其他文件夹一起。
+#[cfg(test)]
 pub fn undo_run(record: &RunSnapshotRecord) -> Result<UndoPreview, String> {
     let (repo, mut preview) = undo_preview(record)?;
     repo.restore_paths(&record.base_tree, &preview.files)?;
@@ -862,7 +858,6 @@ pub fn get_diff_for_run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::ensure_peck_in_gitignore;
 
     #[test]
     fn test_shadow_git_snapshot_and_diff_preserves_user_git_and_tracks_peck() {
@@ -877,7 +872,7 @@ mod tests {
             .arg(&temp_ws)
             .output()
             .unwrap();
-        ensure_peck_in_gitignore(&temp_ws).unwrap();
+        fs::write(temp_ws.join(".gitignore"), ".peck/\n").unwrap();
         fs::write(
             temp_ws.join("src/login.ts"),
             "export function login() {\n  return false;\n}\n",
@@ -1124,141 +1119,5 @@ mod tests {
 
         let _ = fs::remove_dir_all(&ws);
         let _ = fs::remove_dir_all(&shadow);
-    }
-}
-
-// ───────────────────────── 按块拒绝（v0.7 Phase 10） ─────────────────────────
-
-/// Diff 里的一块：任务前的那几行、任务后的那几行（都带上下文），和它在任务后的文件里从第几行起。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Hunk {
-    pub old: Vec<String>,
-    pub new: Vec<String>,
-    pub new_start: usize,
-}
-
-/// 把统一格式的 Diff 拆成一块一块。
-pub fn parse_hunks(unified: &str) -> Vec<Hunk> {
-    let mut out: Vec<Hunk> = Vec::new();
-    for line in unified.lines() {
-        if let Some(rest) = line.strip_prefix("@@") {
-            let new_start = rest
-                .split_whitespace()
-                .find(|w| w.starts_with('+'))
-                .and_then(|w| w.trim_start_matches('+').split(',').next())
-                .and_then(|n| n.parse().ok())
-                .unwrap_or(1);
-            out.push(Hunk { old: vec![], new: vec![], new_start });
-            continue;
-        }
-        let Some(h) = out.last_mut() else { continue };
-        if line.starts_with("\\ No newline") {
-            continue;
-        }
-        match line.chars().next() {
-            Some('+') => h.new.push(line[1..].to_string()),
-            Some('-') => h.old.push(line[1..].to_string()),
-            Some(' ') => {
-                h.old.push(line[1..].to_string());
-                h.new.push(line[1..].to_string());
-            }
-            None => {
-                h.old.push(String::new());
-                h.new.push(String::new());
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-/// 拒绝一块：在现在的文件里找到这一块任务后的样子，换回任务前的。`current` 为空是文件现在不在。
-/// 返回新的内容（`None` 是文件该删掉：任务新建的文件整块拒掉）。找不到或者有好几处对得上又定不下来时报错。
-pub fn revert_hunk(current: Option<&str>, unified: &str, index: usize, created: bool) -> Result<Option<String>, String> {
-    let hunks = parse_hunks(unified);
-    let hunk = hunks.get(index).ok_or("没有这一块。")?;
-    let text = current.unwrap_or("");
-    let trailing = text.is_empty() || text.ends_with('\n');
-    // 换行照文件原来的（CRLF 的文件拒一块不变成整份 LF）；比对时不看行尾的 \r。
-    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let bare = |v: &[String]| v.iter().map(|l| l.strip_suffix('\r').unwrap_or(l).to_string()).collect::<Vec<String>>();
-    let (old_lines, new_lines) = (bare(&hunk.old), bare(&hunk.new));
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    // 任务删掉了整个文件（`+0,0`）：现在又有内容（站主自己建了一个），不往里插旧的。
-    if hunk.new.is_empty() && hunk.new_start == 0 && !text.is_empty() {
-        return Err("这个文件后来又有了，和任务做完时对不上，没动。".into());
-    }
-    let at = if hunk.new.is_empty() {
-        // 任务只删了行（这一块没有任务后的行）：照行号放回去。
-        Some(hunk.new_start.min(lines.len()))
-    } else {
-        let matches: Vec<usize> = (0..lines.len().saturating_sub(new_lines.len() - 1))
-            .filter(|&i| lines[i..i + new_lines.len()] == new_lines[..])
-            .collect();
-        let expected = hunk.new_start.saturating_sub(1);
-        match matches.as_slice() {
-            [] => None,
-            [one] => Some(*one),
-            many => many.iter().copied().find(|i| *i == expected).or(None),
-        }
-    };
-    let Some(at) = at else {
-        return Err("这一块后来又改过了，和任务做完时对不上，没动。".into());
-    };
-    let end = (at + new_lines.len()).min(lines.len());
-    lines.splice(at..end, old_lines);
-    if lines.is_empty() && created {
-        return Ok(None);
-    }
-    let mut out = lines.join(eol);
-    if trailing && !out.is_empty() {
-        out.push_str(eol);
-    }
-    Ok(Some(out))
-}
-
-#[cfg(test)]
-mod hunk_tests {
-    use super::*;
-
-    const DIFF: &str = "--- a/f\n+++ b/f\n@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n@@ -8,3 +8,4 @@\n h\n i\n+NEW\n j\n";
-
-    #[test]
-    fn hunks_parse_with_context() {
-        let h = parse_hunks(DIFF);
-        assert_eq!(h.len(), 2);
-        assert_eq!((h[0].old.clone(), h[0].new.clone(), h[0].new_start), (vec!["a".into(), "b".into(), "c".into(), "d".into()], vec!["a".into(), "B".into(), "c".into(), "d".into()], 1));
-        assert_eq!(h[1].new, vec!["h".to_string(), "i".into(), "NEW".into(), "j".into()]);
-    }
-
-    #[test]
-    fn rejecting_one_hunk_leaves_the_others() {
-        let after = "a\nB\nc\nd\ne\nf\ng\nh\ni\nNEW\nj\n";
-        let back = revert_hunk(Some(after), DIFF, 1, false).unwrap().unwrap();
-        assert_eq!(back, "a\nB\nc\nd\ne\nf\ng\nh\ni\nj\n");
-        let back = revert_hunk(Some(&back), DIFF, 0, false).unwrap().unwrap();
-        assert_eq!(back, "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n");
-        // 后来又改过：对不上就不动
-        assert!(revert_hunk(Some("a\nX\nc\nd\n"), DIFF, 0, false).unwrap_err().contains("对不上"));
-        assert!(revert_hunk(Some(after), DIFF, 5, false).is_err());
-    }
-
-    #[test]
-    fn rejecting_keeps_crlf_and_refuses_a_recreated_file() {
-        let after = "a\r\nB\r\nc\r\nd\r\ne\r\n";
-        let back = revert_hunk(Some(after), DIFF, 0, false).unwrap().unwrap();
-        assert_eq!(back, "a\r\nb\r\nc\r\nd\r\ne\r\n");
-        // 任务删了整个文件，站主又建了一个：不往新文件里插旧内容
-        let gone = "--- a/f\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x\n-y\n";
-        assert!(revert_hunk(Some("new\n"), gone, 0, false).unwrap_err().contains("对不上"));
-        assert_eq!(revert_hunk(None, gone, 0, false).unwrap().unwrap(), "x\ny\n");
-    }
-
-    #[test]
-    fn rejecting_a_new_file_deletes_it_and_a_deleted_file_comes_back() {
-        let created = "--- /dev/null\n+++ b/n\n@@ -0,0 +1,2 @@\n+x\n+y\n";
-        assert_eq!(revert_hunk(Some("x\ny\n"), created, 0, true).unwrap(), None);
-        let deleted = "--- a/n\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x\n-y\n";
-        assert_eq!(revert_hunk(None, deleted, 0, false).unwrap(), Some("x\ny\n".into()));
     }
 }

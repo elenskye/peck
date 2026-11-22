@@ -1,14 +1,14 @@
 //! 发 Peck 循环的任务（「谁来干」是 `api:<供应商>/<模型>`）和 ONE SHOT。
 //!
 //! 和 CLI 引擎的任务（`gateway/runner.rs`）一样：任务记录（`runs.engine` 记 `peck`）、一个项目一次一个、
-//! 影子仓库的快照（CHANGES 和撤销照旧能用）、`run_cancel` 能停、审批和回答走 `gateway_control`。
+//! 影子仓库的快照（改动记在任务上、能按快照回退）、`run_cancel` 能停、审批和回答走 `gateway_control`。
 //! 多出来的：一个任务里的对话存着（下一句接着发）、「这个项目总是允许」存着、花费上限按这个月已花的算。
 //!
 //! ONE SHOT：只读回答（Peck 循环按 PLAN 档、只给读的工具；CLI 引擎按 PLAN 档），不占任务号、不锁项目、
 //! 不锁终端、不存快照；事件照样进事件日志（花费算进这个月）。Antigravity 只做直接调用，不进 ONE SHOT。
 
 use super::context::ProjectLayer;
-use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, VerifyPlan, DEFAULT_MAX_ROUNDS};
+use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS};
 use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
@@ -179,22 +179,6 @@ pub(crate) fn memories_of(store: &Arc<Mutex<Store>>, workspace_id: &str) -> Vec<
         .unwrap_or_default()
 }
 
-/// 目标模式要过的那几条：名字都得在 verify.toml 里（`*` 是全部）。
-pub(crate) fn check_goal(goal: &[String], verify: &Option<super::verify::VerifyConfig>) -> Result<(), String> {
-    if goal.is_empty() {
-        return Ok(());
-    }
-    let Some(config) = verify.as_ref().filter(|c| !c.check.is_empty()) else {
-        return Err("目标模式要先有验证命令：在项目设置里写 .peck/verify.toml。".into());
-    };
-    for g in goal {
-        if g != "*" && config.find_check(g).is_none() {
-            return Err(format!("verify.toml 里没有叫「{g}」的验证命令。"));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn model_id_of(who: &str) -> Result<String, String> {
     let id = who.strip_prefix("api:").ok_or("这个入口只跑 Peck 循环（api:…）。")?;
     catalog::catalog().model(id).ok_or_else(|| format!("模型目录里没有 {id}。"))?;
@@ -219,8 +203,6 @@ pub async fn harness_run_start(
     permission: Option<String>,
     effort: Option<String>,
     cost_cap: Option<f64>,
-    // 目标模式（v0.6）：要过的验证命令的名字，`*` 是全部。
-    goal: Option<Vec<String>>,
     // 独立工作区（v0.7）：在项目的一个 git worktree 里做，做完再搬回。
     worktree: Option<bool>,
     // 委派（v0.8）：子任务交给这个 API 模型（`api:…` 或目录里的 id）。
@@ -251,7 +233,6 @@ pub async fn harness_run_start(
             effort,
             cost_cap,
             env: super::tools::bash::shell_env(),
-            goal: goal.unwrap_or_default(),
             worktree: worktree.unwrap_or(false),
             delegate,
             images,
@@ -335,8 +316,6 @@ pub(crate) struct PeckRun {
     pub effort: Option<String>,
     pub cost_cap: Option<f64>,
     pub env: Vec<(String, String)>,
-    /// 目标模式：要过的验证命令（`*` 是全部）。空：不是目标模式。
-    pub goal: Vec<String>,
     /// 在独立工作区（git worktree）里做。
     pub worktree: bool,
     /// 委派给谁（v0.8）。
@@ -432,30 +411,19 @@ pub(crate) fn start_peck_run(
     provider: Arc<dyn ModelProvider>,
     out: impl Fn(&AgentEvent) + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, goal, worktree, delegate, images } = run;
+    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, delegate, images } = run;
     let label = model_label(&model_id);
     if worktree && level == PermissionLevel::Plan {
         return Err("PLAN 只读，不用独立工作区。".into());
     }
-    // 验证命令（.peck/verify.toml）：只认站主确认过的那一份；写错了、没确认照常跑、不看验证，开头记一条提示；目标模式要有才行。
-    let (verify_config, verify_error, approved, settings) = {
+    let settings = {
         let db = store.lock().map_err(|e| e.to_string())?;
-        let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
-        let approved = ws.settings.verify_approved.clone();
-        let settings = ws.settings.clone();
-        match super::verify::load_approved(Path::new(&ws.path), approved.as_deref()) {
-            Ok(c) => (c, None, approved, settings),
-            Err(e) => (None, Some(e), approved, settings),
-        }
+        db.workspace_for_session(&session_id).map_err(|e| e.to_string())?.settings
     };
     let env = with_project_env(env, &settings.env_pairs());
     // 独立工作区的任务：其他文件夹只读（它们不在独立工作区里，改了就是真改，丢掉时撤不回来）。
     let folders: Vec<(PathBuf, bool)> = if worktree { settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { settings.live_folders() };
     let writable: Vec<PathBuf> = if level == PermissionLevel::Plan { vec![] } else { folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect() };
-    check_goal(&goal, &verify_config)?;
-    if level == PermissionLevel::Plan && !goal.is_empty() {
-        return Err("PLAN 只读，不能开目标模式。".into());
-    }
     let (run_id, step_id, workspace, workspace_id, cancel_rx) = {
         let mut active = active_runs.lock().map_err(|e| e.to_string())?;
         let mut db = store.lock().map_err(|e| e.to_string())?;
@@ -546,13 +514,6 @@ pub(crate) fn start_peck_run(
         env_names: settings.env.iter().map(|v| v.name.clone()).collect(),
         worktree_of: worktree.then(|| workspace.clone()),
     };
-    // PLAN 只读：不起能写项目的 dev server；独立工作区里也不起（server 跑在主文件夹）。
-    let autostart: Vec<String> = if level == PermissionLevel::Plan || worktree {
-        vec![]
-    } else {
-        verify_config.as_ref().map(|c| c.server.iter().filter(|s| s.autostart).map(|s| s.name.clone()).collect()).unwrap_or_default()
-    };
-    let verify = VerifyPlan { checks: verify_config.map(|c| c.check).unwrap_or_default(), goal };
     // MCP（v0.10 A2）：设置里的 + 项目 .mcp.json 里的；读不懂、钥匙串取不到的开头写一行。
     let (mcp_list, mut mcp_notes) = {
         let db = store.lock().map_err(|e| e.to_string())?;
@@ -560,6 +521,14 @@ pub(crate) fn start_peck_run(
         super::mcp_client::for_project(&db, &ws)
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
+    // 快照回退、定时任务（v1.0.2）：这个任务是谁在干，设定时任务时默认照它。
+    let extras = Arc::new(super::extras::Extras {
+        store: store.clone(),
+        workspace_id: workspace_id.clone(),
+        session_id: session_id.clone(),
+        run_id: run_id.clone(),
+        setup: crate::schedule::Setup { who: who.clone(), model: None, effort: effort.clone(), plan_by: None, review_by: None, delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) },
+    });
     let config = LoopConfig {
         model_id: model_id.clone(),
         max_rounds: max_rounds(&store),
@@ -572,9 +541,10 @@ pub(crate) fn start_peck_run(
         env: env.clone(),
         session_ref: Some(format!("peck-{session_id}")),
         context,
-        verify,
         delegate,
         brief: None,
+        extras: Some(extras),
+        task_level: None,
         mcp: mcp_list,
         mcp_slot: None,
         mcp_seen: Some(super::mcp_client::seen_hook(store.clone(), workspace_id.clone())),
@@ -606,9 +576,6 @@ pub(crate) fn start_peck_run(
             out(e);
         });
         let run_sink = RunSink::Persistent { target: Box::new(RunSink::new_memory().0), store: store.clone() };
-        if let Some(e) = verify_error {
-            sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Warn, text: format!("{e} 这次不替模型跑验证命令。") });
-        }
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text });
         }
@@ -616,7 +583,7 @@ pub(crate) fn start_peck_run(
             sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Warn, text });
         }
         let started = Instant::now();
-        // 独立工作区的快照也存在项目自己的影子仓库里（CHANGES、撤销照常）。
+        // 独立工作区的快照也存在项目自己的影子仓库里（改动记录、回退照常）。
         let repo = if worktree { crate::worktree::shadow_repo(&cwd, &workspace).ok() } else { ShadowRepo::open_or_init(&workspace).ok() };
         let before = repo.as_ref().and_then(|r| {
             let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
@@ -625,19 +592,6 @@ pub(crate) fn start_peck_run(
             Some(tree)
         });
         let extras = snapshot_extras(&id, &folders, level);
-        // 常驻的 dev server：`autostart = true` 的没在跑就先起（拍完任务前快照再起，它写的文件不算这个任务的改动；跨任务一直在，不往这个任务的日志里记后来的变化）。
-        for name in &autostart {
-            if super::background::server(&workspace, name).is_none() {
-                match super::background::start_server(&workspace, name, approved.as_deref(), &settings.env_pairs(), None) {
-                    Ok(p) => {
-                        sink.emit(super::background::event_of(&p.info()));
-                    }
-                    Err(e) => {
-                        sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Warn, text: format!("dev server「{name}」没起来：{e}") });
-                    }
-                }
-            }
-        }
         let descriptor = |status| {
             ResolvedStepPlan {
                 id: step_id.clone(),
@@ -783,9 +737,10 @@ pub async fn harness_oneshot(
                 folders: settings.live_folders(),
                 ..Default::default()
             },
-            verify: Default::default(),
             delegate: None,
             brief: None,
+            extras: None,
+            task_level: None,
             mcp: vec![],
             mcp_slot: None,
             mcp_seen: None,
@@ -924,58 +879,6 @@ fn approx_tokens(bytes: usize) -> String {
     }
 }
 
-/// `/verify`（v0.10 C2）的一条结果。
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VerifyResult {
-    pub name: String,
-    pub command: String,
-    pub passed: bool,
-    pub exit_code: Option<i32>,
-    pub timed_out: bool,
-    pub duration_ms: u64,
-    /// 输出结尾（最多 4KB）。
-    pub output: String,
-}
-
-/// `/verify`：现在把站主确认过的验证命令都跑一遍（和后台验证同一套沙箱、超时），不进哪个任务。
-#[tauri::command]
-pub async fn verify_run_now(workspace_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<VerifyResult>, String> {
-    let (ws, running) = {
-        let db = state.store.lock().map_err(|e| e.to_string())?;
-        let ws = db.workspace(&workspace_id).map_err(|_| "没找到这个项目。")?;
-        let running = state.active_runs.lock().map(|a| a.values().any(|r| r.touches(&[PathBuf::from(&ws.path)]))).unwrap_or(false);
-        (ws, running)
-    };
-    if running {
-        return Err("这个项目有任务在跑，等它跑完再验（它改了文件 Peck 会替它跑）。".into());
-    }
-    let root = PathBuf::from(&ws.path);
-    let config = super::verify::load_approved(&root, ws.settings.verify_approved.as_deref())?.ok_or("还没有确认过的验证命令：在项目设置里写 .peck/verify.toml、SAVE 确认。")?;
-    if config.check.is_empty() {
-        return Err("verify.toml 里没有 [[check]]。".into());
-    }
-    let env = with_project_env(super::tools::bash::shell_env(), &ws.settings.env_pairs());
-    let ctx = super::tools::ToolContext::new(&root, PermissionLevel::Edit, spill_root().join(format!("verify-{workspace_id}")), runtime_dir(&root), env)?
-        .with_extra(&ws.settings.live_folders());
-    let sandbox = super::permission::sandbox_for(PermissionLevel::Edit);
-    let mut out = Vec::new();
-    for check in &config.check {
-        let (_tx, rx) = tokio::sync::watch::channel(false);
-        let Some(o) = super::monitor::run_check(&ctx, check, sandbox, 0, rx).await else { continue };
-        out.push(VerifyResult {
-            name: o.name,
-            command: o.command,
-            passed: o.passed,
-            exit_code: o.exit_code,
-            timed_out: o.timed_out,
-            duration_ms: o.duration_ms,
-            output: super::tools::tail_bytes(&o.output, 4096).to_string(),
-        });
-    }
-    Ok(out)
-}
-
 #[tauri::command]
 pub async fn harness_spend(state: tauri::State<'_, AppState>) -> Result<Spend, String> {
     let since = month_start_ms(now_ms());
@@ -1056,7 +959,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };
@@ -1180,7 +1082,6 @@ mod tests {
                 effort: None,
                 cost_cap: None,
                 env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
-                goal: vec![],
                 worktree: false,
                 delegate: None,
                 images: vec![],
@@ -1261,7 +1162,6 @@ mod tests {
                 effort: None,
                 cost_cap: None,
                 env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
-                goal: vec![],
                 worktree: true,
                 delegate: None,
                 images: vec![],
@@ -1290,7 +1190,7 @@ mod tests {
         let wt = PathBuf::from(&record.worktree.clone().unwrap().path);
         assert!(!main.join("src/New.tsx").exists(), "主文件夹不动");
         assert!(wt.join("src/New.tsx").is_file());
-        assert!(record.files.iter().any(|f| f.path == "src/New.tsx" && f.kind == "create"), "CHANGES 照常：{:?}", record.files);
+        assert!(record.files.iter().any(|f| f.path == "src/New.tsx" && f.kind == "create"), "改动记录照常：{:?}", record.files);
         let repo = crate::worktree::shadow_repo(&wt, &main).unwrap();
         let applied = crate::worktree::apply(&repo, &main, &snapshot.base_tree, &run_id, false).unwrap();
         assert_eq!(applied.applied, vec!["src/New.tsx".to_string()]);
@@ -1321,7 +1221,6 @@ mod tests {
             effort: None,
             cost_cap: Some(100.0),
             env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
-            goal: vec![],
             worktree: false,
             delegate: None,
             images: vec![],
@@ -1364,7 +1263,7 @@ mod tests {
             assert_eq!(record.status, RunStatus::Succeeded, "{:?}", record.summary);
             assert_eq!(record.who.as_deref(), Some("api:deepseek/deepseek-flash"));
             assert!(record.summary.as_deref().unwrap_or("").contains("待办"));
-            assert!(record.files.iter().any(|f| f.path == "src/App.tsx"), "CHANGES 里有改动：{:?}", record.files);
+            assert!(record.files.iter().any(|f| f.path == "src/App.tsx"), "任务记录里有改动：{:?}", record.files);
             assert_eq!(db.run_engine(&run_id).unwrap().as_deref(), Some("peck"));
             assert!(db.agent_events(&run_id).unwrap().len() > 30);
             assert_eq!(db.harness_conversation(&session.id).unwrap().len(), 16);

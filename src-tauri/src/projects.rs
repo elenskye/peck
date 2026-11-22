@@ -178,10 +178,7 @@ pub fn workspace_update(
         }
         ws.name = name.chars().take(80).collect();
     }
-    if let Some(mut settings) = settings {
-        // 验证命令的两样只由 verify_save / verify_dismiss 改；界面改别的设置时手里那份可能是旧的。
-        settings.verify_dismissed = ws.settings.verify_dismissed;
-        settings.verify_approved = ws.settings.verify_approved.clone();
+    if let Some(settings) = settings {
         ws.settings = settings.normalized(Path::new(&ws.path))?;
     }
     db.save_workspace(&ws).map_err(|e| e.to_string())?;
@@ -391,7 +388,6 @@ mod tests {
             name: id.into(),
             last_opened_at: now_ms(),
             git_branch: None,
-            gitignore_configured: true,
             hidden: false,
             settings: ProjectSettings::default(),
         }

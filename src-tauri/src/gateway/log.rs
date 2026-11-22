@@ -22,13 +22,7 @@ pub struct EventSink {
     quiet: Option<Arc<Mutex<Option<(super::event::TurnEndReason, Option<String>)>>>>,
     /// 委派的子任务另外旁听一份（收它最后的报告、改了哪些文件）。
     tap: Option<Arc<dyn Fn(&AgentEvent) + Send + Sync>>,
-    /// CLI 做完 Peck 替它跑验证（v0.10 C1，`holding_end`）：引擎每一轮的 `turn.completed` 先扣下（记着），
-    /// 验证过了、停下了，整个任务最后那一条由发任务的那一层发。
-    hold: Option<Arc<Mutex<Option<HeldEnd>>>>,
 }
-
-/// 扣下的那一条收尾：回合号、原因、错误。
-pub type HeldEnd = (String, super::event::TurnEndReason, Option<String>);
 
 /// 一段的引擎和它怎么收尾的。
 pub struct StageSlot {
@@ -78,7 +72,6 @@ impl EventSink {
             stage: None,
             quiet: None,
             tap: None,
-            hold: None,
         }
     }
 
@@ -103,7 +96,6 @@ impl EventSink {
             stage: self.stage.clone(),
             quiet: None,
             tap: self.tap.clone(),
-            hold: self.hold.clone(),
         }
     }
 
@@ -116,7 +108,6 @@ impl EventSink {
             stage: self.stage.clone(),
             quiet: Some(Arc::new(Mutex::new(None))),
             tap: Some(Arc::new(tap)),
-            hold: None,
         }
     }
 
@@ -134,25 +125,7 @@ impl EventSink {
             stage: Some(Arc::new(StageSlot { engine: engine.into(), ended: Mutex::new(None) })),
             quiet: None,
             tap: self.tap.clone(),
-            hold: None,
         }
-    }
-
-    /// 引擎每一轮的 `turn.completed` 先扣下（v0.10 C1：CLI 做完以后 Peck 还要替它跑验证、可能交回去修）。
-    pub fn holding_end(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            subagent_id: self.subagent_id.clone(),
-            stage: self.stage.clone(),
-            quiet: None,
-            tap: self.tap.clone(),
-            hold: Some(Arc::new(Mutex::new(None))),
-        }
-    }
-
-    /// 扣下的最后那一条收尾；没扣过为空。
-    pub fn held_end(&self) -> Option<HeldEnd> {
-        self.hold.as_ref().and_then(|h| h.lock().ok().and_then(|e| e.clone()))
     }
 
     /// 这一段的引擎收尾时报的（原因、错误）；没报过为空。
@@ -193,12 +166,6 @@ impl EventSink {
                 }
                 _ => {}
             }
-        }
-        if let (EventBody::TurnCompleted { turn_id, reason, error }, Some(hold), None) = (&body, &self.hold, &self.subagent_id) {
-            if let Ok(mut e) = hold.lock() {
-                *e = Some((turn_id.clone(), *reason, error.clone()));
-            }
-            return AgentEvent { seq: 0, at: now_ms(), subagent_id: None, body };
         }
         if let (EventBody::TurnCompleted { reason, error, .. }, Some(slot), None) = (&body, &self.stage, &self.subagent_id) {
             if let Ok(mut e) = slot.ended.lock() {

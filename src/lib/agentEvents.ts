@@ -104,15 +104,6 @@ export interface ContextPart {
 /** 自动压缩三步：落盘、清旧工具输出、交接摘要。 */
 export type CompactStep = "spill" | "clear" | "summary";
 
-/** edit：改了文件后台先跑；end：模型停下后收尾前跑；goal：目标模式。 */
-export type VerifyTrigger = "edit" | "end" | "goal";
-
-/** stale：跑的时候文件又变了，结果不算。 */
-export type VerifyStatus = "passed" | "failed" | "stale" | "cancelled";
-
-/** passed：都过了，收尾；fixing：交回做的那一个（Peck 循环的模型或 CLI）修；stopped：停下。 */
-export type VerifyOutcome = "passed" | "fixing" | "stopped";
-
 export type BackgroundKind = "command" | "server";
 export type BackgroundStatus = "running" | "exited" | "stopped";
 
@@ -227,9 +218,6 @@ export type EventBody =
   | { type: "skill.proposed"; proposalId: string; name: string; description: string; body: string; scope: SkillScope; location: string; diff?: string | null; warnings?: string[]; similar?: string[] }
   | { type: "skill.reviewed"; proposalId: string; status: SkillReviewStatus; name: string; location: string; error?: string | null }
   // ── 验证和后台（v0.6）──
-  | { type: "verify.started"; checkId: string; name: string; command: string; trigger: VerifyTrigger; attempt: number }
-  | { type: "verify.completed"; checkId: string; name: string; status: VerifyStatus; exitCode?: number | null; durationMs?: number | null; output?: string | null }
-  | { type: "verify.round"; attempt: number; maxAttempts: number; outcome: VerifyOutcome; reason?: string | null; goal: boolean }
   | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
   // ── 合作（v0.8）──
   | { type: "stage.started"; stage: StageRole; engine: string; model?: string | null; title: string }
@@ -391,8 +379,6 @@ export interface GatewayRunArgs {
   worktree?: boolean;
   /** 这一句附的图（v0.8）：存成文件，路径写在这一句后面。 */
   images?: { mediaType: string; data: string }[];
-  /** 目标模式（v0.10 C1）：要过的验证命令（`*` 是全部）。Antigravity 不开。 */
-  goal?: string[];
   /** 委派给哪个 API 模型（v0.9 B1）：CLI 经 Peck 的本机 MCP 调 `delegate_task`。Antigravity 不委派。 */
   delegate?: string;
   /** 花费上限（委派的子任务是 Peck 循环，照算）。 */

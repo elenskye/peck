@@ -1,15 +1,14 @@
 //! 多引擎合作（v0.8 Phase 11）：接力（前一个只读、写一份实施规范，后一个照着做）和交叉审查（另一个引擎
 //! 只读地看这次的 Diff，说要改就交回实施的那一个修一次）。两样能一起开。
 //!
-//! 一个任务还是一个任务号、一份任务前快照、一条事件日志（CHANGES、撤销、独立工作区照常）；每一段是一个
+//! 一个任务还是一个任务号、一份任务前快照、一条事件日志（改动记录、回退、独立工作区照常）；每一段是一个
 //! 引擎跑一回合：前面一条 `stage.started`，这一段引擎自己的 `turn.completed` 换成 `stage.completed`
 //! （`EventSink::for_stage`），整个任务最后一条 `turn.completed`。每一段的引擎可以是 API 模型（Peck 循环）
 //! 或 CLI；Antigravity 只做直接调用，不进来（站主 2026-11-12 定）。审批、回答、追加、打断都走同一个
 //! 控制通道，转给正在跑的那一段。
 
-use super::cli_verify::{After, CliVerify, Setup};
 use super::context::ProjectLayer;
-use super::r#loop::{ContextConfig, Delegate, HistoryProbe, LoopConfig, PeckBackend, VerifyPlan};
+use super::r#loop::{ContextConfig, Delegate, HistoryProbe, LoopConfig, PeckBackend};
 use super::run::{budget, finish_extras, live_spend, memories_of, model_label, permission_of, runtime_dir, snapshot_extras, spill_root, with_project_env};
 use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
@@ -34,7 +33,7 @@ use tokio::sync::mpsc;
 const REVIEW_DIFF_BYTES: usize = 60_000;
 
 /// 界面选的一个人：谁（`api:…` / `cli:…`）、CLI 里的哪个模型、思考强度。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamPick {
     pub who: String,
@@ -194,7 +193,6 @@ struct PeckBase {
     env: Vec<(String, String)>,
     env_names: Vec<String>,
     worktree_of: Option<PathBuf>,
-    checks: Vec<super::verify::Check>,
     allowed: HashSet<String>,
     prior_changed: Vec<String>,
     spill_dir: PathBuf,
@@ -205,6 +203,10 @@ struct PeckBase {
     mcp_slot: super::mcp_client::McpSlot,
     /// 这个任务前几次已经委派了几次（v0.9）。
     delegations_used: u32,
+    /// 快照回退、定时任务（v1.0.2）：实施、按审查改那两段才给。
+    extras: Arc<super::extras::Extras>,
+    /// 整个任务的档位：只读的那两段（写规范、审查）的系统提示里写明它，免得把自己的只读当成任务的权限。
+    level: PermissionLevel,
 }
 
 impl PeckBase {
@@ -231,9 +233,10 @@ impl PeckBase {
                 env_names: self.env_names.clone(),
                 worktree_of: self.worktree_of.clone(),
             },
-            verify: if read_only { VerifyPlan::default() } else { VerifyPlan { checks: self.checks.clone(), goal: vec![] } },
             delegate: if read_only { None } else { delegate },
             brief,
+            extras: (!read_only).then(|| self.extras.clone()),
+            task_level: read_only.then_some(self.level),
             mcp: self.mcp.clone(),
             mcp_slot: Some(self.mcp_slot.clone()),
             mcp_seen: Some(super::mcp_client::seen_hook(self.store.clone(), self.workspace_id.clone())),
@@ -256,9 +259,10 @@ impl PeckBase {
 /// 验收标准最多几条（多了只取前面的；审查逐条判，太多反而判不细）。
 const MAX_CRITERIA: usize = 12;
 
-fn spec_prompt(prompt: &str, implementer: &str) -> String {
+fn spec_prompt(prompt: &str, implementer: &str, level: PermissionLevel) -> String {
+    let stage = super::r#loop::read_only_stage_note(level);
     format!(
-        "{prompt}\n\n<peck-relay role=\"spec\">\nYou are the first of two agents on this request. Another agent ({implementer}) will implement it after you. Do not change any files. Investigate the project as much as you need, then write an implementation spec for that agent, in the user's language, under exactly these five Markdown headings in this order (for a Chinese request: `## 目标`, `## 改哪些文件`, `## 步骤`, `## 验收标准`, `## 不做什么`; otherwise `## Goal`, `## Files to change`, `## Steps`, `## Acceptance criteria`, `## Out of scope`).\nUnder the acceptance criteria heading write a numbered list (1., 2., …) of at most 8 concrete, checkable statements about the finished result: each one something a reviewer can verify from the diff, the files or a command's output (name the command). A separate reviewer will judge the work only against these items, so cover what matters and nothing vague. Be concrete and brief. Your final answer is the spec.\n</peck-relay>"
+        "{prompt}\n\n<peck-relay role=\"spec\">\nYou are the first of two agents on this request. Another agent ({implementer}) will implement it after you. Do not change any files: your stage is {stage} Investigate the project as much as you need, then write an implementation spec for that agent, in the user's language, under exactly these five Markdown headings in this order (for a Chinese request: `## 目标`, `## 改哪些文件`, `## 步骤`, `## 验收标准`, `## 不做什么`; otherwise `## Goal`, `## Files to change`, `## Steps`, `## Acceptance criteria`, `## Out of scope`).\nUnder the acceptance criteria heading write a numbered list (1., 2., …) of at most 8 concrete, checkable statements about the finished result: each one something a reviewer can verify from the diff, the files or a command's output (name the command). A separate reviewer will judge the work only against these items, so cover what matters and nothing vague. Be concrete and brief. Your final answer is the spec.\n</peck-relay>"
     )
 }
 
@@ -272,16 +276,17 @@ fn implement_prompt(prompt: &str, spec: &str, writer: &str) -> String {
     )
 }
 
-fn review_prompt(prompt: &str, spec: Option<&str>, criteria: &[String], diff: &str, implementer: &str) -> String {
+fn review_prompt(prompt: &str, spec: Option<&str>, criteria: &[String], diff: &str, implementer: &str, level: PermissionLevel) -> String {
+    let stage = super::r#loop::read_only_stage_note(level);
     let spec = spec.map(|s| format!("\n<peck-spec>\n{}\n</peck-spec>\n", s.trim())).unwrap_or_default();
     if criteria.is_empty() {
         return format!(
-            "Review the changes another agent ({implementer}) just made in this project for this request:\n<peck-request>\n{prompt}\n</peck-request>\n{spec}\n<peck-diff>\n{diff}\n</peck-diff>\nDo not change any files; read files for context when the diff is not enough. Look for bugs, missed requirements, broken edge cases and risky changes. Be specific: file, line, what is wrong, how to fix it. Skip style nits. Write in the user's language. End with exactly one line: `VERDICT: PASS` if the changes are good to keep, or `VERDICT: CHANGES` if the implementer should fix something."
+            "Review the changes another agent ({implementer}) just made in this project for this request:\n<peck-request>\n{prompt}\n</peck-request>\n{spec}\n<peck-diff>\n{diff}\n</peck-diff>\nDo not change any files: your stage is {stage} Read files for context when the diff is not enough. Look for bugs, missed requirements, broken edge cases and risky changes. Be specific: file, line, what is wrong, how to fix it. Skip style nits. Write in the user's language. End with exactly one line: `VERDICT: PASS` if the changes are good to keep, or `VERDICT: CHANGES` if the implementer should fix something."
         );
     }
     let list: Vec<String> = criteria.iter().enumerate().map(|(i, c)| format!("{}. {c}", i + 1)).collect();
     format!(
-        "Review the changes another agent ({implementer}) just made in this project for this request:\n<peck-request>\n{prompt}\n</peck-request>\n{spec}\n<peck-criteria>\n{}\n</peck-criteria>\n<peck-diff>\n{diff}\n</peck-diff>\nDo not change any files; read files or run read-only commands when the diff is not enough. Judge the changes against each acceptance criterion above, in order, one line each, exactly in this form:\nCHECK 1: PASS — why\nCHECK 2: FAIL — what is wrong and how to fix it\nWrite the reasons in the user's language. After the checks, briefly list any other serious problem (a bug, a risky change) you found, if any. End with exactly one line: `VERDICT: PASS` if every criterion passed, otherwise `VERDICT: CHANGES`.",
+        "Review the changes another agent ({implementer}) just made in this project for this request:\n<peck-request>\n{prompt}\n</peck-request>\n{spec}\n<peck-criteria>\n{}\n</peck-criteria>\n<peck-diff>\n{diff}\n</peck-diff>\nDo not change any files: your stage is {stage} Read files or run read-only commands when the diff is not enough. Judge the changes against each acceptance criterion above, in order, one line each, exactly in this form:\nCHECK 1: PASS — why\nCHECK 2: FAIL — what is wrong and how to fix it\nWrite the reasons in the user's language. After the checks, briefly list any other serious problem (a bug, a risky change) you found, if any. End with exactly one line: `VERDICT: PASS` if every criterion passed, otherwise `VERDICT: CHANGES`.",
         list.join("\n")
     )
 }
@@ -478,6 +483,8 @@ struct Stager {
     folders: Vec<(PathBuf, bool)>,
     /// 项目根（v0.10 C3）：CLI 那几段的本机 MCP 带 `create_skill`，提议的 Skill 写进这里。
     skill_root: PathBuf,
+    /// 快照回退、定时任务（v1.0.2）：CLI 实施、按审查改的那两段经本机 MCP 用。
+    extras: Arc<super::extras::Extras>,
 }
 
 impl Stager {
@@ -529,7 +536,8 @@ impl Stager {
             (Engine::Peck { .. }, Some(backend)) => backend.run(task, sink.clone(), rx).await,
             (Engine::Cli { engine, backend, .. }, _) => {
                 let delegate = if matches!(role, StageRole::Implement | StageRole::Fix) { self.cli_delegate.clone() } else { None };
-                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()) };
+                let extras = (!read_only).then(|| self.extras.clone());
+                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()), extras, read_only };
                 let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
                 let token = peck_mcp.as_ref().map(|m| m.token.clone());
                 let prompt = format!("{}{}", task.prompt, runner::folders_note(&self.folders, level));
@@ -563,38 +571,6 @@ impl Stager {
     }
 }
 
-/// CLI 实施（或按审查改）的那一段做完了：替它跑验证，没过续接同一个会话交回去修，规则和 Peck 循环一样（v0.10 C1）。
-/// 返回（怎么结束的、原因、最后一段说的话、会话号）。
-async fn verify_cli(
-    stager: &Stager,
-    member: &Member,
-    v: &mut CliVerify,
-    mut session: Option<String>,
-    stop: &tokio::sync::watch::Receiver<bool>,
-) -> (TurnEndReason, Option<String>, Option<String>, Option<String>) {
-    let mut said = None;
-    loop {
-        match v.after_turn(&mut stop.clone()).await {
-            After::Done => return (TurnEndReason::Done, None, said, session),
-            After::Interrupted => return (TurnEndReason::Interrupted, None, said, session),
-            After::Stop(why) => return (TurnEndReason::Limit, Some(why), said, session),
-            After::Fix(text) => {
-                if session.is_none() {
-                    return (TurnEndReason::Limit, Some(format!("验证没过，{} 这次没给会话号、接不上，没法交回去修。", member.label)), said, session);
-                }
-                let f = stager.run(member, StageRole::Fix, text, None, session.clone(), &[], Some(format!("{} 按验证改", member.label))).await;
-                if !f.text.trim().is_empty() {
-                    said = Some(f.text.clone());
-                }
-                session = f.session_ref.clone().or(session);
-                if f.reason != TurnEndReason::Done {
-                    return (f.reason, f.error, said, session);
-                }
-            }
-        }
-    }
-}
-
 pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Result<String, String> {
     let TeamRun { store, active_runs, session_id, prompt, permission, level, cost_cap, env, worktree, spec, implement, review, delegate, images } = run;
     if spec.is_none() && review.is_none() {
@@ -615,21 +591,14 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         }
         parts.join(" → ")
     };
-    let (verify_config, settings) = {
+    let settings = {
         let db = store.lock().map_err(|e| e.to_string())?;
-        let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
-        let config = super::verify::load_approved(std::path::Path::new(&ws.path), ws.settings.verify_approved.as_deref()).ok().flatten();
-        (config, ws.settings.clone())
+        db.workspace_for_session(&session_id).map_err(|e| e.to_string())?.settings
     };
     let env = with_project_env(env, &settings.env_pairs());
     let folders: Vec<(PathBuf, bool)> = if worktree { settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { settings.live_folders() };
     // 项目的其他文件夹：Peck 循环和 CLI（v0.10）都认；能改的锁上。
     let writable: Vec<PathBuf> = folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect();
-    // CLI 实施的那一段也替它跑验证（v0.10 C1）；项目设置能对 CLI 关。
-    let cli_checks: Vec<super::verify::Check> = match (&implement.engine, &verify_config) {
-        (Engine::Cli { .. }, Some(c)) if !settings.cli_verify_off => c.check.clone(),
-        _ => vec![],
-    };
     let project_env = settings.env_pairs();
     let (run_id, step_id, workspace, workspace_id, cancel_rx, refs, fork, earlier, prior_changed) = {
         let mut active = active_runs.lock().map_err(|e| e.to_string())?;
@@ -709,6 +678,16 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         super::mcp_client::for_project(&db, &ws)
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
+    // 这个任务是谁在干（对话里设定时任务时默认照这一套：接力、审查、委派都带着）。
+    let pick_of = |m: &Member| TeamPick { who: m.who.clone(), model: if m.is_peck() { None } else { m.model() }, effort: m.effort.clone() };
+    let lead = pick_of(&implement);
+    let peck_tools = Arc::new(super::extras::Extras {
+        store: store.clone(),
+        workspace_id: workspace_id.clone(),
+        session_id: session_id.clone(),
+        run_id: run_id.clone(),
+        setup: crate::schedule::Setup { who: lead.who, model: lead.model, effort: lead.effort, plan_by: spec.as_ref().map(pick_of), review_by: review.as_ref().map(pick_of), delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) },
+    });
     let peck_base = PeckBase {
         store: store.clone(),
         workspace_id: workspace_id.clone(),
@@ -718,7 +697,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         env,
         env_names: settings.env.iter().map(|v| v.name.clone()).collect(),
         worktree_of: worktree.then(|| workspace.clone()),
-        checks: verify_config.map(|c| c.check).unwrap_or_default(),
         allowed,
         prior_changed,
         spill_dir: spill_root().join(&session_id),
@@ -727,6 +705,8 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         mcp: mcp_list,
         mcp_slot: Default::default(),
         delegations_used: store.lock().ok().and_then(|db| db.delegations_in_session(&session_id).ok()).unwrap_or(0),
+        extras: peck_tools.clone(),
+        level,
     };
     // 引擎看到的请求：换引擎带过来的经过、@ 进来的旧任务、站主的原话。
     let mut lead: Vec<String> = Vec::new();
@@ -782,12 +762,10 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         let current: Arc<Mutex<Option<mpsc::UnboundedSender<Control>>>> = Arc::new(Mutex::new(None));
         let stopped = Arc::new(AtomicBool::new(false));
         let (fwd_current, fwd_stopped) = (current.clone(), stopped.clone());
-        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let forwarder = tokio::spawn(async move {
             while let Some(c) = team_rx.recv().await {
                 if c == Control::Interrupt {
                     fwd_stopped.store(true, Ordering::SeqCst);
-                    let _ = stop_tx.send(true);
                 }
                 let tx = fwd_current.lock().ok().and_then(|g| g.clone());
                 if let Some(tx) = tx {
@@ -849,7 +827,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             _ => None,
         };
         let delegate_note = cli_delegate.as_deref().map(super::delegate::prompt_note).unwrap_or_default();
-        let stager = Stager { run_id: id.clone(), cwd: cwd.clone(), level, base: base.clone(), current, last_text, stage_level, cli_delegate, project_env: project_env.clone(), folders: folders.clone(), skill_root: workspace.clone() };
+        let stager = Stager { run_id: id.clone(), cwd: cwd.clone(), level, base: base.clone(), current, last_text, stage_level, cli_delegate, project_env: project_env.clone(), folders: folders.clone(), skill_root: workspace.clone(), extras: peck_tools };
         let peck_of = |m: &Member, read_only: bool, brief: Option<String>, with_images: bool| -> Option<PeckBackend> {
             match &m.engine {
                 Engine::Peck { model_id, provider } => {
@@ -868,7 +846,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         let mut criteria: Vec<String> = Vec::new();
         if let Some(writer) = &spec {
             let backend = peck_of(writer, true, None, true);
-            let first_ask = spec_prompt(&ask(writer), &implement.label);
+            let first_ask = spec_prompt(&ask(writer), &implement.label, level);
             let r = stager.run(writer, StageRole::Spec, first_ask.clone(), backend.as_ref(), None, &[], None).await;
             if r.reason != TurnEndReason::Done {
                 end = (r.reason, r.error.or(Some(format!("{} 没写完规范。", writer.label))));
@@ -903,7 +881,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         }
         // ② 实施。
         let impl_backend = peck_of(&implement, false, None, true);
-        let mut cli_verify: Option<CliVerify> = None;
         let mut impl_ref = None;
         if end.0 == TurnEndReason::Done && !stopped.load(Ordering::SeqCst) {
             let text = match (&spec_text, &spec) {
@@ -911,38 +888,11 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 _ => ask(&implement),
             };
             let text = format!("{text}{delegate_note}");
-            // CLI 实施的：开跑前记下项目文件的样子，做完替它跑验证（Peck 循环自己会跑）。
-            if let Engine::Cli { backend, .. } = &implement.engine {
-                cli_verify = CliVerify::prepare(
-                    Setup {
-                        checks: cli_checks.clone(),
-                        goal: vec![],
-                        cwd: &cwd,
-                        level,
-                        env: peck_base.env.clone(),
-                        folders: &folders,
-                        spill_dir: peck_base.spill_dir.clone(),
-                        runtime_dir: peck_base.runtime_dir.clone(),
-                        once: !backend.caps().resume,
-                    },
-                    base.clone(),
-                )
-                .await;
-            }
             let r = stager.run(&implement, StageRole::Implement, text, impl_backend.as_ref(), None, &[], None).await;
             impl_ref = r.session_ref.clone();
             final_text = r.text.clone();
             if r.reason != TurnEndReason::Done {
                 end = (r.reason, r.error);
-            } else if let Some(v) = cli_verify.as_mut() {
-                let (reason, error, text, session) = verify_cli(&stager, &implement, v, impl_ref.clone(), &stop_rx).await;
-                if let Some(t) = text {
-                    final_text = t;
-                }
-                impl_ref = session;
-                if reason != TurnEndReason::Done {
-                    end = (reason, error);
-                }
             }
         }
         // ③ 审查（只读）：看这次到现在的 Diff；要改就交回实施的那一个修一次。
@@ -955,7 +905,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 base.emit(EventBody::Notice { level: NoticeLevel::Info, text: "这次没改文件，不用审查。".into() });
             } else {
                 let backend = peck_of(reviewer, true, None, false);
-                let r = stager.run(reviewer, StageRole::Review, review_prompt(&request, spec_text.as_deref(), &criteria, &diff, &implement.label), backend.as_ref(), None, &criteria, None).await;
+                let r = stager.run(reviewer, StageRole::Review, review_prompt(&request, spec_text.as_deref(), &criteria, &diff, &implement.label, level), backend.as_ref(), None, &criteria, None).await;
                 if r.reason != TurnEndReason::Done {
                     end = (r.reason, r.error.or(Some(format!("{} 没审完。", reviewer.label))));
                 } else if verdict_with(&r.text, &r.checks) == ReviewVerdict::Changes && !stopped.load(Ordering::SeqCst) {
@@ -976,14 +926,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                     }
                     if f.reason != TurnEndReason::Done {
                         end = (f.reason, f.error);
-                    } else if let Some(v) = cli_verify.as_mut() {
-                        let (reason, error, text, _) = verify_cli(&stager, &implement, v, f.session_ref.clone().or(impl_ref.clone()), &stop_rx).await;
-                        if let Some(t) = text {
-                            final_text = t;
-                        }
-                        if reason != TurnEndReason::Done {
-                            end = (reason, error);
-                        }
                     }
                 }
             }
@@ -998,9 +940,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         super::background::stop_owned(&id);
         if let Some(hub) = mcp_slot.lock().await.take() {
             hub.stop();
-        }
-        if let Some(v) = cli_verify.as_mut() {
-            v.stop();
         }
 
         let (step_status, run_status, summary) = match end.0 {
@@ -1043,6 +982,17 @@ mod tests {
     use crate::gateway::{Part, Role};
     use serde_json::json;
     use std::time::Duration;
+
+
+    #[test]
+    fn read_only_stages_are_told_the_task_is_not_read_only() {
+        let s = spec_prompt("做 X", "Codex", PermissionLevel::Auto);
+        assert!(s.contains("read-only for this stage only") && s.contains("AUTO permission") && s.contains("don't put a permission mode"), "{s}");
+        for criteria in [vec![], vec!["能跑".to_string()]] {
+            let r = review_prompt("做 X", None, &criteria, "diff", "Codex", PermissionLevel::Edit);
+            assert!(r.contains("read-only for this stage only") && r.contains("EDIT permission"), "{r}");
+        }
+    }
 
     #[test]
     fn verdicts_read_the_last_lines() {
@@ -1119,7 +1069,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };

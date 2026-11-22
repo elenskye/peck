@@ -27,19 +27,22 @@
 
 | 场景 | 怎么触发 | 看什么 |
 | --- | --- | --- |
-| Peck 循环主线（`peckMock.ts`） | 任何一个 API 模型 | 看目录、读、搜、改（进 CHANGES）、长输出命令、`rm -rf dist` 高危卡片、清单、ASK、recap 和下一步按钮、花费；peck 项目改完后台验证挂 ✓、「想记住这几条」 |
-| 上下文和验证 | 「长任务」「修好」「反复」「并发」；输入框旁开 GOAL | 自动压缩三步、验证没过交回修、连续两次失败停下、结果过期重跑、目标模式 |
+| Peck 循环主线（`peckMock.ts`） | 任何一个 API 模型 | 看目录、读、搜、改（FILES 里标出来）、长输出命令、`rm -rf dist` 高危卡片、清单、ASK、recap 和下一步按钮、花费、「想记住这几条」 |
+| 上下文 | 「长任务」 | 自动压缩三步 |
+| 快照回退 | 「撤销」「撤掉」「回退」；`/undo` | 读 Skill → 列快照 → 复述 → `[ RISK ]`「回到任务 N 开始前（2 个文件）」→ ALLOW / DENY |
+| 定时任务 | 「定时」「每周」「每天」「每隔」 | 读 Skill → 复述、ASK 确认 → 设好，PROJECTS 头上的钟多一个 |
+| 错过的定时任务 | 打开就有两个（notebook） | 一打开跳到 notebook 的新任务页：`[ MISSED ]` RUN NOW / SKIP；另一张在「日期统一成 YYYY-MM-DD」那个对话末尾；钟里看详情、REMOVE |
+| 留着的 dev server | 「dev server」 | 过程里一行「留着在跑」；右栏 PREVIEW 头上一个 DEV 小片，点一下停 |
 | 花费上限 | 设置里上限设得比 0.42 低 | 发出去就停、写明原因 |
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
 | 接力 + 审查 + 委派（`teamMock.ts`） | FLOW 选接力，写规范选 CLI、实施选 API、审查另选一个、委派选 FLASH | SPEC → BUILD（中间「交给子任务」）→ REVIEW 逐条清单「1 条没过 · 交回去修」→ FIX → recap 和按段花费表；句子带「通过」就都过、没有 FIX |
 | 预设、额度提醒 | AGENTS 最上面「预设」选「稳妥」；QUOTA 卡片里 Claude Code 每周 90% | 输入框下那行写预设名；输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
 | 换引擎接着发 | 合作做完的任务里换成 CLI、关审查再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
-| 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | APPLY / DISCARD；冲突时 APPLY ANYWAY |
+| 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |
 | 截图、贴图 | 带「截图」；输入框粘贴或拖进图 | 演示图；小图，发出去一行「这一句带了 1 张图」 |
-| CLI 做完验证 | 选一个 CLI，peck 项目；句子带「没过」 | 验证卡片「没过，交回去修（第 1/3 次）」→「续接同一个会话」→「都过了」 |
-| 斜杠命令 | 输入框打 `/` | Peck 自己的九个 + 演示的 `/fix-todo`、`/changelog`；`/verify` 一条没过、`/undo` 确认、`/model` 提示不转发 |
+| 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 演示的 `/fix-todo`、`/changelog`；`/undo` 发一句话给模型、`/model` 提示不转发 |
 
-- 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（头上的 dev server 小片起停 → GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、MCP、SKILLS、COMMANDS、verify.toml、记忆、SCHEDULE）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件）；CHANGES 的按块 REJECT / ACCEPT 和行号批注。
+- 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、MCP、SKILLS、COMMANDS、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
@@ -63,8 +66,8 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 
 - 日常只跑改到的模块：末尾加过滤，如 `-- snapshot::`。收尾才全跑。
 - **每次用新的临时目录**，不碰正式数据（模拟授权次数记在数据目录里，重复用会失败）。
-- **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样（现在用了 700105、700106、700201–700205、905001、910_001、912_001、920_001、930_001、940_001、950_001），新测试另挑一个。
-- Peck 循环的测试用假模型（`ScriptedModel`）跑完整的循环，外部 MCP 用 sh 写的假服务器，预览代理起一个假 dev server。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
+- **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样（现在用了 700105、700106、700201–700205、905001、910_001、920_001、930_001、930_002、940_001、950_001），新测试另挑一个。
+- Peck 循环的测试用假模型（`ScriptedModel`）跑完整的循环，外部 MCP 用 sh 写的假服务器，预览代理起一个假 dev server（一段一段出的 SSE、分块的 HTML、POST）。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck 循环和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境，慢几秒。夹具通过不等于真实账号通过。
 

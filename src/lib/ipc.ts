@@ -12,7 +12,6 @@ import type {
   Session,
   TermEvent,
   TermState,
-  UndoPreview,
   ProjectSettings,
   Workspace,
 } from "@/lib/types";
@@ -163,11 +162,6 @@ export const ipc = {
     if (isMockMode()) return mockIpc.filesQuicklookOpen(workspaceId, path);
     return invoke<void>("files_quicklook_open", { workspaceId, path });
   },
-  /** CHANGES：拒绝一块改动（在现在的文件里换回任务前的样子）。 */
-  async changesHunkRevert(runId: string, stepId: string | undefined, filePath: string, hunk: number): Promise<void> {
-    if (isMockMode()) return mockIpc.changesHunkRevert(runId, stepId, filePath, hunk);
-    return invoke<void>("changes_hunk_revert", { runId, stepId, filePath, hunk });
-  },
   /** 独立工作区：搬回项目（有冲突、没让照样搬时什么都不动，返回冲突的文件）。 */
   async worktreeApply(runId: string, force = false): Promise<WorktreeApply> {
     if (isMockMode()) return mockIpc.worktreeApply(runId, force);
@@ -176,14 +170,6 @@ export const ipc = {
   async worktreeDiscard(runId: string): Promise<RunRecord> {
     if (isMockMode()) return mockIpc.worktreeDiscard(runId);
     return invoke<RunRecord>("worktree_discard", { runId });
-  },
-  async runUndoPreview(runId: string): Promise<UndoPreview> {
-    if (isMockMode()) return mockIpc.runUndoPreview(runId);
-    return invoke<UndoPreview>("run_undo_preview", { runId });
-  },
-  async runUndo(runId: string): Promise<RunRecord> {
-    if (isMockMode()) return mockIpc.runUndo(runId);
-    return invoke<RunRecord>("run_undo", { runId });
   },
   async settingsGet(): Promise<string | null> {
     if (isMockMode()) return mockIpc.settingsGet();
@@ -368,11 +354,6 @@ export const ipc = {
     if (isMockMode()) return mockIpc.harnessCompact(sessionId);
     return invoke<string>("harness_compact", { sessionId });
   },
-  /** `/verify`：现在跑一遍确认过的验证命令。 */
-  async verifyRunNow(workspaceId: string): Promise<VerifyResult[]> {
-    if (isMockMode()) return mockIpc.verifyRunNow(workspaceId);
-    return invoke<VerifyResult[]>("verify_run_now", { workspaceId });
-  },
   /** 项目设置：这个项目的 Peck 循环会用到的 MCP（设置里的 + 项目 .mcp.json 里的）。 */
   async projectMcpList(workspaceId: string): Promise<ProjectMcpView> {
     if (isMockMode()) return mockIpc.projectMcpList(workspaceId);
@@ -389,31 +370,29 @@ export const ipc = {
     channel.onmessage = onEvent;
     return invoke<string>("harness_oneshot", { ...args, channel });
   },
-  // ── 定时任务（v0.8）──
+  // ── 定时任务：在对话里设、改、取消（模型的工具）；界面只列出来看，错过的弹卡片 ──
   async scheduleList(workspaceId?: string): Promise<Schedule[]> {
     if (isMockMode()) return mockIpc.scheduleList(workspaceId);
     return invoke<Schedule[]>("schedule_list", { workspaceId: workspaceId ?? null });
-  },
-  async scheduleSave(schedule: Schedule): Promise<Schedule> {
-    if (isMockMode()) return mockIpc.scheduleSave(schedule);
-    return invoke<Schedule>("schedule_save", { schedule });
   },
   async scheduleDelete(id: string): Promise<void> {
     if (isMockMode()) return mockIpc.scheduleDelete(id);
     return invoke<void>("schedule_delete", { id });
   },
-  /** 现在就发一次（不改下一次的时间）。 */
-  async scheduleRunNow(id: string): Promise<ScheduleFired> {
-    if (isMockMode()) return mockIpc.scheduleRunNow(id);
-    return invoke<ScheduleFired>("schedule_run_now", { id });
+  /** 错过的那张卡片：run 为真是 RUN NOW（补跑一次，返回发出去的那一次），否则是 SKIP。 */
+  async scheduleMissed(id: string, run: boolean): Promise<ScheduleFired | null> {
+    if (isMockMode()) return mockIpc.scheduleMissed(id, run);
+    return invoke<ScheduleFired | null>("schedule_missed", { id, run });
   },
-  /** 定时任务发出去的任务：发了一次（fired）、过程里的每条事件（event）。返回取消监听的函数。 */
-  async onSchedule(onFired: (f: ScheduleFired) => void, onEvent: (e: ScheduleEvent) => void): Promise<() => void> {
-    if (isMockMode()) return mockIpc.onSchedule(onFired, onEvent);
+  /** 定时任务发出去的任务：发了一次（fired）、过程里的每条事件（event）；定时任务变了（changed：设了、取消了、跑了、错过了）。
+   *  返回取消监听的函数。 */
+  async onSchedule(onFired: (f: ScheduleFired) => void, onEvent: (e: ScheduleEvent) => void, onChanged: () => void): Promise<() => void> {
+    if (isMockMode()) return mockIpc.onSchedule(onFired, onEvent, onChanged);
     const { listen } = await import("@tauri-apps/api/event");
     const a = await listen<ScheduleFired>("schedule-fired", (e) => onFired(e.payload));
     const b = await listen<ScheduleEvent>("schedule-event", (e) => onEvent(e.payload));
-    return () => { a(); b(); };
+    const c = await listen("schedules-changed", () => onChanged());
+    return () => { a(); b(); c(); };
   },
   /** 预览面板（v0.8）：给这个本机地址起代理，返回面板要开的地址。 */
   async previewStart(url: string): Promise<string> {
@@ -466,23 +445,8 @@ export const ipc = {
     return invoke<AgentEvent>("memory_review", { runId, keep, skip });
   },
 
-  // ── 验证和后台（v0.6 Phase 8）──
-  /** .peck/verify.toml：有没有、内容、写错了没有、猜的、站主说过不要没有。 */
-  async verifyGet(workspaceId: string): Promise<VerifyState> {
-    if (isMockMode()) return mockIpc.verifyGet(workspaceId);
-    return invoke<VerifyState>("verify_get", { workspaceId });
-  },
-  /** 校验后写进 .peck/verify.toml。 */
-  async verifySave(workspaceId: string, text: string): Promise<VerifyState> {
-    if (isMockMode()) return mockIpc.verifySave(workspaceId, text);
-    return invoke<VerifyState>("verify_save", { workspaceId, text });
-  },
-  /** 不要猜的那几条：中栏不再问。 */
-  async verifyDismiss(workspaceId: string): Promise<VerifyState> {
-    if (isMockMode()) return mockIpc.verifyDismiss(workspaceId);
-    return invoke<VerifyState>("verify_dismiss", { workspaceId });
-  },
-  /** 这个项目的后台命令和常驻 dev server。 */
+  // ── 后台命令 ──
+  /** 这个项目的后台命令和留着的 dev server。 */
   async backgroundList(workspaceId: string): Promise<BgInfo[]> {
     if (isMockMode()) return mockIpc.backgroundList(workspaceId);
     return invoke<BgInfo[]>("background_list", { workspaceId });
@@ -491,12 +455,6 @@ export const ipc = {
     if (isMockMode()) return mockIpc.backgroundStop(id);
     return invoke<void>("background_stop", { id });
   },
-  /** 起 verify.toml 里的一个 dev server（已经在跑就返回它）。 */
-  async serverStart(workspaceId: string, name: string): Promise<BgInfo> {
-    if (isMockMode()) return mockIpc.serverStart(workspaceId, name);
-    return invoke<BgInfo>("server_start", { workspaceId, name });
-  },
-
   /** 换 Dock 里的 App 图标（j2 / a3）。浏览器里不做事。 */
   async appIconSet(icon: "j2" | "a3"): Promise<void> {
     if (isMockMode()) return;
@@ -513,8 +471,6 @@ export interface HarnessRunArgs {
   effort?: string;
   /** 每月花费上限（美元）；空着不管。 */
   costCap?: number | null;
-  /** 目标模式：要过的验证命令的名字（* 是全部）。 */
-  goal?: string[];
   /** 在独立工作区（git worktree）里做（v0.7）。 */
   worktree?: boolean;
   /** 委派（v0.8）：子任务交给这个 API 模型（api:…）。 */
@@ -523,8 +479,12 @@ export interface HarnessRunArgs {
   images?: ImageInput[];
 }
 
-/** 定时任务（v0.8）。时间按本机时区：offsetMin 是和 UTC 差几分钟（东八区 480）。 */
-export type ScheduleWhen = { kind: "daily"; time: string; weekdays?: boolean } | { kind: "interval"; hours: number };
+/** 定时任务（schedule.rs）。时间按本机时区。days：1 是周一 … 7 是周日；weekdays 是旧记录里的「周一到周五」。 */
+export type ScheduleWhen =
+  | { kind: "once"; date: string; time: string }
+  | { kind: "daily"; time: string; weekdays?: boolean; days?: number[] }
+  | { kind: "monthly"; day: number; time: string }
+  | { kind: "interval"; hours: number };
 
 export interface Schedule {
   id: string;
@@ -534,6 +494,10 @@ export interface Schedule {
   who: string;
   model?: string | null;
   effort?: string | null;
+  /** 设的时候 AGENTS 里选了接力、审查、委派才有。 */
+  planBy?: TeamPick | null;
+  reviewBy?: TeamPick | null;
+  delegate?: string | null;
   permission: Permission;
   when: ScheduleWhen;
   offsetMin: number;
@@ -543,6 +507,10 @@ export interface Schedule {
   lastSession?: string | null;
   lastNote?: string | null;
   createdAt?: number;
+  /** 接在哪个对话里跑；空着是每次开新任务。 */
+  session?: string | null;
+  /** 错过的那一次原本该几点跑（等站主点卡片）。 */
+  missedAt?: number | null;
 }
 
 export interface ScheduleFired { scheduleId: string; workspaceId: string; sessionId: string; runId: string; prompt: string }
@@ -594,17 +562,15 @@ export type ToolHint = "read" | "write" | "destructive";
 /** 一个斜杠命令文件（.claude/commands/*.md，v0.10 C2）。 */
 export interface CommandFile { name: string; description: string; hint?: string | null; scope: "project" | "user"; folder?: string | null }
 /** 一个 Skill（SKILL.md，v0.10 C2）。 */
-export interface SkillInfo { name: string; description: string; scope: "project" | "project-skills" | "user"; off: boolean }
+/** scope：项目的 .claude/skills、项目的 skills/、站主的 ~/.claude/skills、Peck 自带的。 */
+export interface SkillInfo { name: string; description: string; scope: "project" | "project-skills" | "user" | "peck"; off: boolean }
 export interface SlashList { commands: CommandFile[]; skills: SkillInfo[] }
 /** 一条 Skill 的草稿（v0.10 C3）：模型提的，或者卡片上改过的。 */
-export interface SkillDraft { name: string; description: string; body: string; scope: SkillInfo["scope"] }
+export interface SkillDraft { name: string; description: string; body: string; scope: Exclude<SkillInfo["scope"], "peck"> }
 /** 项目设置里的一行 Skill（v0.10 C3）。 */
 export interface SkillRow { name: string; description: string; scope: SkillInfo["scope"]; off: boolean; loads: number; lastUsed?: number | null; changedAt?: number | null; stale: boolean; versions: number }
 /** 一份旧版。 */
 export interface SkillVersion { id: string; at: number; description: string; lines: number }
-/** `/verify` 的一条结果。 */
-export interface VerifyResult { name: string; command: string; passed: boolean; exitCode?: number | null; timedOut: boolean; durationMs: number; output: string }
-
 /** 项目设置里的一行 MCP（v0.10 A2）。 */
 export interface ProjectMcpRow {
   name: string;
@@ -632,23 +598,6 @@ export interface WorktreeApply { applied: string[]; conflicts: string[]; record:
 
 /** 站主批过的一条记忆（harness/history.rs）。 */
 export interface MemoryNote { id: string; text: string; sourceRun?: string | null; createdAt: number }
-
-/** .peck/verify.toml（harness/verify.rs）。TOML 里是 [[check]]、[[server]]。 */
-export interface VerifyCheck { name: string; run: string; when?: string[]; timeout?: number | null }
-export interface VerifyServer { name: string; run: string; ready?: string | null; autostart: boolean }
-export interface VerifyConfig { check: VerifyCheck[]; server: VerifyServer[] }
-export interface VerifyState {
-  exists: boolean;
-  text?: string | null;
-  config?: VerifyConfig | null;
-  /** 写错了：原因。 */
-  error?: string | null;
-  /** 没有文件时猜的（TOML 原文）。 */
-  guessed?: string | null;
-  dismissed: boolean;
-  /** 文件和站主确认过的那一份一样；不一样（项目自带的、改过的）就不替模型跑、不起 server。 */
-  approved: boolean;
-}
 
 /** 后台命令（harness/background.rs）。 */
 export interface BgInfo {

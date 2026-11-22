@@ -7,23 +7,20 @@
 //! - 上下文（v0.6）：系统提示分两层（Peck 的说明、项目说明 + 记忆，都打缓存断点）；每次发一句话带上环境块和
 //!   引用的旧任务（`context.rs`、`history.rs`）；每次请求前估一遍大小（`context.updated`），到压缩线自动压缩
 //!   三步（`compact.rs`），压完还超过 95% 才停。
-//! - 验证（v0.6）：改了文件在后台跑 `.peck/verify.toml` 的验证命令；模型停下时没过就把失败交回去修，最多 3 次，
-//!   同一个失败连续两次、两次之间没改文件都停；都过了不再叫模型（`monitor.rs`）。目标模式每次停下都跑目标那几条。
+//! - 验证交给模型：改完跑什么写在项目的 `AGENTS.md` / `CLAUDE.md` 里，模型自己用 `bash_run` 跑；Peck 不替它跑。
 //! - 控制通道：审批、回答（ASK）、追加一句（下一次请求带上）、打断（停下当前请求或命令）。
 
 use super::background;
 use super::compact;
 use super::context::{self, EnvInput, ProjectLayer};
-use super::monitor::{self, Monitor};
 use super::permission::{self, Ask};
 use super::spill;
 use super::tools::{self, bash, ToolContext};
-use super::verify::Check;
 use crate::gateway::caps::AgentCaps;
 use crate::gateway::catalog::{self, Thinking};
 use crate::gateway::event::{
     ApprovalDecision, BackgroundKind, CompactStep, EventBody, NoticeLevel, PermissionLevel, PlanStatus, PlanStep, ResolvedBy,
-    ToolKind, ToolStatus, TurnEndReason, UsageScope, VerifyOutcome, VerifyTrigger,
+    ToolKind, ToolStatus, TurnEndReason, UsageScope,
 };
 use crate::gateway::log::EventSink;
 use crate::gateway::{
@@ -38,9 +35,6 @@ use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 
 pub const DEFAULT_MAX_ROUNDS: u32 = 40;
-/// 验证没过，最多交回去修几次（目标模式多一些）。
-pub const FIX_ATTEMPTS: u32 = 3;
-pub const GOAL_ATTEMPTS: u32 = 8;
 
 /// 花费上限：这个月已经花了多少，上限多少（美元）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,14 +71,6 @@ pub struct ContextConfig {
     pub worktree_of: Option<PathBuf>,
 }
 
-/// 验证（v0.6 Phase 8）：`.peck/verify.toml` 的验证命令和目标模式。
-#[derive(Clone, Default)]
-pub struct VerifyPlan {
-    pub checks: Vec<Check>,
-    /// 目标模式：要过的那几条的名字（`*` 是全部）。空：不是目标模式。
-    pub goal: Vec<String>,
-}
-
 #[derive(Clone)]
 pub struct LoopConfig {
     /// 目录里的模型 id（`deepseek/deepseek-flash`）。
@@ -106,11 +92,15 @@ pub struct LoopConfig {
     /// 续接用的会话号（放进 `session.started`）。
     pub session_ref: Option<String>,
     pub context: ContextConfig,
-    pub verify: VerifyPlan,
     /// 委派（v0.8）：`delegate_task` 把子任务交给这个（便宜的）模型，工具和权限一样。
     pub delegate: Option<Delegate>,
     /// 系统提示末尾再加的一段（接力、审查的那一段做什么；委派的子任务）。
     pub brief: Option<String>,
+    /// Peck 自己的几样工具（v1.0.2：`restore_snapshot`、定时任务那三个）；ONE SHOT、子任务、合作里只读的那两段不给。
+    pub extras: Option<Arc<super::extras::Extras>>,
+    /// 合作里只读的那一段（写规范、审查）：整个任务是哪一档。系统提示里写明「只读的是你这一段，不是任务」，
+    /// 不然它会把自己的 PLAN 当成任务的权限写进规范（站主 2026-11-22 真跑遇到）。
+    pub task_level: Option<PermissionLevel>,
     /// 外部 MCP 服务器（v0.8 设置里配的，v0.10 加上项目 `.mcp.json` 里的）：发任务时起、任务完就停；ONE SHOT 不起。
     /// 项目里的（`project` 有指纹）第一次起之前问站主。
     pub mcp: Vec<super::mcp_client::McpServerConfig>,
@@ -208,12 +198,10 @@ impl AgentBackend for PeckBackend {
                 approvals: 0,
                 cost_usd: 0.0,
                 warned_unpriced: false,
-                monitor: None,
                 scale: 1.0,
                 last_sent: 0,
                 compacted_at_round: None,
                 spill_counter: Default::default(),
-                gate: Default::default(),
                 delegations: used,
                 mcp: None,
                 shots: vec![],
@@ -329,8 +317,6 @@ struct Run {
     approvals: u32,
     cost_usd: f64,
     warned_unpriced: bool,
-    /// 替模型盯验证命令（有验证命令、不是 PLAN 和 ONE SHOT 才有）。
-    monitor: Option<Monitor>,
     /// 估的 tokens → 实报的 tokens 的校准系数（上一次请求算的）。
     scale: f64,
     /// 上一次请求发出去时估的大小（还没校准）。
@@ -338,8 +324,6 @@ struct Run {
     /// 上一次做交接摘要是第几轮（压过了又满就停，不来回压）。
     compacted_at_round: Option<u32>,
     spill_counter: std::sync::atomic::AtomicU32,
-    /// 没过时交回去修还是停下（交回去了几次、上一次的失败、上一次的文件版本）。
-    gate: monitor::FixGate,
     /// 委派了几次（v0.8）。
     delegations: u32,
     /// 这个任务起来的外部 MCP 服务器（v0.8）。
@@ -356,15 +340,6 @@ struct End {
     error: Option<String>,
 }
 
-/// 模型停下以后看验证命令的结果。
-enum Verdict {
-    /// 都过了，或者没有要看的。
-    Done,
-    /// 没过：把这段交回模型修。
-    Fix(String),
-    Stop(End),
-}
-
 impl End {
     fn done() -> Self {
         Self { reason: TurnEndReason::Done, error: None }
@@ -377,15 +352,25 @@ impl End {
     }
 }
 
+/// 合作里只读的那一段看到的权限说明：只读的是这一段，任务本身是 `whole` 那一档（CLI 那几段写在这一句里，同一段话）。
+pub(crate) fn read_only_stage_note(whole: PermissionLevel) -> String {
+    format!(
+        "read-only for this stage only. You are one stage of a multi-agent task: in your stage you cannot edit files and commands run in a read-only sandbox. That limit is yours, not the task's: the task as a whole runs with {} permission, and the agent that implements it can edit files and run commands. Never describe the task, the project or the other agents as read-only or in PLAN mode, and don't put a permission mode in what you write.",
+        level_label(whole)
+    )
+}
+
 fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config: &LoopConfig) -> String {
-    let today = time::OffsetDateTime::now_utc().date();
+    // 站主这台 Mac 的本地日期（具体几点、星期几在每一句前面的环境块里）。
+    let today = crate::schedule::local_text(crate::store::now_ms())[..10].to_string();
     let mode = if oneshot {
-        "ONE SHOT (read-only): answer the user's question by reading the project. Do not change any files and do not run commands that write."
+        "ONE SHOT (read-only): answer the user's question by reading the project. Do not change any files and do not run commands that write.".to_string()
     } else {
-        match level {
-            PermissionLevel::Plan => "PLAN (read-only): investigate and propose a plan. You cannot edit files; commands run in a read-only sandbox.",
-            PermissionLevel::Edit => "EDIT: you may edit files and run commands. Installing dependencies or starting long-running servers asks the user first.",
-            PermissionLevel::Auto => "AUTO: you may edit files and run commands without asking, except dangerous ones.",
+        match (level, config.task_level) {
+            (PermissionLevel::Plan, Some(whole)) => read_only_stage_note(whole),
+            (PermissionLevel::Plan, None) => "PLAN (read-only): investigate and propose a plan. You cannot edit files; commands run in a read-only sandbox.".to_string(),
+            (PermissionLevel::Edit, _) => "EDIT: you may edit files and run commands. Installing dependencies or starting long-running servers asks the user first.".to_string(),
+            (PermissionLevel::Auto, _) => "AUTO: you may edit files and run commands without asking, except dangerous ones.".to_string(),
         }
     };
     format!(
@@ -397,19 +382,23 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
          - Look before you change: list, search and read the relevant files first.\n\
          - {edit_line}\n\
          - For multi-step work keep a short checklist with update_plan (one step in_progress at a time).\n\
-         - Verify with bash_run (tests, build, lint) when it makes sense. A failing command is evidence, not success.\n\
-         - When the project has verify commands (listed in <peck-context>), Peck runs them for you after you edit and when you stop; if they fail you get the output in <peck-verify>. Fix the cause; don't claim success while a check fails.\n\
-         - Use bash_background for dev servers, watchers and long test suites instead of bash_run, then read their output.\n\
+         - Checking your work is your job: after you change files, run what the project instructions (AGENTS.md / CLAUDE.md) say to run, or the project's own tests, build or lint, with bash_run. A failing command is evidence, not success: fix the cause and don't claim success while a check fails.\n\
+         - Use bash_background for dev servers, watchers and long test suites instead of bash_run, then read their output. When the user wants a dev server to look at (the PREVIEW panel), start it with keep=true so it stays up after the task ends.\n\
          - search_tasks finds earlier tasks in this project; <referenced-task> blocks are earlier tasks the user pointed you to.\n\
          - When you learn something durable about this project (a convention, a command, a pitfall, a preference the user stated), propose it with memory; the user approves it at the end.{skill_line}\n\
          - Use ask_user only when you cannot continue without the user's decision.\n\
          - Answer in the user's language (Chinese if they write Chinese), in Markdown, briefly: what you changed, how you checked it, anything left.\n\
-         - When you finish, end the final answer with up to 3 suggested next steps the user might want, each on its own line starting with `→ ` (short, imperative, in the user's language). Peck shows them as buttons and hides these lines. Skip them when nothing obvious is left.{delegate}{brief}",
+         - When you finish, end the final answer with up to 3 suggested next steps the user might want, each on its own line starting with `→ ` (short, imperative, in the user's language). Peck shows them as buttons and hides these lines. Skip them when nothing obvious is left.{extras}{delegate}{brief}",
         root = task.cwd.display(),
         edit_line = if super::tools::uses_v4a(&config.model_id) {
             "Edit with apply_patch (V4A patch format, as described in its tool definition); use write_file for full rewrites."
         } else {
             "Edit with write_patch (exact old_text → new_text); use write_file for new files or full rewrites."
+        },
+        extras = if config.extras.is_some() && !oneshot && config.subtask.is_none() {
+            "\n- Two things the user does by talking to you instead of clicking: going back to a task snapshot (restore_snapshot: undo or redo what a task changed) and scheduled tasks in this project (schedule_task, list_schedules, cancel_schedule). Load the matching skill first (peck-snapshots, peck-schedules) and follow it; both need the user's go-ahead in the conversation before you act."
+        } else {
+            ""
         },
         delegate = match &config.delegate {
             Some(d) if !oneshot => format!(
@@ -462,6 +451,12 @@ impl Run {
         } else if self.config.delegate.is_some() && !self.config.oneshot {
             names.push(tools::DELEGATE_TASK);
         }
+        // 快照回退、定时任务（v1.0.2）：以前在界面上点，现在在对话里做。ONE SHOT、子任务、合作里只读的那两段没有，
+        // 讲这几样工具的自带 Skills 也就不列。
+        let extras = self.config.extras.is_some() && !self.config.oneshot && self.config.subtask.is_none();
+        if !extras {
+            self.config.context.project.skills.retain(|k| k.builtin.is_none());
+        }
         // Skills（v0.10 C2）：有才给 load_skill（它只读，哪一档、ONE SHOT 都有）。
         if !self.config.context.project.skills.is_empty() {
             names.push(tools::LOAD_SKILL);
@@ -469,6 +464,9 @@ impl Run {
         // 自己写 Skill（v0.10 C3）：只是提议（站主批了才写盘），哪一档都有；ONE SHOT、子任务不给。
         if self.offers_create_skill() {
             names.push(tools::CREATE_SKILL);
+        }
+        if extras {
+            names.extend(super::extras::NAMES);
         }
         let turn_id = format!("turn-{}", self.task.run_id);
         // 外部 MCP 服务器：起来、列工具；起不来的写一行，照常干活。合作里几段共用一组（第一段用到时起）。
@@ -521,15 +519,7 @@ impl Run {
             }
         }
         self.push_user(first);
-        let watch_checks = !self.config.oneshot && self.level != PermissionLevel::Plan && !self.config.verify.checks.is_empty();
-        if watch_checks {
-            let sandbox = permission::sandbox_for(self.level);
-            self.monitor = Some(Monitor::new(self.config.verify.checks.clone(), self.ctx.clone(), self.sink.clone(), sandbox).await);
-        }
         let end = self.rounds(&names).await;
-        if let Some(m) = self.monitor.as_mut() {
-            m.stop();
-        }
         background::stop_owned(&self.task.run_id);
         if let Some(hub) = self.mcp.take() {
             if !shared_mcp {
@@ -596,7 +586,7 @@ impl Run {
         hub
     }
 
-    /// 这一句话前面带上的环境：系统、git、任务清单、改过的文件、验证命令、后台命令。
+    /// 这一句话前面带上的环境：系统、git、任务清单、改过的文件、后台命令。
     async fn environment_block(&self) -> String {
         let mut changed = self.config.context.prior_changed.clone();
         changed.sort();
@@ -604,24 +594,13 @@ impl Run {
         let input = EnvInput {
             plan: last_plan(&self.messages),
             changed,
-            // PLAN 不替模型跑验证命令，就不提。
-            checks: if self.level == PermissionLevel::Plan { vec![] } else { self.config.verify.checks.iter().map(|c| (c.name.clone(), c.run.clone())).collect() },
             background: background::list(&self.ctx.root).iter().filter(|p| p.running()).map(|p| background::describe_for_model(p)).collect(),
-            goal: self.goal_names(),
             folders: self.ctx.extra.iter().map(|e| (e.path.to_string_lossy().into_owned(), e.writable && self.level != PermissionLevel::Plan)).collect(),
             env_names: self.config.context.env_names.clone(),
             worktree_of: self.config.context.worktree_of.as_ref().map(|p| p.to_string_lossy().into_owned()),
         };
         let root = self.ctx.root.clone();
         tokio::task::spawn_blocking(move || context::environment_block(&root, &input)).await.unwrap_or_default()
-    }
-
-    fn goal_names(&self) -> Vec<String> {
-        let goal = &self.config.verify.goal;
-        if goal.iter().any(|g| g == "*") {
-            return self.config.verify.checks.iter().map(|c| c.name.clone()).collect();
-        }
-        goal.clone()
     }
 
     fn system_blocks(&self) -> Vec<SystemBlock> {
@@ -915,98 +894,22 @@ impl Run {
                     self.push_user(steer);
                     continue;
                 }
-                // 模型停下了：替它看一遍验证命令。
-                match self.verify_round().await {
-                    Verdict::Done => return End::done(),
-                    Verdict::Fix(text) => {
-                        self.push_user(vec![Part::Text { text }]);
-                        continue;
-                    }
-                    Verdict::Stop(end) => return end,
-                }
+                return End::done();
             }
             if !usage_known {
                 // 先把工具跑完（模型已经要了），下一次请求前再停。
                 let results = self.run_tools(&calls, names).await;
                 self.push_user(results);
-                self.observe(&calls).await;
                 return End::limit("供应商这一次没报用量，花费算不了，先停下。接着说一句就能继续。");
             }
             let results = self.run_tools(&calls, names).await;
             let mut parts = results;
             parts.extend(self.take_steer());
             self.push_user(parts);
-            self.observe(&calls).await;
             if self.ctl.interrupted {
                 return End::interrupted();
             }
         }
-    }
-
-    /// 一轮工具跑完：改了文件就让验证命令在后台跑（只在跑过会改东西的工具之后看）。
-    async fn observe(&mut self, calls: &[(String, String, Value)]) {
-        let mutating = calls.iter().any(|(_, n, _)| matches!(n.as_str(), tools::WRITE_FILE | tools::WRITE_PATCH | tools::APPLY_PATCH | tools::BASH_RUN | tools::BASH_BACKGROUND | tools::DELEGATE_TASK));
-        if !mutating {
-            return;
-        }
-        let reported = self.ctx.diff_summary();
-        if let Some(m) = self.monitor.as_mut() {
-            m.observe(&reported).await;
-        }
-    }
-
-    /// 模型停下以后的一轮验证：都过了（或没有要看的）收尾；没过交回去修；修够了、同一个失败连续两次、
-    /// 两次之间没改文件都停。
-    async fn verify_round(&mut self) -> Verdict {
-        let goal_names = self.goal_names();
-        let goal = !goal_names.is_empty();
-        let Some(m) = self.monitor.as_mut() else { return Verdict::Done };
-        let names = m.selection(&goal_names);
-        if names.is_empty() {
-            return Verdict::Done;
-        }
-        m.attempt = self.gate.fixes;
-        let trigger = if goal { VerifyTrigger::Goal } else { VerifyTrigger::End };
-        let results = {
-            let fut = m.settle(&names, trigger);
-            tokio::pin!(fut);
-            let mut interrupted = false;
-            let r = loop {
-                tokio::select! {
-                    biased;
-                    r = &mut fut => break Some(r),
-                    _ = self.ctl.until_interrupt(), if !self.ctl.interrupted => { interrupted = true; break None; }
-                }
-            };
-            if interrupted {
-                None
-            } else {
-                r
-            }
-        };
-        let Some(results) = results else {
-            if let Some(m) = self.monitor.as_mut() {
-                m.stop();
-            }
-            return Verdict::Stop(End::interrupted());
-        };
-        let max = if goal { GOAL_ATTEMPTS } else { FIX_ATTEMPTS };
-        let failed: Vec<monitor::Outcome> = results.iter().filter(|o| !o.passed).cloned().collect();
-        let version = self.monitor.as_ref().map(|m| m.total_version).unwrap_or(0);
-        if failed.is_empty() {
-            self.emit(EventBody::VerifyRound { attempt: self.gate.fixes, max_attempts: max, outcome: VerifyOutcome::Passed, reason: None, goal });
-            return Verdict::Done;
-        }
-        let attempt = self.gate.fixes;
-        if let Err(reason) = self.gate.judge(&failed, version, max) {
-            self.emit(EventBody::VerifyRound { attempt, max_attempts: max, outcome: VerifyOutcome::Stopped, reason: Some(reason.clone()), goal });
-            return Verdict::Stop(End::limit(format!("{reason}失败的输出在验证卡片里；接着说一句就能继续。")));
-        }
-        if let Some(m) = self.monitor.as_mut() {
-            m.attempt = self.gate.fixes;
-        }
-        self.emit(EventBody::VerifyRound { attempt: self.gate.fixes, max_attempts: max, outcome: VerifyOutcome::Fixing, reason: None, goal });
-        Verdict::Fix(monitor::failure_message(&failed, self.gate.fixes, max, goal))
     }
 
     /// 发一次请求：边收边发增量；站主打断就让 provider 停下。
@@ -1153,6 +1056,24 @@ impl Run {
             }
             tools::BASH_RUN => self.bash(call_id, input).await,
             tools::BASH_BACKGROUND => self.background(call_id, input).await,
+            super::extras::RESTORE_SNAPSHOT => self.restore_snapshot(call_id, input).await,
+            super::extras::SCHEDULE_TASK | super::extras::LIST_SCHEDULES | super::extras::CANCEL_SCHEDULE => {
+                let Some(x) = self.config.extras.clone() else {
+                    return (ToolStatus::Failed, "这里设不了定时任务。".into(), None, vec![]);
+                };
+                let (name, input) = (name.to_string(), input.clone());
+                let r = tokio::task::spawn_blocking(move || match name.as_str() {
+                    super::extras::SCHEDULE_TASK => x.schedule_task(&input),
+                    super::extras::LIST_SCHEDULES => x.list_schedules(),
+                    _ => x.cancel_schedule(&input),
+                })
+                .await
+                .unwrap_or_else(|_| Err("定时任务出错了。".into()));
+                match r {
+                    Ok(text) => (ToolStatus::Ok, text, None, vec![]),
+                    Err(e) => (ToolStatus::Failed, e, None, vec![]),
+                }
+            }
             tools::MEMORY => self.memory(input),
             tools::CREATE_SKILL => {
                 let Some(root) = self.config.context.project.skill_root.clone() else {
@@ -1196,6 +1117,39 @@ impl Run {
         }
     }
 
+    /// `restore_snapshot`：list 直接给；restore 先算好动哪些文件，弹高危卡片，站主批了才放回去（PLAN 不给回退）。
+    async fn restore_snapshot(&mut self, call_id: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
+        let Some(x) = self.config.extras.clone() else {
+            return (ToolStatus::Failed, "这里读不到任务快照。".into(), None, vec![]);
+        };
+        let fail = |t: String| (ToolStatus::Failed, t, None, vec![]);
+        if input.get("action").and_then(Value::as_str) != Some("restore") {
+            return match tokio::task::spawn_blocking(move || x.list_snapshots()).await {
+                Ok(Ok(text)) => (ToolStatus::Ok, text, None, vec![]),
+                Ok(Err(e)) => fail(e),
+                Err(_) => fail("读任务快照出错了。".into()),
+            };
+        }
+        if self.level == PermissionLevel::Plan {
+            return (ToolStatus::Denied, "PLAN 只读：不回退文件。请站主换成 EDIT 或 AUTO 再说一次。".into(), None, vec![]);
+        }
+        let (planner, args) = (x.clone(), input.clone());
+        let plan = match tokio::task::spawn_blocking(move || planner.plan_restore(&args)).await {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => return fail(e),
+            Err(_) => return fail("算要回退哪些文件时出错了。".into()),
+        };
+        let decision = self.approve_as(ToolKind::Edit, call_id, plan.title.clone(), plan.detail.clone(), true).await;
+        if !decision.allows() {
+            return (ToolStatus::Denied, "站主没批这次回退，文件都没动。".into(), None, vec![]);
+        }
+        match tokio::task::spawn_blocking(move || x.restore(&plan)).await {
+            Ok(Ok(text)) => (ToolStatus::Ok, text, None, vec![]),
+            Ok(Err(e)) => fail(e),
+            Err(_) => fail("回退出错了。".into()),
+        }
+    }
+
     /// 给不给 `create_skill`：有项目根、不是 ONE SHOT、不是委派出去的子任务。
     fn offers_create_skill(&self) -> bool {
         self.config.context.project.skill_root.is_some() && !self.config.oneshot && self.config.subtask.is_none()
@@ -1218,6 +1172,7 @@ impl Run {
     }
 
     /// `bash_background`：起、读、停、列后台命令。起的时候照 `bash_run` 的规矩审批（EDIT 当「起常驻进程」问一次）。
+    /// `keep: true` 是留着的 dev server：任务结束不停（PLAN 不给留）。
     async fn background(&mut self, call_id: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
         let action = input.get("action").and_then(Value::as_str).unwrap_or("list");
         let run_id = self.task.run_id.clone();
@@ -1229,9 +1184,24 @@ impl Run {
                 if command.is_empty() {
                     return fail("缺 command。".into());
                 }
-                let mine = background::list(&self.ctx.root).iter().filter(|p| p.owner.as_deref() == Some(run_id.as_str()) && p.running()).count();
-                if mine >= background::PER_RUN {
-                    return fail(format!("这个任务已经有 {mine} 个后台命令在跑了，先停掉一个。"));
+                let keep = tools::bool_arg(input, "keep").unwrap_or(false);
+                if keep {
+                    if self.level == PermissionLevel::Plan {
+                        return fail("PLAN 只读：不留 dev server（去掉 keep，任务结束它会一起停）。".into());
+                    }
+                    let kept = background::kept(&self.ctx.root);
+                    // 同一条命令已经留着在跑：不起第二份。
+                    if let Some(p) = kept.iter().find(|p| p.command == command) {
+                        return (ToolStatus::Ok, format!("这条命令已经留着在跑了，没有再起一份。\n{}", p.status_line()), None, vec![]);
+                    }
+                    if kept.len() >= background::KEPT_PER_PROJECT {
+                        return fail(format!("这个项目已经留着 {} 个 dev server 了，先停掉一个。", kept.len()));
+                    }
+                } else {
+                    let mine = background::list(&self.ctx.root).iter().filter(|p| p.owner.as_deref() == Some(run_id.as_str()) && p.running()).count();
+                    if mine >= background::PER_RUN {
+                        return fail(format!("这个任务已经有 {mine} 个后台命令在跑了，先停掉一个。"));
+                    }
                 }
                 match permission::check_command(self.level, &command, &self.ctx.root, &self.allowed) {
                     Ask::HighRisk(risks) => {
@@ -1278,11 +1248,11 @@ impl Run {
                 let sink = self.sink.clone();
                 let spec = background::Spec {
                     workspace: self.ctx.root.clone(),
-                    owner: Some(run_id.clone()),
+                    owner: (!keep).then(|| run_id.clone()),
                     name,
                     command,
                     cwd: input.get("cwd").and_then(Value::as_str).map(str::to_string),
-                    kind: BackgroundKind::Command,
+                    kind: if keep { BackgroundKind::Server } else { BackgroundKind::Command },
                     ready: None,
                     sandbox: permission::sandbox_for(self.level),
                     env: self.ctx.env.clone(),
@@ -1290,9 +1260,17 @@ impl Run {
                     log_dir: self.ctx.spill_dir.clone(),
                     extra: self.ctx.extra.iter().map(|e| (e.path.clone(), e.writable)).collect(),
                 };
-                let proc_ = match background::start(spec, Some(Arc::new(move |i: &background::BgInfo| {
-                    sink.emit(background::event_of(i));
-                }))) {
+                // 留着的 dev server 活得比这个任务久：只记起来的这一下，后来的变化不往这个任务的日志里写。
+                let started = if keep {
+                    background::start(spec, None).inspect(|p| {
+                        sink.emit(background::event_of(&p.info()));
+                    })
+                } else {
+                    background::start(spec, Some(Arc::new(move |i: &background::BgInfo| {
+                        sink.emit(background::event_of(i));
+                    })))
+                };
+                let proc_ = match started {
                     Ok(p) => p,
                     Err(e) => return fail(e),
                 };
@@ -1302,7 +1280,8 @@ impl Run {
                     _ = self.ctl.until_interrupt(), if !self.ctl.interrupted => {}
                 }
                 let first = proc_.read_new();
-                (ToolStatus::Ok, format!("{}
+                let kept_note = if keep { "\n留着了：任务结束不停，站主在右栏 PREVIEW 里看、能点停；退出 Peck 才全停。" } else { "" };
+                (ToolStatus::Ok, format!("{}{kept_note}
 完整输出写在 {}（read_file 读得到）。
 {first}", proc_.status_line(), proc_.log.display()), None, vec![])
             }
@@ -1312,9 +1291,6 @@ impl Run {
                     return fail(format!("没有 id 是 {id} 的后台命令（list 看有哪些）。"));
                 };
                 if action == "stop" {
-                    if proc_.kind == BackgroundKind::Server {
-                        return fail("常驻的 dev server 由站主起停，你只能读它的输出。".into());
-                    }
                     proc_.stop();
                     for _ in 0..40 {
                         if !proc_.running() {
@@ -1366,10 +1342,10 @@ impl Run {
         config.model_id = d.model_id.clone();
         config.delegate = None;
         config.max_rounds = 24;
-        config.verify = VerifyPlan::default();
         config.session_ref = None;
-        // 子任务不提 Skill（v0.10 C3）：那是主线的事。
+        // 子任务不提 Skill（v0.10 C3）、不碰快照和定时任务：那是主线的事。
         config.context.project.skill_root = None;
+        config.extras = None;
         config.brief = Some(
             "You are a sub-agent: the main agent handed you one subtask (below). Do exactly that, then report briefly what you did, what you changed and anything you could not do. Don't ask the user questions and don't widen the scope.".into(),
         );
@@ -1379,7 +1355,8 @@ impl Run {
         let mut child = Run {
             provider: d.provider.clone(),
             config,
-            task: AgentTask { prompt: brief.clone(), model: Some(d.model_id.clone()), ..self.task.clone() },
+            // 思考强度不跟主线的：委派的模型用它自己的默认（能关思考的就不思考，和 CLI 委派过来的一样）。
+            task: AgentTask { prompt: brief.clone(), model: Some(d.model_id.clone()), effort: None, ..self.task.clone() },
             level: self.level,
             ctx: self.ctx.clone(),
             sink: self.sink.for_subagent(call_id),
@@ -1392,12 +1369,10 @@ impl Run {
             approvals: self.approvals,
             cost_usd: 0.0,
             warned_unpriced: self.warned_unpriced,
-            monitor: None,
             scale: 1.0,
             last_sent: 0,
             compacted_at_round: None,
             spill_counter: Default::default(),
-            gate: Default::default(),
             delegations: MAX_DELEGATIONS,
             mcp: self.mcp.clone(),
             shots: vec![],
@@ -1752,9 +1727,10 @@ mod tests {
             env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
             session_ref: Some("peck-s1".into()),
             context: ContextConfig::default(),
-            verify: VerifyPlan::default(),
             delegate: None,
             brief: None,
+            extras: None,
+            task_level: None,
             mcp: vec![],
             mcp_slot: None,
             mcp_seen: None,
@@ -2358,7 +2334,6 @@ mod tests {
             env_names: vec![],
             worktree_of: None,
         };
-        cfg.verify.checks = vec![Check { name: "check".into(), run: "true".into(), when: vec![], timeout: None }];
         let (outcome, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Edit, "接着修"), |_| None).await;
         assert_eq!(outcome.reason, TurnEndReason::Done);
         let reqs = requests.lock().unwrap();
@@ -2367,7 +2342,7 @@ mod tests {
         assert!(first.system.iter().all(|b| b.cache));
         assert!(first.system[1].text.contains("提交说明用英文") && first.system[1].text.contains("测试用 pnpm test"));
         let parts = &first.messages[0].parts;
-        assert!(matches!(&parts[0], Part::Text { text } if text.starts_with("<peck-context>") && text.contains("src/a.ts") && text.contains("check: `true`")));
+        assert!(matches!(&parts[0], Part::Text { text } if text.starts_with("<peck-context>") && text.contains("src/a.ts")));
         assert!(matches!(&parts[1], Part::Text { text } if text.starts_with("<referenced-task")));
         assert!(matches!(&parts[2], Part::Text { text } if text == "接着修"));
         let second = serde_json::to_string(&reqs[1].messages).unwrap();
@@ -2430,112 +2405,6 @@ mod tests {
         assert_eq!(asked, 1);
         assert!(events.iter().any(|e| matches!(e.body, EventBody::ToolCallCompleted { status: ToolStatus::Denied, .. })));
         assert!(background::list(&p.dir).is_empty());
-    }
-
-    fn verify_cfg(p: &TempProject, run: &str) -> LoopConfig {
-        let mut cfg = config(p, "deepseek/deepseek-flash");
-        cfg.verify.checks = vec![Check { name: "check".into(), run: run.into(), when: vec!["**/*.txt".into()], timeout: Some(30) }];
-        cfg
-    }
-
-    fn rounds_of(events: &[AgentEvent]) -> Vec<(VerifyOutcome, u32)> {
-        events
-            .iter()
-            .filter_map(|e| match &e.body {
-                EventBody::VerifyRound { outcome, attempt, .. } => Some((*outcome, *attempt)),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn write(path: &str) -> (&'static str, Value) {
-        ("write_file", json!({"path": path, "content": "x\n"}))
-    }
-
-    #[tokio::test]
-    async fn a_failing_check_goes_back_and_the_fix_passes_without_another_call() {
-        let p = TempProject::new();
-        let model = Arc::new(ScriptedModel::new(
-            "deepseek/deepseek-flash",
-            vec![turn("", vec![write("bad.txt")]), turn("改好了。", vec![]), turn("", vec![write("good.txt")]), turn("这次真的好了。", vec![])],
-            Duration::ZERO,
-        ));
-        let requests = model.requests.clone();
-        let (outcome, events) = drive(&PeckBackend::new(model, verify_cfg(&p, "test -f good.txt || { echo 'error: good.txt missing'; exit 1; }"), vec![]), task(&p, PermissionLevel::Edit, "x"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
-        assert_eq!(rounds_of(&events), vec![(VerifyOutcome::Fixing, 1), (VerifyOutcome::Passed, 1)]);
-        let reqs = requests.lock().unwrap();
-        assert_eq!(reqs.len(), 4, "过了就不再叫模型");
-        let third = serde_json::to_string(&reqs[2].messages).unwrap();
-        assert!(third.contains("<peck-verify>") && third.contains("good.txt missing") && third.contains("1/3"));
-        let starts: Vec<VerifyTrigger> = events.iter().filter_map(|e| match &e.body { EventBody::VerifyStarted { trigger, .. } => Some(*trigger), _ => None }).collect();
-        assert!(starts.contains(&VerifyTrigger::Edit), "改了文件后台先跑：{starts:?}");
-    }
-
-    #[tokio::test]
-    async fn the_same_failure_twice_stops() {
-        let p = TempProject::new();
-        let model = Arc::new(ScriptedModel::new(
-            "deepseek/deepseek-flash",
-            vec![turn("", vec![write("a.txt")]), turn("好了。", vec![]), turn("", vec![write("b.txt")]), turn("又好了。", vec![]), turn("不会到这", vec![])],
-            Duration::ZERO,
-        ));
-        let requests = model.requests.clone();
-        let (outcome, events) = drive(&PeckBackend::new(model, verify_cfg(&p, "echo 'error[E1]: nope (0.01s)'; exit 1"), vec![]), task(&p, PermissionLevel::Edit, "x"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Limit);
-        assert_eq!(requests.lock().unwrap().len(), 4);
-        assert_eq!(rounds_of(&events), vec![(VerifyOutcome::Fixing, 1), (VerifyOutcome::Stopped, 1)]);
-        assert!(matches!(&events.last().unwrap().body, EventBody::TurnCompleted { error: Some(e), .. } if e.contains("同一个失败连续两次")));
-    }
-
-    #[tokio::test]
-    async fn no_edit_between_attempts_stops_and_three_fixes_is_the_limit() {
-        let p = TempProject::new();
-        let model = Arc::new(ScriptedModel::new(
-            "deepseek/deepseek-flash",
-            vec![turn("", vec![write("a.txt")]), turn("好了。", vec![]), turn("我觉得没问题。", vec![]), turn("不会到这", vec![])],
-            Duration::ZERO,
-        ));
-        let (outcome, events) = drive(&PeckBackend::new(model, verify_cfg(&p, "exit 1"), vec![]), task(&p, PermissionLevel::Edit, "x"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Limit);
-        assert!(matches!(&events.last().unwrap().body, EventBody::TurnCompleted { error: Some(e), .. } if e.contains("没改任何文件")));
-
-        // 每次都换个失败、每次都改了文件：修 3 次还没过就停
-        let p = TempProject::new();
-        let mut script = vec![];
-        for i in 0..5 {
-            script.push(turn("", vec![write(&format!("f{i}.txt"))]));
-            script.push(turn("好了。", vec![]));
-        }
-        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", script, Duration::ZERO));
-        let requests = model.requests.clone();
-        let (outcome, events) = drive(&PeckBackend::new(model, verify_cfg(&p, "echo \"error: $(ls *.txt | wc -l) files\"; exit 1"), vec![]), task(&p, PermissionLevel::Edit, "x"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Limit);
-        assert_eq!(requests.lock().unwrap().len(), 8);
-        let r = rounds_of(&events);
-        assert_eq!(r.iter().filter(|x| x.0 == VerifyOutcome::Fixing).count(), 3);
-        assert_eq!(r.last(), Some(&(VerifyOutcome::Stopped, 3)));
-    }
-
-    #[tokio::test]
-    async fn goal_mode_runs_the_goal_even_without_edits_and_plan_never_verifies() {
-        let p = TempProject::new();
-        let model = Arc::new(ScriptedModel::new(
-            "deepseek/deepseek-flash",
-            vec![turn("先看看。", vec![]), turn("", vec![("write_file", json!({"path":"done.txt","content":"ok"}))]), turn("做到了。", vec![])],
-            Duration::ZERO,
-        ));
-        let mut cfg = verify_cfg(&p, "test -f done.txt");
-        cfg.verify.goal = vec!["check".into()];
-        let (outcome, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Edit, "x"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
-        assert_eq!(rounds_of(&events), vec![(VerifyOutcome::Fixing, 1), (VerifyOutcome::Passed, 1)]);
-        assert!(events.iter().any(|e| matches!(&e.body, EventBody::VerifyRound { goal: true, max_attempts: GOAL_ATTEMPTS, .. })));
-
-        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("只看看。", vec![])], Duration::ZERO));
-        let (outcome, events) = drive(&PeckBackend::new(model, verify_cfg(&p, "exit 1"), vec![]), task(&p, PermissionLevel::Plan, "x"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Done);
-        assert!(rounds_of(&events).is_empty(), "PLAN 不改文件，不看验证");
     }
 
     #[tokio::test]
@@ -2641,6 +2510,123 @@ mod tests {
         assert_eq!(lib.read("new.rs"), "pub fn y() {}\n", "能改的文件夹写得进");
         assert_eq!(docs.read("guide.md"), "# guide\n", "只读的不动");
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { output: Some(o), .. } if o.contains("只读"))));
+    }
+
+    #[tokio::test]
+    async fn snapshots_and_schedules_are_driven_from_the_conversation() {
+        use crate::harness::extras::testing as x;
+        let w = x::world();
+        w.p.write("a.txt", "a0\n");
+        x::task(&w, 930_001, |p| {
+            p.write("a.txt", "a1\n");
+        });
+        let restore = json!({"action":"restore","task":930_001,"to":"before"});
+        let model = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![("restore_snapshot", json!({"action":"list"}))]),
+                turn("", vec![("restore_snapshot", restore.clone())]),
+                turn("", vec![("schedule_task", json!({"prompt":"检查依赖有没有更新","repeat":"weekly","days":[1],"time":"09:00"}))]),
+                turn("好了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let requests = model.requests.clone();
+        let mut cfg = config(&w.p, "deepseek/deepseek-flash");
+        cfg.extras = Some(Arc::new(x::extras(&w, "run-t")));
+        cfg.context.project = ProjectLayer::default().with_skills(&w.p.dir, &[]);
+        let mut cards = Vec::new();
+        let (outcome, events) = drive(&PeckBackend::new(model, cfg.clone(), vec![]), task(&w.p, PermissionLevel::Auto, "撤掉上一次，再设个定时任务"), |e| match e {
+            EventBody::ApprovalRequested { request_id, high_risk, title, options, .. } => {
+                cards.push((*high_risk, title.clone(), options.len()));
+                Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::AllowOnce })
+            }
+            _ => None,
+        })
+        .await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        // AUTO 也要批：一张高危卡片，只有批准、不行。
+        assert_eq!(cards.len(), 1);
+        assert!(cards[0].0 && cards[0].1.contains("任务 930001 开始前") && cards[0].2 == 2, "{cards:?}");
+        assert_eq!(w.p.read("a.txt"), "a0\n");
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallStarted { title, .. } if title == "回到任务 930001 开始前")));
+        assert_eq!(w.store.lock().unwrap().schedules(Some("wx")).unwrap().len(), 1);
+        let first = requests.lock().unwrap()[0].clone();
+        for name in crate::harness::extras::NAMES {
+            assert!(first.tools.iter().any(|t| t.name == name), "{name}");
+        }
+        assert!(first.system[0].text.contains("peck-snapshots") && first.system.iter().any(|b| b.text.contains("- peck-schedules:")));
+
+        // 站主不批：文件不动。PLAN：连卡片都不弹。
+        x::task(&w, 930_002, |p| {
+            p.write("a.txt", "a2\n");
+        });
+        let again = json!({"action":"restore","task":930_002,"to":"before"});
+        for (level, approvals) in [(PermissionLevel::Auto, 1), (PermissionLevel::Plan, 0)] {
+            let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("", vec![("restore_snapshot", again.clone())]), turn("没动。", vec![])], Duration::ZERO));
+            let mut asked = 0;
+            let (_, events) = drive(&PeckBackend::new(model, cfg.clone(), vec![]), task(&w.p, level, "撤掉"), |e| match e {
+                EventBody::ApprovalRequested { request_id, .. } => {
+                    asked += 1;
+                    Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::DenyOnce })
+                }
+                _ => None,
+            })
+            .await;
+            assert_eq!(asked, approvals);
+            assert!(events.iter().any(|e| matches!(e.body, EventBody::ToolCallCompleted { status: ToolStatus::Denied, .. })));
+            assert_eq!(w.p.read("a.txt"), "a2\n");
+        }
+
+        // 没有这几样工具的地方（ONE SHOT、子任务）：工具不给，自带的 Skill 也不列。
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("好。", vec![])], Duration::ZERO));
+        let requests = model.requests.clone();
+        let mut one = cfg.clone();
+        one.oneshot = true;
+        let _ = drive(&PeckBackend::new(model, one, vec![]), task(&w.p, PermissionLevel::Plan, "看看"), |_| None).await;
+        let first = requests.lock().unwrap()[0].clone();
+        assert!(!first.tools.iter().any(|t| t.name == "restore_snapshot" || t.name == "load_skill"));
+        assert!(!first.system.iter().any(|b| b.text.contains("peck-snapshots")));
+        let _ = std::fs::remove_dir_all(&w.root);
+    }
+
+    #[tokio::test]
+    async fn a_read_only_stage_is_told_the_task_itself_is_not_read_only() {
+        let p = TempProject::new();
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("规范。", vec![])], Duration::ZERO));
+        let requests = model.requests.clone();
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.task_level = Some(PermissionLevel::Auto);
+        let _ = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Plan, "写规范"), |_| None).await;
+        let system = requests.lock().unwrap()[0].system[0].text.clone();
+        assert!(system.contains("read-only for this stage only") && system.contains("AUTO permission"), "{system}");
+        assert!(!system.contains("PLAN (read-only): investigate"));
+    }
+
+    #[tokio::test]
+    async fn a_kept_dev_server_outlives_the_task_and_a_later_task_can_stop_it() {
+        let p = TempProject::new();
+        let start = json!({"action":"start","command":"echo up; sleep 30","name":"dev","keep":true});
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("", vec![("bash_background", start.clone())]), turn("起了。", vec![])], Duration::ZERO));
+        let (_, events) = drive(&PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]), task(&p, PermissionLevel::Auto, "起 dev server"), |_| None).await;
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { status: ToolStatus::Ok, output: Some(o), .. } if o.contains("留着了"))));
+        let kept = background::kept(&p.dir);
+        assert_eq!(kept.len(), 1, "任务结束了它还在");
+        assert!(kept[0].owner.is_none() && kept[0].kind == BackgroundKind::Server);
+        // 后来的任务：同一条命令不起第二份；看得到、停得掉。PLAN 不给留。
+        let id = kept[0].id.clone();
+        let model = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![turn("", vec![("bash_background", start.clone())]), turn("", vec![("bash_background", json!({"action":"stop","id":id}))]), turn("停了。", vec![])],
+            Duration::ZERO,
+        ));
+        let (_, events) = drive(&PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]), task(&p, PermissionLevel::Auto, "停掉"), |_| None).await;
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { output: Some(o), .. } if o.contains("已经留着在跑"))));
+        assert!(background::kept(&p.dir).is_empty(), "停掉了");
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("", vec![("bash_background", start)]), turn("不行。", vec![])], Duration::ZERO));
+        let (_, events) = drive(&PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]), task(&p, PermissionLevel::Plan, "起"), |_| None).await;
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { status: ToolStatus::Failed, output: Some(o), .. } if o.contains("PLAN"))));
+        assert!(background::kept(&p.dir).is_empty());
     }
 
     #[test]

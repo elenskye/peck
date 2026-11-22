@@ -342,7 +342,7 @@ pub fn tail_bytes(text: &str, limit: usize) -> &str {
 
 pub fn kind_of(name: &str) -> ToolKind {
     match name {
-        LIST_DIRECTORY | READ_FILE | SCREENSHOT_APP | LOAD_SKILL => ToolKind::Read,
+        LIST_DIRECTORY | READ_FILE | SCREENSHOT_APP | LOAD_SKILL | super::extras::LIST_SCHEDULES => ToolKind::Read,
         SEARCH_TEXT | FIND_FILES | SEARCH_TASKS => ToolKind::Search,
         WRITE_FILE | WRITE_PATCH | APPLY_PATCH => ToolKind::Edit,
         BASH_RUN | BASH_BACKGROUND => ToolKind::Run,
@@ -420,6 +420,13 @@ pub fn title_of(name: &str, input: &Value) -> String {
         ASK_USER => "问你".into(),
         MEMORY => "想记住几条".into(),
         CREATE_SKILL => format!("想存成 Skill {}", s("name")),
+        super::extras::RESTORE_SNAPSHOT => match (s("action").as_str(), input.get("task").and_then(Value::as_u64)) {
+            ("restore", Some(n)) => format!("回到任务 {n} {}", if s("to") == "after" { "结束后" } else { "开始前" }),
+            _ => "看任务快照".into(),
+        },
+        super::extras::SCHEDULE_TASK => format!("设定时任务：{}", short(if s("title").is_empty() { s("prompt") } else { s("title") })),
+        super::extras::LIST_SCHEDULES => "看定时任务".into(),
+        super::extras::CANCEL_SCHEDULE => format!("取消定时任务 {}", s("id")),
         SEARCH_TASKS => match (s("query"), input.get("number").and_then(Value::as_u64)) {
             (_, Some(n)) => format!("看任务 {n}"),
             (q, None) if !q.is_empty() => format!("搜旧任务「{}」", short(q)),
@@ -538,12 +545,13 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["command"]}),
         ),
         BASH_BACKGROUND => (
-            "Run a long-running command in the background (dev server, watcher, long test suite) without blocking, then check on it. action=start (command, cwd?, name?) returns an id and the first output; action=read (id, wait_sec? up to 60) returns the new output since your last read and whether it is still running; action=stop (id); action=list. Same sandbox and approval rules as bash_run, no timeout. Your background commands are stopped when the task ends. The project's dev servers (from .peck/verify.toml) are listed too: you can read them but not stop them.",
+            "Run a long-running command in the background (dev server, watcher, long test suite) without blocking, then check on it. action=start (command, cwd?, name?) returns an id and the first output; action=read (id, wait_sec? up to 60) returns the new output since your last read and whether it is still running; action=stop (id); action=list. Same sandbox and approval rules as bash_run, no timeout. Your background commands are stopped when the task ends, unless you start one with keep=true: that is for a dev server the user wants to keep looking at (the PREVIEW panel shows it and can stop it); it stays up across tasks until someone stops it or Peck quits, and later tasks see it in list and can read or stop it. Don't keep anything that isn't a server.",
             json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["start","read","stop","list"]},
                 "command":{"type":"string","description":"start: the shell command."},
                 "cwd":{"type":"string","description":"start: relative to the project root. Default: the root."},
                 "name":{"type":"string","description":"start: a short label."},
+                "keep":{"type":"boolean","description":"start: keep it running after the task ends (dev servers only). Default false."},
                 "id":{"type":"string","description":"read / stop: the id from start or list."},
                 "wait_sec":{"type":"integer","minimum":0,"maximum":60,"description":"read: wait up to this long for new output or exit. Default 0."}
             },"required":["action"]}),
@@ -585,6 +593,10 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["name"]}),
         ),
         CREATE_SKILL => (crate::skill_propose::TOOL_DESCRIPTION, crate::skill_propose::tool_schema()),
+        super::extras::RESTORE_SNAPSHOT => (super::extras::RESTORE_DESCRIPTION, super::extras::restore_schema()),
+        super::extras::SCHEDULE_TASK => (super::extras::SCHEDULE_DESCRIPTION, super::extras::schedule_schema()),
+        super::extras::LIST_SCHEDULES => (super::extras::LIST_SCHEDULES_DESCRIPTION, json!({"type":"object","properties":{}})),
+        super::extras::CANCEL_SCHEDULE => (super::extras::CANCEL_SCHEDULE_DESCRIPTION, json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})),
         SCREENSHOT_APP => (
             "Take a screenshot of an app's window on the user's Mac and look at it (e.g. the app or page you are building, the iOS Simulator, a browser window). app: the app's name as shown in the Dock (matched loosely); window: part of the window title when the app has several. The image is attached to the result.",
             json!({"type":"object","properties":{

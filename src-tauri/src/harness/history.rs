@@ -410,7 +410,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };

@@ -5,7 +5,7 @@
 //! 2. 项目说明（`AGENTS.md`，没有就读 `CLAUDE.md`）+ 站主批过的记忆（系统提示第二块，缓存）；
 //! 3. 对话（Anthropic 在最后一条消息上再打一个断点，见 `convert/anthropic.rs`）；
 //! 4. 每次发一句话时带上的环境（`<peck-context>`）：系统、git、任务清单、这个任务改过的文件、
-//!    验证命令、在跑的后台命令；放在这一句话的前面，不进系统提示，免得每次把缓存打穿。
+//!    在跑的后台命令；放在这一句话的前面，不进系统提示，免得每次把缓存打穿。
 //!
 //! 大小用一个粗估（中日韩字一个算一个 token，其他四个字符一个），有实报的用量时按实报校准（`scale`）。
 
@@ -122,12 +122,8 @@ pub struct EnvInput {
     pub plan: Vec<PlanStep>,
     /// 这个任务（之前几次 + 这一次）改过的文件。
     pub changed: Vec<String>,
-    /// 验证命令：名字 + 命令。
-    pub checks: Vec<(String, String)>,
     /// 在跑的后台命令（一行一个，给模型看）。
     pub background: Vec<String>,
-    /// 目标模式：要过的那几条。
-    pub goal: Vec<String>,
     /// 项目的其他文件夹（v0.7）：路径、能不能改。
     pub folders: Vec<(String, bool)>,
     /// 项目自己的环境变量的名字（值不写进上下文）。
@@ -136,7 +132,7 @@ pub struct EnvInput {
     pub worktree_of: Option<String>,
 }
 
-/// 环境块：系统、git、任务清单、改过的文件、验证命令、后台命令。给模型看，写英文。
+/// 环境块：系统、git、任务清单、改过的文件、后台命令。给模型看，写英文。
 pub fn environment_block(root: &Path, input: &EnvInput) -> String {
     let mut lines = vec![CONTEXT_TAG.to_string()];
     lines.push(format!(
@@ -145,6 +141,7 @@ pub fn environment_block(root: &Path, input: &EnvInput) -> String {
         std::env::consts::ARCH,
         root.display()
     ));
+    lines.push(format!("Local time: {}", crate::schedule::local_now_text()));
     if let Some(main) = &input.worktree_of {
         lines.push(format!(
             "You are working in a separate git worktree of the project (the main folder is {main}). Work only here; the user applies your changes back to the main folder after reviewing them."
@@ -188,19 +185,6 @@ pub fn environment_block(root: &Path, input: &EnvInput) -> String {
             input.changed.len(),
             shown.join(", "),
             if more > 0 { format!(" … and {more} more") } else { String::new() }
-        ));
-    }
-    if !input.checks.is_empty() {
-        let list: Vec<String> = input.checks.iter().map(|(n, c)| format!("{n}: `{c}`")).collect();
-        lines.push(format!(
-            "Verify commands (Peck runs them for you after you edit and when you stop; you get the output if they fail): {}",
-            list.join(" · ")
-        ));
-    }
-    if !input.goal.is_empty() {
-        lines.push(format!(
-            "Goal mode: keep working until these pass: {}. Peck runs them each time you stop.",
-            input.goal.join(", ")
         ));
     }
     if !input.background.is_empty() {
@@ -409,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn environment_block_has_git_plan_changes_and_checks() {
+    fn environment_block_has_git_plan_and_changes() {
         let p = TempProject::new();
         p.write("a.txt", "1\n");
         let git = |args: &[&str]| {
@@ -425,9 +409,7 @@ mod tests {
         let input = EnvInput {
             plan: vec![PlanStep { text: "改标题".into(), status: PlanStatus::InProgress }],
             changed: vec!["a.txt".into()],
-            checks: vec![("check".into(), "cargo check".into())],
             background: vec!["dev server `pnpm dev` running".into()],
-            goal: vec![],
             folders: vec![("/other/lib".into(), false)],
             env_names: vec!["API_BASE".into()],
             worktree_of: None,
@@ -435,7 +417,7 @@ mod tests {
         let block = environment_block(&p.dir, &input);
         assert!(block.contains("Git branch: main"), "{block}");
         assert!(block.contains("?? b.txt") && block.contains("first commit"), "{block}");
-        assert!(block.contains("[>] 改标题") && block.contains("a.txt") && block.contains("check: `cargo check`") && block.contains("pnpm dev"));
+        assert!(block.contains("[>] 改标题") && block.contains("a.txt") && block.contains("pnpm dev"));
         assert!(block.ends_with("</peck-context>"));
         assert!(block.contains("/other/lib (read-only)") && block.contains("API_BASE"));
         let index_after = std::fs::metadata(p.dir.join(".git/index")).unwrap().modified().unwrap();

@@ -2,13 +2,11 @@
 // 看目录 → 读 → 搜 → 改 → 跑一条输出很长的命令（落盘）→ 删 dist（高危卡片）→ 清单 → 想记住两条 → 问一句 → 收尾。
 // 一轮是一次模型请求：先报上下文多大，再出思考和字、报用量和花费，然后是这一轮要的工具。
 //
-// v0.6 的几个场景按这句话里的字挑（testing.md 写着）：
+// 别的场景按这句话里的字挑（testing.md 写着）：
 // - 「长任务」：读几个大文件，上下文过了压缩线，自动压缩三步（落盘、清旧输出、交接摘要）以后接着做完；
-// - 「修好」：改完验证没过，交回模型修一次，再验证过了，挂 ✓；
-// - 「反复」：同一个失败连续两次，停下；
-// - 「并发」：后台验证跑到一半文件又改了，这次的结果过期，按新文件再跑；
-// - 发的时候开了 GOAL：目标模式，模型停下就跑目标那条，没过接着修。
-// 项目有验证命令（演示里 peck 有）时，主线改完文件也会在后台跑一遍、收尾时挂 ✓。
+// - 「撤销」「撤掉」「回退」：读 Skill → 列任务快照 → 复述 → `restore_snapshot`（高危卡片）；
+// - 「定时」「每周」「每天」「每隔」：读 Skill → 复述确认（ASK）→ `schedule_task`；
+// - 「dev server」：`bash_background` 带 keep 起一个留着的 dev server（右栏 PREVIEW 头上看得到）。
 import type { AgentCaps, EventBody, ToolKind } from "@/lib/agentEvents";
 import type { ReplayEvent } from "@/dev/gatewayMock";
 
@@ -19,18 +17,17 @@ export interface RoundState {
 
 export type Round = ReplayEvent[] | ((state: RoundState) => ReplayEvent[]);
 
-/** 演示里的一条验证命令。 */
-export interface DemoCheck { name: string; run: string }
-
 export interface DemoOptions {
   /** 模型的上下文窗口。 */
   window: number;
-  /** 这个项目的验证命令（.peck/verify.toml）。 */
-  checks: DemoCheck[];
-  /** 目标模式：要过的那条。 */
-  goal?: string | null;
   /** 有没有项目说明和记忆（上下文里那一块多大）。 */
   project: boolean;
+  /** 剧本演到「设了定时任务」「起了留着的 dev server」「回退了」时，让假后端跟着变。 */
+  onSchedule?: () => string;
+  onServer?: () => void;
+  onRestore?: () => void;
+  /** 最近一次改过文件的任务号（回退的剧本用）。 */
+  lastTask?: number;
 }
 
 /** 上下文多大：Peck 的说明和工具、项目说明和记忆、对话、工具的输出。 */
@@ -50,35 +47,6 @@ function context(o: DemoOptions, conversation: number, tools: number): ReplayEve
     ],
   };
 }
-
-function verifyStart(id: string, c: DemoCheck, trigger: "edit" | "end" | "goal", attempt = 0): ReplayEvent {
-  return { type: "verify.started", checkId: id, name: c.name, command: c.run, trigger, attempt };
-}
-
-function verifyDone(id: string, c: DemoCheck, status: "passed" | "failed" | "stale", output: string | null, durationMs = 3200, exitCode: number | null = status === "failed" ? 2 : 0): ReplayEvent {
-  return { type: "verify.completed", checkId: id, name: c.name, status, exitCode: status === "stale" ? null : exitCode, durationMs: status === "stale" ? null : durationMs, output };
-}
-
-function verifyRound(outcome: "passed" | "fixing" | "stopped", attempt: number, goal = false, reason: string | null = null): ReplayEvent {
-  return { type: "verify.round", attempt, maxAttempts: goal ? 8 : 3, outcome, reason, goal };
-}
-
-/** CLI 做完以后 Peck 替它跑验证（v0.10 C1）：平时过一遍；提示里有「验证没过」就先没过、交回同一个会话修好。 */
-export function cliVerifyRounds(checks: DemoCheck[], prompt: string, label: string, goal: string | null): Round[] {
-  const check = checks.find((c) => !goal || goal === "*" || c.name === goal) ?? checks[0];
-  if (!check) return [];
-  const isGoal = !!goal;
-  if (!/验证没过|没过/.test(prompt)) {
-    return [[verifyStart("cv1", check, isGoal ? "goal" : "end"), verifyDone("cv1", check, "passed", "退出码 0（2.8s）", 2800), verifyRound("passed", 0, isGoal)]];
-  }
-  return [
-    [verifyStart("cv1", check, isGoal ? "goal" : "end"), verifyDone("cv1", check, "failed", `退出码 2（3.1s）\n${TS_ERROR}`, 3100), verifyRound("fixing", 1, isGoal)],
-    [{ type: "message.completed", itemId: "cv-fix", text: `（${label} 续接同一个会话）类型错误改好了：\`count\` 改回字符串。` }],
-    [verifyStart("cv2", check, isGoal ? "goal" : "end", 1), verifyDone("cv2", check, "passed", "退出码 0（2.9s）", 2900), verifyRound("passed", 1, isGoal)],
-  ];
-}
-
-const TS_ERROR = "src/App.tsx(3,7): error TS2322: Type 'number' is not assignable to type 'string'.\n\nFound 1 error in src/App.tsx:3";
 
 export const PECK_CAPS: AgentCaps = {
   streaming: true, reasoningReplay: true, tools: "peck", approvals: "live", askUser: true, steer: true, interrupt: true,
@@ -125,10 +93,9 @@ function done(callId: string, output: string, extra: Partial<Extract<EventBody, 
 }
 
 /** Peck 循环的演示剧本。`files` 是这个项目的假文件（路径 → 内容）；`prompt` 里的字挑场景（见文件开头）。 */
-export function peckDemo(runId: string, files: Record<string, string>, prompt = "", options: DemoOptions = { window: 1_000_000, checks: [], project: false }): { rounds: Round[]; edit: { path: string; before: string; after: string } } {
+export function peckDemo(runId: string, files: Record<string, string>, prompt = "", options: DemoOptions = { window: 1_000_000, project: false }): { rounds: Round[]; edit: { path: string; before: string; after: string }; /** 这个剧本改不改那个文件。 */ edits: boolean } {
   const o = options;
-  const check = o.checks[0] ?? { name: "check", run: "pnpm check" };
-  const scenario = o.goal ? "goal" : /长任务/.test(prompt) ? "long" : /反复/.test(prompt) ? "repeat" : /并发/.test(prompt) ? "stale" : /修好/.test(prompt) ? "fix" : "main";
+  const scenario: Scenario | "main" = /长任务/.test(prompt) ? "long" : /撤销|撤掉|回退/.test(prompt) ? "restore" : /定时|每周|每天|每隔/.test(prompt) ? "schedule" : /dev server/i.test(prompt) ? "server" : "main";
   const paths = Object.keys(files).sort();
   const editPath = paths.find((p) => /\.(tsx?|rs|go)$/.test(p) && !p.includes("legacy")) ?? paths[0] ?? "README.md";
   const before = files[editPath] ?? "";
@@ -149,10 +116,8 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
     { type: "diff.updated", files: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] },
     ...extra,
   ];
-  const read = (id: string): ReplayEvent[] => [tool(id, "read_file", "read", `读 ${editPath}`, { path: editPath }), done(id, num(lines.slice(0, 40)))];
   const edited = { path: editPath, before, after };
-  if (scenario !== "main") return { rounds: scenarioRounds(scenario, o, check, read, editRound, editPath, runId), edit: edited };
-  const verifying = o.checks.length > 0;
+  if (scenario !== "main") return { rounds: scenarioRounds(scenario, o, editRound, editPath, runId), edit: edited, edits: scenario === "long" };
   const rounds: Round[] = [
     [
       context(o, 600, 0),
@@ -182,7 +147,6 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
       tool("c4", "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: first, new_text: `// 待办：标题改成中文（Peck 循环演示）\n${first}` }] }),
       done("c4", `改好了 1 处：\n\n${editPath} 第 1 行：\n${num(after.split("\n").slice(0, 4))}`, { diff: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] }),
       { type: "diff.updated", files: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] },
-      ...(verifying ? [verifyStart("v1", check, "edit")] : []),
     ],
     [
       context(o, 2100, 4300),
@@ -191,7 +155,6 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
       tool("c5", "bash_run", "run", "跑 pnpm test", { command: "pnpm test", timeout_sec: 120 }),
       ...chunks(testLog.slice(0, 1800), 300).map((text): ReplayEvent => ({ type: "tool_call.output_delta", callId: "c5", text })),
       done("c5", shown, { exitCode: 0, durationMs: 6400 }),
-      ...(verifying ? [verifyDone("v1", check, "passed", "退出码 0（3.2s）")] : []),
     ],
     [
       context(o, 2400, 8200),
@@ -242,92 +205,87 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
     (state) => [
       ...say(9, `改好了：\n\n- \`${editPath}\` 开头加了一行说明\n- \`pnpm test\` 通过（4200 个测试；完整日志在命令那一步点开）\n- 副标题：你说「${state.answer}」，${state.answer.includes("不") ? "这次先不动" : "下一句我接着改"}\n\n| 文件 | 改动 |\n| --- | --- |\n| \`${editPath}\` | +1 |\n\n→ 副标题也改成中文\n→ 把 dist/ 加进 .gitignore`, "站主回答了，收尾。"),
       usage(150, 160, 8500, 0.00031),
-      ...(verifying ? [verifyRound("passed", 0)] : []),
       context(o, 3400, 8600),
     ],
   ];
-  return { rounds, edit: { path: editPath, before, after } };
+  return { rounds, edit: { path: editPath, before, after }, edits: true };
 }
 
-type Scenario = "long" | "fix" | "repeat" | "stale" | "goal";
+type Scenario = "long" | "restore" | "schedule" | "server";
 
-/** v0.6 的几个场景（长任务压缩、修好、反复失败、并发过期、目标模式）。 */
+/** 别的场景：长任务压缩、快照回退、定时任务、留着的 dev server。 */
 function scenarioRounds(
-  scenario: Scenario, o: DemoOptions, check: DemoCheck,
-  read: (id: string) => ReplayEvent[], editRound: (id: string, extra?: ReplayEvent[]) => ReplayEvent[], editPath: string, runId: string,
+  scenario: Scenario, o: DemoOptions,
+  editRound: (id: string, extra?: ReplayEvent[]) => ReplayEvent[], editPath: string, runId: string,
 ): Round[] {
   const W = o.window;
   const k = (f: number) => Math.round(W * f);
-  if (scenario === "long") {
-    const big = (id: string, path: string, kb: number): ReplayEvent[] => [
-      tool(id, "read_file", "read", `读 ${path}`, { path }),
-      done(id, `${num(Array.from({ length: 40 }, (_, i) => `// ${path} 第 ${i + 1} 行（演示：这个文件很长）`))}\n[读到第 2000 行，共 ${kb * 20} 行；从 2001 行接着读]`),
-    ];
-    const spilled = `/mock/harness-output/${runId}/ctx-1.log`;
-    MOCK_SPILLS[spilled] = "（演示：压缩时落盘的完整工具输出）\n".repeat(400);
+  if (scenario === "restore") {
+    const n = o.lastTask ?? 41;
+    const list = `Recent task snapshots in this project (newest first):\n#${n} · 2026-11-22 14:03 · done · "把标题改成中文" · 2 file(s): ${editPath}, docs/notes.md · states: before, after\n#${n - 3} · 2026-11-21 20:10 · done · "加一个设置页" · 4 file(s): src/Settings.tsx, src/App.tsx, +2 more · states: before, after`;
     return [
-      [context(o, 600, 0), ...say(1, "这个任务要读的东西多，我先看结构。"), usage(4800, 90, 0, 0.0007), tool("l1", "list_directory", "read", "看 项目根目录", { path: ".", depth: 2 }), done("l1", "./\nsrc/\ndocs/\nfixtures/")],
-      [context(o, 900, 1800), ...say(2, "", "先把两个大的夹具文件读一遍。"), usage(6000, 70, 4800, 0.0009), ...big("l2", "fixtures/events-2026-10.jsonl", 900)],
-      [context(o, 1300, k(0.36)), ...say(3, ""), usage(k(0.36), 80, 6000, 0.05), ...big("l3", "fixtures/events-2026-11.jsonl", 1200)],
-      [context(o, 1700, k(0.66)), ...say(4, "再跑一遍测试看看现在的状态。"), usage(k(0.3), 90, k(0.36), 0.04),
-        tool("l4", "bash_run", "run", "跑 pnpm test", { command: "pnpm test" }), done("l4", "退出码 0（41.2s）\n[输出共 2.1 MB，太长：完整的存在 /mock/harness-output/l4.log]", { exitCode: 0, durationMs: 41200 })],
-      [
-        context(o, 2100, k(0.81)),
-        { type: "context.compacted", step: "spill", before: k(0.83), after: k(0.71), text: "3 份长的工具输出落了盘，上下文里只留开头、结尾和路径", summary: null },
-        { type: "context.compacted", step: "clear", before: k(0.71), after: k(0.64), text: "清掉了 2 份旧的工具输出（最近两轮的留着）", summary: null },
-        { type: "context.compacted", step: "summary", before: k(0.64), after: 9800, text: "前面的对话换成了一份交接摘要（加上你最近说的几句）",
-          summary: "## 目标\n把两个月的事件夹具按日期合并，测试照旧通过。\n\n## 做了什么\n- 读了 `fixtures/events-2026-10.jsonl`、`fixtures/events-2026-11.jsonl`（各 2000 行以内的部分）\n- `pnpm test` 通过（41s）\n\n## 现在\n两个文件的格式一样，按 `at` 排序就能合并。\n\n## 下一步\n改 `" + editPath + "`，加一行说明，再收尾。" },
-        context(o, 2400, 7400),
-        ...say(5, "压缩以后接着做：照交接摘要，改要改的那一处。"), usage(7400, 120, 0, 0.0011),
-        ...editRound("l5"),
-      ],
-      [context(o, 2800, 8200), ...say(6, `接着做完了：\n\n- 上下文快满时自动压缩了一次（落盘 → 清旧输出 → 交接摘要），之后照摘要接着做\n- \`${editPath}\` 加了一行说明\n- 完整的工具输出都落了盘，点开那几步能看`), usage(900, 160, 7400, 0.0004), context(o, 3100, 8200)],
+      [context(o, 600, 0), ...say(1, "", "站主要撤销：先读 Peck 自带的 Skill。"), usage(4300, 60, 0, 0.0006),
+        tool("u1", "load_skill", "read", "读 Skill peck-snapshots", { name: "peck-snapshots" }), done("u1", "# 任务快照：看改动、反悔\n…")],
+      [context(o, 900, 1400), ...say(2, ""), usage(700, 50, 4300, 0.0002),
+        tool("u2", "restore_snapshot", "other", "看任务快照", { action: "list" }), done("u2", list)],
+      [context(o, 1200, 1800), ...say(3, `要把任务 ${n}（把标题改成中文）改过的 2 个文件放回它开始前的样子：\`${editPath}\` 写回，\`docs/notes.md\` 删掉。批一下卡片就动。`), usage(500, 90, 5000, 0.0002),
+        tool("u3", "restore_snapshot", "other", `回到任务 ${n} 开始前`, { action: "restore", task: n, to: "before" }),
+        { type: "approval.requested", requestId: "approve-1", callId: "u3", kind: "edit", title: `高危：回到任务 ${n} 开始前（2 个文件）`, detail: `任务 ${n}（2026-11-22 14:03）：把标题改成中文\n写回  ${editPath}\n删掉  docs/notes.md\n回退前的样子也存了一份快照；你自己的 Git 不动。`, highRisk: true, options: ["allow_once", "deny_once"] },
+        ...(() => { o.onRestore?.(); return []; })(),
+        done("u3", `放回去了：它改过的文件回到任务 ${n} 开始前，写回 1 个文件、删掉 1 个。`)],
+      [context(o, 1500, 2100), ...say(4, `撤掉了：任务 ${n} 改过的 2 个文件回到了它开始前的样子（写回 1 个、删掉 1 个）。回退前的样子也有快照，想放回来说一声。`), usage(300, 80, 5600, 0.0002), context(o, 1700, 2100)],
     ];
   }
-  if (scenario === "fix") {
+  if (scenario === "schedule") {
+    const said = "我设一个定时任务：**每周一 09:00**，在这个项目里发「检查这个项目的依赖有没有可以更新的版本，列出能升的和升级风险，先不要改文件」，用现在选的这个模型跑，每次开一个新对话。可以吗？";
     return [
-      [context(o, 600, 0), ...say(1, "", "先读要改的文件。"), usage(4300, 80, 0, 0.0006), ...read("f1")],
-      [context(o, 1000, 1900), ...say(2, "改标题。"), usage(900, 120, 4300, 0.0003), ...editRound("f2", [verifyStart("v1", check, "edit")])],
-      [context(o, 1400, 2300), ...say(3, "改好了。"), usage(500, 40, 5200, 0.0002),
-        verifyDone("v1", check, "failed", `退出码 2（3.4s）\n${TS_ERROR}`, 3400), verifyRound("fixing", 1)],
-      [context(o, 1900, 2900), ...say(4, "", "验证没过：第 3 行把数字赋给了 string。改回字符串。"), usage(800, 110, 5700, 0.0003),
-        tool("f4", "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: "count: 0", new_text: "count: \"0\"" }] }),
-        done("f4", "改好了 1 处", { diff: [{ path: editPath, change: "modified", additions: 2, deletions: 1 }] }), verifyStart("v2", check, "edit", 1)],
-      [context(o, 2300, 3100), ...say(5, `修好了：\n\n- \`${editPath}\` 开头加了一行说明\n- 第一次验证没过（第 3 行类型不对），改回字符串以后 \`${check.run}\` 过了\n\n→ 给这个类型补一个测试`), usage(400, 130, 6500, 0.0003),
-        verifyDone("v2", check, "passed", "退出码 0（3.1s）", 3100), verifyRound("passed", 1)],
+      [context(o, 600, 0), ...say(1, "", "站主要定时做一件事：先读 Peck 自带的 Skill。"), usage(4300, 60, 0, 0.0006),
+        tool("t1", "load_skill", "read", "读 Skill peck-schedules", { name: "peck-schedules" }), done("t1", "# 定时任务\n…")],
+      [context(o, 900, 1500), ...say(2, said), usage(700, 120, 4300, 0.0003),
+        tool("t2", "ask_user", "other", "问你", { question: "照这样设吗？", options: ["可以", "改一下"] }),
+        { type: "user_input.requested", requestId: "ask-1", question: "照这样设吗？", options: ["可以", "改一下"], freeText: true },
+        done("t2", "站主回答：（见上）")],
+      (state) => (state.answer.includes("改") ? [...say(3, "好，要改哪一样？时间、那句话，还是谁来干？"), usage(200, 40, 5200, 0.0001)] : [
+        ...say(3, ""), usage(300, 60, 5200, 0.0002),
+        tool("t3", "schedule_task", "other", "设定时任务：依赖更新", { title: "依赖更新", prompt: "检查这个项目的依赖有没有可以更新的版本，列出能升的和升级风险，先不要改文件", repeat: "weekly", days: [1], time: "09:00" }),
+        done("t3", `设好了。\n${o.onSchedule?.() ?? "id sched-demo ·「依赖更新」"}`),
+      ]),
+      (state) => (state.answer.includes("改") ? [] : [...say(4, "设好了：**每周一 09:00** 检查依赖更新，每次开一个新对话。PROJECTS 头上的钟里能看到；要改时间、换人或者取消，跟我说一声。"), usage(200, 70, 5600, 0.0002), context(o, 1500, 1900)]),
     ];
   }
-  if (scenario === "repeat") {
-    const failOut = `退出码 2（3.3s）\n${TS_ERROR}`;
+  if (scenario === "server") {
     return [
-      [context(o, 600, 0), ...say(1, "改一下。"), usage(4300, 90, 0, 0.0006), ...editRound("r1", [verifyStart("v1", check, "edit")])],
-      [context(o, 1000, 1200), ...say(2, "改好了。"), usage(600, 40, 4300, 0.0002), verifyDone("v1", check, "failed", failOut, 3300), verifyRound("fixing", 1)],
-      [context(o, 1500, 2100), ...say(3, "", "可能是别处的问题，换个文件改。"), usage(900, 100, 4900, 0.0003),
-        tool("r3", "write_patch", "edit", "改 src/types.ts", { edits: [{ path: "src/types.ts", old_text: "x", new_text: "y" }] }),
-        done("r3", "改好了 1 处", { diff: [{ path: "src/types.ts", change: "modified", additions: 1, deletions: 1 }] }), verifyStart("v2", check, "edit", 1)],
-      [context(o, 1900, 2600), ...say(4, "这次应该好了。"), usage(400, 40, 5800, 0.0002), verifyDone("v2", check, "failed", failOut, 3300),
-        verifyRound("stopped", 1, false, `验证没过（${check.name}）：同一个失败连续两次，先停下。`),
-        { type: "turn.completed", turnId: `turn-${runId}`, reason: "limit", error: `验证没过（${check.name}）：同一个失败连续两次，先停下。失败的输出在验证卡片里；接着说一句就能继续。` }],
+      [context(o, 600, 0), ...say(1, "起 dev server，留着给你在 PREVIEW 里看。"), usage(4300, 60, 0, 0.0006),
+        tool("d1", "bash_background", "run", "后台跑 pnpm dev", { action: "start", command: "pnpm dev", name: "dev", keep: true }),
+        ...(() => { o.onServer?.(); return []; })(),
+        { type: "background.updated", id: "srv-dev-demo", name: "dev", command: "pnpm dev", kind: "server", status: "running", exitCode: null },
+        done("d1", "「dev」在跑（1s，id srv-dev-demo）\n留着了：任务结束不停，站主在右栏 PREVIEW 里看、能点停；退出 Peck 才全停。\n  ➜  Local:   http://localhost:5173/")],
+      [context(o, 900, 600), ...say(2, "dev server 起来了：`http://localhost:5173/`，留着在跑，右栏 PREVIEW 点 GO 就能看；不用了在 PREVIEW 头上点一下停。"), usage(300, 70, 4300, 0.0002), context(o, 1100, 600)],
     ];
   }
-  if (scenario === "stale") {
-    return [
-      [context(o, 600, 0), ...say(1, "两处都要改，先改第一处。"), usage(4300, 90, 0, 0.0006), ...editRound("s1", [verifyStart("v1", check, "edit")])],
-      [context(o, 1000, 1200), ...say(2, "", "第二处在同一个文件里，接着改。"), usage(700, 80, 4300, 0.0002),
-        tool("s2", "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: "a", new_text: "b" }] }),
-        done("s2", "改好了 1 处", { diff: [{ path: editPath, change: "modified", additions: 2, deletions: 1 }] }),
-        verifyDone("v1", check, "stale", "跑的时候文件又改了，这次的结果不算，按新的文件再跑。"),
-        verifyStart("v2", check, "edit")],
-      [context(o, 1400, 1700), ...say(3, "两处都改好了。"), usage(500, 60, 5000, 0.0002), verifyDone("v2", check, "passed", "退出码 0（3.0s）", 3000), verifyRound("passed", 0)],
-    ];
-  }
-  // 目标模式
+  const big = (id: string, path: string, kb: number): ReplayEvent[] => [
+    tool(id, "read_file", "read", `读 ${path}`, { path }),
+    done(id, `${num(Array.from({ length: 40 }, (_, i) => `// ${path} 第 ${i + 1} 行（演示：这个文件很长）`))}\n[读到第 2000 行，共 ${kb * 20} 行；从 2001 行接着读]`),
+  ];
+  const spilled = `/mock/harness-output/${runId}/ctx-1.log`;
+  MOCK_SPILLS[spilled] = "（演示：压缩时落盘的完整工具输出）\n".repeat(400);
   return [
-    [context(o, 600, 0), ...say(1, "", "目标是让检查过，先看现在的状态。"), usage(4300, 80, 0, 0.0006), ...read("g1")],
-    [context(o, 1000, 1900), ...say(2, "现在的代码看起来没问题。"), usage(800, 60, 4300, 0.0003),
-      verifyStart("v1", check, "goal"), verifyDone("v1", check, "failed", `退出码 2（3.4s）\n${TS_ERROR}`, 3400), verifyRound("fixing", 1, true)],
-    [context(o, 1500, 2600), ...say(3, "", "目标没达到：第 3 行类型不对。"), usage(900, 120, 5100, 0.0003), ...editRound("g3", [verifyStart("v2", check, "edit", 1)])],
-    [context(o, 1900, 3000), ...say(4, `目标达到了：\`${check.run}\` 过了（自动修了 1 次）。`), usage(400, 90, 6000, 0.0002), verifyDone("v2", check, "passed", "退出码 0（3.1s）", 3100), verifyRound("passed", 1, true)],
+    [context(o, 600, 0), ...say(1, "这个任务要读的东西多，我先看结构。"), usage(4800, 90, 0, 0.0007), tool("l1", "list_directory", "read", "看 项目根目录", { path: ".", depth: 2 }), done("l1", "./\nsrc/\ndocs/\nfixtures/")],
+    [context(o, 900, 1800), ...say(2, "", "先把两个大的夹具文件读一遍。"), usage(6000, 70, 4800, 0.0009), ...big("l2", "fixtures/events-2026-10.jsonl", 900)],
+    [context(o, 1300, k(0.36)), ...say(3, ""), usage(k(0.36), 80, 6000, 0.05), ...big("l3", "fixtures/events-2026-11.jsonl", 1200)],
+    [context(o, 1700, k(0.66)), ...say(4, "再跑一遍测试看看现在的状态。"), usage(k(0.3), 90, k(0.36), 0.04),
+      tool("l4", "bash_run", "run", "跑 pnpm test", { command: "pnpm test" }), done("l4", "退出码 0（41.2s）\n[输出共 2.1 MB，太长：完整的存在 /mock/harness-output/l4.log]", { exitCode: 0, durationMs: 41200 })],
+    [
+      context(o, 2100, k(0.81)),
+      { type: "context.compacted", step: "spill", before: k(0.83), after: k(0.71), text: "3 份长的工具输出落了盘，上下文里只留开头、结尾和路径", summary: null },
+      { type: "context.compacted", step: "clear", before: k(0.71), after: k(0.64), text: "清掉了 2 份旧的工具输出（最近两轮的留着）", summary: null },
+      { type: "context.compacted", step: "summary", before: k(0.64), after: 9800, text: "前面的对话换成了一份交接摘要（加上你最近说的几句）",
+        summary: "## 目标\n把两个月的事件夹具按日期合并，测试照旧通过。\n\n## 做了什么\n- 读了 `fixtures/events-2026-10.jsonl`、`fixtures/events-2026-11.jsonl`（各 2000 行以内的部分）\n- `pnpm test` 通过（41s）\n\n## 现在\n两个文件的格式一样，按 `at` 排序就能合并。\n\n## 下一步\n改 `" + editPath + "`，加一行说明，再收尾。" },
+      context(o, 2400, 7400),
+      ...say(5, "压缩以后接着做：照交接摘要，改要改的那一处。"), usage(7400, 120, 0, 0.0011),
+      ...editRound("l5"),
+    ],
+    [context(o, 2800, 8200), ...say(6, `接着做完了：\n\n- 上下文快满时自动压缩了一次（落盘 → 清旧输出 → 交接摘要），之后照摘要接着做\n- \`${editPath}\` 加了一行说明\n- 完整的工具输出都落了盘，点开那几步能看`), usage(900, 160, 7400, 0.0004), context(o, 3100, 8200)],
   ];
 }
 

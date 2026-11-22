@@ -1,6 +1,6 @@
 [package]
 name = "peck"
-version = "1.0.1"
+version = "1.0.2"
 description = "Peck — 只在自己 Mac 上用的本地 Coding Agent"
 authors = ["Peck Team"]
 edition = "2021"

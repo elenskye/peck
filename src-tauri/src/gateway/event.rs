@@ -270,44 +270,8 @@ pub enum EventBody {
         error: Option<String>,
     },
 
-    // ── 验证和后台（v0.6）──
-    /// Peck 替模型跑一条验证命令（`.peck/verify.toml`）。
-    #[serde(rename = "verify.started")]
-    VerifyStarted {
-        check_id: String,
-        name: String,
-        command: String,
-        trigger: VerifyTrigger,
-        /// 第几次自动修之后跑的（0 是还没修过）。
-        #[serde(default)]
-        attempt: u32,
-    },
-    #[serde(rename = "verify.completed")]
-    VerifyCompleted {
-        check_id: String,
-        name: String,
-        status: VerifyStatus,
-        #[serde(default)]
-        exit_code: Option<i32>,
-        #[serde(default)]
-        duration_ms: Option<u64>,
-        /// 输出的结尾（完整的落盘，路径写在里面）。
-        #[serde(default)]
-        output: Option<String>,
-    },
-    /// 模型停下以后的一轮验证：都过了、交回去修、停下。
-    #[serde(rename = "verify.round")]
-    VerifyRound {
-        attempt: u32,
-        max_attempts: u32,
-        outcome: VerifyOutcome,
-        #[serde(default)]
-        reason: Option<String>,
-        /// 目标模式。
-        #[serde(default)]
-        goal: bool,
-    },
-    /// 后台命令（模型起的、常驻的 dev server）的状态变了。
+    // ── 后台（v0.6）──
+    /// 后台命令（模型起的；标了留着的 dev server）的状态变了。
     #[serde(rename = "background.updated")]
     BackgroundUpdated {
         id: String,
@@ -405,9 +369,6 @@ impl EventBody {
             Self::MemoryReviewed { .. } => "memory.reviewed",
             Self::SkillProposed { .. } => "skill.proposed",
             Self::SkillReviewed { .. } => "skill.reviewed",
-            Self::VerifyStarted { .. } => "verify.started",
-            Self::VerifyCompleted { .. } => "verify.completed",
-            Self::VerifyRound { .. } => "verify.round",
             Self::BackgroundUpdated { .. } => "background.updated",
             Self::StageStarted { .. } => "stage.started",
             Self::StageCompleted { .. } => "stage.completed",
@@ -420,7 +381,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 37] = [
+    pub const TYPE_NAMES: [&'static str; 34] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -448,9 +409,6 @@ impl EventBody {
         "memory.reviewed",
         "skill.proposed",
         "skill.reviewed",
-        "verify.started",
-        "verify.completed",
-        "verify.round",
         "background.updated",
         "stage.started",
         "stage.completed",
@@ -479,38 +437,6 @@ pub enum CompactStep {
     Clear,
     /// 模型写一份交接摘要，前面的对话换成它。
     Summary,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyTrigger {
-    /// 模型改了文件，后台先跑一遍。
-    Edit,
-    /// 模型停下了，收尾前跑。
-    End,
-    /// 目标模式：每次停下都跑目标那几条。
-    Goal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyStatus {
-    Passed,
-    Failed,
-    /// 跑的时候文件又变了，结果不算（会再跑）。
-    Stale,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyOutcome {
-    /// 都过了：不再叫模型。
-    Passed,
-    /// 没过：失败的输出交回模型修。
-    Fixing,
-    /// 停下：修够了次数、同一个失败连续两次、两次之间没改文件。
-    Stopped,
 }
 
 /// 接力、审查里的一段（v0.8）。
@@ -566,7 +492,7 @@ pub struct CriterionCheck {
 pub enum BackgroundKind {
     /// 模型用 `bash_background` 起的。
     Command,
-    /// `.peck/verify.toml` 里的常驻 dev server。
+    /// 模型起的时候标了留着的 dev server：任务结束不停，退出 Peck 才停。
     Server,
 }
 

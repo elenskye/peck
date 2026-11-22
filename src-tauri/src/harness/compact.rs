@@ -24,7 +24,7 @@ pub const STOP_AT: f64 = 0.95;
 pub const SPILL_OVER: usize = 3 * 1024;
 /// 第 2 步：最近几轮的工具输出不动。
 pub const KEEP_ROUNDS: usize = 2;
-/// 认出验证结果（自动修交回去的那条）。
+/// 旧对话里 Peck 交回去的验证结果（v1.0.2 以前有后台验证）：不当成站主说的话。
 pub const VERIFY_TAG: &str = "<peck-verify>";
 /// 认出交接摘要。
 pub const HANDOFF_TAG: &str = "<peck-handoff>";

@@ -11,7 +11,7 @@ import { ipc, type CliModel, type CliModels } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import { RELAY, applyPreset, canDelegate, currentSetup, matches, presetProblems, presetSummary } from "@/lib/presets";
 import { ago, cn, entryDot } from "@/lib/utils";
-import { Dot, FoldBtn, Icon, MenuChip, ModHead } from "@/ui";
+import { Dot, FoldBtn, Icon, Info, MenuChip, ModHead } from "@/ui";
 import { cliEngine, defaultEffort, firstOf, flowOf, labelOf, money, pickable, teamable, whoShort, type FlowKind } from "@/shell/ModelPicker";
 
 const priceOf = (e: ModelEntry) => {
@@ -25,6 +25,9 @@ const FLOWS: Array<{ id: FlowKind; label: string; does: string; none: string }> 
   { id: "cli", label: "CLI", does: "一个 CLI 整包干", none: "没检测到 CLI" },
   { id: "relay", label: "接力", does: "任意两个：前一个只读写规范，后一个照着做", none: "先配 Key 或装 CLI" },
 ];
+
+/** 头上的 ⓘ（站主 2026-11-22 要的）：接力、审查里没有「思考」那一行，强度从哪来写在这里。 */
+const EFFORT_NOTE = "工作流的思考强度跟着每个模型自己的设置：接力里写规范的、实施的和审查的，各用它在 API / CLI 里选过的那一档（没选过用默认）。委派的模型用它的默认思考强度。";
 
 interface Props {
   /** 模型列表（全部，含用不了的：CLI 没检测到的也列出来、变灰）。 */
@@ -110,7 +113,7 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
 
   return (
     <div ref={ref} className={cn("pk-mod left-agents", folded && "is-folded", grow && !folded && "is-grow", lit && "is-flash")} aria-label="谁来干">
-      <ModHead label="AGENTS" note={note && <span className="mod-note-text" title={note}>{note}</span>}>
+      <ModHead label="AGENTS" after={!folded && <Info text={EFFORT_NOTE} />} note={note && <span className="mod-note-text" title={note}>{note}</span>}>
         {!solo && <FoldBtn name="AGENTS" folded={folded} onFold={fold} />}
       </ModHead>
       {!folded && (

@@ -76,7 +76,7 @@ pub fn run() {
             std::thread::spawn(move || gateway::config::fill_cli_dir(&gateway_store, true));
             // 落盘的长输出：14 天没动过的任务文件夹删掉。
             std::thread::spawn(|| harness::run::prune_spills(&harness::run::spill_root(), std::time::Duration::from_secs(14 * 86_400)));
-            // 定时任务（v0.8）：每 30 秒看一眼到点的。
+            // 定时任务：关着时错过的记一笔，然后每 30 秒看一眼到点的。
             schedule::start(app.handle().clone());
             // 菜单栏图标起不来不挡 App 打开。
             if let Err(error) = tray::init(app) {
@@ -108,8 +108,6 @@ pub fn run() {
             commands::projects_overview,
             commands::files_list,
             commands::files_read,
-            commands::run_undo_preview,
-            commands::run_undo,
             commands::settings_get,
             commands::settings_set,
             commands::term_run,
@@ -149,15 +147,13 @@ pub fn run() {
             skill_propose::skill_versions,
             skill_propose::skill_restore,
             harness::run::harness_compact,
-            harness::run::verify_run_now,
             harness::run::harness_output_read,
             harness::run::harness_image_read,
             commands::open_path,
             preview::preview_start,
             schedule::schedule_list,
-            schedule::schedule_save,
             schedule::schedule_delete,
-            schedule::schedule_run_now,
+            schedule::schedule_missed,
             harness::run::harness_spend,
             harness::run::harness_allow_list,
             projects::workspace_update,
@@ -176,18 +172,13 @@ pub fn run() {
             commands::dialog_pick_folder,
             commands::files_quicklook,
             commands::files_quicklook_open,
-            commands::changes_hunk_revert,
             worktree::worktree_apply,
             worktree::worktree_discard,
             harness::history::memory_list,
             harness::history::memory_delete,
             harness::history::memory_review,
-            harness::verify::verify_get,
-            harness::verify::verify_save,
-            harness::verify::verify_dismiss,
             harness::background::background_list,
             harness::background::background_stop,
-            harness::background::server_start,
             app_icon::app_icon_set,
         ])
         // 点红色关闭只把窗口藏起来：菜单栏图标和在跑的任务都留着；⌘Q 或菜单栏图标的「退出 Peck」才退出。

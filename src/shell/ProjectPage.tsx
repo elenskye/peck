@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from "react";
 import type { ModelEntry } from "@/lib/agentEvents";
-import { ipc, type AllowRule, type MemoryNote, type ProjectMcpView, type Schedule, type SkillRow, type SkillVersion, type SlashList, type ToolHint, type VerifyState } from "@/lib/ipc";
+import { ipc, type AllowRule, type MemoryNote, type ProjectMcpView, type SkillRow, type SkillVersion, type SlashList, type ToolHint } from "@/lib/ipc";
 import type { Permission, ProjectOverview, ProjectSettings } from "@/lib/types";
-import { ago, clock, cn, entryDot, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
+import { ago, cn, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
 import { Btn, Dot, Field, Icon, Info, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
-import { WhoPicker, labelOf, pickable, teamable } from "@/shell/ModelPicker";
+import { WhoPicker, pickable } from "@/shell/ModelPicker";
 import { presetProblems, presetSummary, type Preset } from "@/lib/presets";
 
 
-/** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、验证命令、记忆、「总是允许」过的、归档全部任务、移出列表。 */
+/** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、MCP、Skills、记忆、「总是允许」过的、归档全部任务、移出列表。 */
 export const ProjectPage: React.FC<{
   project: ProjectOverview;
   entries: ModelEntry[];
@@ -20,29 +20,21 @@ export const ProjectPage: React.FC<{
   onArchiveAll: (id: string) => void;
   /** 存着的合作预设（v0.9 B2）：给项目指定默认用哪套。 */
   presets: Preset[];
-  /** AGENTS 里现在选的实施（定时任务「谁来干」默认用它）。 */
-  pick: string;
   onClose: () => void;
   say: (message: unknown) => void;
-}> = ({ project, entries, native, onChanged, onRelocate, onReveal, onRemove, onArchiveAll, presets, pick, onClose, say }) => {
+}> = ({ project, entries, native, onChanged, onRelocate, onReveal, onRemove, onArchiveAll, presets, onClose, say }) => {
   const { workspace, tasks, missing } = project;
   const [name, setName] = useState(workspace.name);
   const [rules, setRules] = useState<AllowRule[] | null>(null);
   const [armed, setArmed] = useState(false);
   const [archiveArmed, setArchiveArmed] = useState(false);
   const [memories, setMemories] = useState<MemoryNote[] | null>(null);
-  const [verify, setVerify] = useState<VerifyState | null>(null);
-  const [verifyText, setVerifyText] = useState("");
   useEffect(() => setName(workspace.name), [workspace.name]);
   useEffect(() => {
     let live = true;
     ipc.memoryList(workspace.id).then((m) => { if (live) setMemories(m); }).catch(say);
-    if (!missing) ipc.verifyGet(workspace.id).then((v) => { if (live) { setVerify(v); setVerifyText(v.text ?? v.guessed ?? ""); } }).catch(say);
     return () => { live = false; };
-  }, [workspace.id, missing]); // eslint-disable-line react-hooks/exhaustive-deps
-  const saveVerify = async () => {
-    try { const v = await ipc.verifySave(workspace.id, verifyText); setVerify(v); setVerifyText(v.text ?? ""); say("验证命令存好了"); } catch (e) { say(e); }
-  };
+  }, [workspace.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true;
     ipc.harnessAllowList().then((all) => { if (live) setRules(all.filter((r) => r.workspaceId === workspace.id)); }).catch(say);
@@ -153,7 +145,7 @@ export const ProjectPage: React.FC<{
             <Btn sm icon="folder" disabled={missing || (!native && !folderPath.trim())} onClick={() => void addFolder()}>ADD</Btn>
           </div>
 
-          <p className="lbl">ENV<Info text="一行一个 NAME=value。Peck 循环的命令、验证命令、dev server、TERM、CLI 引擎的进程都带上（同名的盖过你终端里的；PATH 不带进 CLI）；值只存在 Peck 的数据库里，不进模型上下文（Peck 循环看得到名字）。" /></p>
+          <p className="lbl">ENV<Info text="一行一个 NAME=value。Peck 循环的命令（包括它起的 dev server）、TERM、CLI 引擎的进程都带上（同名的盖过你终端里的；PATH 不带进 CLI）；值只存在 Peck 的数据库里，不进模型上下文（Peck 循环看得到名字）。" /></p>
           <textarea className="verify-text" aria-label="这个项目的环境变量" spellCheck={false} disabled={missing} value={envDraft}
             placeholder={"API_BASE=http://localhost:8080\nRUST_LOG=info"} rows={Math.min(12, Math.max(3, envDraft.split("\n").length + 1))} onChange={(e) => setEnvDraft(e.target.value)} />
           <div className="set-inline">
@@ -164,23 +156,6 @@ export const ProjectPage: React.FC<{
           <ProjectMcp workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
 
           <ProjectSkills workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
-
-          <p className="lbl">VERIFY · .peck/verify.toml<Info text="模型改了文件，Peck 在后台替它跑这些；模型停下时没过，就把失败交回去修（最多 3 次）。CLI 做完也跑（下面能关）。[[check]] 里 name、run、when（改了哪些文件才跑）、timeout（秒）；[[server]] 是常驻的 dev server，在右栏 PREVIEW 头上起停。项目自带的、改过的要 SAVE 确认过才用。" /></p>
-          {!verify?.exists && verify?.guessed && <p className="hint">还没有：下面是 Peck 猜的，SAVE 就写进去。</p>}
-          {verify?.error && <p className="hint is-bad">{verify.error}</p>}
-          {verify?.exists && !verify.approved && !verify.error && <p className="hint is-bad">还没确认：看一遍再 SAVE</p>}
-          <textarea className="verify-text" aria-label="verify.toml" spellCheck={false} disabled={missing} value={verifyText}
-            placeholder={'[[check]]\nname = "check"\nrun = "pnpm check"\nwhen = ["**/*.ts"]'} rows={Math.min(18, Math.max(6, verifyText.split("\n").length + 1))} onChange={(e) => setVerifyText(e.target.value)} />
-          <div className="set-inline">
-            <Btn sm disabled={missing || !verifyText.trim() || (verifyText === (verify?.text ?? "") && !!verify?.approved)} onClick={() => void saveVerify()}>SAVE</Btn>
-            {verify?.exists && verifyText !== (verify.text ?? "") && <Btn sm v="ghost" onClick={() => setVerifyText(verify.text ?? "")}>RESET</Btn>}
-          </div>
-          <div className="set-rows">
-            <Row name="CLI 做完也跑" off={!!settings.cliVerifyOff} info="CLI 引擎（和合作里 CLI 实施的那一段）做完，Peck 照样跑一遍改到的那几条；没过就续接它的会话交回去修，规则和 Peck 循环一样。Antigravity 只跑一遍、不交回。关了以后 GOAL 照样能开。">
-              <Switch label="CLI 做完也跑验证" on={!settings.cliVerifyOff} disabled={missing || saving}
-                onChange={(on) => void save({ settings: { ...settings, cliVerifyOff: !on } }, on ? "CLI 做完也替它跑验证" : "CLI 做完不跑验证了")} />
-            </Row>
-          </div>
 
           <p className="lbl">MEMORY<Info text="Peck 循环觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；每次发任务都带上。" /></p>
           {memories && memories.length > 0 ? (
@@ -194,8 +169,6 @@ export const ProjectPage: React.FC<{
           ) : (
             <p className="hint">{memories ? "还没有。" : "在读…"}</p>
           )}
-
-          <Schedules workspaceId={workspace.id} entries={entries} pick={pick} missing={!!missing} say={say} />
 
           <p className="lbl">ALWAYS ALLOWED<Info text="EDIT 档装依赖、起常驻进程时弹卡，点 ALWAYS 就记在这里。" /></p>
           {rules && rules.length > 0 ? (
@@ -281,7 +254,7 @@ const ProjectMcp: React.FC<{
 
 // ---------- Skills 和命令文件（v0.10 C2） ----------
 
-const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", user: "~/.claude/skills" };
+const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", user: "~/.claude/skills", peck: "Peck 自带" };
 
 /** 这个项目读到的 Skills（能一个个关）和斜杠命令文件。 */
 const ProjectSkills: React.FC<{
@@ -320,7 +293,7 @@ const ProjectSkills: React.FC<{
   const shown: SkillRow[] = rows ?? (list?.skills.map((k) => ({ ...k, loads: 0, stale: false, versions: 0 })) ?? []);
   return (
     <>
-      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/、你的 ~/.claude/skills/ 里的 SKILL.md。Peck 循环把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。Claude Code 自己会读这些；这里关掉只管 Peck 循环。模型提议、你批了的 Skill 也写在这几处；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck 循环和 Claude Code 读它的次数算（项目的只算这个项目，全局的算所有项目）。" /></p>
+      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/、你的 ~/.claude/skills/ 里的 SKILL.md，加上 Peck 自带的两个（快照回退、定时任务：教模型用 Peck 自己的工具，只给 Peck 循环）。Peck 循环把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。Claude Code 自己会读这些；这里关掉只管 Peck 循环。模型提议、你批了的 Skill 也写在这几处；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck 循环和 Claude Code 读它的次数算（项目的只算这个项目，全局的算所有项目）。" /></p>
       {list || rows ? (shown.length > 0 ? (
         <div className="set-rows">
           {shown.map((k) => (
@@ -344,103 +317,13 @@ const ProjectSkills: React.FC<{
       ) : <p className="hint">没有。</p>) : (
         <p className="hint">{missing ? "文件夹不在了。" : "在读…"}</p>
       )}
-      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/verify…），加上项目的 .claude/commands/ 和你的 ~/.claude/commands/ 里的 .md。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
+      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/undo…），加上项目的 .claude/commands/ 和你的 ~/.claude/commands/ 里的 .md。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
       {list && list.commands.length > 0 ? (
         <div className="chips">
           {list.commands.map((c) => <span key={c.name} className="chip-quiet" title={c.description}>/{c.name}{c.scope === "user" ? " · 你的" : ""}</span>)}
         </div>
       ) : (
         <p className="hint">{list ? "没有命令文件。" : "在读…"}</p>
-      )}
-    </>
-  );
-};
-
-// ---------- 定时任务（v0.8） ----------
-
-function whenText(s: Schedule): string {
-  if (s.when.kind === "interval") return `每 ${s.when.hours} 小时`;
-  return `${s.when.weekdays ? "工作日" : "每天"} ${s.when.time}`;
-}
-
-function nextText(at?: number | null): string {
-  if (!at) return "关着";
-  const d = new Date(at);
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  const tomorrow = new Date(today.getTime() + 86_400_000).toDateString() === d.toDateString();
-  return `下一次 ${sameDay ? "今天" : tomorrow ? "明天" : `${d.getMonth() + 1}-${d.getDate()}`} ${clock(at)}`;
-}
-
-const blank = (workspaceId: string, who: string): Schedule => ({
-  id: "", workspaceId, title: "", prompt: "", who, permission: "plan", when: { kind: "daily", time: "09:30", weekdays: true },
-  offsetMin: -new Date().getTimezoneOffset(), enabled: true,
-});
-
-/** 项目设置里的 SCHEDULE：到点了替你发一句话（每次一个新任务，做完进左栏 NOW）。 */
-const Schedules: React.FC<{ workspaceId: string; entries: ModelEntry[]; pick: string; missing: boolean; say: (m: unknown) => void }> = ({ workspaceId, entries, pick: current, missing, say }) => {
-  const [list, setList] = useState<Schedule[] | null>(null);
-  const [draft, setDraft] = useState<Schedule | null>(null);
-  const options = teamable(entries);
-  const load = () => ipc.scheduleList(workspaceId).then(setList).catch(say);
-  useEffect(() => { void load(); }, [workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const save = async (s: Schedule, message: string, closeEditor = false) => {
-    try { await ipc.scheduleSave({ ...s, offsetMin: -new Date().getTimezoneOffset() }); if (closeEditor) setDraft(null); await load(); say(message); } catch (e) { say(e); }
-  };
-  const label = (who: string) => { const e = entries.find((x) => x.id === who); return e ? labelOf(e) : who; };
-  const pick = draft ? options.find((e) => e.id === draft.who) ?? null : null;
-  return (
-    <>
-      <p className="lbl">SCHEDULE<Info text="到点了 Peck 替你在这个项目里发一句话：每次开一个新任务（标题前面一个 ⏰），做完、停下、等你批的都进左栏 NOW。App 开着才跑；关着错过的，12 小时以内的打开时补一次。到点时项目有任务在跑就等它跑完（最多等 2 小时）。Antigravity 不进定时任务。" /></p>
-      <div className="set-rows">
-        {list?.map((s) => (
-          <Row key={s.id} off={!s.enabled}
-            name={<><Dot kind={entryDot(s.who)} />{s.title}</>}
-            desc={<>{whenText(s)} · {label(s.who)} · {s.permission.toUpperCase()}{s.enabled ? ` · ${nextText(s.nextAt)}` : ""}{s.lastRunAt ? ` · 上一次 ${ago(s.lastRunAt)}${s.lastNote ? `（${s.lastNote}）` : ""}` : ""}</>}>
-            <Switch label={`${s.title} 开着`} on={s.enabled} onChange={(enabled) => void save({ ...s, enabled }, enabled ? "开了" : "关了，不会再到点发")} />
-            <Btn sm disabled={missing} onClick={() => void ipc.scheduleRunNow(s.id).then(() => { say("发出去了：左栏 NOW 里看"); void load(); }).catch(say)}>RUN NOW</Btn>
-            <Btn sm onClick={() => setDraft({ ...s })}>EDIT</Btn>
-            <Btn sm v="danger" onClick={() => void ipc.scheduleDelete(s.id).then(load).then(() => say("删掉了")).catch(say)}>REMOVE</Btn>
-          </Row>
-        ))}
-        {list && list.length === 0 && !draft && <p className="hint">还没有。</p>}
-      </div>
-      {draft ? (
-        <div className="pk-mod pk-mod--sunk set-editor">
-          <p className="lbl">{draft.id ? "EDIT SCHEDULE" : "ADD SCHEDULE"}</p>
-          <Row name="名字"><Field width={260} aria-label="定时任务的名字" placeholder="每天看一眼 TODO" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></Row>
-          <Row name="发什么">
-            <textarea className="sel set-env sched-prompt" aria-label="到点发的那句话" rows={3} value={draft.prompt} onChange={(e) => setDraft({ ...draft, prompt: e.target.value })} />
-          </Row>
-          <Row name="谁来干">
-            <MenuChip sm ariaLabel="定时任务谁来干" dot={pick ? (pick.group === "cli" ? entryDot(pick.id) : "api") : undefined} label={pick ? labelOf(pick) : "选一个"}>
-              {(close) => options.map((e) => (
-                <button key={e.id} type="button" role="menuitem" className={cn("pk-menu-item", draft.who === e.id && "is-on")} onClick={() => { setDraft({ ...draft, who: e.id }); close(); }}>
-                  <Dot kind={e.group === "cli" ? entryDot(e.id) : "api"} /><b>{labelOf(e)}</b><span>{e.group === "cli" ? "CLI" : e.providerLabel}</span>
-                </button>
-              ))}
-            </MenuChip>
-          </Row>
-          <Row name="权限" info="没人看着：PLAN 只读最稳；EDIT、AUTO 要改文件时照样弹卡片，在 NOW 里等你批。">
-            <Seg<Permission> label="定时任务的权限" sm items={PERMISSIONS.map((p) => ({ id: p.id as Permission, label: p.label }))} value={draft.permission} onChange={(permission) => setDraft({ ...draft, permission })} />
-          </Row>
-          <Row name="什么时候">
-            <Seg<"daily" | "weekdays" | "interval"> label="怎么定时" sm items={[{ id: "daily", label: "每天" }, { id: "weekdays", label: "工作日" }, { id: "interval", label: "每隔" }]}
-              value={draft.when.kind === "interval" ? "interval" : draft.when.weekdays ? "weekdays" : "daily"}
-              onChange={(k) => setDraft({ ...draft, when: k === "interval" ? { kind: "interval", hours: draft.when.kind === "interval" ? draft.when.hours : 6 } : { kind: "daily", time: draft.when.kind === "daily" ? draft.when.time : "09:30", weekdays: k === "weekdays" } })} />
-            {draft.when.kind === "daily" ? (
-              <Field width={90} aria-label="几点" type="time" value={draft.when.time} onChange={(e) => setDraft({ ...draft, when: { ...draft.when, kind: "daily", time: e.target.value } as Schedule["when"] })} />
-            ) : (
-              <><Field width={70} aria-label="每隔几小时" type="number" min={1} max={168} value={draft.when.hours} onChange={(e) => setDraft({ ...draft, when: { kind: "interval", hours: Number(e.target.value) || 1 } })} /><span className="hint">小时</span></>
-            )}
-          </Row>
-          <div className="set-inline">
-            <Btn v="primary" disabled={!draft.prompt.trim() || !draft.who} onClick={() => void save(draft, draft.id ? "存好了" : "加上了，到点就发", true)}>SAVE</Btn>
-            <Btn v="ghost" onClick={() => setDraft(null)}>CANCEL</Btn>
-          </div>
-        </div>
-      ) : (
-        <div className="set-inline"><Btn sm icon="plus" disabled={missing || options.length === 0} onClick={() => setDraft(blank(workspaceId, options.find((e) => e.id === current)?.id ?? options.find((e) => e.group === "peck")?.id ?? options[0]?.id ?? ""))}>ADD SCHEDULE</Btn></div>
       )}
     </>
   );

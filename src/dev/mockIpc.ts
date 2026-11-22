@@ -11,9 +11,9 @@ import {
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
-import { MOCK_SPILLS, PECK_CAPS, cliVerifyRounds, oneshotDemo, peckDemo, type DemoCheck, type Round } from "@/dev/peckMock";
+import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, SkillDraft, SkillRow, SkillVersion, SlashList, VerifyResult, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs, VerifyConfig, VerifyState } from "@/lib/ipc";
+import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs } from "@/lib/ipc";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
 import { cliRounds, delegateRound, fixRounds, reviewRounds, specRounds, stage, type Member } from "@/dev/teamMock";
 import type { ApiConfig, ApiStatus, ApiTask } from "@/lib/api";
@@ -29,7 +29,6 @@ import type {
   StepDescriptor,
   TermEvent,
   TermState,
-  UndoPreview,
   ProjectSettings,
   Workspace,
 } from "@/lib/types";
@@ -198,7 +197,7 @@ export const mockIpc = {
         if (at >= 0) env.splice(at, 1);
         env.push({ name, value: v.value });
       }
-      ws.settings = { ...patch.settings, folders, env, verifyDismissed: ws.settings?.verifyDismissed };
+      ws.settings = { ...patch.settings, folders, env };
     }
     return { ...ws };
   },
@@ -272,26 +271,6 @@ export const mockIpc = {
     };
   },
 
-  async runUndoPreview(runId: string): Promise<UndoPreview> {
-    const record = findRun(runId);
-    if (!record) throw new Error("没找到这个任务。");
-    return { runId, files: record.files.map((f, i) => ({ path: f.path, kind: f.kind, changedSince: i === 0 && record.files.length > 3 && !undoState[runId] })) };
-  },
-
-  async runUndo(runId: string): Promise<RunRecord> {
-    const record = findRun(runId);
-    if (!record) throw new Error("没找到这个任务。");
-    if (record.status === "running") throw new Error("任务还在跑，先停下来再撤销。");
-    const undo = undoState[runId];
-    if (undo) {
-      const files = (filesState[undo.workspaceId] ??= {});
-      undo.remove.forEach((p) => delete files[p]);
-      Object.assign(files, undo.restore);
-    }
-    record.undoneAt = Date.now();
-    return structuredClone(record);
-  },
-
   async filesList(workspaceId: string): Promise<FileListing> {
     const files = filesState[workspaceId] ?? {};
     return {
@@ -323,24 +302,6 @@ export const mockIpc = {
   },
   async filesQuicklookOpen(_workspaceId: string, _path: string): Promise<void> {
     console.info("[演示] 原生 App 里这里会弹出系统的 Quick Look 窗口。");
-  },
-  async changesHunkRevert(runId: string, _stepId: string | undefined, filePath: string, hunk: number): Promise<void> {
-    const record = findRun(runId);
-    if (!record) throw new Error("没找到这个任务。");
-    if (record.status === "running") throw new Error("任务还在跑，跑完再拒绝。");
-    const diff = diffsState[`${runId}:${filePath}`];
-    if (!diff) throw new Error("这个文件不是这个任务改的。");
-    const workspaceId = workspaceOfSession(record.sessionId);
-    const files = (filesState[workspaceId] ??= {});
-    const blocks = diff.unifiedDiff.split(/\n(?=@@)/).filter((b) => b.startsWith("@@"));
-    const block = blocks[hunk];
-    if (!block) throw new Error("没有这一块。");
-    const lines = block.split("\n").slice(1);
-    const after = lines.filter((l) => l.startsWith(" ") || l.startsWith("+")).map((l) => l.slice(1)).join("\n");
-    const before = lines.filter((l) => l.startsWith(" ") || l.startsWith("-")).map((l) => l.slice(1)).join("\n");
-    const current = files[filePath];
-    if (current != null && after && current.includes(after)) files[filePath] = current.replace(after, before);
-    else if (current != null && after) throw new Error("这一块后来又改过了，和任务做完时对不上，没动。");
   },
   async worktreeApply(runId: string, force: boolean): Promise<{ applied: string[]; conflicts: string[]; record: RunRecord }> {
     const record = findRun(runId);
@@ -524,16 +485,7 @@ export const mockIpc = {
       record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
       worktreeState[runId] = { files: {}, conflicts: [] };
     }
-    // CLI 也走后台验证（v0.10 C1）：确认过 verify.toml、不是 PLAN、项目没关、不是只做直接调用的（那种只跑一遍）。
-    const entry = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who);
-    const verify = mockVerify(workspaceId);
-    const checks: DemoCheck[] = verify.approved ? verify.config?.check.map((c) => ({ name: c.name, run: c.run })) ?? [] : [];
-    const off = workspacesState.find((w) => w.id === workspaceId)?.settings?.cliVerifyOff && !args.goal?.length;
-    if (args.goal?.length && entry?.directOnly) throw new Error(`${label} 只做直接调用，不开目标模式。`);
-    const after = (args.permission ?? "edit") !== "plan" && !off ? cliVerifyRounds(checks, args.prompt, label, args.goal?.[0] ?? null) : [];
-    // 引擎自己的收尾挪到验证之后（和真的一样：验证跑完才收尾）。
-    const body = after.length ? replay.filter((e) => e.type !== "turn.completed") : replay;
-    void replayAgent(runId, [body, ...(entry?.directOnly ? after.slice(0, 1) : after)], forkNotice(args.sessionId, runId, `cli:${engine}`, label), onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
+    void replayAgent(runId, [replay], forkNotice(args.sessionId, runId, `cli:${engine}`, label), onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
     return runId;
   },
   // ── 合作（v0.8）：接力（写规范 → 实施）、交叉审查（要改就修一次）。一个任务、一条事件流 ──
@@ -554,7 +506,7 @@ export const mockIpc = {
     const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, who, args.permission ?? "edit", "team", title);
     if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
     const files = (filesState[workspaceId] ??= {});
-    const demo = peckDemo(runId, files, args.prompt, { window: 1_000_000, checks: [], project: false });
+    const demo = peckDemo(runId, files, "", { window: 1_000_000, project: false });
     const editPath = demo.edit.path;
     const sub = args.delegate ? MOCK_MODEL_ENTRIES.find((e) => e.id === args.delegate) : undefined;
     // 实施的是 Peck 循环：主线剧本（委派的话插一段子任务）；是 CLI：回放它录下来的过程。
@@ -580,47 +532,48 @@ export const mockIpc = {
     });
     return runId;
   },
-  // ── 定时任务（v0.8）：只在内存；RUN NOW 照常发一个任务（演示里不会到点自己跑）──
+  // ── 定时任务：只在内存；演示里不会到点自己跑。设是「定时」那个剧本演的，这里只列、取消、点错过的卡片 ──
   async scheduleList(workspaceId?: string): Promise<Schedule[]> {
     return structuredClone(schedulesState.filter((x) => !workspaceId || x.workspaceId === workspaceId));
   },
-  async scheduleSave(schedule: Schedule): Promise<Schedule> {
-    if (!schedule.prompt.trim()) throw new Error("定时任务要发的那句话还空着。");
-    if (schedule.who === "cli:antigravity") throw new Error("Antigravity 只做直接调用，不进定时任务。");
-    if (schedule.when.kind === "daily" && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(schedule.when.time)) throw new Error(`时间写成 09:30 这样：${schedule.when.time}`);
-    if (schedule.when.kind === "interval" && !(schedule.when.hours >= 1 && schedule.when.hours <= 168)) throw new Error("每隔几小时：1 到 168。");
-    const next: Schedule = { ...schedule, title: schedule.title.trim() || schedule.prompt.trim().slice(0, 30), id: schedule.id || `sched-${Date.now()}`, createdAt: schedule.createdAt ?? Date.now() };
-    next.nextAt = next.enabled ? mockNextAt(next) : null;
-    schedulesState = schedulesState.some((x) => x.id === next.id) ? schedulesState.map((x) => (x.id === next.id ? next : x)) : [...schedulesState, next];
-    return structuredClone(next);
-  },
   async scheduleDelete(id: string): Promise<void> {
     schedulesState = schedulesState.filter((x) => x.id !== id);
+    scheduleListeners.changed?.();
   },
-  async scheduleRunNow(id: string): Promise<ScheduleFired> {
+  async scheduleMissed(id: string, run: boolean): Promise<ScheduleFired | null> {
     const s = schedulesState.find((x) => x.id === id);
     if (!s) throw new Error("没找到这个定时任务。");
-    if (workspaceIsBusy(s.workspaceId)) throw new Error("这个项目有任务在跑，跑完再发。");
-    const session = await this.sessionCreate(s.workspaceId, `⏰ ${s.title}`);
-    let runId = "";
-    const early: AgentEvent[] = [];
-    const onEvent = (event: AgentEvent) => { if (runId) scheduleListeners.event?.({ runId, workspaceId: s.workspaceId, sessionId: session.id, prompt: s.prompt, event }); else early.push(event); };
-    runId = s.who.startsWith("api:")
-      ? await this.harnessRunStart({ sessionId: session.id, prompt: s.prompt, who: s.who, permission: s.permission, effort: s.effort ?? undefined }, onEvent)
-      : await this.gatewayRunStart({ sessionId: session.id, prompt: s.prompt, who: s.who, permission: s.permission, model: s.model ?? undefined, effort: s.effort ?? undefined }, onEvent);
-    for (const event of early) scheduleListeners.event?.({ runId, workspaceId: s.workspaceId, sessionId: session.id, prompt: s.prompt, event });
-    const fired: ScheduleFired = { scheduleId: s.id, workspaceId: s.workspaceId, sessionId: session.id, runId, prompt: s.prompt };
-    s.lastRunAt = Date.now();
-    s.lastSession = session.id;
-    s.lastNote = "手动发了一次";
-    scheduleListeners.fired?.(fired);
+    let fired: ScheduleFired | null = null;
+    if (run) {
+      if (workspaceIsBusy(s.workspaceId)) throw new Error("这个项目有任务在跑，跑完再点。");
+      const kept = s.session && sessionsState.some((x) => x.id === s.session) ? s.session : null;
+      const sessionId = kept ?? (await this.sessionCreate(s.workspaceId, `⏰ ${s.title}`)).id;
+      let runId = "";
+      const early: AgentEvent[] = [];
+      const onEvent = (event: AgentEvent) => { if (runId) scheduleListeners.event?.({ runId, workspaceId: s.workspaceId, sessionId, prompt: s.prompt, event }); else early.push(event); };
+      runId = s.who.startsWith("api:")
+        ? await this.harnessRunStart({ sessionId, prompt: s.prompt, who: s.who, permission: s.permission, effort: s.effort ?? undefined }, onEvent)
+        : await this.gatewayRunStart({ sessionId, prompt: s.prompt, who: s.who, permission: s.permission, model: s.model ?? undefined, effort: s.effort ?? undefined }, onEvent);
+      for (const event of early) scheduleListeners.event?.({ runId, workspaceId: s.workspaceId, sessionId, prompt: s.prompt, event });
+      fired = { scheduleId: s.id, workspaceId: s.workspaceId, sessionId, runId, prompt: s.prompt };
+      s.lastRunAt = Date.now();
+      s.lastSession = sessionId;
+      s.lastNote = "补跑了一次";
+      scheduleListeners.fired?.(fired);
+    } else {
+      s.lastNote = "错过的那一次跳过了";
+    }
+    s.missedAt = null;
+    if (s.when.kind === "once") schedulesState = schedulesState.filter((x) => x.id !== id);
+    scheduleListeners.changed?.();
     return fired;
   },
-  async onSchedule(onFired: (f: ScheduleFired) => void, onEvent: (e: ScheduleEvent) => void): Promise<() => void> {
+  async onSchedule(onFired: (f: ScheduleFired) => void, onEvent: (e: ScheduleEvent) => void, onChanged: () => void): Promise<() => void> {
     scheduleListeners.fired = onFired;
     scheduleListeners.event = onEvent;
+    scheduleListeners.changed = onChanged;
     // 只摘自己挂的（React 开发模式会挂两次、摘一次）。
-    return () => { if (scheduleListeners.fired === onFired) { scheduleListeners.fired = null; scheduleListeners.event = null; } };
+    return () => { if (scheduleListeners.fired === onFired) { scheduleListeners.fired = null; scheduleListeners.event = null; scheduleListeners.changed = null; } };
   },
   async previewStart(url: string): Promise<string> {
     if (!/^http:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/|$)/.test(url.trim())) throw new Error("预览只开本机的地址（localhost、127.0.0.1），不代理外面的网站。");
@@ -682,12 +635,6 @@ export const mockIpc = {
     await new Promise((r) => setTimeout(r, 200));
     return "压好了：2 份长输出落了盘，5 份旧的工具输出换成了一句话；对话从约 38.2k 降到约 9.6k token。";
   },
-  async verifyRunNow(workspaceId: string): Promise<VerifyResult[]> {
-    const v = mockVerify(workspaceId);
-    if (!v.approved || !v.config?.check.length) throw new Error("还没有确认过的验证命令：在项目设置里写 .peck/verify.toml、SAVE 确认。");
-    await new Promise((r) => setTimeout(r, 900));
-    return v.config.check.map((c, i) => ({ name: c.name, command: c.run, passed: i !== 1, exitCode: i !== 1 ? 0 : 1, timedOut: false, durationMs: 2400 + i * 900, output: i !== 1 ? "" : "FAIL src/lib/utils.test.ts > versionText\n  expected '0.167.2' to be '0.167.3'" }));
-  },
   async mcpSecretSet(server: string, name: string, value: string | null): Promise<McpServerConfig[]> {
     const s = mcpState.find((x) => x.name === server);
     if (!s) throw new Error(`没有叫 ${server} 的 MCP 服务器。`);
@@ -739,10 +686,29 @@ export const mockIpc = {
     const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", "peck", label);
     if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
     const files = (filesState[workspaceId] ??= {});
-    const verify = mockVerify(workspaceId);
-    const checks: DemoCheck[] = verify.config?.check.map((c) => ({ name: c.name, run: c.run })) ?? [];
     const project = (memoryState[workspaceId]?.length ?? 0) > 0 || "AGENTS.md" in files || "CLAUDE.md" in files;
-    const demo = peckDemo(runId, files, args.prompt, { window: entry?.contextWindow ?? 1_000_000, checks, goal: args.goal?.[0] ?? null, project });
+    // 这个项目最近一次改过文件、没撤销的任务（「撤销」那个剧本回退它）。
+    const lastChanged = allRuns().filter((r) => r.id !== runId && workspaceOfSession(r.sessionId) === workspaceId && r.status !== "running" && !r.undoneAt && r.files.length > 0).sort((a, b) => b.number - a.number)[0];
+    const demo = peckDemo(runId, files, args.prompt, {
+      window: entry?.contextWindow ?? 1_000_000,
+      project,
+      lastTask: lastChanged?.number,
+      onRestore: () => {
+        if (!lastChanged) return;
+        const undo = undoState[lastChanged.id];
+        if (undo) { undo.remove.forEach((p) => delete files[p]); Object.assign(files, undo.restore); }
+        lastChanged.undoneAt = Date.now();
+      },
+      onSchedule: () => {
+        const next = nextMonday(9, 0);
+        schedulesState = [...schedulesState, { id: `sched-${Date.now()}`, workspaceId, title: "依赖更新", prompt: "检查这个项目的依赖有没有可以更新的版本，列出能升的和升级风险，先不要改文件", who: args.who, effort: args.effort ?? null, permission: "auto", when: { kind: "daily", time: "09:00", days: [1] }, offsetMin: -new Date().getTimezoneOffset(), enabled: true, nextAt: next, createdAt: Date.now() }];
+        scheduleListeners.changed?.();
+        return "id sched-demo-2 ·「依赖更新」\n什么时候：每周一 09:00\n谁来干：现在这一个 · 权限 AUTO · 每次开新任务";
+      },
+      onServer: () => {
+        (serverState[workspaceId] ??= {}).dev = { id: "srv-dev-demo", name: "dev", command: "pnpm dev", kind: "server", status: "running", exitCode: null, ready: true, startedAt: Date.now(), endedAt: null, owner: null, log: "/mock/harness-output/servers/dev.log", url: "http://localhost:5173/" };
+      },
+    });
     // 委派（v0.8）：主模型先把一个查找的子任务交给便宜的模型。
     const sub = args.delegate ? MOCK_MODEL_ENTRIES.find((e) => e.id === args.delegate) : undefined;
     if (sub) demo.rounds.splice(1, 0, delegateRound(runId, { who: sub.id, label: sub.label }, demo.edit.path));
@@ -755,7 +721,7 @@ export const mockIpc = {
       { type: "turn.started", turnId: `turn-${runId}` },
     ];
     void replayAgent(runId, demo.rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
-      if (end.diffs.some((d) => d.path === demo.edit.path)) {
+      if (demo.edits && end.diffs.some((d) => d.path === demo.edit.path)) {
         if (args.worktree) {
           // 独立工作区：主文件夹不动，等 APPLY 再搬（演示：「冲突」两个字在这句话里就报一个冲突）。
           worktreeState[runId] = { files: { [demo.edit.path]: demo.edit.after }, conflicts: /冲突/.test(args.prompt) ? [demo.edit.path] : [] };
@@ -876,36 +842,12 @@ export const mockIpc = {
     return structuredClone(event);
   },
 
-  // ── 验证和后台（v0.6）──
-  async verifyGet(workspaceId: string): Promise<VerifyState> {
-    return structuredClone(mockVerify(workspaceId));
-  },
-  async verifySave(workspaceId: string, text: string): Promise<VerifyState> {
-    const config = parseVerifyToml(text);
-    verifyState[workspaceId] = { exists: true, text, config, error: null, guessed: null, dismissed: verifyState[workspaceId]?.dismissed ?? false, approved: true };
-    filesState[workspaceId] = { ...(filesState[workspaceId] ?? {}), ".peck/verify.toml": text };
-    return structuredClone(verifyState[workspaceId]);
-  },
-  async verifyDismiss(workspaceId: string): Promise<VerifyState> {
-    const v = mockVerify(workspaceId);
-    v.dismissed = true;
-    return structuredClone(v);
-  },
+  // ── 后台命令 ──
   async backgroundList(workspaceId: string): Promise<BgInfo[]> {
     return structuredClone(Object.values(serverState[workspaceId] ?? {}));
   },
   async backgroundStop(id: string): Promise<void> {
     for (const m of Object.values(serverState)) for (const b of Object.values(m)) if (b.id === id && b.status === "running") { b.status = "stopped"; b.endedAt = Date.now(); }
-  },
-  async serverStart(workspaceId: string, name: string): Promise<BgInfo> {
-    const server = mockVerify(workspaceId).config?.server.find((x) => x.name === name);
-    if (!server) throw new Error(`verify.toml 里没有叫「${name}」的 server。`);
-    const running = serverState[workspaceId]?.[name];
-    if (running?.status === "running") return structuredClone(running);
-    const info: BgInfo = { id: `srv-${name}-${++memoryCounter}`, name, command: server.run, kind: "server", status: "running", exitCode: null, ready: false, startedAt: Date.now(), endedAt: null, owner: null, log: `/mock/harness-output/servers/${name}.log`, url: "http://localhost:5173/" };
-    (serverState[workspaceId] ??= {})[name] = info;
-    window.setTimeout(() => { info.ready = true; }, 1500);
-    return structuredClone(info);
   },
 };
 
@@ -932,71 +874,7 @@ const memoryState: Record<string, MemoryNote[]> = {
     { id: "mem-b", text: "界面文案用中文，专有名词保留英文（Muse、Grok、API、Key）", sourceRun: null, createdAt: Date.now() - 2 * 86_400_000 },
   ],
 };
-const PECK_VERIFY = `# Peck 的验证命令：模型改了文件，Peck 在后台替它跑；模型停下时没过就把失败交回去修（最多 3 次）。
-
-[[check]]
-name = "check"
-run = "pnpm check"
-when = ["**/*.{ts,tsx}"]
-
-[[check]]
-name = "cargo-test"
-run = "cargo test --manifest-path src-tauri/Cargo.toml"
-when = ["**/*.rs", "**/Cargo.toml"]
-timeout = 600
-
-[[server]]
-name = "dev"
-run = "pnpm dev"
-ready = "Local:"
-autostart = false
-`;
-const NOTEBOOK_GUESS = `# Peck 的验证命令：模型改了文件，Peck 在后台替它跑；模型停下时没过就把失败交回去修（最多 3 次）。
-
-[[check]]
-name = "check"
-run = "pnpm check"
-when = ["**/*.{ts,tsx,js,jsx,mjs,cjs,vue,svelte,css}"]
-
-[[check]]
-name = "test"
-run = "pnpm test"
-when = ["**/*.{ts,tsx,js,jsx,mjs,cjs,vue,svelte,css}"]
-
-[[server]]
-name = "dev"
-run = "pnpm dev"
-autostart = false
-`;
-const verifyState: Record<string, VerifyState> = {
-  "ws-peck": { exists: true, text: PECK_VERIFY, config: parseVerifyToml(PECK_VERIFY), error: null, guessed: null, dismissed: false, approved: true },
-  "ws-notebook": { exists: false, text: null, config: null, error: null, guessed: NOTEBOOK_GUESS, dismissed: false, approved: false },
-};
 const serverState: Record<string, Record<string, BgInfo>> = {};
-
-function mockVerify(workspaceId: string): VerifyState {
-  return (verifyState[workspaceId] ??= { exists: false, text: null, config: null, error: null, guessed: null, dismissed: false, approved: false });
-}
-
-/** 演示用的极简 TOML：[[check]]、[[server]]，值是字符串、字符串数组、数字、true / false。 */
-function parseVerifyToml(text: string): VerifyConfig {
-  const config: VerifyConfig = { check: [], server: [] };
-  let cur: Record<string, unknown> | null = null;
-  text.split("\n").forEach((raw, i) => {
-    const line = raw.replace(/#.*$/, "").trim();
-    if (!line) return;
-    if (line === "[[check]]") { cur = { name: "", run: "" }; config.check.push(cur as never); return; }
-    if (line === "[[server]]") { cur = { name: "", run: "", autostart: false }; config.server.push(cur as never); return; }
-    const m = line.match(/^(\w+)\s*=\s*(.+)$/);
-    if (!m || !cur) throw new Error(`verify.toml 写得不对：第 ${i + 1} 行看不懂。`);
-    try { cur[m[1]] = JSON.parse(m[2]); } catch { throw new Error(`verify.toml 写得不对：第 ${i + 1} 行的值看不懂。`); }
-  });
-  for (const c of [...config.check, ...config.server]) {
-    if (!c.name?.trim()) throw new Error("每一条都要有名字。");
-    if (!c.run?.trim()) throw new Error(`「${c.name}」没写 run（要跑的命令）。`);
-  }
-  return config;
-}
 
 // ── 统一事件的任务（CLI 引擎、Peck 循环、ONE SHOT）：回放 ──
 /** 项目设置 SKILLS 的演示数据（v0.10 C3）：slashList 那几个加上批进来的。 */
@@ -1008,6 +886,8 @@ function mockSkillRows(workspaceId: string): SkillRow[] {
     { name: "release", description: "How to cut a release of this project", scope: "project", off: false, loads: 7, lastUsed: Date.now() - 2 * day, changedAt: Date.now() - 3 * day, stale: false, versions: 2 },
     { name: "draw-board", description: "Draw a board with the dw MCP tools", scope: "project-skills", off: false, loads: 0, lastUsed: null, changedAt: Date.now() - 45 * day, stale: true, versions: 0 },
     { name: "pdf", description: "Read and fill PDF forms", scope: "user", off: false, loads: 3, lastUsed: Date.now() - 40 * day, changedAt: Date.now() - 90 * day, stale: true, versions: 0 },
+    { name: "peck-snapshots", description: "站主要撤销、反悔、回退某次任务的改动时用：列出任务快照，确认后按任务号放回去", scope: "peck", off: false, loads: 2, lastUsed: Date.now() - 1 * day, changedAt: null, stale: false, versions: 0 },
+    { name: "peck-schedules", description: "站主要定时做一件事，或者要看、改、取消定时任务时用", scope: "peck", off: false, loads: 0, lastUsed: null, changedAt: null, stale: false, versions: 0 },
   ]);
   for (const r of rows) r.off = off.includes(r.name);
   return rows;
@@ -1026,23 +906,21 @@ let oneshotCounter = 0;
 
 interface AgentEnd { reason: TurnEndReason; error: string | null; text: string; diffs: FileDiff[] }
 
+/** 下一个星期一的几点（本机时间）。 */
+function nextMonday(h: number, m: number): number {
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  do { d.setDate(d.getDate() + 1); } while (d.getDay() !== 1);
+  return d.getTime();
+}
+
+// 演示：一个照常的，一个错过了的（每次开新任务：卡片在 notebook 的新任务页），一个接在对话里跑、也错过了的（卡片在那个对话里）。
 let schedulesState: Schedule[] = [
   { id: "sched-demo", workspaceId: "ws-peck", title: "每天看一眼 TODO", prompt: "列出项目里还没做完的 TODO 和 FIXME，按文件分组，别改文件", who: "api:deepseek/deepseek-flash", permission: "plan", when: { kind: "daily", time: "09:30", weekdays: true }, offsetMin: 480, enabled: true, nextAt: Date.now() + 5 * 3_600_000, lastRunAt: Date.now() - 19 * 3_600_000, lastSession: null, lastNote: "发出去了", createdAt: Date.now() - 7 * 86_400_000 },
+  { id: "sched-deps", workspaceId: "ws-notebook", title: "依赖更新", prompt: "检查这个项目的依赖有没有可以更新的版本，列出能升的和升级风险，先不要改文件", who: "cli:codex", permission: "auto", when: { kind: "daily", time: "09:00", days: [1] }, offsetMin: 480, enabled: true, nextAt: nextMonday(9, 0), lastRunAt: Date.now() - 8 * 86_400_000, lastSession: null, lastNote: "App 关着，错过了", missedAt: Date.now() - 3 * 3_600_000, createdAt: Date.now() - 20 * 86_400_000 },
+  { id: "sched-ci", workspaceId: "ws-notebook", title: "看一下 CI", prompt: "看一下 main 分支最近一次 CI 过了没有，没过就说是哪一步", who: "api:deepseek/deepseek-flash", planBy: null, reviewBy: { who: "cli:codex" }, permission: "auto", when: { kind: "interval", hours: 6 }, offsetMin: 480, enabled: true, nextAt: Date.now() + 2 * 3_600_000, lastRunAt: Date.now() - 10 * 3_600_000, lastSession: "task-11", lastNote: "项目一直有任务在跑，错过了", session: "task-11", missedAt: Date.now() - 4 * 3_600_000, createdAt: Date.now() - 3 * 86_400_000 },
 ];
-const scheduleListeners: { fired: ((f: ScheduleFired) => void) | null; event: ((e: ScheduleEvent) => void) | null } = { fired: null, event: null };
-
-/** 演示里的下一次：和 Rust 的 next_after 一样的算法。 */
-function mockNextAt(s: Schedule): number {
-  const now = Date.now();
-  if (s.when.kind === "interval") return now + s.when.hours * 3_600_000;
-  const [h, m] = s.when.time.split(":").map(Number);
-  const offset = s.offsetMin * 60_000;
-  const day = 86_400_000;
-  let at = Math.floor((now + offset) / day) * day + (h * 60 + m) * 60_000;
-  if (at <= now + offset) at += day;
-  if (s.when.weekdays) while (((Math.floor(at / day) + 3) % 7 + 7) % 7 >= 5) at += day;
-  return at - offset;
-}
+const scheduleListeners: { fired: ((f: ScheduleFired) => void) | null; event: ((e: ScheduleEvent) => void) | null; changed: (() => void) | null } = { fired: null, event: null, changed: null };
 
 /** 演示：记下的 MCP 工具标注（项目设置里 TEST 过的）。 */
 const mockHints: Record<string, [string, "read" | "write" | "destructive"][]> = {};

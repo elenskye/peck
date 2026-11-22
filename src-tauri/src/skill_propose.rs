@@ -617,13 +617,15 @@ pub(crate) fn overview(store: &Arc<Mutex<Store>>, workspace_id: &str, root: &Pat
         .map(|s| {
             let mine: Vec<i64> = used.iter().filter(|(ws, n, _)| n == &s.name && (s.scope == "user" || ws == workspace_id)).map(|(_, _, at)| *at).collect();
             let last_used = mine.iter().copied().max();
-            let changed_at = std::fs::metadata(s.dir.join("SKILL.md"))
-                .and_then(|m| m.modified())
-                .ok()
+            // Peck 自带的嵌在程序里：没有文件、没有旧版。
+            let on_disk = s.builtin.is_none();
+            let changed_at = on_disk
+                .then(|| std::fs::metadata(s.dir.join("SKILL.md")).and_then(|m| m.modified()).ok())
+                .flatten()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as i64);
             let since = last_used.or(changed_at);
-            let versions = versions_in(&history_dir(&history_key(s.scope, workspace_id), &s.dir)).len() as u32;
+            let versions = if on_disk { versions_in(&history_dir(&history_key(s.scope, workspace_id), &s.dir)).len() as u32 } else { 0 };
             SkillRow {
                 name: s.name,
                 description: s.description,
@@ -661,6 +663,9 @@ fn find_skill(root: &Path, name: &str) -> Result<SkillInfo, String> {
 
 pub(crate) fn versions(workspace_id: &str, root: &Path, name: &str) -> Result<Vec<SkillVersion>, String> {
     let s = find_skill(root, name)?;
+    if s.builtin.is_some() {
+        return Ok(vec![]);
+    }
     let at = history_dir(&history_key(s.scope, workspace_id), &s.dir);
     Ok(versions_in(&at)
         .into_iter()
@@ -679,6 +684,9 @@ pub(crate) fn restore(workspace_id: &str, root: &Path, name: &str, id: &str) -> 
         return Err("没有这份旧版。".into());
     }
     let s = find_skill(root, name)?;
+    if s.builtin.is_some() {
+        return Err("Peck 自带的 Skill 没有旧版。".into());
+    }
     let key = history_key(s.scope, workspace_id);
     let old = std::fs::read_to_string(history_dir(&key, &s.dir).join(format!("{id}.md"))).map_err(|_| "没有这份旧版。")?;
     let t = Target { location: location_of(s.scope, &s.dir), dir: s.dir, scope: s.scope.to_string(), previous: None };
@@ -714,7 +722,6 @@ mod tests {
             name: "试".into(),
             last_opened_at: 0,
             git_branch: None,
-            gitignore_configured: false,
             hidden: false,
             settings: Default::default(),
         };
@@ -812,7 +819,7 @@ mod tests {
 
     #[test]
     fn similar_names_and_descriptions_are_flagged() {
-        let s = |name: &str, desc: &str| SkillInfo { name: name.into(), description: desc.into(), scope: "project", dir: PathBuf::from("/x"), off: false };
+        let s = |name: &str, desc: &str| SkillInfo { name: name.into(), description: desc.into(), scope: "project", dir: PathBuf::from("/x"), off: false, builtin: None };
         let existing = vec![s("release", "Cut a release: bump the version, tag and push"), s("draw-board", "在 Atelier 里画一张画板"), s("deploy-docs", "Publish the docs site")];
         assert_eq!(similar(&existing, "release-checklist", "x"), vec!["release"]);
         assert_eq!(similar(&existing, "ship", "Bump the version, tag and push a release"), vec!["release"]);
