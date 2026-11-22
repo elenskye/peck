@@ -85,15 +85,20 @@ body { overflow: hidden; }
 .pk-field { cursor: text; }
 
 .menu-anchor { position: relative; display: inline-flex; }
-.menu-pop { position: absolute; left: 0; z-index: 10; min-width: 260px; }
+.menu-pop { min-width: 260px; }
+/* 弹层（ui.tsx 的 Float）：固定在窗口上，位置、最大高度由 Float 量好写进来；量好之前不露出来。
+   里面那一块（菜单、模块）跟着弹层的最大高度，菜单靠里面的 .pk-menu-scroll 滚。 */
+.float { position: fixed; z-index: 50; visibility: hidden; }
+.float > * { max-height: inherit; }
 
 /* ---------- 左栏：项目和任务、这个任务的记录 ---------- */
 .left-projects { flex: 1 1 0; min-height: 0; }
 .left-list { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--space-1); margin: 0 calc(-1 * var(--space-4)); padding: 0 var(--space-4); }
-.pj-head { display: flex; align-items: center; gap: var(--space-4); width: 100%; height: var(--size-menu-row); padding: 0 var(--space-4); clip-path: var(--pk-clip2); }
+.pj-head { display: flex; align-items: center; gap: var(--space-4); width: 100%; height: 36px; padding: 0 var(--space-4); clip-path: var(--pk-clip2); }
 .pj-head .pk-i { color: var(--color-text-2); }
 .pj-head span { margin-left: auto; font-size: var(--text-small); color: var(--color-text-3); white-space: nowrap; }
-.pj-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 项目名（v1.0.1 放大）：像素字 18px（12 的 1.5 倍，视网膜屏上是整像素）。 */
+.pj-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; line-height: 24px; }
 .pj-head:hover { background: var(--color-raised); }
 .pj-head.is-on { background: var(--color-cyan-soft); }
 .pj-head.is-on .pk-i { color: var(--color-cyan-text); }
@@ -339,6 +344,17 @@ body { overflow: hidden; }
 
 /* ---------- 整页的东西（L6）：设置、额度与花费，占中栏和右栏合成的宽栏 ---------- */
 .page-mod { padding-bottom: var(--space-9); }
+/* 大号页面（v1.0.1：设置、项目设置）：模块里面整块放大 1.5 倍——像素字 12→18、11→16.5 在视网膜屏上还是整像素，
+   按钮、输入框、间距跟着一起大；从这里弹出来的菜单、ⓘ 也跟着放大（ui.tsx 的 Float 按锚点的倍数）。
+   模块的边框和外边距不放大，和左栏对齐。 */
+.page-mod.is-big > * { zoom: 1.5; }
+.page-mod.is-big .set-grid { grid-template-columns: 148px minmax(0, 1fr); gap: var(--space-8); }
+/* 标题像素字 18 放大后是 27（不是 12 的整数倍、发糊）：先收成 16，放大后正好 24。 */
+.page-mod.is-big .t-title { font-size: 16px; line-height: 22px; }
+@media (max-width: 1180px) {
+  .page-mod.is-big .set-grid { grid-template-columns: 112px minmax(0, 1fr); gap: var(--space-5); }
+  .page-mod.is-big .set-nav button { padding: var(--space-3) var(--space-3); }
+}
 .set-grid { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: var(--space-10); }
 .set-nav { display: flex; flex-direction: column; gap: var(--space-1); }
 .set-nav button { display: flex; flex-direction: column; gap: 1px; padding: var(--space-3) var(--space-5); clip-path: var(--pk-clip2); color: var(--color-text-2); }
@@ -366,7 +382,9 @@ body { overflow: hidden; }
 .set-num { display: inline-flex; align-items: center; gap: var(--space-3); }
 .set-unit { flex: none; width: 16px; font-size: var(--text-small); color: var(--color-text-3); }
 .set-unit:first-child { text-align: right; }
-.set-meter { width: 240px; height: 10px; margin-right: calc(16px + var(--space-3)); order: 2; }
+.set-meter { flex: 0 1 240px; min-width: 60px; height: 10px; margin-right: calc(16px + var(--space-3)); order: 2; }
+/* 「这个月花了」那一行：名字短，进度条那边让出来能缩（设置页放大后窗口窄时不撑出横向滚动）。 */
+.set-row:has(.set-meter) { grid-template-columns: auto minmax(0, 1fr); }
 .set-meter-text { order: 1; font-size: var(--text-small); color: var(--color-text-2); }
 .set-inline { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-4); }
 .set-inline .pk-field { flex: 1 1 200px; min-width: 0; height: var(--size-button); }
@@ -374,6 +392,14 @@ body { overflow: hidden; }
 /* 供应商的 Key 一格网格：Key 框和 Aliyun 业务空间 ID 框右边对齐（v0.10 Refine）。 */
 .set-keys { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
 .set-keys .pk-field { min-width: 0; height: var(--size-button); }
+/* 输入框里的 input 默认有 20 个字宽的最小宽度，窄的时候把右边的按钮挤出去：让它跟着框缩（v1.0.1，设置页放大后才看得出）。 */
+:is(.set-keys, .set-inline) .pk-field input { width: 0; }
+/* 设置页很窄时（放大以后窗口又小）：Aliyun 的地域单独一行，业务空间 ID 框占它让出来的位置。 */
+.set-pane { container-type: inline-size; }
+@container (max-width: 380px) {
+  .set-keys > .pk-seg { grid-column: 1 / -1; justify-self: start; }
+  .set-keys > .pk-seg + .pk-field { grid-column: 1 / 3; }
+}
 .set-keys > .set-keys-wide { grid-column: 1 / 3; }
 /* 价格表的编辑：进、出、缓存命中、缓存写入、高峰倍数一排。 */
 .set-price-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-4) var(--space-5); margin-top: var(--space-5); }
@@ -410,7 +436,7 @@ body { overflow: hidden; }
 .set-out { margin: var(--space-3) 0 0; padding: var(--space-3); max-height: 10em; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: var(--text-small); color: var(--color-text-2); border: 1px dotted var(--color-line-strong); }
 
 /* ---------- v0.5：Markdown、输入框编辑器、过程（统一事件）、卡片、ONE SHOT ---------- */
-.menu-pop--fixed { position: fixed; z-index: 50; min-width: 300px; max-width: min(460px, calc(100vw - 16px)); }
+.menu-pop--fixed { min-width: 300px; max-width: 460px; }
 /* 菜单的浅底是 .pk-menu:before（只盖住第一屏），所以滚动放在里面一层：.pk-menu 自己滚，往下露出的是青色描边色（Phase 13 修）。 */
 .pk-menu-scroll { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .menu-pop .pk-menu-scroll { max-height: min(460px, 62vh); }
@@ -449,7 +475,9 @@ body { overflow: hidden; }
 .agent { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-5); }
 .agent-text.is-live > :last-child::after { content: "▌"; color: var(--color-cyan); animation: pk-blink 1s steps(1) infinite; margin-left: 1px; }
 .agent .fold { margin: 0; }
-.agent-thought-text { margin: var(--space-2) 0 var(--space-3) var(--space-10); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-3); white-space: pre-wrap; }
+/* 正在想（v1.0.1）：和组头一样高的一行，前面是转圈的点阵，想完就收掉。 */
+.agent-thinking { display: flex; align-items: center; gap: var(--space-4); height: var(--size-row); padding-left: 2px; font-size: var(--text-small); color: var(--color-text-2); }
+.agent-thinking em { color: var(--color-text-3); }
 .agent-tools.has-bad > .fold-head { color: var(--color-text); }
 .agent-bad { margin-left: var(--space-3); color: var(--color-bad) !important; font-style: normal; }
 .agent-calls { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3) var(--space-4); }
@@ -487,7 +515,7 @@ body { overflow: hidden; }
 .pk-dot--antigravity { background: var(--color-antigravity); }
 
 /* ---------- 左栏：右键菜单、改名、拖动排顺序、文件夹不在了（v0.5 Refine 2） ---------- */
-.ctx-menu { position: fixed; z-index: 60; min-width: 232px; }
+.float.ctx-menu { z-index: 60; min-width: 232px; }
 .ctx-menu .pk-menu-action { font-size: var(--text-body); color: var(--color-text); }
 .ctx-menu .pk-menu-action:disabled { color: var(--color-text-3); cursor: not-allowed; }
 .ctx-menu .pk-menu-action:disabled .pk-i { color: var(--color-text-3); }
@@ -653,7 +681,7 @@ body { overflow: hidden; }
 
 /* 输入框里 @ 旧任务 */
 .composer { position: relative; }
-.mention-pop { position: absolute; left: var(--space-8); right: var(--space-8); bottom: calc(100% + var(--space-3)); z-index: 20; }
+
 .mention-pop .pk-menu-scroll { max-height: 228px; }
 .mention-head { padding: var(--space-1) var(--space-4) var(--space-2); color: var(--color-text-3); }
 .mention-pop .pk-menu-item b.mention-title { font-family: var(--font-body); font-weight: 400; font-size: var(--text-body); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -754,7 +782,7 @@ body { overflow: hidden; }
 .info-i::before { top: 2px; height: 1px; }
 .info-i::after { top: 4px; height: 4px; }
 .agent-card-more { align-self: flex-start; margin-top: var(--space-2); font-size: var(--text-small); }
-.info-pop { position: fixed; z-index: 70; padding: var(--space-4) var(--space-6); background: var(--color-panel-2); box-shadow: 0 0 0 1px var(--color-cyan-line); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); white-space: normal; letter-spacing: 0; text-transform: none; user-select: text; }
+.float.info-pop { z-index: 70; width: 280px; overflow-y: auto; padding: var(--space-4) var(--space-6); background: var(--color-panel-2); box-shadow: 0 0 0 1px var(--color-cyan-line); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); white-space: normal; letter-spacing: 0; text-transform: none; user-select: text; }
 .lbl .info-btn, .pk-mod-head .info-btn { vertical-align: -2px; }
 
 /* ---------- 多引擎合作（v0.8 Phase 11） ---------- */

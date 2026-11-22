@@ -45,7 +45,7 @@ export const SettingsPage: React.FC<Props> = (props) => {
   const [section, setSection] = useState<SettingsSection>(props.initial ?? "GENERAL");
   return (
     <section className="col page" aria-label="设置">
-      <div className="pk-mod col-grow page-mod">
+      <div className="pk-mod col-grow page-mod is-big">
         <ModHead label="SETTINGS"><Btn v="ghost" sm icon="x" onClick={props.onClose}>CLOSE</Btn></ModHead>
         <div className="set-grid">
           <nav className="set-nav" aria-label="设置分组">

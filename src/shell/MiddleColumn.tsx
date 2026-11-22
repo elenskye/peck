@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { api, type ApiTask } from "@/lib/api";
 import { canAutomate, type AgentEvent, type Control, type ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
@@ -10,10 +9,11 @@ import type { QuotaHint } from "@/lib/quota";
 import { canDelegate } from "@/lib/presets";
 import type { Permission, ProjectOverview, RunRecord, StepDescriptor, TaskBrief } from "@/lib/types";
 import { PERMISSIONS, agentDot, ago, clock, cn, copyText, engineDot, entryDot, isAgentRun, isPeckRun, runState, span, stepName, timer, whoDots, whoLabel , shortenHomePath } from "@/lib/utils";
-import { Blocks, Btn, Dot, DotCheck, Icon, Info, MenuChip, ModHead, Seg, useNow } from "@/ui";
+import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
+import { useScrollMemory } from "@/lib/scrollMemory";
 import { RELAY_ID, cliModelOf, pickable, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
 
 interface Props {
@@ -226,6 +226,9 @@ export const MiddleColumn: React.FC<Props> = (props) => {
   useEffect(() => setPermission(settings.permission), [settings.permission]);
   const projectId = project.missing ? null : project.workspace.id;
   const [verify, setVerify] = useVerify(projectId, busy, props.say);
+  // 对话的位置记忆（v1.0.1）：进来到最新一轮、回来回到上次的位置。
+  const stackRef = useRef<HTMLDivElement>(null);
+  useScrollMemory(stackRef, task?.id ?? null, runs.length);
 
   // 归档的任务只读：文件夹不在了也看得了记录。
   const archivedAt = task?.archivedAt ?? null;
@@ -279,7 +282,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
 
   return (
     <section className="col" aria-label="对话">
-      <div className="col-grow scroll task-stack">
+      <div className="col-grow scroll task-stack" ref={stackRef}>
         {runs.length === 0 && <div className="pk-mod"><p className="empty-line">在读这个任务…</p></div>}
         {runs.map((run, i) => (
           <React.Fragment key={run.id}>
@@ -357,22 +360,10 @@ function taskContext(runs: RunRecord[], events: Record<string, AgentEvent[]>): C
 const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
-  const [place, setPlace] = useState<React.CSSProperties>({});
   const ratio = context.window ? Math.min(1, context.used / context.window) : 0;
   const line = context.window && context.compactAt ? context.compactAt / context.window : 0.8;
   const warn = ratio >= line;
   const lit = Math.max(context.used > 0 ? 1 : 0, Math.round(ratio * 12));
-  useEffect(() => {
-    if (!open) return;
-    const r = ref.current?.getBoundingClientRect();
-    if (r) setPlace({ left: Math.max(8, Math.min(r.right - 300, window.innerWidth - 308)), bottom: window.innerHeight - r.top + 6 });
-    const away = (e: MouseEvent) => { const t = e.target as Node; if (!ref.current?.contains(t) && !pop.current?.contains(t)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc);
-    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("keydown", esc); };
-  }, [open]);
   const pct = (n: number) => `${Math.round(n * 100)}%`;
   const total = context.parts.reduce((n, p) => n + p.tokens, 0) || 1;
   // 12 个点围成一圈（像素格，16×16）
@@ -387,8 +378,8 @@ const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
           {dots.map((d, i) => <rect key={i} x={d.x} y={d.y} width="2" height="2" className={d.on ? "is-on" : undefined} />)}
         </svg>
       </button>
-      {open && createPortal(
-        <div ref={pop} className="pk-anim-reveal-s menu-pop menu-pop--fixed ctx-pop" style={place} role="dialog" aria-label="上下文">
+      {open && (
+        <Float anchor={ref} side="top" align="end" onClose={() => setOpen(false)} className="pk-anim-reveal-s menu-pop menu-pop--fixed ctx-pop" role="dialog" aria-label="上下文">
           <div className="pk-mod">
             <ModHead label="CONTEXT" note={context.window ? `${tokens(context.used)} / ${tokens(context.window)} · ${pct(ratio)}` : tokens(context.used)} />
             {context.window != null && (
@@ -403,8 +394,7 @@ const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
             </ul>
             <p className="note">压缩线 {pct(line)}{context.compactAt ? `（${tokens(context.compactAt)}）` : ""}：到了先把长输出落盘、再清掉旧的工具输出，还不够就让模型写一份交接摘要接着做。</p>
           </div>
-        </div>,
-        document.querySelector(".app") ?? document.body,
+        </Float>
       )}
     </>
   );
@@ -417,22 +407,12 @@ function mentionAt(draft: string): { start: number; query: string } | null {
   return { start: draft.length - m[2].length - 1, query: m[2] };
 }
 
-/** 输入框上方弹出的列表（@ 旧任务、/ 命令）：放到 `.app` 下面按输入框的位置摆，免得被输入框的切角剪掉。 */
-const AbovePop: React.FC<{ anchor: React.RefObject<HTMLDivElement | null>; label: string; children: React.ReactNode }> = ({ anchor, label, children }) => {
-  const [rect, setRect] = useState<DOMRect | null>(null);
-  useEffect(() => {
-    const measure = () => setRect(anchor.current?.getBoundingClientRect() ?? null);
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [anchor]);
-  if (!rect) return null;
-  const style: React.CSSProperties = { position: "fixed", left: rect.left + 16, width: Math.max(240, rect.width - 32), bottom: window.innerHeight - rect.top + 6 };
-  return createPortal(
-    <div className="pk-menu mention-pop" role="listbox" aria-label={label} style={style}>{children}</div>,
-    document.querySelector(".app") ?? document.body,
-  );
-};
+/** 输入框上方弹出的列表（@ 旧任务、/ 命令）：和输入框一样宽（左右各缩 16），交给 Float 摆（上面放不下就压矮）。 */
+const AbovePop: React.FC<{ anchor: React.RefObject<HTMLDivElement | null>; label: string; children: React.ReactNode }> = ({ anchor, label, children }) => (
+  <Float anchor={anchor} side="top" inset={16}>
+    <div className="pk-menu mention-pop" role="listbox" aria-label={label}>{children}</div>
+  </Float>
+);
 
 // ---------- 斜杠命令的结果（v0.10 C2） ----------
 

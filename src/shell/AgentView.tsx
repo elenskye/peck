@@ -1,11 +1,11 @@
 // 一次任务的过程（Peck 循环和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, Control } from "@/lib/agentEvents";
-import { COMPACT_STEP, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ToolView, type VerifyCheckView, type VerifyRoundView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, englishTitle, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type VerifyCheckView, type VerifyRoundView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
 import { cn, copyText, engineDot, span } from "@/lib/utils";
-import { Btn, Dot, Field, Icon, Info, ModHead, Seg, useNow } from "@/ui";
+import { Btn, Dot, Field, Icon, Info, ModHead, Seg, Twinkle, useNow } from "@/ui";
 import { Md } from "@/shell/Markdown";
 
 interface Props {
@@ -51,10 +51,8 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
   switch (item.kind) {
     case "text":
       return <AnswerText text={hideSteps ? splitNextSteps(item.text).body : item.text} live={!item.done} say={say} />;
-    case "reasoning":
-      return <Thought text={item.text} done={item.done} ms={(item.endedAt ?? now) - item.startedAt} />;
     case "tools":
-      return <ToolGroup calls={item.calls} now={now} onShowFile={onShowFile} say={say} />;
+      return <ToolGroup calls={item.calls} thoughts={item.thoughts} now={now} onShowFile={onShowFile} say={say} />;
     case "asked":
       return (
         <div className="agent-asked sel">
@@ -407,19 +405,6 @@ function decisionWord(d?: ApprovalDecision, by?: string): string {
   return `${who}没批`;
 }
 
-const Thought: React.FC<{ text: string; done: boolean; ms: number }> = ({ text, done, ms }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="fold agent-thought">
-      <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon name={open ? "triD" : "triR"} size={12} />
-        <span>{done ? "思考" : "在想"} · {span(Math.max(ms, 1000))}</span>
-      </button>
-      {open && <p className="agent-thought-text sel">{text}</p>}
-    </div>
-  );
-};
-
 const STATUS_ICON: Record<ToolView["status"], React.ReactNode> = {
   running: <span className="pk-run" />,
   ok: <Icon name="check" size={12} />,
@@ -428,8 +413,12 @@ const STATUS_ICON: Record<ToolView["status"], React.ReactNode> = {
   cancelled: <Icon name="stop" size={12} />,
 };
 
-const ToolGroup: React.FC<{ calls: ToolView[]; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ calls, now, onShowFile, say }) => {
+/** 一组连着的工具调用（v1.0.1 学 Claude Code）：头上一行英文摘要，点开看每一步；在跑的那一步收着也露出来。
+ *  思考不算一步：在想时下面一行「Thinking… 3s」，想完就不显示（只有思考、没调工具的一组整个不显示）。 */
+const ToolGroup: React.FC<{ calls: ToolView[]; thoughts: ThoughtView[]; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ calls, thoughts, now, onShowFile, say }) => {
   const [open, setOpen] = useState(false);
+  const thinking = thoughts.find((t) => !t.done);
+  if (calls.length === 0) return thinking ? <Thinking since={thinking.startedAt} now={now} /> : null;
   const running = calls.filter((c) => c.status === "running");
   const failed = calls.some((c) => c.status === "failed");
   const bad = failed || calls.some((c) => c.status === "denied");
@@ -437,7 +426,7 @@ const ToolGroup: React.FC<{ calls: ToolView[]; now: number; onShowFile: (path: s
     <div className={cn("fold agent-tools", bad && "has-bad")}>
       <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Icon name={open ? "triD" : "triR"} size={12} />
-        <span>{groupSummary(calls)} · {span(Math.max(groupSpan(calls, now), 1000))}</span>
+        <span>{groupSummary(calls)} · {span(Math.max(groupSpan(calls, now, thoughts), 1000))}</span>
         {bad && <em className="t-label agent-bad">{failed ? "FAIL" : "DENIED"}</em>}
       </button>
       {open ? (
@@ -445,11 +434,26 @@ const ToolGroup: React.FC<{ calls: ToolView[]; now: number; onShowFile: (path: s
       ) : running.length > 0 ? (
         <ol className="agent-calls">{running.map((c) => <ToolRow key={c.callId} call={c} now={now} onShowFile={onShowFile} say={say} />)}</ol>
       ) : null}
+      {thinking && <Thinking since={thinking.startedAt} now={now} />}
       {/* 截的图收起时也露出来（展开了在那一步里看）。 */}
       {!open && calls.filter((c) => c.name === "screenshot_app" && c.status === "ok").map((c) => <ShotThumb key={c.callId} output={c.output} />)}
     </div>
   );
 };
+
+/** 正在想：一行「Thinking… 3s」，想完就收掉。 */
+const Thinking: React.FC<{ since: number; now: number }> = ({ since, now }) => (
+  <p className="agent-thinking" role="status"><Twinkle /><span>Thinking…</span><em>{span(Math.max(now - since, 0))}</em></p>
+);
+
+/** 一步上的审批（过程里是英文）。 */
+function decisionEn(d?: ApprovalDecision, by?: string): string {
+  if (!d) return "waiting for you";
+  const who = by === "rule" ? "by rule" : by === "engine" ? "by engine" : "by you";
+  if (d === "allow_always") return `always allowed ${who}`;
+  if (d === "allow_once") return `allowed ${who}`;
+  return `denied ${who}`;
+}
 
 const ToolRow: React.FC<{ call: ToolView; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ call, now, onShowFile, say }) => {
   const [open, setOpen] = useState(false);
@@ -468,14 +472,14 @@ const ToolRow: React.FC<{ call: ToolView; now: number; onShowFile: (path: string
       <span className="pk-step-node">{STATUS_ICON[call.status]}</span>
       <div className="step-body">
         <button type="button" className="step-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-          <b className="pk-step-name agent-call-title">{call.title}</b>
+          <b className="pk-step-name agent-call-title" title={call.title}>{englishTitle(call.title)}</b>
           <span className="pk-step-time">{time}</span>
         </button>
         <p className="pk-step-desc">
-          {call.approval && <span className={cn(call.approval.decision?.startsWith("deny") && "is-bad")}>{call.approval.highRisk ? "高危 · " : ""}{decisionWord(call.approval.decision, call.approval.by)}</span>}
-          {call.exitCode != null && <span>退出码 {call.exitCode}</span>}
-          {call.status === "denied" && !call.approval && <span>没让跑</span>}
-          {call.status === "cancelled" && <span>已停止</span>}
+          {call.approval && <span className={cn(call.approval.decision?.startsWith("deny") && "is-bad")}>{call.approval.highRisk ? "high risk · " : ""}{decisionEn(call.approval.decision, call.approval.by)}</span>}
+          {call.exitCode != null && <span>exit {call.exitCode}</span>}
+          {call.status === "denied" && !call.approval && <span>denied</span>}
+          {call.status === "cancelled" && <span>stopped</span>}
           {call.diff.map((d) => (
             <button key={d.path} type="button" className="agent-diff" onClick={() => onShowFile(d.path)}>
               {d.path}<span className="pk-add">+{d.additions ?? 0}</span><span className="pk-del">−{d.deletions ?? 0}</span>

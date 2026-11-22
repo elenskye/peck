@@ -80,7 +80,7 @@ export const ProjectPage: React.FC<{
   const preset = presets.find((p) => p.id === settings.preset) ?? null;
   return (
     <section className="col page" aria-label="项目设置">
-      <div className="pk-mod col-grow page-mod">
+      <div className="pk-mod col-grow page-mod is-big">
         <ModHead label="PROJECT"><Btn v="ghost" sm icon="x" onClick={onClose}>CLOSE</Btn></ModHead>
         <div className="set-pane scroll">
           <h2 className="t-title">项目设置<Info text={`只管这一个项目；空着的跟设置里的全局默认。${tasks.length ? `这个项目有 ${tasks.length} 个任务。` : ""}`} /></h2>

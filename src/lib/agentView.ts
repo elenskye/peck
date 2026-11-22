@@ -1,6 +1,7 @@
 // 统一事件 → 界面上的样子。Peck 循环和 CLI 引擎同一套：
-// - 回答（Markdown，边出字边显示）；思考折叠成「思考 · 12s」；
-// - 连续的工具调用折叠成一行（「读了 4 个文件、改了 2 个、跑了 1 条命令 · 38s」），在跑的那一步露出来；
+// - 回答（Markdown，边出字边显示）；
+// - 连续的工具调用和思考折叠成一组，头上一行英文（v1.0.1 学 Claude Code：「Read 4 files, edited 2 files, ran 1 command · 38s」），
+//   在跑的那一步露出来；思考不算一步：在想时那一组下面一行「Thinking… 3s」，想完就不显示，也不打断上下的步骤；
 // - 没批、没答的审批和 ASK 单独拿出来做卡片；任务清单取最新的一份；
 // - 花费：这一次的进、出、缓存命中、美元（CLI 估的标「估」，不知道的写「未知」，不当 0）。
 // - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、验证卡片（Peck 替模型跑的验证命令）、
@@ -103,11 +104,14 @@ export interface StageView {
   checks?: CriterionCheck[];
 }
 
+/** 一段思考（只用来显示「Thinking… 3s」，想完不显示）。 */
+export interface ThoughtView { text: string; done: boolean; startedAt: number; endedAt?: number }
+
 export type ViewItem =
   | { kind: "text"; id: string; text: string; done: boolean; stage?: StageRole }
   | { kind: "stage"; id: string; info: StageView }
-  | { kind: "reasoning"; id: string; text: string; done: boolean; startedAt: number; endedAt?: number }
-  | { kind: "tools"; id: string; calls: ToolView[] }
+  /** 连着的工具调用和思考（v1.0.1：思考并进来，不再单独一行）。 */
+  | { kind: "tools"; id: string; calls: ToolView[]; thoughts: ThoughtView[] }
   | { kind: "asked"; id: string; ask: AskView }
   | { kind: "approved"; id: string; approval: ApprovalView }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
@@ -190,7 +194,9 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
-  const thoughts = new Map<string, Extract<ViewItem, { kind: "reasoning" }>>();
+  const thoughts = new Map<string, ThoughtView>();
+  // 开始动手（调工具）或开口说话了，前面没收尾的思考就算想完了（有的引擎不发 reasoning.completed）。
+  const thoughtsDone = (at: number) => { for (const t of thoughts.values()) if (!t.done) { t.done = true; t.endedAt = at; } };
   const approvals = new Map<string, ApprovalView>();
   const asks = new Map<string, AskView>();
   const skills = new Map<string, SkillProposalView>();
@@ -230,6 +236,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
           }
           break;
         }
+        thoughtsDone(e.at);
         // 每一段的引擎各自从 m1 编号：同一个号在不同段里是两段话。
         const key = stageNow ? `${view.stages.length}:${e.itemId}` : e.itemId;
         let item = texts.get(key);
@@ -267,9 +274,12 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         let item = thoughts.get(rkey);
         if (!item) {
           if (e.type === "reasoning.completed" && !e.text.trim()) break;
-          item = { kind: "reasoning", id: `r-${rkey}-${e.seq}`, text: "", done: false, startedAt: e.at };
+          item = { text: "", done: false, startedAt: e.at };
           thoughts.set(rkey, item);
-          view.items.push(item);
+          // 并进前面那一组工具调用；前面不是就新开一组（后面的工具调用接着进这一组）。
+          const group = lastGroup();
+          if (group) group.thoughts.push(item);
+          else view.items.push({ kind: "tools", id: `g-r-${rkey}-${e.seq}`, calls: [], thoughts: [item] });
         }
         if (e.type === "reasoning.delta") item.text += e.text;
         else { item.text = e.text || item.text; item.done = true; item.endedAt = e.at; }
@@ -280,11 +290,12 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         tools.set(e.callId, call);
         // 子任务的步骤挂在交出去的那一步下面（找不到那一步就照旧排在组里）。
         const parent = e.subagentId ? parentOf(e.subagentId) : undefined;
-        if (parent && parent !== call) (parent.sub ??= { title: "子任务", calls: [] }).calls.push(call);
+        if (parent && parent !== call) (parent.sub ??= { title: "Subagent", calls: [] }).calls.push(call);
         else {
+          thoughtsDone(e.at);
           const group = lastGroup();
           if (group) group.calls.push(call);
-          else view.items.push({ kind: "tools", id: `g-${e.callId}-${e.seq}`, calls: [call] });
+          else view.items.push({ kind: "tools", id: `g-${e.callId}-${e.seq}`, calls: [call], thoughts: [] });
         }
         const pending = [...approvals.values()].find((a) => a.callId === e.callId);
         if (pending) call.approval = { title: pending.title, decision: pending.decision, by: pending.by, highRisk: pending.highRisk };
@@ -529,25 +540,125 @@ function collectDiffs(calls: ToolView[]): FileDiff[] {
   return [...byPath.values()];
 }
 
-/** 一组工具调用折叠成一句：「读了 4 个文件、改了 2 个、跑了 1 条命令 · 38s」。 */
-export function groupSummary(calls: ToolView[]): string {
-  const count = (k: ToolKind) => calls.filter((c) => c.kind === k).length;
-  const edited = new Set(calls.filter((c) => c.kind === "edit").flatMap((c) => (c.diff.length ? c.diff.map((d) => d.path) : [c.callId])));
-  const parts: string[] = [];
-  if (count("read")) parts.push(`读了 ${count("read")} 个文件`);
-  if (count("search")) parts.push(`搜了 ${count("search")} 次`);
-  if (edited.size) parts.push(`改了 ${edited.size} 个`);
-  if (count("run")) parts.push(`跑了 ${count("run")} 条命令`);
-  if (count("fetch")) parts.push(`取了 ${count("fetch")} 个网页`);
-  const other = count("mcp") + count("other");
-  if (other) parts.push(`其他 ${other} 步`);
-  return parts.join("、") || `${calls.length} 步`;
+// ---------- 一组的英文摘要、每一步的英文标题（v1.0.1，学 Claude Code） ----------
+
+/** 这一步算哪一类（摘要里按类计数）。名字比 kind 细：读 Skill、截图、查旧任务、搜网页各算一类。 */
+function activity(c: ToolView): string {
+  const n = c.name.toLowerCase();
+  if (n === "search_tasks") return "memory";
+  if (/web_?search/.test(n) || c.title.startsWith("搜网页")) return "web";
+  if (n === "load_skill") return "skill";
+  if (n === "screenshot_app") return "shot";
+  if (n === "list_directory") return "list";
+  if (c.sub || /delegate_task$/.test(n) || n === "task" || n === "agent") return "agent";
+  if (n === "update_plan" || /todo/.test(n)) return "plan";
+  if (/ask_user$/.test(n)) return "ask";
+  if (n === "memory") return "note";
+  if (n === "create_skill") return "newskill";
+  if (c.kind === "mcp" || c.kind === "other") return "tool";
+  return c.kind;
 }
 
-export function groupSpan(calls: ToolView[], now: number): number {
-  const start = Math.min(...calls.map((c) => c.startedAt));
-  const end = calls.some((c) => c.status === "running") ? now : Math.max(...calls.map((c) => c.endedAt ?? c.startedAt));
+const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const times = (base: string, n: number) => (n === 1 ? base : `${base} ${n} times`);
+
+const PHRASE: Record<string, (n: number) => string> = {
+  read: (n) => `read ${count(n, "file")}`,
+  list: (n) => `listed ${count(n, "folder")}`,
+  search: (n) => `searched for ${count(n, "pattern")}`,
+  edit: (n) => `edited ${count(n, "file")}`,
+  run: (n) => `ran ${count(n, "command")}`,
+  fetch: (n) => `fetched ${count(n, "page")}`,
+  web: (n) => times("searched the web", n),
+  memory: (n) => times("recalled memory", n),
+  skill: (n) => `used ${count(n, "skill")}`,
+  shot: (n) => `took ${count(n, "screenshot")}`,
+  agent: (n) => `ran ${count(n, "subagent")}`,
+  plan: () => "updated the plan",
+  ask: () => "asked you",
+  note: () => "proposed memory",
+  newskill: (n) => `proposed ${count(n, "skill")}`,
+  tool: (n) => `used ${count(n, "tool")}`,
+};
+
+/** 一组工具调用折叠成一句：「Read 4 files, edited 2 files, ran 1 command」（按第一次出现的先后）。 */
+export function groupSummary(calls: ToolView[]): string {
+  const order: string[] = [];
+  const counts = new Map<string, number>();
+  const edited = new Set<string>();
+  for (const c of calls) {
+    const k = activity(c);
+    if (!counts.has(k)) { order.push(k); counts.set(k, 0); }
+    if (k === "edit") for (const p of c.diff.length ? c.diff.map((d) => d.path) : [c.callId]) edited.add(p);
+    else counts.set(k, counts.get(k)! + 1);
+  }
+  if (edited.size) counts.set("edit", edited.size);
+  const text = order.map((k) => (PHRASE[k] ?? PHRASE.tool)(counts.get(k)!)).join(", ");
+  return text ? text[0].toUpperCase() + text.slice(1) : count(calls.length, "step");
+}
+
+/** 一组从第一步（或第一段思考）开始到最后一步结束用了多久；有在跑的算到现在。 */
+export function groupSpan(calls: ToolView[], now: number, thoughts: ThoughtView[] = []): number {
+  const marks = [...calls.map((c) => c.startedAt), ...thoughts.map((t) => t.startedAt)];
+  if (!marks.length) return 0;
+  const start = Math.min(...marks);
+  const live = calls.some((c) => c.status === "running") || thoughts.some((t) => !t.done);
+  const end = live ? now : Math.max(...calls.map((c) => c.endedAt ?? c.startedAt), ...thoughts.map((t) => t.endedAt ?? t.startedAt));
   return Math.max(0, end - start);
+}
+
+// 各引擎给的步骤标题是中文、一个字的动词打头（Peck 循环在 harness/tools、CLI 在 gateway/convert）。
+// 在这里翻成英文，旧记录也一样；认不出的照原样。
+const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
+  [/^后台跑 (.*)$/s, "Run in background $1"],
+  [/^停后台命令 ?(.*)$/s, "Stop background command $1"],
+  [/^看后台命令 ?(.*)$/s, "Check background command $1"],
+  [/^看任务 (\d+)$/, "Recall task $1"],
+  [/^搜旧任务「(.*)」$/s, "Recall past tasks “$1”"],
+  [/^看最近的任务$/, "Recall recent tasks"],
+  [/^看 项目根目录$/, "List project root"],
+  [/^看 (.*)$/s, "List $1"],
+  [/^读 Skill (\S+) 的 (.*)$/s, "Read skill $1 · $2"],
+  [/^读 Skill (.*)$/s, "Read skill $1"],
+  [/^读 (.*)$/s, "Read $1"],
+  [/^搜网页 (.*)$/s, "Search the web: $1"],
+  [/^取网页 (.*)$/s, "Fetch $1"],
+  [/^取 (.*)$/s, "Fetch $1"],
+  [/^搜「(.*)」$/s, "Search “$1”"],
+  [/^搜 (.*)$/s, "Search $1"],
+  [/^找文件 (.*)$/s, "Find files $1"],
+  [/^找 (.*)$/s, "Find $1"],
+  [/^写 (.*)$/s, "Write $1"],
+  [/^改 (.*) 等 (\d+) 个文件$/s, (_m, p, n) => `Edit ${p} and ${Number(n) - 1} more`],
+  [/^改 (.*)（(\d+) 处）$/s, "Edit $1 ($2 edits)"],
+  [/^改文件$/, "Edit files"],
+  [/^改 (.*)$/s, "Edit $1"],
+  [/^打补丁$/, "Apply patch"],
+  [/^跑 (.*)$/s, "Run $1"],
+  [/^截 (.*) 的窗口$/s, "Screenshot $1"],
+  [/^更新任务清单$/, "Update plan"],
+  [/^交给子任务[：:]\s*(.*)$/s, "Delegate: $1"],
+  [/^交给子任务$/, "Delegate"],
+  [/^子任务 (.*)$/s, "Subagent: $1"],
+  [/^子任务$/, "Subagent"],
+  [/^(问你|问站主)$/, "Ask you"],
+  [/^想记住几条$/, "Propose memory"],
+  [/^想存成 Skill (.*)$/s, "Propose skill $1"],
+  [/^用 MCP (.*)$/s, "MCP $1"],
+  [/^列出文件$/, "List files"],
+  [/^想一想$/, "Think"],
+  [/^用 (.*)$/s, "Use $1"],
+];
+
+/** 步骤标题翻成英文（「跑 pnpm test」→「Run pnpm test」）。 */
+export function englishTitle(title: string): string {
+  for (const [re, to] of TITLE_RULES) {
+    const m = title.match(re);
+    if (!m) continue;
+    const out = typeof to === "string" ? title.replace(re, to) : to(...m);
+    return out.replace(/、/g, ", ").replace(/（/g, " (").replace(/）/g, ")");
+  }
+  return title;
 }
 
 /** 落盘的完整输出路径（bash_run 的结果里写着「完整的存在 …」）。 */

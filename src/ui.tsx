@@ -95,8 +95,162 @@ export const ModHead: React.FC<{ label: string; note?: React.ReactNode; count?: 
   </div>
 );
 
-/** 选项片 + 从它上方弹出的菜单（K10）：再点一下收起，点外面也收起。
- *  菜单挂在 body 上、按选项片的位置摆（模块的像素切角会裁掉放在里面的弹层）。 */
+// ---------- 弹层（v1.0.1）：所有下拉、菜单、ⓘ、右键菜单都走这一个 ----------
+// 挂在 `.app` 下面（模块的像素切角会裁掉放在里面的弹层），按锚点在屏幕上的位置摆：
+// - 想往上（或往下）弹，那一边放不下、另一边更宽就翻过去；两边都放不下就压矮、里面滚；
+// - 左右夹在窗口里，比窗口还宽就压窄；
+// - 锚点在放大的区域里（设置页 zoom 1.5），弹层跟着放大；
+// - 窗口变大小、任何一层滚动、弹层或锚点自己变大小，都重新摆。
+// 新加弹层用 <Float>，不要再自己算位置。
+
+type Box = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+
+/** 元素实际的放大倍数（自己和上面每一层的 CSS zoom 乘起来）。 */
+function zoomOf(el: Element | null): number {
+  let z = 1;
+  for (let e = el; e; e = e.parentElement) {
+    const v = parseFloat(getComputedStyle(e).zoom);
+    if (v && v !== 1) z *= v;
+  }
+  return z;
+}
+
+/** 放大区域里的 getBoundingClientRect 给的是屏幕上的像素（新标准），还是除过倍数的（WebKit 旧做法）？量一次记着。 */
+let rectsOnScreen: boolean | null = null;
+function rectsAreOnScreen(): boolean {
+  if (rectsOnScreen == null) {
+    const outer = document.createElement("div");
+    outer.style.cssText = "position:fixed;left:0;top:0;zoom:2;visibility:hidden;pointer-events:none";
+    const inner = document.createElement("div");
+    inner.style.cssText = "width:50px;height:1px";
+    outer.appendChild(inner);
+    document.body.appendChild(outer);
+    rectsOnScreen = inner.getBoundingClientRect().width > 75;
+    outer.remove();
+  }
+  return rectsOnScreen;
+}
+
+/** 元素在屏幕上占的框（不管在不在放大区域里）。 */
+function screenBox(el: Element): Box {
+  const r = el.getBoundingClientRect();
+  const z = rectsAreOnScreen() ? 1 : zoomOf(el);
+  return { left: r.left * z, top: r.top * z, right: r.right * z, bottom: r.bottom * z, width: r.width * z, height: r.height * z };
+}
+
+export interface FloatPlace {
+  /** 先往哪边弹（放不下会翻）。默认往下。 */
+  side?: "top" | "bottom";
+  /** 左边对齐锚点的左边（start，默认）还是右边对齐右边（end）。 */
+  align?: "start" | "end";
+  /** 和锚点隔多远。 */
+  gap?: number;
+  /** 至少和锚点一样宽。 */
+  matchWidth?: boolean;
+  /** 和锚点一样宽、左右各缩进这么多（输入框上方的 @、/ 列表）。 */
+  inset?: number;
+}
+
+const EDGE = 8;
+
+function placeFloat(el: HTMLElement, a: Box, z: number, o: FloatPlace) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const gap = (o.gap ?? 6) * z;
+  // 先放到左上角、去掉上次的限制，量出本来多大。
+  const s = el.style;
+  s.left = "0px"; s.top = "0px"; s.right = "auto"; s.bottom = "auto"; s.maxHeight = ""; s.maxWidth = "";
+  if (o.inset != null) s.width = `${Math.max(240 * z, a.width - 2 * o.inset * z) / z}px`;
+  if (o.matchWidth) s.minWidth = `${a.width / z}px`;
+  const n = screenBox(el);
+  let w = n.width;
+  let h = n.height;
+  // 左右
+  if (w > vw - 2 * EDGE) { w = vw - 2 * EDGE; s.maxWidth = `${w / z}px`; }
+  let left = o.inset != null ? a.left + o.inset * z : o.align === "end" ? a.right - w : a.left;
+  // 这边放不下先换另一种对齐（右边对锚点右边 / 左边对左边），还不行再夹在窗口里。
+  if (o.inset == null && o.align !== "end" && left + w > vw - EDGE) left = a.right - w;
+  else if (o.inset == null && o.align === "end" && left < EDGE) left = a.left;
+  left = Math.min(Math.max(EDGE, left), vw - EDGE - w);
+  // 上下：想去的那边放不下、另一边更宽就翻过去；还放不下就压矮。
+  const below = vh - a.bottom - gap - EDGE;
+  const above = a.top - gap - EDGE;
+  let side = o.side ?? "bottom";
+  const want = side === "bottom" ? below : above;
+  const other = side === "bottom" ? above : below;
+  if (h > want && other > want) side = side === "bottom" ? "top" : "bottom";
+  const room = Math.max(0, side === "bottom" ? below : above);
+  if (h > room) { h = room; s.maxHeight = `${room / z}px`; }
+  s.left = `${left / z}px`;
+  if (side === "bottom") { s.top = `${(a.bottom + gap) / z}px`; s.bottom = "auto"; }
+  else { s.top = "auto"; s.bottom = `${(vh - a.top + gap) / z}px`; }
+  el.dataset.side = side;
+  s.visibility = "visible";
+}
+
+type FloatProps = FloatPlace & Omit<React.HTMLAttributes<HTMLDivElement>, "style"> & {
+  /** 锚点：弹层贴着它摆。 */
+  anchor?: React.RefObject<Element | null>;
+  /** 或者贴着一个点（右键菜单）。 */
+  point?: { x: number; y: number };
+  /** 拿弹层的 DOM（判断点没点在里面）。 */
+  floatRef?: React.RefObject<HTMLDivElement | null>;
+  /** 给了就管「点外面、按 Esc 收起」（点锚点不算外面，锚点自己管开关）。 */
+  onClose?: () => void;
+};
+
+/** 弹层：见上面的说明。用法：`{open && <Float anchor={ref} side="top" onClose={…} className="menu-pop">…</Float>}`。 */
+export function Float({ anchor, point, side, align, gap, matchWidth, inset, floatRef, onClose, className, children, ...rest }: FloatProps) {
+  const own = useRef<HTMLDivElement>(null);
+  const ref = floatRef ?? own;
+  const opts = useRef<FloatPlace>({});
+  opts.current = { side, align, gap, matchWidth, inset };
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const px = point?.x;
+  const py = point?.y;
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const z = anchor?.current ? zoomOf(anchor.current) : 1;
+    if (z !== 1) el.style.zoom = String(z);
+    const place = () => {
+      const a: Box | null = anchor?.current ? screenBox(anchor.current)
+        : px != null && py != null ? { left: px, right: px, top: py, bottom: py, width: 0, height: 0 } : null;
+      if (a && ref.current) placeFloat(ref.current, a, z, opts.current);
+    };
+    place();
+    // 弹层自己里面的滚动不算（不然压矮了的菜单一滚就跳）。
+    const onScroll = (e: Event) => { if (!(e.target instanceof Node && el.contains(e.target))) place(); };
+    const ro = new ResizeObserver(() => place());
+    ro.observe(el);
+    if (anchor?.current) ro.observe(anchor.current);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [anchor, px, py, ref]);
+  useEffect(() => {
+    if (!onClose) return;
+    const away = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !anchor?.current?.contains(t)) closeRef.current?.();
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") closeRef.current?.(); };
+    window.addEventListener("mousedown", away);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("keydown", esc); };
+  }, [!onClose, anchor, ref]); // eslint-disable-line react-hooks/exhaustive-deps
+  return createPortal(
+    <div ref={ref} className={cn("float", className)} {...rest}>{children}</div>,
+    document.querySelector(".app") ?? document.body,
+  );
+}
+
+/** 选项片 + 弹出的菜单（K10）：默认往上弹，放不下自己翻；再点一下收起，点外面也收起。 */
 export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLabel, title }: {
   label: React.ReactNode;
   /** 悬停看全名（字是元素不是字符串时要给）。 */
@@ -109,34 +263,7 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
   ariaLabel: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [place, setPlace] = useState<React.CSSProperties>({});
   const ref = useRef<HTMLSpanElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const at = () => {
-      const r = ref.current?.getBoundingClientRect();
-      if (!r) return;
-      const left = Math.max(8, Math.min(r.left, window.innerWidth - 8 - (pop.current?.offsetWidth ?? 280)));
-      setPlace(up ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
-    };
-    at();
-    const away = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!ref.current?.contains(t) && !pop.current?.contains(t)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc);
-    window.addEventListener("resize", at);
-    const raf = requestAnimationFrame(at);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("mousedown", away);
-      window.removeEventListener("keydown", esc);
-      window.removeEventListener("resize", at);
-    };
-  }, [open, up]);
   return (
     <span className="menu-anchor" ref={ref}>
       <button type="button" disabled={disabled} className={cn("pk-chip", sm && "pk-chip--sm", open && "is-on")} aria-haspopup="menu" aria-expanded={open} aria-label={ariaLabel} title={title ?? (typeof label === "string" ? label : undefined)} onClick={() => setOpen((v) => !v)}>
@@ -144,48 +271,27 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
         <span className="pk-chip-label">{label}</span>
         <Icon name="triD" size={12} />
       </button>
-      {open && createPortal(
-        <div ref={pop} className="pk-anim-reveal-s menu-pop menu-pop--fixed" style={place}>
+      {open && (
+        <Float anchor={ref} side={up ? "top" : "bottom"} onClose={() => setOpen(false)} className="pk-anim-reveal-s menu-pop menu-pop--fixed">
           <div className="pk-menu" role="menu"><div className="pk-menu-scroll">{children(() => setOpen(false))}</div></div>
-        </div>,
-        document.querySelector(".app") ?? document.body,
+        </Float>
       )}
     </span>
   );
 }
 
-/** ⓘ：界面上的说明文字都收进这里，悬停、聚焦或点一下看。图标是占位（一格像素「i」），等在方案里画、站主批了再换。
- *  弹层挂在 body 上（模块的像素切角会裁掉放在里面的）。 */
+/** ⓘ：界面上的说明文字都收进这里，悬停、聚焦或点一下看。图标是占位（一格像素「i」），等在方案里画、站主批了再换。 */
 export const Info: React.FC<{ text: React.ReactNode }> = ({ text }) => {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const [place, setPlace] = useState<React.CSSProperties>({});
   const ref = useRef<HTMLButtonElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
   const id = useId();
   // 从按钮移到弹层上要一点时间：晚一下再收，移进弹层就不收（能选里面的字）。
   const hideTimer = useRef(0);
   const hideSoon = () => { if (!pinned) hideTimer.current = window.setTimeout(() => setOpen(false), 150); };
   const keep = () => window.clearTimeout(hideTimer.current);
   useEffect(() => () => window.clearTimeout(hideTimer.current), []);
-  const show = () => {
-    keep();
-    const r = ref.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = 280;
-    const left = Math.max(8, Math.min(r.left - 12, window.innerWidth - width - 8));
-    const below = r.bottom + 6 + 120 < window.innerHeight;
-    setPlace(below ? { left, top: r.bottom + 6, width } : { left, bottom: window.innerHeight - r.top + 6, width });
-    setOpen(true);
-  };
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => { const t = e.target as Node; if (pinned && !ref.current?.contains(t) && !pop.current?.contains(t)) { setPinned(false); setOpen(false); } };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setPinned(false); setOpen(false); } };
-    window.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc);
-    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("keydown", esc); };
-  }, [open, pinned]);
+  const show = () => { keep(); setOpen(true); };
   return (
     <>
       <button ref={ref} type="button" className={cn("info-btn", open && "is-on")} aria-label="说明" aria-expanded={open} aria-describedby={open ? id : undefined}
@@ -194,9 +300,11 @@ export const Info: React.FC<{ text: React.ReactNode }> = ({ text }) => {
         onClick={(e) => { e.stopPropagation(); if (pinned) { setPinned(false); setOpen(false); } else { setPinned(true); show(); } }}>
         <i className="info-i" aria-hidden="true" />
       </button>
-      {open && createPortal(
-        <div ref={pop} id={id} className="pk-anim-reveal-s info-pop" role="tooltip" style={place} onMouseEnter={keep} onMouseLeave={hideSoon}>{text}</div>,
-        document.querySelector(".app") ?? document.body,
+      {open && (
+        <Float anchor={ref} side="bottom" id={id} role="tooltip" className="pk-anim-reveal-s info-pop" onMouseEnter={keep} onMouseLeave={hideSoon}
+          onClose={() => { setPinned(false); setOpen(false); }}>
+          {text}
+        </Float>
       )}
     </>
   );
@@ -215,27 +323,11 @@ export const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { off
 export const ComboField: React.FC<{ value: string; options: string[]; onChange: (v: string) => void; label: string; placeholder?: string; width?: number; emptyLabel?: string }> = ({ value, options, onChange, label, placeholder, width, emptyLabel }) => {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [place, setPlace] = useState<React.CSSProperties>({});
   const ref = useRef<HTMLLabelElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
   const q = value.trim().toLowerCase();
   const exact = !q || options.some((o) => o.toLowerCase() === q);
   const shown = exact ? options : options.filter((o) => o.toLowerCase().includes(q));
   const items = [...(emptyLabel ? [{ v: "", t: emptyLabel }] : []), ...shown.map((o) => ({ v: o, t: o }))];
-  useEffect(() => {
-    if (!open) return;
-    const at = () => {
-      const r = ref.current?.getBoundingClientRect();
-      if (!r) return;
-      const below = r.bottom + 6 + 240 < window.innerHeight;
-      setPlace(below ? { left: r.left, top: r.bottom + 6, minWidth: r.width } : { left: r.left, bottom: window.innerHeight - r.top + 6, minWidth: r.width });
-    };
-    at();
-    const away = (e: MouseEvent) => { const t = e.target as Node; if (!ref.current?.contains(t) && !pop.current?.contains(t)) setOpen(false); };
-    window.addEventListener("mousedown", away);
-    window.addEventListener("resize", at);
-    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("resize", at); };
-  }, [open]);
   const pick = (v: string) => { onChange(v); setOpen(false); setActive(-1); };
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -262,8 +354,8 @@ export const ComboField: React.FC<{ value: string; options: string[]; onChange: 
           onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(-1); }} />
         <Icon name="triD" size={12} className="combo-caret" />
       </label>
-      {open && items.length > 0 && createPortal(
-        <div ref={pop} className="pk-anim-reveal-s menu-pop menu-pop--fixed combo-pop" style={place}>
+      {open && items.length > 0 && (
+        <Float anchor={ref} side="bottom" matchWidth onClose={() => setOpen(false)} className="pk-anim-reveal-s menu-pop menu-pop--fixed combo-pop">
           <div className="pk-menu" role="listbox" aria-label={label}>
             <div className="pk-menu-scroll">
               {items.map((it, i) => (
@@ -277,8 +369,7 @@ export const ComboField: React.FC<{ value: string; options: string[]; onChange: 
               ))}
             </div>
           </div>
-        </div>,
-        document.querySelector(".app") ?? document.body,
+        </Float>
       )}
     </>
   );

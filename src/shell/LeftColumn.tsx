@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import type { ProjectOverview, TaskBrief } from "@/lib/types";
 import { ago, clock, cn, plainLine, runState, STATUS_WORD } from "@/lib/utils";
-import { Btn, FoldBtn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
+import { Btn, Float, FoldBtn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
 
 /** 全部项目页每个项目带几次最近的任务。 */
 const RECENT = 5;
@@ -29,53 +28,54 @@ type MenuEntry =
   | { label: string; icon: IconName; hint?: string; danger?: boolean; disabled?: boolean; confirm?: string; onClick: () => void }
   | "sep";
 
-/** 右键菜单：贴着鼠标出现，点外面、Esc、滚动都收起。带 confirm 的项点第一下只换成确认的字，再点才做。 */
+/** 右键菜单：贴着鼠标出现（位置交给 Float：靠窗口边就往回让、太长就压矮滚动），点外面、Esc、滚动都收起。
+ *  带 confirm 的项点第一下只换成确认的字，再点才做。 */
 const ContextMenu: React.FC<{ x: number; y: number; items: MenuEntry[]; onClose: () => void }> = ({ x, y, items, onClose }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [armed, setArmed] = useState<number | null>(null);
-  const [pos, setPos] = useState({ left: x, top: y });
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
     const onClose = () => closeRef.current();
-    const el = ref.current;
-    if (el) {
-      const r = el.getBoundingClientRect();
-      setPos({ left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) });
-      el.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-    }
+    ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     const down = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
     const key = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    // 菜单太长压矮了能在里面滚：自己里面的滚动不收。
+    const scroll = (e: Event) => { if (!(e.target instanceof Node && ref.current?.contains(e.target))) onClose(); };
     window.addEventListener("mousedown", down, true);
     window.addEventListener("keydown", key);
     window.addEventListener("resize", onClose);
     window.addEventListener("blur", onClose);
-    document.addEventListener("scroll", onClose, true);
+    document.addEventListener("scroll", scroll, true);
     return () => {
       window.removeEventListener("mousedown", down, true);
       window.removeEventListener("keydown", key);
       window.removeEventListener("resize", onClose);
       window.removeEventListener("blur", onClose);
-      document.removeEventListener("scroll", onClose, true);
+      document.removeEventListener("scroll", scroll, true);
     };
   }, [x, y]);
   return (
-    <div ref={ref} className="pk-menu ctx-menu" role="menu" style={{ left: pos.left, top: pos.top }} onContextMenu={(e) => e.preventDefault()}>
-      {items.map((item, i) =>
-        item === "sep" ? <div key={`sep-${i}`} className="pk-menu-sep" /> : (
-          <button key={item.label} type="button" role="menuitem" disabled={item.disabled} className={cn("pk-menu-action", item.danger && "ctx-danger", armed === i && "is-armed")}
-            onClick={() => {
-              if (item.confirm && armed !== i) { setArmed(i); return; }
-              onClose();
-              item.onClick();
-            }}>
-            <Icon name={item.icon} size={12} />
-            {armed === i ? item.confirm : item.label}
-            {item.hint && armed !== i && <em>{item.hint}</em>}
-          </button>
-        ),
-      )}
-    </div>
+    <Float point={{ x, y }} gap={0} floatRef={ref} className="ctx-menu" onContextMenu={(e) => e.preventDefault()}>
+      <div className="pk-menu" role="menu">
+        <div className="pk-menu-scroll">
+          {items.map((item, i) =>
+            item === "sep" ? <div key={`sep-${i}`} className="pk-menu-sep" /> : (
+              <button key={item.label} type="button" role="menuitem" disabled={item.disabled} className={cn("pk-menu-action", item.danger && "ctx-danger", armed === i && "is-armed")}
+                onClick={() => {
+                  if (item.confirm && armed !== i) { setArmed(i); return; }
+                  onClose();
+                  item.onClick();
+                }}>
+                <Icon name={item.icon} size={12} />
+                {armed === i ? item.confirm : item.label}
+                {item.hint && armed !== i && <em>{item.hint}</em>}
+              </button>
+            ),
+          )}
+        </div>
+      </div>
+    </Float>
   );
 };
 
@@ -319,7 +319,7 @@ const ProjectList: React.FC<ListProps> = ({ projects, projectId, taskId, busyPro
         );
       })}
       {/* 挂在模块外面：模块的像素切角会裁掉放在里面的弹层。 */}
-      {menu && createPortal(<ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />, document.querySelector(".app") ?? document.body)}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   );
 };
