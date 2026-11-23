@@ -618,6 +618,18 @@ body { overflow: hidden; }
 .agent-skill-done code { font-family: var(--font-code); color: var(--color-text-2); }
 .skill-history { margin: 0 0 var(--space-3) var(--space-8); border-left: 1px dotted var(--color-line-strong); padding-left: var(--space-6); }
 .skill-history .set-row:first-child { border-top: 0; }
+/* 插件（v1.1.0）：一行一个，点名字展开看它带的 Skill、命令、工具、Hook、MCP。 */
+.plugin-name { display: inline-flex; align-items: center; gap: var(--space-3); font: inherit; color: inherit; text-align: left; }
+.plugin-name .pk-i { color: var(--color-text-3); }
+.plugin-name:hover .pk-i, .plugin-name[aria-expanded="true"] .pk-i { color: var(--color-cyan-text); }
+.plugin-every { color: var(--color-text-3); white-space: nowrap; }
+.plugin-detail { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-4) var(--space-7); margin: 0 0 var(--space-3) var(--space-8); padding-left: var(--space-6); border-left: 1px dotted var(--color-line-strong); font-size: var(--text-small); line-height: 1.5; }
+.plugin-detail dt { color: var(--color-text-3); padding-top: 1px; }
+.plugin-detail dd { margin: 0; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.plugin-detail dd p { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); color: var(--color-text-2); }
+.plugin-detail dd code { color: var(--color-text); overflow-wrap: anywhere; }
+.plugin-detail dd span { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.plugin-detail dd p.is-warn span { color: var(--color-warn); }
 .memory-text { font-family: var(--font-body); font-size: var(--text-body); letter-spacing: 0; text-transform: none; }
 
 /* ---------- 审阅和预览（v0.7 Phase 10，云端取了沉静一边，本地改方案时并进 tokens） ---------- */

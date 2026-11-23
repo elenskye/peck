@@ -11,9 +11,10 @@ import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch 
 import { ModelChip } from "@/shell/AgentsPanel";
 import { pickable, teamable } from "@/shell/ModelPicker";
 import { chosenEntry } from "@/shell/MiddleColumn";
+import { PluginsSettings } from "@/shell/Plugins";
 
 /** 设置的分组（v0.10 Refine：只写英文；DEV、NOTIFY、LIMIT 并成 GENERAL，新加 AGENTS、QUOTA）。 */
-export const SETTINGS_NAV = ["GENERAL", "PROVIDERS", "AGENTS", "QUOTA", "ACCESS", "CLI", "LOOK", "MCP", "ARCHIVE", "KEYS"] as const;
+export const SETTINGS_NAV = ["GENERAL", "PROVIDERS", "AGENTS", "QUOTA", "ACCESS", "CLI", "LOOK", "PLUGINS", "ARCHIVE", "KEYS"] as const;
 export type SettingsSection = (typeof SETTINGS_NAV)[number];
 
 interface Props {
@@ -63,7 +64,7 @@ export const SettingsPage: React.FC<Props> = (props) => {
             {section === "ACCESS" && <Access {...props} />}
             {section === "CLI" && <Cli {...props} />}
             {section === "LOOK" && <Look {...props} />}
-            {section === "MCP" && <Mcp {...props} />}
+            {section === "PLUGINS" && <><PluginsSettings say={props.say} /><p className="lbl">MCP SERVERS</p><Mcp {...props} /></>}
             {section === "ARCHIVE" && <Archive {...props} />}
             {section === "KEYS" && <Keys />}
           </div>
@@ -491,7 +492,7 @@ const Look: React.FC<Props> = ({ settings, onSettings }) => (
   </div>
 );
 
-// ---------- MCP 服务器（v0.8） ----------
+// ---------- MCP 服务器（v0.8；v1.1.0 起在 PLUGINS 页的 MCP SERVERS 一块） ----------
 
 /** 参数：空格分开，带空格的用引号包起来。 */
 function splitArgs(text: string): string[] {

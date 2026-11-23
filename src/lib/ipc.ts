@@ -334,6 +334,37 @@ export const ipc = {
     if (isMockMode()) return mockIpc.skillRestore(workspaceId, name, id);
     return invoke<SkillRow[]>("skill_restore", { workspaceId, name, id });
   },
+  // ── 插件（v1.1.0）──
+  /** 设置 → PLUGINS：自带的和库里的。 */
+  async pluginList(): Promise<PluginList> {
+    if (isMockMode()) return mockIpc.pluginList();
+    return invoke<PluginList>("plugin_list");
+  },
+  /** 库里的一项要不要默认每个项目都装（只管以后点开的项目）。 */
+  async pluginEveryProject(name: string, on: boolean): Promise<PluginList> {
+    if (isMockMode()) return mockIpc.pluginEveryProject(name, on);
+    return invoke<PluginList>("plugin_every_project", { name, on });
+  },
+  /** 点开一个项目：第一次认项目结构，每次补上「每个项目都装」的插件。回这次做了什么。 */
+  async projectPrepare(workspaceId: string): Promise<Prepared> {
+    if (isMockMode()) return mockIpc.projectPrepare(workspaceId);
+    return invoke<Prepared>("project_prepare", { workspaceId });
+  },
+  /** 项目设置 → PLUGINS：自带的开没开、库里的装没装、有没有新版。 */
+  async projectPlugins(workspaceId: string): Promise<ProjectPlugins> {
+    if (isMockMode()) return mockIpc.projectPlugins(workspaceId);
+    return invoke<ProjectPlugins>("project_plugins", { workspaceId });
+  },
+  /** INSTALL / UPDATE：把库里的拷进项目（盖掉项目里那一份）。 */
+  async pluginInstall(workspaceId: string, name: string): Promise<ProjectPlugins> {
+    if (isMockMode()) return mockIpc.pluginInstall(workspaceId, name);
+    return invoke<ProjectPlugins>("plugin_install", { workspaceId, name });
+  },
+  /** REMOVE：删掉项目里那一份，以后不再自动装。 */
+  async pluginRemove(workspaceId: string, name: string): Promise<ProjectPlugins> {
+    if (isMockMode()) return mockIpc.pluginRemove(workspaceId, name);
+    return invoke<ProjectPlugins>("plugin_remove", { workspaceId, name });
+  },
   /** 选了一个插件命令：展开成要发出去的这句话。 */
   async slashExpand(workspaceId: string, name: string, args: string): Promise<string> {
     if (isMockMode()) return mockIpc.slashExpand(workspaceId, name, args);
@@ -549,6 +580,42 @@ export interface McpServerConfig {
 
 export type ToolHint = "read" | "write" | "destructive";
 
+/** 一个插件（或库里一个单独的 Skill），v1.1.0。 */
+export interface PluginInfo {
+  name: string;
+  /** 界面上的名字。 */
+  title: string;
+  version: string;
+  description: string;
+  kind: "plugin" | "skill";
+  /** builtin：嵌在程序里；library：数据目录的插件库；project：装进项目的那一份。 */
+  source: "builtin" | "library" | "project";
+  /** 库里的：默认每个项目都装。 */
+  everyProject: boolean;
+  skills: Array<{ name: string; description: string }>;
+  /** name 是全名 `<插件名>:<命令>`。 */
+  commands: Array<{ name: string; description: string; hint?: string | null }>;
+  /** known：Peck 有这个工具。 */
+  tools: Array<{ name: string; description: string; known: boolean }>;
+  /** kind：peck（问模型一句 ask，再由 Peck 跑 run）、command（任意脚本，Peck 不跑）。 */
+  hooks: Array<{ event: string; kind: string; ask?: string | null; run?: string | null }>;
+  mcp: Array<{ name: string; command: string }>;
+}
+export interface PluginList { builtin: PluginInfo[]; library: PluginInfo[] }
+/** 项目设置 → PLUGINS 的一行。 */
+export interface ProjectPlugin extends PluginInfo {
+  /** 自带的：这个项目里关掉了。 */
+  off: boolean;
+  /** 项目里装的是哪一版（没装是空）。 */
+  installed?: string | null;
+  /** 库里现在的版本（库里没有了是空）。 */
+  latest?: string | null;
+  /** 库里的比项目里的新。 */
+  update: boolean;
+}
+export interface ProjectPlugins { builtin: ProjectPlugin[]; library: ProjectPlugin[]; skillsDir: string }
+/** 点开一个项目时做了什么。 */
+export interface Prepared { created: string[]; installed: string[] }
 /** 一个插件带的斜杠命令（v1.1.0）：name 是全名 `<插件名>:<命令>`，plugin 是插件在界面上的名字。 */
 export interface CommandFile { name: string; description: string; hint?: string | null; plugin: string }
 /** 一个 Skill（SKILL.md，v0.10 C2）。 */
@@ -558,7 +625,7 @@ export interface SlashList { commands: CommandFile[]; skills: SkillInfo[] }
 /** 一条 Skill 的草稿（v0.10 C3）：模型提的，或者卡片上改过的。 */
 export interface SkillDraft { name: string; description: string; body: string; scope: Exclude<SkillInfo["scope"], "peck"> }
 /** 项目设置里的一行 Skill（v0.10 C3）。 */
-export interface SkillRow { name: string; description: string; scope: SkillInfo["scope"]; off: boolean; loads: number; lastUsed?: number | null; changedAt?: number | null; stale: boolean; versions: number }
+export interface SkillRow { name: string; description: string; scope: SkillInfo["scope"]; plugin?: string | null; off: boolean; loads: number; lastUsed?: number | null; changedAt?: number | null; stale: boolean; versions: number }
 /** 一份旧版。 */
 export interface SkillVersion { id: string; at: number; description: string; lines: number }
 /** 项目设置里的一行 MCP（v0.10 A2）。 */

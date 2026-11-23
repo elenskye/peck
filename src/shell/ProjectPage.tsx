@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import type { ModelEntry } from "@/lib/agentEvents";
-import { ipc, type AllowRule, type MemoryNote, type ProjectMcpView, type SkillRow, type SkillVersion, type SlashList, type ToolHint } from "@/lib/ipc";
+import { ipc, type AllowRule, type MemoryNote, type ProjectMcpView, type SkillRow, type SkillVersion, type ToolHint } from "@/lib/ipc";
 import type { Permission, ProjectOverview, ProjectSettings } from "@/lib/types";
 import { ago, cn, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
 import { Btn, Dot, Field, Icon, Info, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
 import { WhoPicker, pickable } from "@/shell/ModelPicker";
 import { presetProblems, presetSummary, type Preset } from "@/lib/presets";
+import { ProjectPluginsSection } from "@/shell/Plugins";
 
 
 /** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、MCP、Skills、记忆、「总是允许」过的、归档全部任务、移出列表。 */
@@ -27,6 +28,8 @@ export const ProjectPage: React.FC<{
   const [name, setName] = useState(workspace.name);
   const [rules, setRules] = useState<AllowRule[] | null>(null);
   const [armed, setArmed] = useState(false);
+  // 装、更新、移除过插件：下面的 SKILLS 重读一遍。
+  const [pluginRev, setPluginRev] = useState(0);
   const [archiveArmed, setArchiveArmed] = useState(false);
   const [memories, setMemories] = useState<MemoryNote[] | null>(null);
   useEffect(() => setName(workspace.name), [workspace.name]);
@@ -153,9 +156,11 @@ export const ProjectPage: React.FC<{
             {envDraft !== envText && <Btn sm v="ghost" onClick={() => setEnvDraft(envText)}>RESET</Btn>}
           </div>
 
-          <ProjectMcp workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
+          <ProjectPluginsSection workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} onChanged={() => setPluginRev((n) => n + 1)} />
 
-          <ProjectSkills workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
+          <ProjectSkills workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} rev={pluginRev} />
+
+          <ProjectMcp workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
 
           <p className="lbl">MEMORY<Info text="Peck Loop 觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；每次发任务都带上。" /></p>
           {memories && memories.length > 0 ? (
@@ -227,7 +232,7 @@ const ProjectMcp: React.FC<{
   };
   return (
     <>
-      <p className="lbl">MCP<Info text="Peck Loop 在这个项目里起的 MCP 服务器：项目根 .mcp.json 里的（Claude Code 的写法，一份四家都用）和设置 → MCP 里的，同名的以项目的为准。项目里的是项目里的程序，第一次起之前问你一次，.mcp.json 改了再问。TEST 起一次、记下每个工具是只读还是会改：Grok、Antigravity 问要不要调这些工具时，Peck 照这个替它们批只读的。CLI 引擎自己读 .mcp.json，这里关掉只管 Peck Loop。" /></p>
+      <p className="lbl">MCP<Info text="Peck Loop 在这个项目里起的 MCP 服务器：项目根 .mcp.json 里的（Claude Code 的写法，一份四家都用）和设置 → PLUGINS 里 MCP SERVERS 的，同名的以项目的为准。项目里的是项目里的程序，第一次起之前问你一次，.mcp.json 改了再问。TEST 起一次、记下每个工具是只读还是会改：Grok、Antigravity 问要不要调这些工具时，Peck 照这个替它们批只读的。CLI 引擎自己读 .mcp.json，这里关掉只管 Peck Loop。" /></p>
       {view?.error && <p className="hint is-bad">{view.error}</p>}
       <div className="set-rows">
         {view?.rows.map((r) => (
@@ -245,18 +250,18 @@ const ProjectMcp: React.FC<{
           </div>
         ))}
       </div>
-      {view && view.rows.length === 0 && <p className="hint">没有。设置 → MCP 里加，或者在项目根写 .mcp.json。</p>}
+      {view && view.rows.length === 0 && <p className="hint">没有。设置 → PLUGINS 的 MCP SERVERS 里加，或者在项目根写 .mcp.json。</p>}
       {!view && !missing && <p className="hint">在读…</p>}
       {view?.skipped.map(([n, why]) => <p key={n} className="hint">{n}：{why}</p>)}
     </>
   );
 };
 
-// ---------- Skills 和命令文件（v0.10 C2） ----------
+// ---------- Skills（v0.10 C2；自带插件的在上面 PLUGINS 里按插件开关） ----------
 
-const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", peck: "Peck 自带" };
+const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/" };
 
-/** 这个项目读到的 Skills（能一个个关）和斜杠命令文件。 */
+/** 这个项目里的 Skills（项目自己的、插件带进来的），能一个个关。 */
 const ProjectSkills: React.FC<{
   workspaceId: string;
   settings: ProjectSettings;
@@ -265,8 +270,9 @@ const ProjectSkills: React.FC<{
   saving?: boolean;
   save: (patch: { settings?: ProjectSettings }, message: string) => Promise<void>;
   say: (m: unknown) => void;
-}> = ({ workspaceId, settings, missing, saving, save, say }) => {
-  const [list, setList] = useState<SlashList | null>(null);
+  /** 装、更新、移除过插件就变一下：重读。 */
+  rev: number;
+}> = ({ workspaceId, settings, missing, saving, save, say, rev }) => {
   const [rows, setRows] = useState<SkillRow[] | null>(null);
   // 展开了哪个 Skill 的旧版（v0.10 C3）。
   const [history, setHistory] = useState<{ name: string; versions: SkillVersion[] } | null>(null);
@@ -274,10 +280,9 @@ const ProjectSkills: React.FC<{
   useEffect(() => {
     if (missing) return;
     let live = true;
-    ipc.slashList(workspaceId).then((l) => { if (live) setList(l); }).catch(say);
-    ipc.skillOverview(workspaceId).then((r) => { if (live) setRows(r); }).catch(say);
+    ipc.skillOverview(workspaceId).then((r) => { if (live) setRows(r.filter((k) => k.scope !== "peck")); }).catch(say);
     return () => { live = false; };
-  }, [workspaceId, missing, off.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [workspaceId, missing, off.join(","), rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (name: string, on: boolean) =>
     save({ settings: { ...settings, skillsOff: on ? off.filter((n) => n !== name) : [...off, name] } }, on ? `Skill ${name} 开了` : `这个项目里不用 Skill ${name} 了`);
   const showHistory = (name: string) => {
@@ -290,15 +295,14 @@ const ProjectSkills: React.FC<{
     k.loads > 0 ? `用了 ${k.loads} 次${k.lastUsed ? `，最近 ${ago(k.lastUsed)}` : ""}` : "还没用过",
     k.stale ? "30 天没用了" : null,
   ].filter(Boolean).join(" · ");
-  const shown: SkillRow[] = rows ?? (list?.skills.map((k) => ({ ...k, loads: 0, stale: false, versions: 0 })) ?? []);
   return (
     <>
-      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/ 里的 SKILL.md，加上 Peck 自带插件的三个（快照回退、定时任务、写 Skill：教模型用 Peck 自己的工具，只给 Peck Loop）。Peck Loop 把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。CLI 自己读项目里的；这里关掉只管 Peck Loop。模型提议、你批了的 Skill 只写进这个项目；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck Loop 和 Claude Code 读它的次数算（只算这个项目）。" /></p>
-      {list || rows ? (shown.length > 0 ? (
+      <p className="lbl">SKILLS<Info text="这个项目里的 SKILL.md：.claude/skills/（.agents/skills/ 是同一处的软链接，哪家 CLI 都读得到）、和 AGENTS.md 同级的 skills/；插件带进来的写着是哪个插件的。Peck Loop 把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。CLI 自己读项目里的；这里关掉只管 Peck Loop。模型提议、你批了的 Skill 只写进这个项目；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck Loop 和 Claude Code 读它的次数算。Peck 自带的在上面 PLUGINS 里开关。" /></p>
+      {rows ? (rows.length > 0 ? (
         <div className="set-rows">
-          {shown.map((k) => (
+          {rows.map((k) => (
             <React.Fragment key={k.name}>
-              <Row name={<span className="t-code">{k.name}</span>} off={k.off} desc={<>{SKILL_WHERE[k.scope] ?? k.scope} · {k.description}{rows && <><br /><span className={cn(k.stale && "is-warn")}>{used(k)}</span></>}</>}>
+              <Row name={<span className="t-code">{k.name}</span>} off={k.off} desc={<>{SKILL_WHERE[k.scope] ?? k.scope}{k.plugin ? ` · ${k.plugin}` : ""} · {k.description}<br /><span className={cn(k.stale && "is-warn")}>{used(k)}</span></>}>
                 {k.versions > 0 && <Btn sm v="ghost" aria-expanded={history?.name === k.name} onClick={() => showHistory(k.name)}>旧版 {k.versions}</Btn>}
                 <Switch label={`Skill ${k.name} 开着`} on={!k.off} disabled={missing || saving} onChange={(on) => void toggle(k.name, on)} />
               </Row>
@@ -316,14 +320,6 @@ const ProjectSkills: React.FC<{
         </div>
       ) : <p className="hint">没有。</p>) : (
         <p className="hint">{missing ? "文件夹不在了。" : "在读…"}</p>
-      )}
-      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/undo…，不带前缀），加上插件带的（一律 /插件名:命令）。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
-      {list && list.commands.length > 0 ? (
-        <div className="chips">
-          {list.commands.map((c) => <span key={c.name} className="chip-quiet" title={c.description}>/{c.name}</span>)}
-        </div>
-      ) : (
-        <p className="hint">{list ? "没有插件带的命令。" : "在读…"}</p>
       )}
     </>
   );

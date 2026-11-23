@@ -458,6 +458,15 @@ const App: React.FC = () => {
   }, [refreshProjects, say]);
 
   // ---------- 终端 ----------
+  // 点开一个项目（v1.1.0）：第一次认项目结构（说明文件、Skill 文件夹的软链接），每次补上「每个项目都装」的插件；做了什么说一句。
+  useEffect(() => {
+    if (!projectId) return;
+    void ipc.projectPrepare(projectId).then((done) => {
+      const parts = [done.created.length ? `补了 ${done.created.join("、")}` : "", done.installed.length ? `装了 ${done.installed.join("、")}` : ""].filter(Boolean);
+      if (parts.length) say(`这个项目里${parts.join("；")}`);
+    }).catch(say);
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const term = (projectId && terms[projectId]) || EMPTY_TERM;
   useEffect(() => {
     if (!projectId) return;

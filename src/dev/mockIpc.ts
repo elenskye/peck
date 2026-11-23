@@ -13,7 +13,8 @@ import {
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
 import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs } from "@/lib/ipc";
+import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs } from "@/lib/ipc";
+import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
 import { cliRounds, delegateRound, fixRounds, reviewRounds, specRounds, stage, type Member } from "@/dev/teamMock";
 import type { ApiConfig, ApiStatus } from "@/lib/api";
@@ -594,19 +595,40 @@ export const mockIpc = {
       { server: server.name, name: "delete_issue", description: "Delete an issue", readOnly: false, destructive: true },
     ];
   },
-  // ── 斜杠命令和 Skills（v0.10 C2）：演示几个 Skill；插件带的命令等项目里装了插件才有（v1.1.0）──
+  // ── 插件（v1.1.0）：数据在 pluginMock.ts ──
+  async pluginList(): Promise<PluginList> {
+    return structuredClone(mockPluginList());
+  },
+  async pluginEveryProject(name: string, on: boolean): Promise<PluginList> {
+    return structuredClone(mockEveryProject(name, on));
+  },
+  async projectPrepare(_workspaceId: string): Promise<Prepared> {
+    return { created: [], installed: [] };
+  },
+  async projectPlugins(workspaceId: string): Promise<ProjectPlugins> {
+    return structuredClone(mockProjectPlugins(workspaceId, workspacesState.find((w) => w.id === workspaceId)?.settings?.pluginsOff ?? []));
+  },
+  async pluginInstall(workspaceId: string, name: string): Promise<ProjectPlugins> {
+    mockInstall(workspaceId, name);
+    return this.projectPlugins(workspaceId);
+  },
+  async pluginRemove(workspaceId: string, name: string): Promise<ProjectPlugins> {
+    mockRemove(workspaceId, name);
+    return this.projectPlugins(workspaceId);
+  },
+  // ── 斜杠命令和 Skills（v0.10 C2）：演示几个 Skill；命令是项目里装着的插件带的（v1.1.0）──
   async slashList(workspaceId: string): Promise<SlashList> {
     const off = workspacesState.find((w) => w.id === workspaceId)?.settings?.skillsOff ?? [];
     return {
-      commands: [],
+      commands: mockPluginCommands(workspaceId),
       skills: [
         { name: "release", description: "How to cut a release of this project", scope: "project", off: off.includes("release") },
         { name: "draw-board", description: "Draw a board with the dw MCP tools", scope: "project-skills", off: off.includes("draw-board") },
       ],
     };
   },
-  async slashExpand(_workspaceId: string, name: string, _args: string): Promise<string> {
-    throw new Error(`没有 /${name} 这个命令。`);
+  async slashExpand(workspaceId: string, name: string, args: string): Promise<string> {
+    return mockExpand(workspaceId, name, args);
   },
   async harnessCompact(_sessionId: string): Promise<string> {
     await new Promise((r) => setTimeout(r, 200));
@@ -776,7 +798,8 @@ export const mockIpc = {
     return structuredClone(event);
   },
   async skillOverview(workspaceId: string): Promise<SkillRow[]> {
-    return structuredClone(mockSkillRows(workspaceId));
+    const off = workspacesState.find((w) => w.id === workspaceId)?.settings?.skillsOff ?? [];
+    return structuredClone([...mockPluginSkillRows(workspaceId).map((r) => ({ ...r, off: off.includes(r.name) })), ...mockSkillRows(workspaceId)]);
   },
   async skillVersions(_workspaceId: string, name: string): Promise<SkillVersion[]> {
     const day = 86_400_000;
