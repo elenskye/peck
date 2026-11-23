@@ -16,7 +16,7 @@
 //!   （`ProjectSettings.plugins_off`），关了它的 Skill 和工具都不给。
 //! - **插件库**（`library`）：数据目录 `library/plugins/<名字>/`、`library/skills/<名字>/SKILL.md`（单独的 Skill）。
 //!   源在 `defaults/library/`，打进程序；打开 App 时库里没有、或程序里的版本更新就整个写进去（[`seed`]），不降级。
-//! - 项目里装的：见 roadmap v1.1.0 Phase 2。
+//! - **项目里装的**（`project`）：从库里拷进项目的那一份，之后是项目自己的文件（`project_plugins.rs`）。
 //!
 //! 系统级的插件和 Skill 只在开发 Peck 时改；跑着的模型只能往项目里提 Skill（`skill_propose`）。
 
@@ -58,7 +58,7 @@ pub struct PluginInfo {
     pub description: String,
     /// `plugin`（完整的插件）、`skill`（库里单独的一份 `SKILL.md`）。
     pub kind: &'static str,
-    /// `builtin`（嵌在程序里）、`library`（数据目录的插件库）。
+    /// `builtin`（嵌在程序里）、`library`（数据目录的插件库）、`project`（装进项目的那一份）。
     pub source: &'static str,
     /// 库里的：默认每个项目都装。
     pub every_project: bool,
@@ -123,6 +123,8 @@ pub struct Plugin {
     pub info: PluginInfo,
     pub skills: Vec<SkillText>,
     pub commands: Vec<CommandText>,
+    /// 装进项目的那一份：它的 Skill 拆到项目的 Skill 文件夹里了，这里记名字（`plugin.json` 的 `peck.skills`）。
+    pub split_skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,7 +258,12 @@ pub fn parse_plugin(tree: &Tree, source: &'static str) -> Result<Plugin, String>
         mcp: utf8(tree, ".mcp.json").map(read_mcp).transpose()?.unwrap_or_default(),
         name,
     };
-    Ok(Plugin { info, skills, commands })
+    let split_skills = peck
+        .get("skills")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| list.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Ok(Plugin { info, skills, commands, split_skills })
 }
 
 /// `hooks/hooks.json`：Claude Code 的形状，`事件 → [{hooks: [{type, …}]}]`。
@@ -316,7 +323,7 @@ pub fn parse_skill(dir_name: &str, tree: &Tree, source: &'static str) -> Result<
         hooks: vec![],
         mcp: vec![],
     };
-    Ok(Plugin { info, skills: vec![skill], commands: vec![] })
+    Ok(Plugin { info, skills: vec![skill], commands: vec![], split_skills: vec![] })
 }
 
 /// 打进程序的那张表按前 `depth` 段路径分组：（那几段，这一组的文件）。
@@ -362,10 +369,6 @@ pub fn has_tool(plugin: &str, offered: &[&str]) -> bool {
     builtin().iter().find(|p| p.info.name == plugin).is_some_and(|p| p.info.tools.iter().any(|t| offered.contains(&t.name.as_str())))
 }
 
-/// 这个项目能打的插件命令（现在只有开着的自带插件的；项目里装的见 Phase 2）。
-pub fn commands(off: &[String]) -> Vec<(&'static Plugin, &'static CommandText)> {
-    builtin_on(off).flat_map(|p| p.commands.iter().map(move |c| (p, c))).collect()
-}
 
 // ---------- 插件库 ----------
 
@@ -375,7 +378,7 @@ pub fn library_dir() -> PathBuf {
 }
 
 /// 把一个文件夹读成「相对路径 → 内容」（点开头的只要 `.claude-plugin`、`.mcp.json`；符号链接、太大的不要）。
-fn read_tree(dir: &Path) -> Tree {
+pub(crate) fn read_tree(dir: &Path) -> Tree {
     let mut out = Tree::new();
     let mut stack = vec![(dir.to_path_buf(), String::new(), 0usize)];
     while let Some((at, prefix, depth)) = stack.pop() {
@@ -411,6 +414,11 @@ fn parse_item(kind: &str, dir_name: &str, tree: &Tree) -> Result<Plugin, String>
 
 /// 插件库里现在有的（先插件、再单独的 Skill，各按名字排；读不了的跳过）。
 pub fn library(dir: &Path) -> Vec<Plugin> {
+    library_trees(dir).into_iter().map(|(plugin, _)| plugin).collect()
+}
+
+/// 同上，带着每一项的文件（装进项目时要拷）。
+pub fn library_trees(dir: &Path) -> Vec<(Plugin, Tree)> {
     let mut out = Vec::new();
     for kind in ["plugins", "skills"] {
         let Ok(entries) = std::fs::read_dir(dir.join(kind)) else { continue };
@@ -418,9 +426,10 @@ pub fn library(dir: &Path) -> Vec<Plugin> {
         dirs.sort_by_key(|e| e.file_name());
         for entry in dirs {
             let dir_name = entry.file_name().to_string_lossy().into_owned();
-            if let Ok(plugin) = parse_item(kind, &dir_name, &read_tree(&entry.path())) {
-                if !out.iter().any(|p: &Plugin| p.info.name == plugin.info.name) {
-                    out.push(plugin);
+            let tree = read_tree(&entry.path());
+            if let Ok(plugin) = parse_item(kind, &dir_name, &tree) {
+                if !out.iter().any(|(p, _): &(Plugin, Tree)| p.info.name == plugin.info.name) {
+                    out.push((plugin, tree));
                 }
             }
         }
@@ -452,7 +461,7 @@ pub fn seed(dir: &Path, files: &[(&str, &[u8])]) -> Vec<String> {
 }
 
 /// 把一个文件夹换成这些文件。
-fn write_tree(target: &Path, tree: &Tree) -> std::io::Result<()> {
+pub(crate) fn write_tree(target: &Path, tree: &Tree) -> std::io::Result<()> {
     if target.exists() {
         std::fs::remove_dir_all(target)?;
     }
@@ -471,6 +480,24 @@ pub fn seed_library() {
     seed(&library_dir(), LIBRARY_FILES);
 }
 
+/// 「每个项目都装」的开关：站主在设置里改过的（`app_settings` 的 `plugins` 那一行），盖在 `plugin.json` 写的默认上面。
+#[derive(Debug, Clone, Default, serde::Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Overrides {
+    pub every_project: BTreeMap<String, bool>,
+}
+
+impl Overrides {
+    pub fn load(db: &crate::store::Store) -> Self {
+        db.setting("plugins").ok().flatten().and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
+    }
+
+    /// 这一项现在是不是每个项目都装。
+    pub fn every(&self, info: &PluginInfo) -> bool {
+        self.every_project.get(&info.name).copied().unwrap_or(info.every_project)
+    }
+}
+
 /// 设置 → PLUGINS 要的：自带的和库里的。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -479,12 +506,30 @@ pub struct PluginList {
     pub library: Vec<PluginInfo>,
 }
 
-#[tauri::command]
-pub fn plugin_list() -> PluginList {
+fn list(overrides: &Overrides) -> PluginList {
     PluginList {
         builtin: builtin().iter().map(|p| p.info.clone()).collect(),
-        library: library(&library_dir()).into_iter().map(|p| p.info).collect(),
+        library: library(&library_dir())
+            .into_iter()
+            .map(|p| PluginInfo { every_project: overrides.every(&p.info), ..p.info })
+            .collect(),
     }
+}
+
+#[tauri::command]
+pub fn plugin_list(state: tauri::State<'_, crate::state::AppState>) -> Result<PluginList, String> {
+    let db = state.store.lock().map_err(|_| "读不到设置。")?;
+    Ok(list(&Overrides::load(&db)))
+}
+
+/// 设置里改库里一项的「每个项目都装」。只管以后点开的项目；已经装了的不动。
+#[tauri::command]
+pub fn plugin_every_project(name: String, on: bool, state: tauri::State<'_, crate::state::AppState>) -> Result<PluginList, String> {
+    let db = state.store.lock().map_err(|_| "读不到设置。")?;
+    let mut overrides = Overrides::load(&db);
+    overrides.every_project.insert(name, on);
+    db.set_setting("plugins", &serde_json::to_string(&overrides).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    Ok(list(&overrides))
 }
 
 #[cfg(test)]
@@ -644,7 +689,13 @@ mod tests {
         assert!(!has_tool("peck-snapshots", &["read_file", "schedule_task"]));
         assert!(!has_tool("nope", &["restore_snapshot"]));
         // 自带插件现在没有带命令（Peck 自己的 /undo 这些不带前缀、不算插件的）。
-        assert!(commands(&[]).is_empty());
+        assert!(all.iter().all(|p| p.commands.is_empty()));
+        // 「每个项目都装」：设置里改过的盖在 plugin.json 的默认上面。
+        let git_plan = parse_plugin(&full(), "library").unwrap().info;
+        let mut o = Overrides::default();
+        assert!(o.every(&git_plan) && !o.every(&all[0].info));
+        o.every_project.insert("git-plan".into(), false);
+        assert!(!o.every(&git_plan));
     }
 
     #[test]

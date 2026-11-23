@@ -1,10 +1,11 @@
 //! 斜杠命令和 Skills（v0.10 Phase 15，roadmap C2）。不读 Claude Code 的 `~/.claude/`；v1.1.0 起也没有全局 Skill、
 //! 全局命令库：项目只用项目里的，加上 Peck 自带插件的（见 `plugins.rs`）。
 //!
-//! - **命令**：插件带的 `commands/*.md`，打 `/<插件名>:<命令>`。写法照 Claude Code 的：一段带参数的提示词，开头可以有
+//! - **命令**：插件带的 `commands/*.md`（项目里装着的插件的、开着的自带插件的），打 `/<插件名>:<命令>`。写法照 Claude Code 的：一段带参数的提示词，开头可以有
 //!   `---` 包着的 `description`、`argument-hint`。输入框打 `/` 列出来，选了以后把正文展开进这句话（`$ARGUMENTS` 换成后面
 //!   写的，`$1`…`$9` 按空格分开的第几个），哪家引擎都能用。正文里的 `!` 命令不替它跑（原样留着）。
-//! - **Skills**：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`，加上开着的自带插件的
+//! - **Skills**：项目的 `.claude/skills/*/SKILL.md`、`.agents/skills/*/SKILL.md`（一般一边是另一边的软链接）、和 `AGENTS.md`
+//!   同级的 `skills/*/SKILL.md`，加上开着的自带插件的
 //!   （嵌在程序里）。开头 `name`、`description`。Peck Loop 把名字和一句描述放进系统提示，`load_skill(name)` 按需读全文；
 //!   CLI 原厂会读的自己读，Peck 不硬塞。项目设置里列出来、能一个个关（`ProjectSettings.skills_off`）。
 //! - 只认指到这几个目录里面的（符号链接指到外面的不认）；一个文件最多 64KB，一处最多 200 个。
@@ -36,9 +37,9 @@ pub struct CommandFile {
 pub struct SkillInfo {
     pub name: String,
     pub description: String,
-    /// `project`（`.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`peck`（自带插件的，嵌在程序里）。
+    /// `project`（`.claude/skills`、`.agents/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`peck`（自带插件的，嵌在程序里）。
     pub scope: &'static str,
-    /// 自带插件的：哪个插件。
+    /// 哪个插件的：自带插件的名字，或者项目里装着的、带来这个 Skill 的那个插件。
     pub plugin: Option<String>,
     /// Skill 的文件夹（`SKILL.md` 在里面）。
     #[serde(skip)]
@@ -211,7 +212,12 @@ fn clip(text: &str, max: usize) -> String {
 pub fn skills(root: &Path, off: &[String], plugins_off: &[String]) -> Vec<SkillInfo> {
     let mut out = Vec::new();
     skills_in(&root.join(".claude/skills"), "project", &mut out);
+    skills_in(&root.join(".agents/skills"), "project", &mut out);
     skills_in(&root.join("skills"), "project-skills", &mut out);
+    let installed = crate::project_plugins::installed(root);
+    for s in &mut out {
+        s.plugin = crate::project_plugins::owner_of(&installed, &s.name);
+    }
     for plugin in crate::plugins::builtin_on(plugins_off) {
         for skill in &plugin.skills {
             if !out.iter().any(|s| s.name == skill.name) {
@@ -286,8 +292,8 @@ pub fn load(skills: &[SkillInfo], name: &str, file: Option<&str>) -> Result<Stri
 }
 
 /// 这个项目能打的插件命令（按名字排）。
-fn commands(plugins_off: &[String]) -> Vec<CommandFile> {
-    let mut out: Vec<CommandFile> = crate::plugins::commands(plugins_off)
+fn commands(root: &Path, plugins_off: &[String]) -> Vec<CommandFile> {
+    let mut out: Vec<CommandFile> = crate::project_plugins::commands(root, plugins_off)
         .into_iter()
         .map(|(plugin, c)| {
             let (fields, body) = front_matter(&c.text);
@@ -295,7 +301,7 @@ fn commands(plugins_off: &[String]) -> Vec<CommandFile> {
                 name: c.name.clone(),
                 description: field(&fields, "description").map(str::to_string).unwrap_or_else(|| first_line(body)),
                 hint: field(&fields, "argument-hint").map(str::to_string),
-                plugin: plugin.info.title.clone(),
+                plugin,
             }
         })
         .collect();
@@ -320,14 +326,14 @@ fn workspace_root(state: &crate::state::AppState, workspace_id: &str) -> Result<
 #[tauri::command]
 pub fn slash_list(workspace_id: String, state: tauri::State<'_, crate::state::AppState>) -> Result<SlashList, String> {
     let (root, settings) = workspace_root(&state, &workspace_id)?;
-    Ok(SlashList { commands: commands(&settings.plugins_off), skills: skills(&root, &settings.skills_off, &settings.plugins_off) })
+    Ok(SlashList { commands: commands(&root, &settings.plugins_off), skills: skills(&root, &settings.skills_off, &settings.plugins_off) })
 }
 
 /// 选了一个插件命令：展开成要发出去的这句话。
 #[tauri::command]
 pub fn slash_expand(workspace_id: String, name: String, args: Option<String>, state: tauri::State<'_, crate::state::AppState>) -> Result<String, String> {
-    let (_, settings) = workspace_root(&state, &workspace_id)?;
-    let found = crate::plugins::commands(&settings.plugins_off).into_iter().find(|(_, c)| c.name == name);
+    let (root, settings) = workspace_root(&state, &workspace_id)?;
+    let found = crate::project_plugins::commands(&root, &settings.plugins_off).into_iter().find(|(_, c)| c.name == name);
     let (_, cmd) = found.ok_or_else(|| format!("没有 /{name} 这个命令。"))?;
     let out = expand(&cmd.text, args.as_deref().unwrap_or(""));
     if out.trim().is_empty() {
@@ -370,7 +376,7 @@ mod tests {
         // 项目里的命令文件夹不读（命令只从插件来）。
         std::fs::create_dir_all(root.join(".claude/commands")).unwrap();
         std::fs::write(root.join(".claude/commands/old.md"), "旧的").unwrap();
-        assert!(commands(&[]).iter().all(|c| c.name.contains(':')));
+        assert!(commands(&root, &[]).is_empty());
         let all = skills(&root, &["draw".into()], &[]);
         let mine: Vec<_> = all.iter().filter(|s| s.scope != "peck").collect();
         assert_eq!(mine.len(), 2);

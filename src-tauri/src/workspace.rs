@@ -44,6 +44,12 @@ pub struct ProjectSettings {
     /// 这个项目里关掉的自带插件（v1.1.0，按名字）：它的 Skill 和工具都不给。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub plugins_off: Vec<String>,
+    /// 认过项目结构了（v1.1.0）：说明文件、Skill 文件夹的软链接只在第一次点开时补一次。Peck 自己记，界面不改。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub prepared: bool,
+    /// 站主在这个项目里 REMOVE 过的库里的插件（v1.1.0）：标了「每个项目都装」也不再自动装。Peck 自己记，界面不改。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub plugins_removed: Vec<String>,
 }
 
 /// 项目的另一个文件夹：能改（`writable`）还是只读。
@@ -146,7 +152,7 @@ impl ProjectSettings {
         }
         self.folders = folders;
         self.env = env;
-        for list in [&mut self.mcp_off, &mut self.skills_off, &mut self.plugins_off] {
+        for list in [&mut self.mcp_off, &mut self.skills_off, &mut self.plugins_off, &mut self.plugins_removed] {
             *list = list.iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && n.len() <= 64).collect();
             list.sort();
             list.dedup();

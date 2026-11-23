@@ -60,7 +60,7 @@ impl Store {
         Ok(n > 0)
     }
 
-    fn workspace_running(&self, workspace_id: &str) -> StoreResult<bool> {
+    pub(crate) fn workspace_running(&self, workspace_id: &str) -> StoreResult<bool> {
         let n: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM runs r JOIN sessions s ON s.id = r.session_id
              WHERE s.workspace_id=?1 AND json_extract(r.record, '$.status') = 'running'",
@@ -178,7 +178,10 @@ pub fn workspace_update(
         }
         ws.name = name.chars().take(80).collect();
     }
-    if let Some(settings) = settings {
+    if let Some(mut settings) = settings {
+        // Peck 自己记的两样不让界面盖掉（界面手里的可能是旧的）。
+        settings.prepared = ws.settings.prepared;
+        settings.plugins_removed = ws.settings.plugins_removed.clone();
         ws.settings = settings.normalized(Path::new(&ws.path))?;
     }
     db.save_workspace(&ws).map_err(|e| e.to_string())?;

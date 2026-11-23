@@ -12,6 +12,7 @@ mod mode;
 mod plugins;
 mod preview;
 mod process;
+mod project_plugins;
 mod projects;
 mod run;
 mod schedule;
@@ -132,6 +133,11 @@ pub fn run() {
             harness::mcp_client::project_mcp_list,
             harness::mcp_client::project_mcp_test,
             plugins::plugin_list,
+            plugins::plugin_every_project,
+            project_plugins::project_prepare,
+            project_plugins::project_plugins,
+            project_plugins::plugin_install,
+            project_plugins::plugin_remove,
             skills::slash_list,
             skills::slash_expand,
             skill_propose::skill_review,

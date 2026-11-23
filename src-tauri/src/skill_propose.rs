@@ -222,12 +222,8 @@ pub struct Target {
     pub previous: Option<String>,
 }
 
-fn location_of(scope: &str, dir: &Path) -> String {
-    let leaf = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    match scope {
-        "project-skills" => format!("skills/{leaf}/SKILL.md"),
-        _ => format!(".claude/skills/{leaf}/SKILL.md"),
-    }
+fn location_of(root: &Path, dir: &Path) -> String {
+    format!("{}/SKILL.md", dir.strip_prefix(root).unwrap_or(dir).to_string_lossy())
 }
 
 pub fn target(root: &Path, name: &str) -> Result<Target, String> {
@@ -236,10 +232,11 @@ pub fn target(root: &Path, name: &str) -> Result<Target, String> {
         // 自带插件的 Skill 嵌在程序里，只在开发 Peck 时改（v1.1.0）。
         Some(s) if s.builtin.is_some() => return Err(format!("{name} 是 Peck 自带的 Skill，改不了。换个名字存成这个项目自己的。")),
         Some(s) => (s.dir.clone(), s.scope.to_string()),
-        None => (root.join(".claude/skills").join(name), "project".to_string()),
+        // 新的写进项目的 Skill 文件夹（真身在 `.claude/skills` 还是 `.agents/skills`，见 `project_plugins::skills_home`）。
+        None => (crate::project_plugins::skills_home(root).join(name), "project".to_string()),
     };
     let previous = std::fs::read_to_string(dir.join("SKILL.md")).ok();
-    let location = location_of(&scope, &dir);
+    let location = location_of(root, &dir);
     Ok(Target { dir, scope, location, previous })
 }
 
@@ -412,7 +409,7 @@ fn history_root() -> PathBuf {
 }
 
 /// 存一份旧版（最多留 [`KEEP_VERSIONS`] 份）。
-fn backup(key: &str, dir: &Path, old: &str) -> Result<(), String> {
+pub(crate) fn backup(key: &str, dir: &Path, old: &str) -> Result<(), String> {
     let at = history_dir(key, dir);
     std::fs::create_dir_all(&at).map_err(|e| format!("存不了旧版：{e}"))?;
     let mut stamp = crate::store::now_ms();
@@ -563,6 +560,8 @@ pub struct SkillRow {
     pub name: String,
     pub description: String,
     pub scope: &'static str,
+    /// 哪个插件的（自带插件，或者项目里装着的、带来这个 Skill 的那个）。
+    pub plugin: Option<String>,
     pub off: bool,
     /// 近一年里被读了几次（`load_skill`、Claude Code 的 `Skill`）：只算这个项目的。
     pub loads: u32,
@@ -627,6 +626,7 @@ pub(crate) fn overview(store: &Arc<Mutex<Store>>, workspace_id: &str, root: &Pat
                 name: s.name,
                 description: s.description,
                 scope: s.scope,
+                plugin: s.plugin,
                 off: s.off,
                 loads: mine.len() as u32,
                 last_used,
@@ -686,7 +686,7 @@ pub(crate) fn restore(workspace_id: &str, root: &Path, name: &str, id: &str) -> 
     }
     let key = workspace_id.to_string();
     let old = std::fs::read_to_string(history_dir(&key, &s.dir).join(format!("{id}.md"))).map_err(|_| "没有这份旧版。")?;
-    let t = Target { location: location_of(s.scope, &s.dir), dir: s.dir, scope: s.scope.to_string(), previous: None };
+    let t = Target { location: location_of(root, &s.dir), dir: s.dir, scope: s.scope.to_string(), previous: None };
     write_skill(&t, &old, &key)
 }
 
