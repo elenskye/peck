@@ -1,44 +1,50 @@
 # 当前交接
 
-更新：2026-11-23。**v1.1.1 做完了，已装进 /Applications**。这是逐步优化 Peck Loop 的第一轮。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md「PLOOP」「联网搜索」](./docs/architecture.md)，定位和不做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-23。**v1.1.2 做完了，已装进 /Applications**。这是逐步优化 Peck Loop 的第二轮，专注 API 的工作流。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md「PLOOP」「脚本 Hook」](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 这一版做了什么（1.1.1）
+## 这一版做了什么（1.1.2）
 
-1. **分清两种干法**：CLI 引擎整包干，Peck 只当外壳（显示、审批、花费、本机 MCP 的几样工具），不进工作流；Peck Loop 是 Peck 深度参与的那一边。CLI 之间交接靠换引擎接着发一句或 `/review`（`/review` 用现在选的那一个按 PLAN 看最近一次改动）。
-2. **接力换成 PLOOP**：AGENTS 的 FLOW 是 API / CLI / PLOOP。PLOOP 三行「写规范」（OFF）、「实施」、「审查」（OFF）只列 API 模型，委派留在设置 → AGENTS、只在 PLOOP 里用。API、CLI 单干没有审查和委派。后端 `team.rs` 只认 API 模型（CLI 的那几段代码删了）；CLI 委派（本机 MCP 的 `delegate_task`、`harness/delegate.rs`）删了。
-3. **工作流预设去掉了**：左栏的「预设」、设置 → AGENTS 的 PRESETS、项目设置的「默认预设」都没了。存着的设置读的时候换过来：接力 → PLOOP（只留 API 模型那几格），预设丢掉。
-4. **联网搜索**（Peck Loop）：Anthropic、OpenAI、Gemini（3 起）接各家原生搜索；DeepSeek 用它家的 Search API（同一个 Key）；百炼、Vertex 上的 Gemini 走 Tavily（设置 → PROVIDERS → SEARCH 填 Key）；都没有就不给。供应商那边搜的每一次显示成一步「Search the web: …」（Anthropic 新版在它那边跑代码筛结果，那几步写「筛搜索结果」），按次的费用算进花费和花费上限，花费行多「搜 N 次」。
-5. 文档：roadmap 加了「不做」（PR / CI 回路、同项目并行、通用 ACP 接入层、CLI 进工作流），每家 CLI 用官方原生接口写进了 architecture。
+1. **PLOOP = 主角色 + 四类子代理**：AGENTS 的 FLOW 只剩 CLI / PLOOP（API 单干去掉）；PLOOP 只选一个 API 模型当主角色。它用 `spawn_agent` 在后台派 explorer（读、搜、只读命令）、searcher（联网检索和调研）——这两类能同时派几个；worker（以前的委派）、auditor（以前的审查）一个一个排队。同一次派的一批全做完才把报告一起交回、叫醒主角色一次；没有查进度的工具。写规范、自动审查那几段去掉。
+2. **设置 → AGENTS**：主角色一行 + SUBAGENTS 四块（开关、模型（空着跟主角色）、思考强度、最多几轮、explorer / searcher 同时几个）。思考强度按模型记，这里和 AGENTS 面板调的是同一档。GENERAL 的「子任务最多几轮」去掉（挪到每类里）。
+3. **缓存不失效**：系统提示和工具说明里不写子代理用哪个模型；成员名单（`agents.roster`）发一次、显示在右栏 LOG 最上面。
+4. **一批只读工具同时跑**：一次回答里全是只读的（读、看目录、搜、找文件、读 Skill、查旧任务、`web_search`、派子代理）就同时跑，结果按调用顺序放回；混进改文件、命令、MCP 就按顺序。
+5. **原地打转**：同一个工具、同样的参数、同样的结果，第 3 次提醒（琥珀提示），第 5 次要它收尾，再调工具就停下。
+6. **脚本 Hook**：照 Claude Code 格式读项目 `.claude/settings.json` / `settings.local.json` 和装进项目的插件的 `hooks/hooks.json`，在发话时、调工具前后、压缩前、收尾时跑命令；exit 2 拦下、JSON 决定，和 Claude Code 一样。每条命令第一次跑前弹卡片（ALWAYS 按指纹记）。只在 Peck Loop 里跑，ONE SHOT 不跑。
+7. **百炼换到 Responses**（Qwen 方言），接上它自己的 `web_search`（不再走 Tavily）。
+8. 文档：roadmap 写了「自定义子代理（下一步）」「PLOOP 的成员和任务板」「自动审查先不做」。
 
-- 新加依赖：没有。数据库没动（schema 11）。`app_settings` 的 `ui` 那一行：`relay` → `ploop`，`presets`、`preset` 不再存；项目设置不再有 `preset`。钥匙串「其他」那一包多一项 `tavily`。事件里 `usage` 多一个 `webSearches`。
+- 新加依赖：Rust `regex = "^1.13.1"`（Hook 的 matcher；已经在锁文件里，是间接依赖）。数据库没动（schema 11）。`app_settings` 的 `ui` 那一行：`ploop` 只剩 `main`，多了 `subagents`，`subRounds`、`review`、`delegate` 不再存（读的时候换过去并马上存回：选着单干的那个当主角色，不然是接力 / 旧 PLOOP 实施的那个；委派 → worker、审查 → auditor 的模型）。事件：多了 `agents.roster`，`subagent.started` 多 `kind`，`hook.ran` 多 `event`。旧的定时任务里记的写规范、审查、委派读的时候丢掉，到点按 PLOOP 跑。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（新加：三家转换器各一组原生搜索、Peck Loop 的原生搜索 + `pause_turn`、Peck 的 `web_search`、搜索路由和参数）；`pnpm check`、`pnpm build` 过。
-- **`?mock`**：AGENTS 三个 FLOW、PLOOP 下拉里只有 API 模型、PLOOP 写规范 → 实施 → 审查跑通；「上网搜一下」两步搜索折成一组、花费行「搜 2 次」；设置 → PROVIDERS 的 SEARCH、设置 → AGENTS 只剩委派（明暗都看了）。
-- **真跑**（账在 roadmap）：Anthropic Haiku 5.5（基础版）、Sonnet 5.5（动态过滤）、OpenAI gpt-6-luna 各两次请求都过——带着 Peck 的工具一起搜、搜索原件回放被接受；DeepSeek Search API、Tavily 各搜一次都过。**Gemini 没验到**：Key 目录里那把 Key 额度用完（429）。
-- **正式版**：装好了，版本号 1.1.1、签名校验过；窗口里没点过。
+- **自动测试**：全量 `cargo test` 过（308 个；新加：子代理一批叫醒一次、worker + auditor 拿到 Diff、只读一批同时跑且顺序不乱、原地打转收尾、项目里的脚本 Hook 拦下和补充、Hook 的解析和退出码、百炼 Responses 的方言）；`pnpm check`、`pnpm build` 过。
+- **`?mock`**：AGENTS 只剩 CLI / PLOOP、主角色下拉；NEW TASK 两行（主角色、子代理）；「派两个子代理」两个 explorer 同时跑、挂在派的那一步下面、一批做完主线才接着；LOG 的成员名单和时间线；设置 → AGENTS 四块（明暗都看了）。
+- **真跑**（账在 roadmap）：百炼 qwen3.8-flash 在 Responses 上两次请求、原生搜索两次都过；PLOOP 主角色 gpt-6-luna 一次派两个 DeepSeek Flash 的 explorer、等报告、收尾，过（约 $0.003）。
+- **正式版**：装好了，版本号 1.1.2、签名校验过；窗口里没点过。
 - **没验的**：
-  - 正式版窗口里一下都没点过：AGENTS 的 PLOOP、设置 → PROVIDERS → SEARCH 存 Tavily 的 Key、整个 App 里 Peck Loop 真搜（上面的真跑只到 Gateway 一层）。
-  - Gemini 的原生搜索（官方写着和函数调用一起用还是 Preview）、Vertex 上的 Claude（基础版）和 Gemini（走 Tavily）都没真跑过。
-  - Anthropic 搜到一半停下（`pause_turn`）再发一次，只有假模型的测试。
+  - 正式版窗口里一下都没点过：AGENTS、设置 → AGENTS、整个 App 里真派子代理。
+  - searcher、worker、auditor 没真跑过（只有假模型的测试）；主角色是 Anthropic、Gemini 时派子代理没真跑过。
+  - 脚本 Hook 只在测试里用 sh 脚本跑过，App 里没挂过真的 `.claude/settings.json`；插件 `hooks.json` 里的 `command` 也是。
+  - 百炼新加坡地域在 Responses 上没真跑；Gemini 的原生搜索、Vertex 上的 Claude 和 Gemini 还是没真跑过（Gemini 那把 Key 额度用完）。
 
 ## 留给站主的
 
 - **第一次打开新版**：可能弹钥匙串授权框。
-- **AGENTS 变了**：你以前用的「省钱」「稳妥」「Shot」「Daily」预设都没了。「Shot」那一套现在就是 PLOOP：写规范 Sonnet 5.5、实施 DeepSeek Flash（旧的接力设置已经换过去）；委派 DeepSeek Flash 留着，只在 PLOOP 里用。
-- **Tavily**：在设置 → PROVIDERS → SEARCH 填一次 Key（这次真跑用的是剪贴板里那把，没存进钥匙串）。不填的话百炼、Vertex 上的 Gemini 没有联网搜索，DeepSeek 搜不了时也没有退路。
-- **走一遍**：选 Sonnet 或 GPT 发「上网查一下 Tauri 最新版本」，看过程里的「Search the web」和花费行；有 Gemini 额度时也试一次。
-- **Key 目录**：`anthropic` 那个文件按你说的换成了剪贴板里的新 Key；Gemini 那把额度用完了。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2、1.0.3、1.1.0 和 1.1.1 的全部提交。
-- 以前留下、还没验的：1.1.0 的插件界面和收尾提交在正式版里走一遍；1.0.3 的轮数设置、旧任务的样子；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。
+- **AGENTS 变了**：没有 API 单干了。你正式版里现在选的是单干 Sonnet 5.5，打开新版就是 PLOOP · 主角色 Sonnet 5.5；委派 DeepSeek Flash 换成 worker 的模型，别的几类跟主角色；接力里的写规范 Sonnet、实施 DeepSeek Flash 不再用。到设置 → AGENTS 看一眼，想让 explorer / searcher 用便宜的模型就在那里选。
+- **走一遍**：选 PLOOP 发「派两个子代理分别看看 X 和 Y，然后告诉我…」，看过程里的「Spawn explorer」和 LOG 的成员名单；改完东西让它「派 auditor 审一下」。
+- **Hook**：想试的话在测试项目的 `.claude/settings.json` 写一条（格式和 Claude Code 一样），第一次会弹卡片。
+- **Tavily**：还没存进钥匙串（v1.1.1 真跑用的是剪贴板那把）。现在百炼不用它了，只有 Vertex 上的 Gemini、Gemini 2.x 用，DeepSeek 搜不了时也是退路。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.2 的全部提交。
+- 以前留下、还没验的：1.1.1 在正式版里存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交在正式版里走一遍；1.0.3 的轮数设置、旧任务的样子；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。
 
 ## 已知问题
 
 | 问题 | 建议 |
 | --- | --- |
 | 搜索按次的费用按收费价记，Gemini 每月头 5000 次、Tavily 免费档每月 1000 次不扣（会多算） | 宁可多算；在意再加个月度计数 |
-| 旧的定时任务里记了 CLI 写规范或审查的，到点起不来、记成错过（正式数据里现在没有这样的） | 记着 |
+| 子代理报告回来以前站主停下任务，派出去的一起叫停，报告不进对话 | 记着 |
+| 原地打转只认一模一样的调用和结果；参数稍微不同、结果一样的绕圈认不出来 | 用一阵再看 |
+| 脚本 Hook 不进沙箱，跑的是站主 shell 的环境（第一次弹卡片就是为这个） | 记着 |
 | OpenAI 的来源没有标题，过程里标题写网址 | 记着 |
 | Gemini 的来源挂在第一条搜索上（它只在最后一起给） | 记着 |
 | 只有界面点开项目时才认结构、装默认插件；定时任务在一个从没点开过的老项目里跑时不会先做 | 记在 roadmap |
@@ -57,7 +63,7 @@
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、PLOOP 每一段的头和审查结论框、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.0.3 新加的：SPEC 那一行（整行能点、最右三角）和展开后的规范框、「读过 N 个文件」列表。 1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、PLOOP 每一段的头和审查结论框、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.0.3 新加的：SPEC 那一行（整行能点、最右三角）和展开后的规范框、「读过 N 个文件」列表。 1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 四块（开关、「跟主角色」、「同时 N 个」）。
 
 ## 留意
 
@@ -69,4 +75,4 @@
 
 ## 下一步
 
-等站主给 PLOOP 的新工作流方案和设计（下一轮）。其他候选在 roadmap「之后要做的」。
+自定义子代理（站主定了下一步做）；之后是 PLOOP 的成员和任务板。其他候选在 roadmap「之后要做的」。

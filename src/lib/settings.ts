@@ -94,13 +94,14 @@ export async function loadSettings(): Promise<AppSettings> {
       return fresh;
     }
     // 旧版本存的 `mode`、`who`（v0.8 以前的「谁来干」）、`presets`、`preset`（v1.1.1 去掉的预设）、`subRounds` 不要了：读的时候丢掉。
-    // 接力（`relay`）、API 单干（v1.1.2 去掉）换成 PLOOP：实施的 / 单干的那个当主角色；委派、审查的模型挪给 worker、auditor。
+    // 接力（`relay`）、API 单干（v1.1.2 去掉）换成 PLOOP：现在选着单干的就是那个模型当主角色，不然是接力 / 旧 PLOOP 实施的那一个；
+    // 委派、审查的模型挪给 worker、auditor。
     type Old = { mode?: unknown; who?: unknown; presets?: unknown; preset?: unknown; subRounds?: unknown; relay?: { build?: string }; review?: string; delegate?: string; ploop?: { main?: string; build?: string } };
     const { mode: _mode, who: _who, presets: _presets, preset: _preset, subRounds: _sub, relay, review, delegate, ...saved } = JSON.parse(raw) as Partial<AppSettings> & Old;
     const api = (id?: string) => (id?.startsWith("api:") ? id : undefined);
     const oldPloop = (saved.ploop ?? {}) as { main?: string; build?: string };
     const single = api(saved.pick);
-    const main = api(oldPloop.main) ?? api(oldPloop.build) ?? api(relay?.build) ?? single ?? api(saved.picks?.api);
+    const main = single ?? api(oldPloop.main) ?? api(oldPloop.build) ?? api(relay?.build) ?? api(saved.picks?.api);
     const subagents: AppSettings["subagents"] = { ...saved.subagents };
     if (!saved.subagents && api(delegate)) subagents.worker = { model: delegate };
     if (!saved.subagents && api(review)) subagents.auditor = { model: review };
@@ -122,7 +123,9 @@ export async function loadSettings(): Promise<AppSettings> {
       seenSince: saved.seenSince ?? Date.now(),
     };
     // 这条线马上记下来，不然每次打开都往后挪，两次打开之间做完的就算看过了。
-    if (saved.seenSince === undefined) void saveSettings(settings).catch(() => {});
+    // 换过旧设置的也马上存回去：后端发任务时读存着的 `subagents`（委派、审查挪过去的模型），不存它看不到。
+    const migrated = [relay, review, delegate, _sub, _presets, _preset, oldPloop.build].some((v) => v !== undefined) || !!single || "relay" in (saved.picks ?? {});
+    if (saved.seenSince === undefined || migrated) void saveSettings(settings).catch(() => {});
     return settings;
   } catch {
     return { ...DEFAULT_SETTINGS, seenSince: Date.now() };

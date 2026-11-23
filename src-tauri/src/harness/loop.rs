@@ -2954,6 +2954,50 @@ mod tests {
         assert!(types(&events).contains(&"diff.updated"));
     }
 
+    /// 子代理真跑（花钱，手动跑）：主角色派两个 explorer 各读一个文件，一批做完再合起来答。
+    /// `PECK_LIVE_KEYS=<Key 目录> PECK_LIVE_MODEL=openai/gpt-6-luna PECK_LIVE_SUB_MODEL=deepseek/deepseek-flash
+    ///  cargo test --lib live_ploop_spawns_explorers -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_ploop_spawns_explorers() {
+        use crate::gateway::config::GatewayConfig;
+        use crate::gateway::providers::{Credential, HttpProvider};
+        let keys = std::path::PathBuf::from(std::env::var("PECK_LIVE_KEYS").expect("PECK_LIVE_KEYS"));
+        let provider = |id: &str| -> Arc<dyn ModelProvider> {
+            let spec = catalog::catalog().model(id).unwrap();
+            let file = if spec.provider == "google" { "gemini" } else { spec.provider.as_str() };
+            let key = zeroize::Zeroizing::new(std::fs::read_to_string(keys.join(file)).unwrap().trim().to_string());
+            Arc::new(HttpProvider::new(id, Credential::Key(key), &GatewayConfig::default(), None).unwrap())
+        };
+        let main_id = std::env::var("PECK_LIVE_MODEL").expect("PECK_LIVE_MODEL");
+        let sub_id = std::env::var("PECK_LIVE_SUB_MODEL").expect("PECK_LIVE_SUB_MODEL");
+        let p = TempProject::new();
+        p.write("a.txt", "苹果 3 个\n").write("b.txt", "香蕉 5 根\n");
+        let none = std::collections::HashMap::new();
+        let mut settings = agents::KindSettings::default();
+        settings.rounds = Some(5);
+        let explorer = agents::member(Kind::Explorer, sub_id.clone(), provider(&sub_id), &settings, &none);
+        let mut cfg = config(&p, &main_id);
+        cfg.max_rounds = 6;
+        cfg.team = Some(Arc::new(agents::Team { members: vec![explorer] }));
+        let backend = PeckBackend::new(provider(&main_id), cfg, vec![]);
+        let mut t = task(&p, PermissionLevel::Plan, "用 spawn_agent 同时派两个 explorer：一个读 a.txt、一个读 b.txt，各自说出文件里写了什么。你自己不要读文件。等两份报告都回来以后，用一句话合起来告诉我一共有几个水果。");
+        t.effort = Some("low".into());
+        let (outcome, events) = drive(&backend, t, |_| None).await;
+        for e in &events {
+            match &e.body {
+                EventBody::ToolCallStarted { title, .. } => println!("{} start {title}", e.subagent_id.as_deref().unwrap_or("main")),
+                EventBody::ToolCallCompleted { status, output, .. } => println!("{} done {status:?} {}", e.subagent_id.as_deref().unwrap_or("main"), output.as_deref().unwrap_or("").lines().next().unwrap_or("")),
+                EventBody::MessageCompleted { text, .. } => println!("{} says {}", e.subagent_id.as_deref().unwrap_or("main"), text.replace('\n', " ")),
+                EventBody::UsageUpdated { cost, .. } => println!("{} cost {:?}", e.subagent_id.as_deref().unwrap_or("main"), cost.usd),
+                EventBody::TurnCompleted { reason, error, .. } => println!("end {reason:?} {error:?}"),
+                _ => {}
+            }
+        }
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        assert_eq!(events.iter().filter(|e| matches!(e.body, EventBody::SubagentStarted { .. })).count(), 2);
+    }
+
     #[tokio::test]
     async fn reads_in_one_reply_run_together_and_mixed_ones_in_order() {
         let p = TempProject::new();
