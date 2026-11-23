@@ -35,6 +35,7 @@
 | 留着的 dev server | 「dev server」 | 过程里一行「留着在跑」；右栏 PREVIEW 头上一个 DEV 小片，点一下停 |
 | 花费上限 | 设置里上限设得比 0.42 低 | 发出去就停、写明原因 |
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
+| 任务板（`agentsMock.ts`） | PLOOP 下句子带「任务板」或「member」（在没有任务在跑的项目里，比如 peck） | 过程最上面「任务板」：worker 1、2 和 member 1 在跑、worker 3（和 worker 1 划的同一个文件）排队，worker 1 做完它才跑；点 member 1 展开它的几步，它派的 explorer 再挂一层；设置 → AGENTS 五块、member 默认 40 轮同时 2 个 |
 | 子代理（`agentsMock.ts`） | PLOOP 下句子带「派」「子代理」 | 两步「Spawn explorer: …」同时在跑，各自的几步挂在下面（头上「explorer · 模型名」），两个都完了主线才接着改；右栏 LOG 上面成员名单（MAIN 和四类）、时间线「派了 explorer」「explorer 做完了」 |
 | 联网搜索 | 句子带「搜一下」「上网」「最新版」 | 「Searched the web 2 times」一组，点开两步「Search the web: …」带来源；回答写出处；花费行「搜 2 次」 |
 | 额度提醒 | 选一个 CLI；QUOTA 卡片里 Claude Code 每周 90% | 输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
@@ -70,7 +71,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 - **每次用新的临时目录**，不碰正式数据（模拟授权次数记在数据目录里，重复用会失败）。
 - **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样（现在用了 700105、700106、700201–700205、905001、910_001、920_001、930_001、930_002、940_001、960_001），新测试另挑一个。
 - 要 git 仓库的测试（`git_commit`、收尾 Hook）用 `harness::git::testing` 起临时仓库（自己配 `user.name`，不碰站主的 git 配置）。
-- Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环（子代理一批叫醒一次、worker 和 auditor、只读的一批同时跑、原地打转、项目里的脚本 Hook 都在 `harness::r#loop` 里），外部 MCP 用 sh 写的假服务器，预览代理起一个假 dev server（一段一段出的 SSE、分块的 HTML、POST）。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
+- Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环（子代理一批叫醒一次、worker 和 auditor、划文件的 worker 同时跑和排队、member 再派 explorer、只读的一批同时跑、原地打转、项目里的脚本 Hook 都在 `harness::r#loop` 里；会派子代理的测试各用自己的 `run_id`，子代理的控制通道按任务号登记），外部 MCP 用 sh 写的假服务器，预览代理起一个假 dev server（一段一段出的 SSE、分块的 HTML、POST）。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境，慢几秒。夹具通过不等于真实账号通过。
 
@@ -110,6 +111,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
   - API：`gateway::providers` 的 `live_two_requests`。`PECK_LIVE_MODEL`、`PECK_LIVE_KEYS`（Key 目录）、可选 `PECK_LIVE_REGION`、`PECK_LIVE_EFFORT`。
   - 原生联网搜索：同一个模块的 `live_web_search`（参数同上，只认有原生搜索的模型）：一次带着 Peck 的工具让它搜，一次把带搜索原件的回答放回去再问一句（验回放）。
   - Peck 的 `web_search`：`gateway::search` 的 `live_tavily`（`PECK_TAVILY_KEY`）、`live_deepseek`（`PECK_DEEPSEEK_KEY`），各搜一次。
+  - 划文件（v1.1.3）：同一个模块的 `live_ploop_workers_split_files`，参数同下（`PECK_LIVE_SUB_MODEL` 是 worker）：主角色派两个 worker 各建一个文件，主角色最多 5 轮、worker 各 2 轮。
   - PLOOP 子代理：`harness::r#loop` 的 `live_ploop_spawns_explorers`。`PECK_LIVE_KEYS`、`PECK_LIVE_MODEL`（主角色）、`PECK_LIVE_SUB_MODEL`（explorer）：在临时项目里让主角色一次派两个 explorer、等报告、收尾（主角色约 3 次请求，explorer 各 2–3 次）。
   - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`。审批一律批准一次，提问答「好」。
   - 收尾 Hook（Codex，花一个小任务、两轮）：`gateway::engines::codex` 的 `live_stop_hook_commits_the_round`，`PECK_LIVE_CODEX`、`PECK_LIVE_CWD=<一个 git 仓库>`（用仓库外的 `projects/git-plan-smoke`）。

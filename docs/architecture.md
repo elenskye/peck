@@ -86,7 +86,7 @@
 
 各家 API 和 CLI 转成同一套事件。契约：`mod.rs`（`ModelProvider` 裸模型、`AgentBackend` 整包引擎、控制通道）、`event.rs`、`caps.rs`、`catalog.rs`；TS 对照 `src/lib/agentEvents.ts`。
 
-- **事件**：`AgentEvent` = `seq` + `at` + 可选 `subagentId` + 本体（`session.*`、`turn.*`、`message.*`、`tool_call.*`、`approval.*`、`stage.*`、`background.updated`、`usage.updated`、`hook.ran` 等，全的在 `event.rs`）。`EventSink`（`log.rs`）编号、存 `agent_events`、交给界面；`gateway_events(runId)` 读。读不懂的行（旧版本的 `verify.*`、以后版本的）当 `raw`，界面不显示。
+- **事件**：`AgentEvent` = `seq` + `at` + 可选 `subagentId` + 本体（`session.*`、`turn.*`、`message.*`、`tool_call.*`、`approval.*`、`stage.*`、`background.updated`、`usage.updated`、`hook.ran` 等，全的在 `event.rs`）。`EventSink`（`log.rs`）编号、存 `agent_events`、交给界面；`gateway_events(runId)` 读。读不懂的行（旧版本的 `verify.*`、以后版本的）当 `raw`，界面不显示。`subagent.started` / `completed` 自己的 `subagentId` 和外层同名：读回来手写（这两种的归事件本身），v1.1.3 以前存的也读得回来。
 - **用量**：`input` 不含缓存，`cacheRead`、`cacheWrite` 另算；`output` 含思考。花费分按价格表算 / CLI 估 / 未知，没有就 `usd: null`，不填 0。
 - **模型目录**：`src-tauri/defaults/models.json`，`node scripts/models-snapshot.mjs` 从 models.dev 重取。
 - **价格表**（`prices.rs`）：花费都按「用量 × 价格表」算。内置 `src-tauri/defaults/prices.json`（美元价取 models.dev，DeepSeek、Aliyun 是官网人民币价），站主改的、刷新来的、汇率存 `app_settings`，盖在内置的上面。`prices_refresh` 只更新美元价，站主改过的行不动。
@@ -119,6 +119,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | Grok | ACP（`grok agent stdio`） | 没有模式，Peck 回答审批 | `request_permission`；ASK 走本机 MCP | 用量和花费；读不到余量 |
 | Antigravity | ACP（`agy acp`） | `plan` / `accept-edits` / `auto` | 同 Grok | 用量；没有花费、余量 |
 
+- **任务清单**：五家的清单都转成 `plan.updated`（过程最上面那一块）。Codex `turn/plan/updated`、Muse `session/todoListChanged`、Grok / Antigravity 的 ACP `plan`；Claude Code 旧的 `TodoWrite` 每次整份，2.1 起默认的 `TaskCreate` / `TaskUpdate` 一次一项（编号在结果「Task #N created」里），Peck 拼成整份（v1.1.3）。子任务里的清单不转。
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck Loop 同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示；Antigravity 不查。
 - **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌，只对这一次进程挂上、不改 CLI 的配置。工具：`create_skill`、`restore_snapshot`、定时任务那三个（五家都给；项目里关掉的自带插件的不列、调了也不收）、`load_skill`（读自带插件的 Skill 全文：给了哪个自带插件的工具就能读它的）、`git_commit`（项目里装着 Git Plan、这一段不是只读的才给）、`ask_user`（Grok、Antigravity）。Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
@@ -145,7 +146,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | `update_plan`、`ask_user` | 任务清单；停下来问站主 |
 | `screenshot_app`（`shot.rs`） | Mac、能看图的模型，PLAN 也有：截这个 App 最前面的窗口 |
 | `web_search` | 没有原生搜索的模型才有，PLAN、ONE SHOT 也有（见「联网搜索」） |
-| `spawn_agent`（`agents.rs`） | PLOOP 的主角色派子代理（见「PLOOP」） |
+| `spawn_agent`（`agents.rs`） | PLOOP 的主角色派子代理，worker、member 要写 `paths`（见「PLOOP」） |
 
 其余（`bash_run`、`bash_background`、`memory`、`search_tasks`、`load_skill`、`create_skill`、`restore_snapshot`、`schedule_task` 等、`git_commit`、`mcp__*`）见下面各节。
 
@@ -171,6 +172,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 ### 命令（`tools/bash.rs`）
 
 - `sandbox-exec`，默认联网；EDIT / AUTO 只能写项目、临时目录和 Peck 给的 HOME，`.git` 只读；PLAN 只写临时目录；不能开别的 App、发 Apple Events。沙箱拒了写项目外就弹高危卡片，批了出沙箱再跑。
+- 划了文件的 worker、member（v1.1.3）：项目里只放开划给它的几块，加上构建、缓存目录（`BUILD_DIRS`：`target`、`node_modules`、`dist`、`.next`、`__pycache__` 这些，任何一层；`*.tsbuildinfo`、`.eslintcache`）和 git 忽略着的文件夹，构建、测试照样能跑。要写别处同样弹高危卡片（写明是它那块以外）。项目在临时目录里时这一层不起作用（临时目录本来整个能写），文件工具那一层照样管。
 - 环境是站主 shell 的，去掉名字像 Key、令牌、密码、Cookie、Session 的变量和 `SSH_AUTH_SOCK`。
 - 默认 120 秒、最长 600 秒，结束整个进程组。输出太长整份落盘（`spill.rs`），上下文留开头、结尾和路径。
 
@@ -249,18 +251,24 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 ## PLOOP（`harness/agents.rs`）
 
-PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主角色**，需要时用 `spawn_agent` 派**子代理**在后台跑。以前的写规范、自动审查那几段去掉了（审查变成主角色自己派的 auditor）；自动审查、成员和任务板、自定义子代理以后再做（roadmap）。
+PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主角色**，需要时用 `spawn_agent` 派**子代理**在后台跑。简单的改动给 worker、复杂的给 member，互不干扰的一起派（worker、member 也能一起派）。以前的写规范、自动审查那几段去掉了（审查是主角色自己派的 auditor）；自动审查、自定义子代理以后再做（roadmap）。
 
 | 类型 | 做什么 | 工具 | 档位 | 同时几个 |
 |---|---|---|---|---|
 | explorer | 读、搜项目 | 看目录、读、搜、找文件、只读沙箱里的命令、查旧任务 | PLAN | 设置里配（默认 3） |
 | searcher | 联网检索、深度调研 | `web_search`（照它的模型挑原生或 Peck 的）、只读沙箱里的命令（curl 读网页）、读 | PLAN | 设置里配（默认 3） |
-| worker | 照写清楚的子任务改东西（以前的委派） | 读、搜、改、命令、后台命令 | 任务的档位（PLAN 不派） | 一个一个排队 |
+| worker | 简单、写清楚的改动（以前的委派），便宜、快 | 读、搜、改、命令、后台命令 | 任务的档位（PLAN 不派） | 设置里配（默认 3） |
+| member | 复杂、多步的活（v1.1.3）：权限和主角色一样，模型一般配得更贵更聪明 | 主角色的工具（改、命令、截图、读 Skill、联网搜索、MCP），能再派 explorer、searcher；不问站主、不写清单和记忆 | 任务的档位（PLAN 不派） | 设置里配（默认 2） |
 | auditor | 审这个任务到现在的改动（以前的审查） | 同 explorer；第一句带原话和用文件工具改过的 Diff | PLAN | 一个一个排队 |
 
-- **设置**（设置 → AGENTS，存在 `ui` 的 `subagents`）：每类开关、模型（空着跟主角色）、思考强度（按模型记，和主角色共用 `efforts`）、最多几轮、同时几个。`agents::prepare` 发任务时按它准备好（模型起不来的不给、开头写一行）；searcher 的模型没有联网搜索时不给。一个任务里不变。
-- **后台跑、一批叫醒一次**：`spawn_agent` 马上回「已派出」，主角色接着干。同一次回答里派的算一批（`agents::Pool`），一批全做完才把报告（`<agent-reports>`，worker 带改了哪些文件、auditor 带结论）一起放进对话；主角色先说完了，Peck 等这一批（不算轮数，能停）。没有查进度的工具。一句话里最多派 12 个。
-- **子代理**：同一个项目（独立工作区里就是那个工作区）、同一组 MCP；不能再派、不问站主、不写清单和记忆、不碰快照和定时任务。审批照样弹给站主（编号带 `agent-<n>-` 前缀，各自的控制通道）。事件带 `subagentId`（= 派的那一步的调用 id），挂在那一步下面；派的那一步等它做完才算完。用量带它的模型、算进任务和花费上限。停下、出错时一起叫停。
+- **设置**（设置 → AGENTS，存在 `ui` 的 `subagents`）：每类开关、模型（空着跟主角色）、思考强度（按模型记，和主角色共用 `efforts`）、最多几轮（默认 24，member 40）、同时几个。`agents::prepare` 发任务时按它准备好（模型起不来的不给、开头写一行）；searcher 的模型没有联网搜索时不给。一个任务里不变。同时几个是整个任务的名额：member 派的 explorer 和主角色派的共用。
+- **后台跑、一批叫醒一次**：`spawn_agent` 马上回「已派出」，主角色接着干。同一次回答里派的算一批（`agents::Pool`），一批全做完才把报告（`<agent-reports>`，worker / member 带改了哪些文件、auditor 带结论）一起放进对话；主角色先说完了，Peck 等这一批（不算轮数，能停）。没有查进度的工具。一句话里最多派 12 个。
+- **划文件**（v1.1.3，`agents::Locks`）：派 worker、member 必须写 `paths`（它能改的文件、文件夹，相对项目根；文件夹管它下面全部，`.` 是整个项目），派的时候规范好（出项目、碰 `.git`、只读文件夹的拒掉）。
+  - **排队**：按派的顺序排；和前面还没做完的（在跑的、排着的）重叠就等，不重叠就跑（再受同时几个的名额限）。先派先跑、后来的不插队，不会互相等死。主角色判断错了只会变慢，不会改乱。
+  - **强制**：文件工具（`write_file`、`write_patch`、`apply_patch`）改划给它以外的直接拒；命令的沙箱只放开划给它的几块和构建、缓存目录（见「命令」）。报告里的「改了哪些文件」也只算它那几块。MCP 工具管不到。
+  - **主角色**：用文件工具改正划给 worker / member 的地方（在跑或排着队）直接拒，告诉它归谁、等报告回来再改；它的命令不拦。
+- **任务板**（v1.1.3，`agents::Board`，事件 `board.updated` 整份）：主角色派的 worker、member 一项一个（做什么、谁、第几个、划的文件、模型）。模型只写派给谁、做什么，进度由 Peck 照子代理的事件填：排队 → 在跑（排完队、拿到名额）→ 等你批（它的审批卡片没答）→ 做完 / 没做完 / 停了，带开始、做完的时刻。只管这一个任务回合，不做跨任务的。主角色自己那几步还是 `update_plan`，界面上和任务板放在一起。
+- **子代理**：同一个项目（独立工作区里就是那个工作区）、同一组 MCP；不问站主、不写清单和记忆、不碰快照和定时任务；只有 member 能再派（只派 explorer、searcher）。审批照样弹给站主（编号带 `agent-<n>-` 前缀，member 派的是 `agent-<n>-agent-<m>-`，按最长的前缀转给它的控制通道）。事件带 `subagentId`（= 派的那一步的调用 id），挂在那一步下面；`subagent.started` / `completed` 一律从主线发（它们自己就带 `subagentId`）。派的那一步等它做完才算完。用量带它的模型、算进任务和花费上限。停下、出错时一起叫停；member 收尾时它派的没回来就只叫停它下面的。
 - **缓存**：系统提示和工具说明只写怎么派、有哪几类，不写是哪个模型；名单（`agents.roster`，开头发一次）放在 LOG 里。换了设置，下一个任务的提示也不变。
 - **换引擎接着发**（`history::fork_context`）：Peck Loop 所有模型算一家，每个 CLI 一家（以前的接力、审查任务算一家）。这一家上次以后别家做的几次做成 `<peck-fork>` 放在这句前面；原来的会话留着，换回去接得上。
 

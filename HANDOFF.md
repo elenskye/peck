@@ -1,41 +1,39 @@
 # 当前交接
 
-更新：2026-11-23。**v1.1.2 做完了，已装进 /Applications**。这是逐步优化 Peck Loop 的第二轮，专注 API 的工作流。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md「PLOOP」「脚本 Hook」](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-23。**v1.1.3 做完了，已装进 /Applications**。这是逐步优化 Peck Loop 的第三轮。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md「PLOOP」](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 这一版做了什么（1.1.2）
+## 这一版做了什么（1.1.3）
 
-1. **PLOOP = 主角色 + 四类子代理**：AGENTS 的 FLOW 只剩 CLI / PLOOP（API 单干去掉）；PLOOP 只选一个 API 模型当主角色。它用 `spawn_agent` 在后台派 explorer（读、搜、只读命令）、searcher（联网检索和调研）——这两类能同时派几个；worker（以前的委派）、auditor（以前的审查）一个一个排队。同一次派的一批全做完才把报告一起交回、叫醒主角色一次；没有查进度的工具。写规范、自动审查那几段去掉。
-2. **设置 → AGENTS**：主角色一行 + SUBAGENTS 四块（开关、模型（空着跟主角色）、思考强度、最多几轮、explorer / searcher 同时几个）。思考强度按模型记，这里和 AGENTS 面板调的是同一档。GENERAL 的「子任务最多几轮」去掉（挪到每类里）。
-3. **缓存不失效**：系统提示和工具说明里不写子代理用哪个模型；成员名单（`agents.roster`）发一次、显示在右栏 LOG 最上面。
-4. **一批只读工具同时跑**：一次回答里全是只读的（读、看目录、搜、找文件、读 Skill、查旧任务、`web_search`、派子代理）就同时跑，结果按调用顺序放回；混进改文件、命令、MCP 就按顺序。
-5. **原地打转**：同一个工具、同样的参数、同样的结果，第 3 次提醒（琥珀提示），第 5 次要它收尾，再调工具就停下。
-6. **脚本 Hook**：照 Claude Code 格式读项目 `.claude/settings.json` / `settings.local.json` 和装进项目的插件的 `hooks/hooks.json`，在发话时、调工具前后、压缩前、收尾时跑命令；exit 2 拦下、JSON 决定，和 Claude Code 一样。每条命令第一次跑前弹卡片（ALWAYS 按指纹记）。只在 Peck Loop 里跑，ONE SHOT 不跑。
-7. **百炼换到 Responses**（Qwen 方言），接上它自己的 `web_search`（不再走 Tavily）。
-8. 文档：roadmap 写了「自定义子代理（下一步）」「PLOOP 的成员和任务板」「自动审查先不做」。
+1. **Claude Code 的任务清单**：旧的 `TodoWrite`（整份）和 2.1 起默认的 `TaskCreate` / `TaskUpdate`（一次一项，Peck 拼成整份）都转成任务清单，和 Codex、Muse、Grok、Antigravity 一样显示在过程最上面；子任务里的不转。
+2. **子代理 member**：复杂、多步的活。工具和权限和主角色一样（改、命令、截图、读 Skill、联网搜索、MCP），只能再派 explorer、searcher；不问站主、不写清单和记忆。设置 → AGENTS 多一块，默认 40 轮、同时 2 个（花费上限照样管）。worker 也能同时几个了（默认 3）。主角色的提示里写明：简单的给 worker、复杂的给 member、互不干扰的一起派。
+3. **划文件**：派 worker、member 必须写 `paths`（能改的文件、文件夹）。不重叠的同时跑，和前面的重叠就按派的顺序排队；Peck 强制它只改自己那块——文件工具改别处直接拒，命令的沙箱只放开它那几块和构建、缓存目录（`target`、`node_modules`、git 忽略着的文件夹等）。主角色用文件工具改划出去的地方也拒，告诉它等报告。
+4. **任务板**：派了 worker、member 时，过程最上面的任务清单换成任务板：主角色自己那几步 + 每个 worker / member 一行（排队、在跑、等你批、做完，Peck 照子代理的事件填；做什么、谁、用时、划的文件）。点一项展开它自己的步骤。只管这一个任务。
+5. **顺手修的**：
+   - 子代理的审批按最长的前缀转（member 派的 explorer 的审批不会被 member 截走）。
+   - `subagent.started` / `completed` 存进库以后读不回来（变成 `raw`），重开任务时 LOG 里「派了谁」、子任务那一行的头都没了——v0.9 起就有，这版改成手写读回，旧记录也读得回来。
 
-- 新加依赖：Rust `regex = "^1.13.1"`（Hook 的 matcher；已经在锁文件里，是间接依赖）。数据库没动（schema 11）。`app_settings` 的 `ui` 那一行：`ploop` 只剩 `main`，多了 `subagents`，`subRounds`、`review`、`delegate` 不再存（读的时候换过去并马上存回：选着单干的那个当主角色，不然是接力 / 旧 PLOOP 实施的那个；委派 → worker、审查 → auditor 的模型）。事件：多了 `agents.roster`，`subagent.started` 多 `kind`，`hook.ran` 多 `event`。旧的定时任务里记的写规范、审查、委派读的时候丢掉，到点按 PLOOP 跑。
+- 新加依赖：没有。数据库没动（schema 11）。`ui` 的 `subagents` 多 `member`。事件：多了 `board.updated`；`spawn_agent` 多 `paths`、`title`。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（308 个；新加：子代理一批叫醒一次、worker + auditor 拿到 Diff、只读一批同时跑且顺序不乱、原地打转收尾、项目里的脚本 Hook 拦下和补充、Hook 的解析和退出码、百炼 Responses 的方言）；`pnpm check`、`pnpm build` 过。
-- **`?mock`**：AGENTS 只剩 CLI / PLOOP、主角色下拉；NEW TASK 两行（主角色、子代理）；「派两个子代理」两个 explorer 同时跑、挂在派的那一步下面、一批做完主线才接着；LOG 的成员名单和时间线；设置 → AGENTS 四块（明暗都看了）。
-- **真跑**（账在 roadmap）：百炼 qwen3.8-flash 在 Responses 上两次请求、原生搜索两次都过；PLOOP 主角色 gpt-6-luna 一次派两个 DeepSeek Flash 的 explorer、等报告、收尾，过（约 $0.003）。
-- **正式版**：装好了，版本号 1.1.2、签名校验过；窗口里没点过。
+- **自动测试**：全量 `cargo test` 过（317 个；新加：Claude Code 清单转换、划文件的规范和重叠、排队先派先跑、任务板状态、两个 worker 同时跑 + 重叠的排队 + 改别人那块被拒 + 主角色被拒、member 在自己那块里改并再派 explorer、沙箱规则只放开那几块、嵌套审批的转发、事件读回）；`pnpm check`、`pnpm build` 过。
+- **`?mock`**：任务板（三个在跑、一个排队、做完一个接着跑下一个）、点开 member 看到它的步骤和它派的 explorer、设置 → AGENTS 五块（明暗都看了）。
+- **真跑**（账在 roadmap）：主角色 gpt-6-luna 派两个 DeepSeek Flash 的 worker，`paths` 各写对一个文件，两个文件都建好，任务板两项做完；它是分两次回答派的（两个有一段同时在跑），测试把主角色卡在 3 轮，收到报告后的收尾那一轮没发（测试已改成 5 轮，这一版的次数用得差不多了，没再跑）。
+- **正式版**：装好了，版本号 1.1.3、签名校验过；窗口里没点过。
 - **没验的**：
-  - 正式版窗口里一下都没点过：AGENTS、设置 → AGENTS、整个 App 里真派子代理。
-  - searcher、worker、auditor 没真跑过（只有假模型的测试）；主角色是 Anthropic、Gemini 时派子代理没真跑过。
-  - 脚本 Hook 只在测试里用 sh 脚本跑过，App 里没挂过真的 `.claude/settings.json`；插件 `hooks.json` 里的 `command` 也是。
-  - 百炼新加坡地域在 Responses 上没真跑；Gemini 的原生搜索、Vertex 上的 Claude 和 Gemini 还是没真跑过（Gemini 那把 Key 额度用完）。
+  - member 没真跑过（只有假模型的测试）；命令被划文件的沙箱拦下、弹卡片那条路没真跑过。
+  - Claude Code 的清单只用夹具式的测试验过，没真跑一次 Claude Code（站主平时要用）。
+  - 正式版窗口里一下都没点过：任务板、设置 → AGENTS 的 member。
 
 ## 留给站主的
 
 - **第一次打开新版**：可能弹钥匙串授权框。
-- **AGENTS 变了**：没有 API 单干了。你正式版里现在选的是单干 Sonnet 5.5，打开新版就是 PLOOP · 主角色 Sonnet 5.5；委派 DeepSeek Flash 换成 worker 的模型，别的几类跟主角色；接力里的写规范 Sonnet、实施 DeepSeek Flash 不再用。到设置 → AGENTS 看一眼，想让 explorer / searcher 用便宜的模型就在那里选。
-- **走一遍**：选 PLOOP 发「派两个子代理分别看看 X 和 Y，然后告诉我…」，看过程里的「Spawn explorer」和 LOG 的成员名单；改完东西让它「派 auditor 审一下」。
+- **AGENTS 变了**（1.1.2 起，正式版还没打开过）：没有 API 单干了。你现在选的单干 Sonnet 5.5 打开新版就是 PLOOP · 主角色 Sonnet 5.5；委派 DeepSeek Flash 换成 worker 的模型，别的几类（含 member）跟主角色。想让 member 用更贵更聪明的、explorer 用便宜的，到设置 → AGENTS 选。
+- **走一遍**：选 PLOOP，在测试项目里发「把 X 和 Y 分给两个 worker 同时改，Z 比较复杂交给 member」，看任务板、点开一项看它的步骤。
 - **Hook**：想试的话在测试项目的 `.claude/settings.json` 写一条（格式和 Claude Code 一样），第一次会弹卡片。
-- **Tavily**：还没存进钥匙串（v1.1.1 真跑用的是剪贴板那把）。现在百炼不用它了，只有 Vertex 上的 Gemini、Gemini 2.x 用，DeepSeek 搜不了时也是退路。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.2 的全部提交。
-- 以前留下、还没验的：1.1.1 在正式版里存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交在正式版里走一遍；1.0.3 的轮数设置、旧任务的样子；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。
+- **Tavily**：还没存进钥匙串。只有 Vertex 上的 Gemini、Gemini 2.x 用，DeepSeek 搜不了时也是退路。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.3 的全部提交。
+- 以前留下、还没验的：1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置、旧任务的样子；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
 ## 已知问题
 
@@ -43,6 +41,9 @@
 | --- | --- |
 | 搜索按次的费用按收费价记，Gemini 每月头 5000 次、Tavily 免费档每月 1000 次不扣（会多算） | 宁可多算；在意再加个月度计数 |
 | 子代理报告回来以前站主停下任务，派出去的一起叫停，报告不进对话 | 记着 |
+| 划文件只管文件工具和命令的沙箱：MCP 工具、主角色自己的命令管不到；项目在临时目录里时沙箱那一层不起作用 | 记着 |
+| 命令原地改划给它的单个文件（`sed -i` 先在同一个文件夹建临时文件）会被沙箱拦；划文件夹、或用文件工具改就没事 | 记着 |
+| 主角色可能一次回答只派一个、分几次派（真跑时 gpt-6-luna 就这样），同一批的说法就变成几批 | 用一阵看要不要在提示里再强调 |
 | 原地打转只认一模一样的调用和结果；参数稍微不同、结果一样的绕圈认不出来 | 用一阵再看 |
 | 脚本 Hook 不进沙箱，跑的是站主 shell 的环境（第一次弹卡片就是为这个） | 记着 |
 | OpenAI 的来源没有标题，过程里标题写网址 | 记着 |
@@ -63,7 +64,7 @@
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、PLOOP 每一段的头和审查结论框、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.0.3 新加的：SPEC 那一行（整行能点、最右三角）和展开后的规范框、「读过 N 个文件」列表。 1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 四块（开关、「跟主角色」、「同时 N 个」）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、PLOOP 每一段的头和审查结论框、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.0.3 新加的：SPEC 那一行（整行能点、最右三角）和展开后的规范框、「读过 N 个文件」列表。 1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。
 
 ## 留意
 
@@ -75,4 +76,4 @@
 
 ## 下一步
 
-自定义子代理（站主定了下一步做）；之后是 PLOOP 的成员和任务板。其他候选在 roadmap「之后要做的」。
+自定义子代理（站主定了下一步做）。其他候选在 roadmap「之后要做的」。

@@ -12,7 +12,9 @@
 | Worker / Supervisor | 谁来干 |
 | Ploop / team run | PLOOP（Peck Loop：一个 API 模型当主角色，能派子代理） |
 | Orchestrator / lead | 主角色 |
-| Sub-agent / spawn_agent | 子代理（四类写英文：explorer / searcher / worker / auditor；过程里「Spawn explorer: …」） |
+| Sub-agent / spawn_agent | 子代理（五类写英文：explorer / searcher / worker / member / auditor；过程里「Spawn explorer: …」） |
+| Task board | 任务板（派出去的 worker、member 和它们的进度） |
+| Scope / lock | 划文件（「划给 worker 1」「排队」） |
 | Roster | 成员名单（LOG 上面） |
 | Hook（脚本） | Hook（过程里一行「Hook 调工具前 · 命令（出处）：…」） |
 | Web search / server tool | 搜网页（过程里「Searched the web」；花费行「搜 N 次」） |
@@ -81,7 +83,7 @@
 
 - **GENERAL**：API 请求发到哪（MOCK / REAL）、发通知、每月上限（`$` + 数字框）、这个月花了（20 格的进度条，左边写「花了 / 上限」；到 80% 琥珀、到上限红）、每个任务最多几轮（默认 40）、ONE SHOT 最多几轮（12）、额度提醒（开关在数字框左边，关了框变灰）。数字框一样宽、左右对齐，单位在框外占固定的宽。
 - **PROVIDERS**：每家一块：Key 框 + SAVE + REMOVE；Aliyun 下面一行选地域（BEIJING / SINGAPORE）和 SAVE；Vertex 一行两个方框（GCLOUD、PROJECT ID 的状态）；最下面 SEARCH 一块是 Tavily 的 Key（联网搜索的备用）。
-- **AGENTS**：「主角色」一行（下拉只列 API 模型 + 思考强度）；SUBAGENTS 四块，每块头上名字、一句做什么、开关，下面一行：模型（空着写「跟主角色」）、思考强度、最多几轮（24）、explorer 和 searcher 多一格「同时 N 个」（3）。思考强度按模型记，这里调的和 AGENTS 面板里的是同一档；关了的整块变暗。
+- **AGENTS**：「主角色」一行（下拉只列 API 模型 + 思考强度）；SUBAGENTS 五块，每块头上名字、一句做什么、开关，下面一行：模型（空着写「跟主角色」）、思考强度、最多几轮（24，member 40）、除了 auditor 都多一格「同时 N 个」（3，member 2）。思考强度按模型记，这里调的和 AGENTS 面板里的是同一档；关了的整块变暗。
 - **QUOTA**：汇率；价格表 REFRESH；按家分组，一行一个模型（进、出、缓存命中、缓存写入、分档、高峰倍数），EDIT 就地改，改过的标 EDITED、能 RESET，ADD MODEL 加自己的。
 - **ACCESS**：默认档、五类高危、「总是允许」能撤。**CLI**：CLI 目录，五家的色点 / 版本 / 位置（FOUND / NOT FOUND），Claude Code、Codex 的 LOGIN / RELOGIN。**LOOK**：明暗、编辑器（能打字的下拉）、App 图标 J2 / A3。
 - **PLUGINS**：三块。BUILT-IN、LIBRARY 一行一个插件（名字、版本、说明），点名字展开一张清单：SKILL、COMMAND（怎么打、参数、做什么）、TOOL、HOOK（什么时候、问哪一句、Peck 跑什么）、MCP；库里的右边一个 EVERY PROJECT 开关，单独的 Skill 带 SKILL 标签。MCP SERVERS 一行一台，TEST 列出工具（只读的带锁、会删改的写出来）；编辑时有「钥匙串」一行存要保密的变量。
@@ -98,7 +100,7 @@
 - **FLOW**：CLI（一个 CLI 整包干，Peck 只当外壳）、PLOOP（Peck Loop：一个 API 模型当主角色，能派子代理）。用不了的变灰，点了说为什么。没有 API 单干。
 - **CLI**：五家点选（没检测到变灰；Antigravity 写「直接调用」），下面是这家的模型和强度。**PLOOP**：「主角色」一个下拉（按供应商分组，只列配了 Key 的，后面价格），下面它的思考强度；子代理在设置 → AGENTS。主角色没选过或现在用不了，显示并存下第一个能用的。
 - CLI 之间交接换引擎接着发一句，或 `/review`（用现在选的那一个；PLOOP 是主角色，它还能派 auditor）。
-- **头上的 ⓘ**：四类子代理各做什么、在设置 → AGENTS 配模型、强度、轮数、同时几个，没单独选模型的跟主角色。
+- **头上的 ⓘ**：五类子代理各做什么；worker、member 只改划给它的文件，不重叠的同时跑、重叠的排队，进度在任务板上；在设置 → AGENTS 配模型、强度、轮数、同时几个，没单独选模型的跟主角色。
 - 在跑时不能换，头上写「在跑，跑完再换」。收起时头上一行写短的：「PLOOP · 主角色名」或那个 CLI 的名字。
 
 NEW TASK 上「WHO」下面：PLOOP 一行「主角色 · 名字」（它怎么干）、一行「子代理 · explorer、searcher…」（开着的几类，一句怎么派、在哪配）；CLI 一行。再下面是这个项目错过的定时任务的 `[ MISSED ]` 卡片。ONE SHOT 自己留着 FLOW（API、CLI）。
@@ -130,7 +132,8 @@ NEW TASK 上「WHO」下面：PLOOP 一行「主角色 · 名字」（它怎么�
 
 Peck Loop 和 CLI 引擎同一套显示（`src/shell/AgentView.tsx`）：
 
-- **回答**按 Markdown 显示。任务清单在过程最上面。
+- **回答**按 Markdown 显示。任务清单在过程最上面（五家 CLI 的清单一样显示，Claude Code 的 `TodoWrite` / `TaskCreate` 也转过来）。
+- **任务板**（PLOOP 派了 worker、member 时代替任务清单）：头一行「任务板」和做完几项（收起时写「n 个在跑」「n 个等你批」）；上面是主角色自己那几步（勾选框），下面一项一行：状态（排队暗字、在跑青、等你批琥珀、做完绿、没做完红、停了暗字）、做什么、`WORKER 2` / `MEMBER 1`、用时，下一行暗字写它划的文件。点一项展开它自己的几步（member 派的 explorer 再挂在那一步下面），排着队的写「还在排队，没开始」。
 - **工具调用**（学 Claude Code，英文）：连着的折成一组，头上一行「Read 3 files, edited 2 files, ran 1 command · 38s」（按出现的先后：read / listed / searched for / edited / ran / fetched / searched the web / recalled memory / used N skills / ran N subagents / used N tools…），失败的组标 FAIL；点开每步一行，标题也是英文（Run pnpm test、Edit src/a.ts），改的带 Diff 入口和 +/−，跑的带 exit 码、能看输出。各引擎给的中文标题在前端翻（`englishTitle`），旧记录一样。
 - **思考**不算一步、不单独占行，也不打断上下的工具调用：在想时那一组下面一行「Thinking… 3s」，想完就不显示。
 - 英文只到工具调用的组和 Thinking 为止；卡片、recap、提醒行这些细的信息用中文。

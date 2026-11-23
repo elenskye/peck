@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.1.2**（2026-11-23）：逐步优化 Peck Loop 的第二轮，把 API 的工作流做好。PLOOP 变成一个 API 模型当主角色、在后台派四类子代理（explorer、searcher、worker、auditor；设置 → AGENTS 配），API 单干和写规范、自动审查那几段去掉；一次回答里全是只读的工具同时跑；原地打转检测；照 Claude Code 格式的脚本 Hook（项目 `.claude/settings.json` 和插件）；百炼换到 Responses、接上它的 `web_search`。设计见 [architecture「PLOOP」「脚本 Hook」](./architecture.md)。
+**v1.1.3**（2026-11-23）：逐步优化 Peck Loop 的第三轮。加子代理 member（复杂的活，权限和主角色一样，能再派 explorer、searcher）；worker、member 派的时候要划文件，不重叠的同时跑、重叠的自动排队，Peck 强制它只改自己那块；任务板显示派出去的 worker、member 和进度（Peck 照事件填，点开看它的步骤）；Claude Code 的 `TodoWrite` / `TaskCreate` 转成任务清单。设计见 [architecture「PLOOP」](./architecture.md)。v1.1.2 是主角色 + 子代理、并行读、原地打转、脚本 Hook、百炼 Responses。
 
 ## 定位
 
@@ -24,8 +24,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 候选，没排期，要做时站主定进哪个版本：
 
-- **自定义子代理**（下一步）：在四类以外自己加类型（名字、做什么、给哪些工具、模型）；插件带的子代理（`agents/`）一起接。
-- **PLOOP 的成员和任务板**：v1.1.2 的子代理是铺垫（名单已在 LOG 里）。
+- **自定义子代理**（下一步）：在五类以外自己加类型（名字、做什么、给哪些工具、模型）；插件带的子代理（`agents/`）一起接。
 - **自动审查**：先不做（v1.1.2 定的）；现在审查是主角色自己派 auditor，或 `/review`。
 - 用 Peck 开发 Peck 一整轮；Peck 接手站主的其他项目。
 - 多家 CLI 和 Peck Loop 的 Benchmark（Atelier MCP 那一轮没跑满的一起补）。
@@ -42,6 +41,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - GitHub PR 和 CI 回路；同一个项目里并行跑几个任务。
 - 通用的 ACP 接入层：每家 CLI 用它官方的原生接口（Grok、Antigravity 官方给的就是 ACP，照它们的来）。
 - CLI 进工作流（接力、CLI 审查、CLI 委派）：v1.1.1 删了。
+- 跨任务的任务板：任务板只管这一个任务（v1.1.3 定的）。
 
 ## 现行授权
 
@@ -60,6 +60,5 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.2 | Aliyun | qwen3.8-flash | 4 次尝试 | 换到 Responses：`live_two_requests` 两次（思考 + 工具回传）、`live_web_search` 两次（它的 `web_search` 和函数工具一起用、回放被接受）都过 |
-| v1.1.2 | OpenAI | gpt-6-luna（low） | 3 次尝试 | PLOOP 主角色（`live_ploop_spawns_explorers`）：一次回答派两个 explorer、等这一批、拿报告收尾，都过 |
-| v1.1.2 | DeepSeek | deepseek-flash | 5 次尝试 | 同上那次里的两个 explorer（同时跑、只读），都过；整次约 $0.003 |
+| v1.1.3 | OpenAI | gpt-6-luna（low） | 3 次尝试 | PLOOP 主角色（`live_ploop_workers_split_files`）：给两个 worker 各划了一个文件（`paths` 写对了），分两次回答派、两个有一段同时在跑；测试把主角色卡在 3 轮，等报告回来后的收尾那一轮没发（测试已改成 5 轮） |
+| v1.1.3 | DeepSeek | deepseek-flash | 4 次尝试 | 同上那次的两个 worker：各用 write_file 建好自己那个文件、交报告，任务板两项都做完 |

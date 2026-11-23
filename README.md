@@ -10,9 +10,9 @@ Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](doc
 |---|---|
 | 项目和任务 | 没选项目时中间是全部项目页，左栏一整块是 AGENTS；选了项目，左栏是 NOW（跨项目的待你处理、在跑）和 PROJECTS（这个项目的任务）；不同项目的任务能同时跑；任务能归档（设置 → ARCHIVE） |
 | 发任务 | 一句话（↵ 发送，`@` 引用旧任务，`/` 斜杠命令）+ 权限（PLAN / EDIT / AUTO）+ 独立工作区（WORKTREE，做完在对话里 APPLY / DISCARD）；谁来干在左栏 AGENTS 里选（CLI、PLOOP；思考强度），输入框下一行短的写现在是谁；贴图、拖图进输入框 |
-| PLOOP 和换引擎 | PLOOP 是 Peck Loop 的工作方式：选一个 API 模型当主角色，它需要时在后台派子代理——explorer 读项目、searcher 联网调研（这两类能同时派几个）、worker 照子任务改、auditor 审改动（这两类一个一个来），同一次派的一批做完报告一起交回；每类的模型、思考强度、轮数在设置 → AGENTS。只读的工具一次要几个就同时跑；同一步原地打转会提醒、再转就停。项目 `.claude/settings.json` 和插件里照 Claude Code 格式写的 Hook（发话时、调工具前后、压缩前、收尾时）会跑，第一次先问。CLI 之间交接：换引擎接着发一句（带上前面的经过）或 `/review`。Peck Loop 接外部 MCP 服务器（设置里的和项目 `.mcp.json` 里的） |
+| PLOOP 和换引擎 | PLOOP 是 Peck Loop 的工作方式：选一个 API 模型当主角色，它需要时在后台派子代理——explorer 读项目、searcher 联网调研、worker 做简单的改动、member 做复杂的活（权限和主角色一样，能再派 explorer、searcher）、auditor 审改动，同一次派的一批做完报告一起交回；worker、member 派的时候划好能改哪些文件，不重叠的同时跑、重叠的排队，只能改自己那块；对话里的任务板显示它们的进度，点开看每个的步骤；每类的模型、思考强度、轮数、同时几个在设置 → AGENTS。只读的工具一次要几个就同时跑；同一步原地打转会提醒、再转就停。项目 `.claude/settings.json` 和插件里照 Claude Code 格式写的 Hook（发话时、调工具前后、压缩前、收尾时）会跑，第一次先问。CLI 之间交接：换引擎接着发一句（带上前面的经过）或 `/review`。Peck Loop 接外部 MCP 服务器（设置里的和项目 `.mcp.json` 里的） |
 | 联网搜索 | Peck Loop 的模型要查网上的东西时用：Anthropic、OpenAI、Gemini、Aliyun 用它们自己的搜索；DeepSeek 用它家的 Search API；别的用 Tavily（设置 → PROVIDERS → SEARCH 填 Key）。按次记花费 |
-| 看任务 | 回答按 Markdown 显示，连着的工具调用折成一行英文（像 Claude Code），在想时一行 Thinking；要批的事、要问的事弹卡片，下面一行花费；压缩上下文、「想记住这几条」；每轮末尾一块 recap，带下一步按钮；进任务停在最新一轮、回来回到上次的位置 |
+| 看任务 | 任务清单在最上面（各家 CLI 的也转过来），回答按 Markdown 显示，连着的工具调用折成一行英文（像 Claude Code），在想时一行 Thinking；要批的事、要问的事弹卡片，下面一行花费；压缩上下文、「想记住这几条」；每轮末尾一块 recap，带下一步按钮；进任务停在最新一轮、回来回到上次的位置 |
 | 上下文 | 项目说明（AGENTS.md / CLAUDE.md，改完跑什么测试也写在这里，模型自己跑）和记忆、Skills（按需读全文；模型能提议存成 Skill，批了才写进这个项目）、每次带上的环境和 git；输入框旁的小环看用了多少，到压缩线自动压缩 |
 | 插件 | 一包 Skill、斜杠命令、工具、Hook。自带的（撤销、定时任务、写 Skill）按项目开关；插件库里的在项目设置里 INSTALL，拷进项目、跟着项目的 git 走，库里有新版出 UPDATE、点了才覆盖。库里第一个是 **Git Plan**（默认每个项目都装）：版本和提交的规矩、`/git-plan:plan` 这几个命令，每一轮做完 Peck 问模型要一行提交说明、自己提交这一轮改过的文件，不 push。点开项目时 Peck 补齐 CLAUDE.md / AGENTS.md 和 Skill 文件夹的软链接，哪家 CLI 都读得到同一份 |
 | 在对话里做的 | **反悔**：「撤掉刚才的改动」，模型列出快照、复述，弹高危卡片，批了才放回去。**定时任务**：「每周一早上九点帮我检查依赖更新」，模型复述确认后设好，PROJECTS 头上的钟里看；App 关着错过的，重开时弹卡片 RUN NOW / SKIP。**dev server**：模型起的会留着，右栏 PREVIEW 里看、点一下停 |
