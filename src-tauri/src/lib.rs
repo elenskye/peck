@@ -3,7 +3,6 @@ mod app_icon;
 mod api;
 mod commands;
 mod events;
-mod export;
 mod files;
 mod flow;
 mod gateway;
@@ -42,12 +41,6 @@ pub fn run() {
             store
                 .recover_interrupted_runs()
                 .map_err(|e| e as Box<dyn std::error::Error>)?;
-            store
-                .recover_api_calls()
-                .map_err(|e| e as Box<dyn std::error::Error>)?;
-            store
-                .recover_worker_tasks()
-                .map_err(|e| e as Box<dyn std::error::Error>)?;
             // 独立工作区：任务删了、搬回丢掉了还留在磁盘上的，删掉（v0.8）。
             worktree::prune_orphans(&store);
             // API 价格表：站主改过的、刷新来的、汇率（v0.10 Refine）。
@@ -71,9 +64,8 @@ pub fn run() {
             });
             crate::usage::start_monitor(app.handle().clone(), store_arc, monitor_arc, api_arc);
             term::warm_env();
-            // 「CLI 目录」没设：在后台找一个存上（旧清单旁边的 bin/、站主 shell 的 PATH），引擎才检测得到。
-            gateway::config::fill_cli_dir(&gateway_store, false);
-            std::thread::spawn(move || gateway::config::fill_cli_dir(&gateway_store, true));
+            // 「CLI 目录」没设：在后台从站主 shell 的 PATH 里找一个存上，引擎才检测得到。
+            std::thread::spawn(move || gateway::config::fill_cli_dir(&gateway_store));
             // 落盘的长输出：14 天没动过的任务文件夹删掉。
             std::thread::spawn(|| harness::run::prune_spills(&harness::run::spill_root(), std::time::Duration::from_secs(14 * 86_400)));
             // 定时任务：关着时错过的记一笔，然后每 30 秒看一眼到点的。
@@ -90,16 +82,12 @@ pub fn run() {
             api::api_set_mode,
             api::api_key_load,
             api::api_key_set,
-            api::api_task_history,
             commands::workspace_open,
             commands::workspace_choose,
             commands::session_create,
             commands::session_get_runs,
             commands::run_cancel,
             commands::changes_get_diff,
-            usage::usage_list,
-            usage::usage_import,
-            usage::usage_export_csv,
             usage::usage_clients,
             usage::usage_refresh,
             usage::usage_manual_snapshot,

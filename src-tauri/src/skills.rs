@@ -1,12 +1,11 @@
-//! 斜杠命令文件和 Skills（v0.10 Phase 15，roadmap C2）。
+//! 斜杠命令文件和 Skills（v0.10 Phase 15，roadmap C2）。v1.0.3 起不读 Claude Code 的 `~/.claude/`：Peck 有自己的库。
 //!
-//! - **命令文件**：项目的 `.claude/commands/**/*.md` 和站主的 `~/.claude/commands/**/*.md`（Claude Code 的格式：一段带参数的
-//!   提示词，开头可以有 `---` 包着的 `description`、`argument-hint`）。输入框打 `/` 列出来，选了以后把正文展开进这句话
-//!   （`$ARGUMENTS` 换成后面写的，`$1`…`$9` 按空格分开的第几个），哪家引擎都能用。同名的项目的为准。
-//!   正文里 Claude Code 的 `!` 命令不替它跑（原样留着）。
-//! - **Skills**：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`、站主的 `~/.claude/skills/*/SKILL.md`
-//!   （开头 `name`、`description`）。Peck 循环把名字和一句描述放进系统提示，`load_skill(name)` 按需读全文（和 Claude Code 一样）；
-//!   CLI 原厂会读的自己读，Peck 不硬塞。项目设置里列出来、能一个个关（`ProjectSettings.skills_off`）。
+//! - **命令文件**：Peck 自己的命令库（数据目录的 `commands/**/*.md`；项目的 `.claude/commands/` 也不读）。写法照 Claude Code 的：
+//!   一段带参数的提示词，开头可以有 `---` 包着的 `description`、`argument-hint`。输入框打 `/` 列出来，选了以后把正文展开进这句话
+//!   （`$ARGUMENTS` 换成后面写的，`$1`…`$9` 按空格分开的第几个），哪家引擎都能用。正文里的 `!` 命令不替它跑（原样留着）。
+//! - **Skills**：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`、Peck 自己的全局 Skill
+//!   （数据目录的 `skills/*/SKILL.md`），开头 `name`、`description`。Peck Loop 把名字和一句描述放进系统提示，`load_skill(name)`
+//!   按需读全文；CLI 原厂会读的自己读，Peck 不硬塞。项目设置里列出来、能一个个关（`ProjectSettings.skills_off`）。
 //! - 只认指到这几个目录里面的（符号链接指到外面的不认）；一个文件最多 64KB，一处最多 200 个。
 
 use serde::Serialize;
@@ -26,9 +25,7 @@ pub struct CommandFile {
     pub description: String,
     /// 参数怎么写（`argument-hint`）。
     pub hint: Option<String>,
-    /// `project`：项目的 `.claude/commands`；`user`：`~/.claude/commands`。
-    pub scope: &'static str,
-    /// 子文件夹（Claude Code 写成「project:子文件夹」）。
+    /// 命令库里的子文件夹（几层用 `:` 连着）。
     pub folder: Option<String>,
     #[serde(skip)]
     pub path: PathBuf,
@@ -40,8 +37,8 @@ pub struct CommandFile {
 pub struct SkillInfo {
     pub name: String,
     pub description: String,
-    /// `project`（`.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`user`（`~/.claude/skills`）、
-    /// `peck`（Peck 自带的，嵌在程序里）。
+    /// `project`（`.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`user`（Peck 的全局 Skill，
+    /// 数据目录的 `skills/`）、`peck`（Peck 自带的，嵌在程序里）。
     pub scope: &'static str,
     /// Skill 的文件夹（`SKILL.md` 在里面）。
     #[serde(skip)]
@@ -128,12 +125,13 @@ fn first_line(body: &str) -> String {
     }
 }
 
-pub(crate) fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute())
+/// Peck 自己的库（v1.0.3）：数据目录里的 `commands/`（斜杠命令）、`skills/`（全局 Skill）。
+pub(crate) fn library(kind: &str) -> PathBuf {
+    crate::mode::app_data_dir().join(kind)
 }
 
 /// 一个 `commands` 文件夹里的命令（往下两层）。
-fn commands_in(base: &Path, scope: &'static str, out: &mut Vec<CommandFile>) {
+fn commands_in(base: &Path, out: &mut Vec<CommandFile>) {
     if !base.is_dir() {
         return;
     }
@@ -171,7 +169,6 @@ fn commands_in(base: &Path, scope: &'static str, out: &mut Vec<CommandFile>) {
                 name: stem.to_string(),
                 description: field(&fields, "description").map(str::to_string).unwrap_or_else(|| first_line(body)),
                 hint: field(&fields, "argument-hint").map(str::to_string),
-                scope,
                 folder: folder.clone(),
                 path,
             });
@@ -184,13 +181,14 @@ pub fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// 这个项目能用的命令文件：项目的在前（同名的项目的为准），再是站主的。
-pub fn commands(root: &Path) -> Vec<CommandFile> {
+/// 命令库里的命令（按名字排；同名的先读到的为准）。
+pub fn commands() -> Vec<CommandFile> {
+    sorted_commands(&library("commands"))
+}
+
+fn sorted_commands(base: &Path) -> Vec<CommandFile> {
     let mut out = Vec::new();
-    commands_in(&root.join(".claude/commands"), "project", &mut out);
-    if let Some(h) = home() {
-        commands_in(&h.join(".claude/commands"), "user", &mut out);
-    }
+    commands_in(base, &mut out);
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
@@ -274,14 +272,13 @@ fn clip(text: &str, max: usize) -> String {
     }
 }
 
-/// 这个项目能用的 Skills（同名的先到先得：项目的 `.claude/skills`、项目的 `skills/`、站主的）。`off` 里的标出来。
+/// 这个项目能用的 Skills（同名的先到先得：项目的 `.claude/skills`、项目的 `skills/`、Peck 的全局 Skill、Peck 自带的）。
+/// `off` 里的标出来。
 pub fn skills(root: &Path, off: &[String]) -> Vec<SkillInfo> {
     let mut out = Vec::new();
     skills_in(&root.join(".claude/skills"), "project", &mut out);
     skills_in(&root.join("skills"), "project-skills", &mut out);
-    if let Some(h) = home() {
-        skills_in(&h.join(".claude/skills"), "user", &mut out);
-    }
+    skills_in(&library("skills"), "user", &mut out);
     for text in BUILTIN {
         let (fields, _) = front_matter(text);
         let (Some(name), Some(description)) = (field(&fields, "name"), field(&fields, "description")) else { continue };
@@ -295,7 +292,7 @@ pub fn skills(root: &Path, off: &[String]) -> Vec<SkillInfo> {
     out
 }
 
-/// 给 Peck 循环的（关掉的不给）。
+/// 给 Peck Loop 的（关掉的不给）。
 pub fn for_loop(root: &Path, off: &[String]) -> Vec<SkillInfo> {
     skills(root, off).into_iter().filter(|s| !s.off).collect()
 }
@@ -364,14 +361,13 @@ fn workspace_root(state: &crate::state::AppState, workspace_id: &str) -> Result<
 #[tauri::command]
 pub fn slash_list(workspace_id: String, state: tauri::State<'_, crate::state::AppState>) -> Result<SlashList, String> {
     let (root, settings) = workspace_root(&state, &workspace_id)?;
-    Ok(SlashList { commands: commands(&root), skills: skills(&root, &settings.skills_off) })
+    Ok(SlashList { commands: commands(), skills: skills(&root, &settings.skills_off) })
 }
 
 /// 选了一个命令文件：展开成要发出去的这句话。
 #[tauri::command]
-pub fn slash_expand(workspace_id: String, name: String, args: Option<String>, state: tauri::State<'_, crate::state::AppState>) -> Result<String, String> {
-    let (root, _) = workspace_root(&state, &workspace_id)?;
-    let cmd = commands(&root).into_iter().find(|c| c.name == name).ok_or_else(|| format!("没有 /{name} 这个命令。"))?;
+pub fn slash_expand(name: String, args: Option<String>) -> Result<String, String> {
+    let cmd = commands().into_iter().find(|c| c.name == name).ok_or_else(|| format!("没有 /{name} 这个命令。"))?;
     let text = read_small(&cmd.path).ok_or_else(|| format!("读不了 /{name} 的文件。"))?;
     let out = expand(&text, args.as_deref().unwrap_or(""));
     if out.trim().is_empty() {
@@ -404,17 +400,20 @@ mod tests {
     }
 
     #[test]
-    fn commands_and_skills_are_read_from_the_project() {
+    fn commands_come_from_the_library_and_skills_from_the_project() {
         let root = temp();
-        std::fs::create_dir_all(root.join(".claude/commands/review")).unwrap();
-        std::fs::write(root.join(".claude/commands/fix-todo.md"), "# 把 TODO 改掉\n$ARGUMENTS").unwrap();
-        std::fs::write(root.join(".claude/commands/review/pr.md"), "---\ndescription: 审 PR\n---\n审一下").unwrap();
-        std::fs::write(root.join(".claude/commands/bad name.md"), "x").unwrap();
-        let cmds = commands(&root);
-        let project: Vec<_> = cmds.iter().filter(|c| c.scope == "project").collect();
-        assert_eq!(project.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["fix-todo", "pr"]);
-        assert_eq!(project[0].description, "把 TODO 改掉");
-        assert_eq!(project[1].folder.as_deref(), Some("review"));
+        // 命令库（数据目录的 commands/）；项目里的 .claude/commands/ 不读（v1.0.3）。
+        let library = root.join("library/commands");
+        std::fs::create_dir_all(library.join("review")).unwrap();
+        std::fs::write(library.join("fix-todo.md"), "# 把 TODO 改掉\n$ARGUMENTS").unwrap();
+        std::fs::write(library.join("review/pr.md"), "---\ndescription: 审 PR\n---\n审一下").unwrap();
+        std::fs::write(library.join("bad name.md"), "x").unwrap();
+        std::fs::create_dir_all(root.join(".claude/commands")).unwrap();
+        std::fs::write(root.join(".claude/commands/old.md"), "旧的").unwrap();
+        let cmds = sorted_commands(&library);
+        assert_eq!(cmds.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["fix-todo", "pr"]);
+        assert_eq!(cmds[0].description, "把 TODO 改掉");
+        assert_eq!(cmds[1].folder.as_deref(), Some("review"));
         std::fs::create_dir_all(root.join(".claude/skills/release")).unwrap();
         std::fs::write(root.join(".claude/skills/release/SKILL.md"), "---\nname: release\ndescription: How to cut a release\n---\n1. Bump the version\n").unwrap();
         std::fs::write(root.join(".claude/skills/release/checklist.md"), "- tag").unwrap();
@@ -435,7 +434,7 @@ mod tests {
         let full = load(&on, "release", None).unwrap();
         assert!(full.contains("Bump the version") && full.contains("checklist.md"), "{full}");
         assert_eq!(load(&on, "release", Some("checklist.md")).unwrap(), "- tag");
-        assert!(load(&on, "release", Some("../../.claude/commands/fix-todo.md")).is_err());
+        assert!(load(&on, "release", Some("../../.claude/commands/old.md")).is_err());
         assert!(load(&on, "nope", None).unwrap_err().contains("没有叫 nope"));
         let _ = std::fs::remove_dir_all(&root);
     }

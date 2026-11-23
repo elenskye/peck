@@ -1,7 +1,7 @@
 //! 左栏的项目和任务：重命名、项目设置、移出列表、文件夹不在了重新定位、在访达里显示、删任务、拖动排的顺序。
 //!
 //! - 项目「移出列表」只是藏起来（`Workspace.hidden`）：文件夹、任务、快照都不动，重新打开这个文件夹就回来。
-//! - 任务「删除」是真的删：任务记录、消息、事件日志、Peck 循环的对话一起删（项目里的文件不动，快照里的历史 Diff 也不再列）。
+//! - 任务「删除」是真的删：任务记录、消息、事件日志、Peck Loop 的对话一起删（项目里的文件不动，快照里的历史 Diff 也不再列）。
 //! - 任务「归档」只是收起来（`sessions.archived_at`）：不在左栏列，记录、快照、独立工作区都不动，模型查旧任务照样查得到；设置 → ARCHIVE 里看、拿回来、删掉。
 //! - 项目 id 是文件夹路径的哈希，快照目录也按它放：重新定位到新文件夹时，任务、「总是允许」、快照都挪到新 id 下。
 //! - 顺序存在 `app_settings` 的 `layout` 键：拖过的按拖的排，没拖过的（新项目、新任务）排在最上面。
@@ -122,7 +122,7 @@ impl Store {
             "DELETE FROM steps WHERE run_id IN (SELECT id FROM runs WHERE session_id=?1)",
             [session_id],
         )?;
-        // 旧 API 层（规划 + 实施、假 Agent 走过的）的调用记录指着任务：断开就行，花费记录留着照算。
+        // v0.8 以前的旧 API 层、对话消息表的行指着任务（外键）：调用记录断开、消息删掉。
         tx.execute(
             "UPDATE api_tasks SET run_id=NULL WHERE run_id IN (SELECT id FROM runs WHERE session_id=?1)",
             [session_id],
@@ -202,17 +202,9 @@ pub fn workspace_remove(id: String, state: State<'_, AppState>) -> Result<(), St
 
 /// 文件夹不在了（或者挪了地方）：换成新的文件夹。`path` 空着就弹选文件夹的窗。
 #[tauri::command]
-pub async fn workspace_relocate(
-    id: String,
-    path: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<Option<Workspace>, String> {
-    let path = match path {
-        Some(p) => p,
-        None => match choose_folder().await? {
-            Some(p) => p,
-            None => return Ok(None),
-        },
+pub async fn workspace_relocate(id: String, state: State<'_, AppState>) -> Result<Option<Workspace>, String> {
+    let Some(path) = choose_folder().await? else {
+        return Ok(None);
     };
     let canonical = crate::agent::expand_tilde(&path)
         .canonicalize()
@@ -475,7 +467,8 @@ mod tests {
         assert!(store.sessions("ws-new").unwrap().is_empty());
         let kept: i64 = store.conn.query_row("SELECT COUNT(*) FROM api_calls", [], |r| r.get(0)).unwrap();
         assert_eq!(kept, 1);
-        assert!(store.messages(&s.id).unwrap().is_empty());
+        let messages: i64 = store.conn.query_row("SELECT COUNT(*) FROM messages WHERE session_id=?1", [&s.id], |r| r.get(0)).unwrap();
+        assert_eq!(messages, 0);
         let _ = std::fs::remove_dir_all(root);
     }
 }

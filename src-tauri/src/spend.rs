@@ -1,4 +1,4 @@
-//! 顶栏 QUOTA 页的图表数据：从事件日志里取近几十天的花费（Peck 循环、ONE SHOT、CLI 引擎估的）和订阅额度的历史。
+//! 顶栏 QUOTA 页的图表数据：从事件日志里取近几十天的花费（Peck Loop、ONE SHOT、CLI 引擎估的）和订阅额度的历史。
 //!
 //! 只读、只汇总，不另存。额度与花费的新模块（`src/quota/`）是站主自己的作业，这里只是现有用量页的数据来源。
 
@@ -15,9 +15,9 @@ use tauri::State;
 #[serde(rename_all = "camelCase")]
 pub struct SpendPoint {
     pub at: i64,
-    /// `peck`（Peck 循环和 ONE SHOT）或 CLI 引擎 id。
+    /// `peck`（Peck Loop 和 ONE SHOT）或 CLI 引擎 id。
     pub engine: String,
-    /// 谁花的：Peck 循环是目录里的模型 id（`deepseek/deepseek-flash`），ONE SHOT 是 `oneshot`，CLI 是引擎 id。
+    /// 谁花的：Peck Loop 是目录里的模型 id（`deepseek/deepseek-flash`），ONE SHOT 是 `oneshot`，CLI 是引擎 id。
     pub key: String,
     pub usd: Option<f64>,
     /// CLI 自己估的（不是按价格表算的）。
@@ -99,7 +99,7 @@ pub fn spend_points_by_session(rows: Vec<(String, String, i64, String, Option<St
 }
 
 /// 同上，再按价格表补上算不出的（v0.10 Refine，站主 11-17）：CLI 按它会话用的模型折成 API 价（订阅不真花，标「估」，
-/// 有价格表就不用 CLI 自己估的）；Peck 循环当时没价格的，按现在的价格表补。Peck 循环当时算好的照旧（当时的价格）。
+/// 有价格表就不用 CLI 自己估的）；Peck Loop 当时没价格的，按现在的价格表补。 Peck Loop 当时算好的照旧（当时的价格）。
 pub fn priced_points(rows: Vec<UsageRow>, book: Option<&Book>) -> Vec<SpendPoint> {
     let mut last: HashMap<String, Last> = HashMap::new();
     let mut out = Vec::new();
@@ -126,7 +126,7 @@ pub fn priced_points(rows: Vec<UsageRow>, book: Option<&Book>) -> Vec<SpendPoint
             }
             *prev = next;
         }
-        // v0.9 起 Peck 循环的用量带模型 id（委派的子任务是子任务的模型，合作里是那一段的模型），按它记；
+        // v0.9 起 Peck Loop 的用量带模型 id（委派的子任务是子任务的模型，合作里是那一段的模型），按它记；
         // 旧记录没有：任务的「谁」是 api: 的记那个模型，合作里分不出的记「合作」，不是任务的（ONE SHOT）记 oneshot。
         let model = event["model"].as_str().filter(|m| !m.is_empty());
         let key = match (model, who.as_deref()) {
@@ -137,7 +137,7 @@ pub fn priced_points(rows: Vec<UsageRow>, book: Option<&Book>) -> Vec<SpendPoint
             (None, _) if engine == "peck" => "oneshot".to_string(),
             (None, _) => engine.clone(),
         };
-        // 带模型 id 的都是 Peck 循环花的（CLI 委派出去的子任务记在 CLI 的任务里，也算 Peck）。
+        // 带模型 id 的都是 Peck Loop 花的（CLI 委派出去的子任务记在 CLI 的任务里，也算 Peck）。
         let cli = model.is_none() && engine != "peck";
         let engine = if model.is_some() { "peck".to_string() } else { engine };
         let mut estimated = cost["source"].as_str() == Some("estimated");
@@ -249,7 +249,7 @@ mod tests {
         ];
         let points = spend_points(rows);
         assert_eq!(points.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["deepseek/deepseek-flash", "deepseek/deepseek-flash", "claude-code", "claude-code", "oneshot", "team"]);
-        // v0.9：带模型 id 的按模型记——合作里那一段、Peck 循环委派的子任务、CLI 委派出去的子任务（记成 Peck）。
+        // v0.9：带模型 id 的按模型记——合作里那一段、Peck Loop 委派的子任务、CLI 委派出去的子任务（记成 Peck）。
         let with = |model: &str| format!(r#"{{"type":"usage.updated","usage":{{"input":10}},"cost":{{"usd":0.001,"source":"priced"}},"scope":"turn","model":"{model}"}}"#);
         let newer = spend_points(vec![
             ("t2".into(), "peck".into(), 7, with("anthropic/claude-sonnet-5-5"), Some("team:|api:anthropic/claude-sonnet-5-5|cli:codex".into())),

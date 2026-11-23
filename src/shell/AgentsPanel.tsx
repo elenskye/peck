@@ -21,7 +21,7 @@ const priceOf = (e: ModelEntry) => {
 };
 
 const FLOWS: Array<{ id: FlowKind; label: string; does: string; none: string }> = [
-  { id: "api", label: "API", does: "Peck 循环配一个 API 模型", none: "先在设置里配 Key" },
+  { id: "api", label: "API", does: "Peck Loop 配一个 API 模型", none: "先在设置里配 Key" },
   { id: "cli", label: "CLI", does: "一个 CLI 整包干", none: "没检测到 CLI" },
   { id: "relay", label: "接力", does: "任意两个：前一个只读写规范，后一个照着做", none: "先配 Key 或装 CLI" },
 ];

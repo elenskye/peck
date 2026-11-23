@@ -119,7 +119,7 @@ const Archive: React.FC<Props> = ({ onOpenArchived, onRestoreArchived, onDeleteA
 
 const KEY_STATE: Record<string, string | undefined> = { unloaded: "在读钥匙串", unavailable: "钥匙串没授权" };
 
-/** 旧 API 层留下的设置（现在只用 Aliyun 的地域和业务空间）：改了要点 SAVE；存的时候整份一起存。 */
+/** Aliyun 的地域：改了要点 SAVE。 */
 function useApiConfig(apiStatus: ApiStatus | null, onRefreshApi: Props["onRefreshApi"], say: Props["say"]) {
   const [config, setConfig] = useState<ApiConfig | null>(apiStatus?.config ?? null);
   const [dirty, setDirty] = useState(false);
@@ -148,7 +148,6 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
               <Row name={p.name} off={state !== "saved"} desc={KEY_STATE[state]}>
                 {state === "saved" ? <Tag v="ok">SAVED</Tag> : <Tag>{state === "unloaded" || state === "unavailable" ? "NOT READ" : "NO KEY"}</Tag>}
               </Row>
-              {/* 网格：Key 框和下面业务空间 ID 框的右边对齐（站主 11-17）。 */}
               <div className="set-keys">
                 <Field className="set-keys-wide" type="password" aria-label={`${p.name} 的 Key`} placeholder={`粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />
                 <Btn sm disabled={busy || !keys[p.id]?.trim()} onClick={() => void act(async () => { await api.setKey(p.id, keys[p.id]); setKeys((k) => ({ ...k, [p.id]: "" })); await onRefreshApi(); say(apiStatus.mode === "mock" ? "假 Key 只存在内存里，没进钥匙串" : "Key 已保存到钥匙串；认证通过要发一次请求才知道"); })}>SAVE</Btn>
@@ -156,7 +155,6 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
                 {p.id === "aliyun" && (
                   <>
                     <Seg label="Aliyun 的地域" sm items={[{ id: "beijing", label: "BEIJING" }, { id: "singapore", label: "SINGAPORE" }]} value={config.aliyunRegion} onChange={(aliyunRegion) => change({ ...config, aliyunRegion })} />
-                    <Field aria-label="Aliyun 的业务空间 ID" placeholder="业务空间 ID（可以不填）" value={config.aliyunWorkspaceId} onChange={(e) => change({ ...config, aliyunWorkspaceId: e.target.value.trim() })} />
                     <Btn sm disabled={busy || !dirty} onClick={() => void save("Aliyun 的地域存好了")}>SAVE</Btn>
                   </>
                 )}
@@ -173,7 +171,7 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
 
 // ---------- GENERAL：开发者选项 → 通知 → 花费上限（站主 11-17 并成一组） ----------
 
-/** 这个月已经花了多少（Peck 循环）：一条 20 格的进度（到 80% 变琥珀、到上限变红），右边写「花了 / 上限」。 */
+/** 这个月已经花了多少（Peck Loop）：一条 20 格的进度（到 80% 变琥珀、到上限变红），右边写「花了 / 上限」。 */
 const SpendMeter: React.FC<{ cap: number | null }> = ({ cap }) => {
   const [spent, setSpent] = useState<number | null>(null);
   useEffect(() => { void ipc.harnessSpend().then((s) => setSpent(s.monthUsd)).catch(() => setSpent(null)); }, []);
@@ -194,7 +192,7 @@ const SpendMeter: React.FC<{ cap: number | null }> = ({ cap }) => {
 const Num: React.FC<{ pre?: string; post?: string; children: React.ReactNode }> = ({ pre, post, children }) => (
   <span className="set-num"><span className="set-unit">{pre}</span>{children}<span className="set-unit">{post}</span></span>
 );
-/** GENERAL 里三个数字框一样宽。 */
+/** GENERAL 里的数字框一样宽。 */
 const NUM_WIDTH = 120;
 
 /** 有上下限的数字框：打字时照原样留着，离开或回车才夹到范围里存（以前每敲一个字就夹，打不出 120；v0.10 收尾审查）。
@@ -227,7 +225,13 @@ const General: React.FC<Props> = ({ settings, onSettings, apiStatus, onRefreshAp
       </Row>
       <Row name="这个月花了"><SpendMeter cap={settings.costCap} /></Row>
       <Row name="每个任务最多几轮">
-        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="Peck 循环每个任务最多几轮" min={5} max={400} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} /></Num>
+        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="Peck Loop 每个任务最多几轮" min={5} max={400} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} /></Num>
+      </Row>
+      <Row name="ONE SHOT 最多几轮">
+        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="ONE SHOT 最多几轮" min={5} max={400} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} /></Num>
+      </Row>
+      <Row name="子任务最多几轮">
+        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="委派的子任务最多几轮" min={5} max={400} value={settings.subRounds ?? 24} onCommit={(v) => onSettings({ subRounds: v })} /></Num>
       </Row>
       <Row name="额度提醒" off={settings.quotaWarn == null}>
         <Switch label="额度提醒" on={settings.quotaWarn != null} onChange={(on) => onSettings({ quotaWarn: on ? 85 : null })} />

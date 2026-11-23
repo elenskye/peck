@@ -22,98 +22,6 @@ pub fn client_label(client: &str) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct UsageTokens {
-    pub input_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    pub cache_read_tokens: Option<i64>,
-    pub cache_creation_tokens: Option<i64>,
-    pub reasoning_tokens: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageCall {
-    pub source: String,
-    pub request_id: String,
-    pub project: String,
-    pub run_id: Option<String>,
-    pub task_id: Option<String>,
-    pub round: Option<i64>,
-    pub mode: String,
-    pub provider: String,
-    pub model: String,
-    pub role: String,
-    pub started_at: i64,
-    pub finished_at: Option<i64>,
-    pub status: String,
-    pub budget_counted: bool,
-    pub usage: Option<UsageTokens>,
-    pub currency: Option<String>,
-    pub actual_cost: Option<f64>,
-    pub estimated_cost: Option<f64>,
-    pub price_version: Option<String>,
-    pub local_id: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct UsageFilter {
-    pub mode: Option<String>,
-    pub project: Option<String>,
-    pub model: Option<String>,
-    pub provider: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenSummary {
-    pub input: Option<i64>,
-    pub output: Option<i64>,
-    pub cache_read: Option<i64>,
-    pub cache_creation: Option<i64>,
-    pub reasoning: Option<i64>,
-    pub unknown_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CostSummary {
-    pub currency: Option<String>,
-    pub actual: Option<f64>,
-    pub estimated: Option<f64>,
-    pub actual_unknown_count: i64,
-    pub estimated_unknown_count: i64,
-    pub price_versions: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageSummary {
-    pub request_count: i64,
-    pub tokens: TokenSummary,
-    pub costs: Vec<CostSummary>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageListResult {
-    pub calls: Vec<UsageCall>,
-    pub summary: UsageSummary,
-    pub projects: Vec<String>,
-    pub models: Vec<String>,
-    pub providers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportResult {
-    pub imported: i64,
-    pub skipped: i64,
-    pub invalid: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaWindow {
@@ -244,108 +152,7 @@ pub struct ManualSnapshotInput {
     pub note: String,
 }
 
-// ---------- 台账：纯汇总与导入解析（可独立测试） ----------
-
-pub fn summarize(calls: &[UsageCall]) -> UsageSummary {
-    let mut tokens = TokenSummary::default();
-    let add = |slot: &mut Option<i64>, v: Option<i64>| {
-        if let Some(v) = v {
-            *slot = Some(slot.unwrap_or(0) + v);
-        }
-    };
-    for c in calls {
-        match &c.usage {
-            None => tokens.unknown_count += 1,
-            Some(u) => {
-                if u.input_tokens.is_none()
-                    || u.output_tokens.is_none()
-                    || u.cache_read_tokens.is_none()
-                    || u.cache_creation_tokens.is_none()
-                    || u.reasoning_tokens.is_none()
-                {
-                    tokens.unknown_count += 1;
-                }
-                add(&mut tokens.input, u.input_tokens);
-                add(&mut tokens.output, u.output_tokens);
-                add(&mut tokens.cache_read, u.cache_read_tokens);
-                add(&mut tokens.cache_creation, u.cache_creation_tokens);
-                add(&mut tokens.reasoning, u.reasoning_tokens);
-            }
-        }
-    }
-    let mut groups: Vec<CostSummary> = vec![];
-    for c in calls {
-        let idx = groups
-            .iter()
-            .position(|g: &CostSummary| g.currency == c.currency);
-        let idx = match idx {
-            Some(i) => i,
-            None => {
-                groups.push(CostSummary {
-                    currency: c.currency.clone(),
-                    actual: None,
-                    estimated: None,
-                    actual_unknown_count: 0,
-                    estimated_unknown_count: 0,
-                    price_versions: vec![],
-                });
-                groups.len() - 1
-            }
-        };
-        let g = &mut groups[idx];
-        match c.actual_cost {
-            Some(v) => g.actual = Some(g.actual.unwrap_or(0.0) + v),
-            None => g.actual_unknown_count += 1,
-        }
-        match c.estimated_cost {
-            Some(v) => g.estimated = Some(g.estimated.unwrap_or(0.0) + v),
-            None => g.estimated_unknown_count += 1,
-        }
-        if let Some(p) = &c.price_version {
-            if !g.price_versions.contains(p) {
-                g.price_versions.push(p.clone());
-            }
-        }
-    }
-    UsageSummary {
-        request_count: calls.len() as i64,
-        tokens,
-        costs: groups,
-    }
-}
-
-pub fn parse_import(json: &str) -> Result<Vec<UsageCall>, String> {
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("导入文件不是有效 JSON：{e}"))?;
-    if v.get("schemaVersion").and_then(Value::as_i64) != Some(1) {
-        return Err("导入文件 schemaVersion 必须为 1。".into());
-    }
-    if v.get("source").and_then(Value::as_str) != Some("peck") {
-        return Err("导入文件 source 必须为 peck。".into());
-    }
-    let arr = v
-        .get("calls")
-        .and_then(Value::as_array)
-        .ok_or("导入文件缺少 calls 数组。")?;
-    let mut out = vec![];
-    for item in arr {
-        if let Some(c) = parse_import_call(item) {
-            out.push(c);
-        }
-    }
-    Ok(out)
-}
-
-pub fn count_invalid(json: &str) -> i64 {
-    let Ok(v) = serde_json::from_str::<Value>(json) else {
-        return 0;
-    };
-    let Some(arr) = v.get("calls").and_then(Value::as_array) else {
-        return 0;
-    };
-    arr.iter()
-        .filter(|i| parse_import_call(i).is_none())
-        .count() as i64
-}
+// ---------- 读 JSON 字段的小帮手 ----------
 
 fn opt_i64(v: &Value, key: &str) -> Option<i64> {
     v.get(key).and_then(Value::as_i64)
@@ -355,105 +162,6 @@ fn opt_f64(v: &Value, key: &str) -> Option<f64> {
 }
 fn opt_str(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
-fn parse_import_call(item: &Value) -> Option<UsageCall> {
-    let source = opt_str(item, "source")?;
-    if source != "peck" {
-        return None;
-    }
-    let mode = opt_str(item, "mode")?;
-    if mode != "real" && mode != "mock" {
-        return None;
-    }
-    let model = opt_str(item, "model").filter(|s| !s.trim().is_empty())?;
-    let request_id = opt_str(item, "requestId").filter(|s| !s.trim().is_empty())?;
-    let usage = item
-        .get("usage")
-        .filter(|u| !u.is_null())
-        .map(|u| UsageTokens {
-            input_tokens: opt_i64(u, "inputTokens"),
-            output_tokens: opt_i64(u, "outputTokens"),
-            cache_read_tokens: opt_i64(u, "cacheReadTokens"),
-            cache_creation_tokens: opt_i64(u, "cacheCreationTokens"),
-            reasoning_tokens: opt_i64(u, "reasoningTokens"),
-        });
-    Some(UsageCall {
-        source,
-        request_id,
-        project: opt_str(item, "project").unwrap_or_default(),
-        run_id: opt_str(item, "runId"),
-        task_id: opt_str(item, "taskId"),
-        round: opt_i64(item, "round"),
-        mode,
-        provider: opt_str(item, "provider").unwrap_or_default(),
-        model,
-        role: opt_str(item, "role").unwrap_or_default(),
-        started_at: opt_i64(item, "startedAt").unwrap_or(0),
-        finished_at: opt_i64(item, "finishedAt"),
-        status: opt_str(item, "status").unwrap_or_default(),
-        budget_counted: item
-            .get("budgetCounted")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        usage,
-        currency: opt_str(item, "currency"),
-        actual_cost: opt_f64(item, "actualCost"),
-        estimated_cost: opt_f64(item, "estimatedCost"),
-        price_version: opt_str(item, "priceVersion"),
-        local_id: false,
-    })
-}
-
-fn csv_cell(s: &str) -> String {
-    if s.contains([',', '"', '\n']) {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
-}
-
-pub fn build_csv(calls: &[UsageCall]) -> String {
-    let mut out = String::new();
-    out.push_str("source,requestId,project,runId,taskId,round,mode,provider,model,role,startedAt,finishedAt,status,budgetCounted,inputTokens,outputTokens,cacheReadTokens,cacheCreationTokens,reasoningTokens,currency,actualCost,estimatedCost,priceVersion\n");
-    for c in calls {
-        let u = c.usage.as_ref();
-        let num = |v: Option<i64>| v.map(|x| x.to_string()).unwrap_or_default();
-        let cost = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_default();
-        let row = [
-            c.source.clone(),
-            c.request_id.clone(),
-            c.project.clone(),
-            c.run_id.clone().unwrap_or_default(),
-            c.task_id.clone().unwrap_or_default(),
-            num(c.round),
-            c.mode.clone(),
-            c.provider.clone(),
-            c.model.clone(),
-            c.role.clone(),
-            c.started_at.to_string(),
-            num(c.finished_at),
-            c.status.clone(),
-            c.budget_counted.to_string(),
-            num(u.and_then(|x| x.input_tokens)),
-            num(u.and_then(|x| x.output_tokens)),
-            num(u.and_then(|x| x.cache_read_tokens)),
-            num(u.and_then(|x| x.cache_creation_tokens)),
-            num(u.and_then(|x| x.reasoning_tokens)),
-            c.currency.clone().unwrap_or_default(),
-            cost(c.actual_cost),
-            cost(c.estimated_cost),
-            c.price_version.clone().unwrap_or_default(),
-        ];
-        out.push_str(
-            &row.iter()
-                .map(|s| csv_cell(s))
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-        out.push('\n');
-    }
-    out
 }
 
 // ---------- 五家解析器（纯函数，输入为官方 JSON） ----------
@@ -830,139 +538,15 @@ pub fn list_processes() -> Vec<ProcInfo> {
 // ---------- Store 持久化 ----------
 
 impl Store {
-    pub fn usage_insert_calls(&self, calls: &[UsageCall]) -> StoreResult<ImportResult> {
-        let mut imported = 0i64;
-        let mut skipped = 0i64;
-        for c in calls {
-            let n = self.conn.execute(
-                "INSERT OR IGNORE INTO usage_calls(source,request_id,project,run_id,task_id,round,mode,provider,model,role,started_at,finished_at,status,budget_counted,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,reasoning_tokens,currency,actual_cost,estimated_cost,price_version,local_id,imported_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)",
-                params![c.source, c.request_id, c.project, c.run_id, c.task_id, c.round, c.mode, c.provider, c.model, c.role, c.started_at, c.finished_at, c.status, c.budget_counted as i64,
-                    c.usage.as_ref().and_then(|u| u.input_tokens), c.usage.as_ref().and_then(|u| u.output_tokens),
-                    c.usage.as_ref().and_then(|u| u.cache_read_tokens), c.usage.as_ref().and_then(|u| u.cache_creation_tokens),
-                    c.usage.as_ref().and_then(|u| u.reasoning_tokens), c.currency, c.actual_cost, c.estimated_cost, c.price_version, c.local_id as i64, now_ms()],
-            )?;
-            if n == 0 {
-                skipped += 1;
-            } else {
-                imported += 1;
-            }
-        }
-        Ok(ImportResult {
-            imported,
-            skipped,
-            invalid: 0,
-        })
-    }
-
-    pub fn usage_sync_own(&self) -> StoreResult<()> {
-        let value = self.export_api_calls()?;
-        let raw = serde_json::to_string(&value).map_err(|e| e.to_string())?;
-        if let Ok(calls) = parse_import(&raw) {
-            self.usage_update_own_calls(&calls)?;
-        }
-        Ok(())
-    }
-
-    pub fn usage_update_own_calls(&self, calls: &[UsageCall]) -> StoreResult<()> {
-        for c in calls {
-            let u = c.usage.as_ref();
-            self.conn.execute(
-                "UPDATE usage_calls SET status=?1,finished_at=?2,budget_counted=?3,input_tokens=?4,output_tokens=?5,cache_read_tokens=?6,cache_creation_tokens=?7,reasoning_tokens=?8 WHERE source=?9 AND request_id=?10",
-                params![c.status, c.finished_at, c.budget_counted as i64,
-                    u.and_then(|u| u.input_tokens), u.and_then(|u| u.output_tokens),
-                    u.and_then(|u| u.cache_read_tokens), u.and_then(|u| u.cache_creation_tokens),
-                    u.and_then(|u| u.reasoning_tokens), c.source, c.request_id],
-            )?;
-        }
-        self.usage_insert_calls(calls)?;
-        Ok(())
-    }
-
-    pub fn usage_calls(&self, filter: &UsageFilter) -> StoreResult<UsageListResult> {
-        let mode = filter.mode.as_deref().unwrap_or("real");
-        let mut stmt = self.conn.prepare("SELECT source,request_id,project,run_id,task_id,round,mode,provider,model,role,started_at,finished_at,status,budget_counted,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,reasoning_tokens,currency,actual_cost,estimated_cost,price_version,local_id FROM usage_calls ORDER BY started_at DESC, rowid DESC")?;
-        let rows = stmt
-            .query_map([], |r| {
-                let has_usage = r.get::<_, Option<i64>>(14)?.is_some()
-                    || r.get::<_, Option<i64>>(15)?.is_some()
-                    || r.get::<_, Option<i64>>(16)?.is_some()
-                    || r.get::<_, Option<i64>>(17)?.is_some()
-                    || r.get::<_, Option<i64>>(18)?.is_some()
-                    || {
-                        // usage object existed but all fields null is indistinguishable in columns;
-                        // treat rows imported with usage null and known rows alike via started check below.
-                        false
-                    };
-                Ok(UsageCall {
-                    source: r.get(0)?,
-                    request_id: r.get(1)?,
-                    project: r.get(2)?,
-                    run_id: r.get(3)?,
-                    task_id: r.get(4)?,
-                    round: r.get(5)?,
-                    mode: r.get(6)?,
-                    provider: r.get(7)?,
-                    model: r.get(8)?,
-                    role: r.get(9)?,
-                    started_at: r.get(10)?,
-                    finished_at: r.get(11)?,
-                    status: r.get(12)?,
-                    budget_counted: r.get::<_, i64>(13)? != 0,
-                    usage: if has_usage {
-                        Some(UsageTokens {
-                            input_tokens: r.get(14)?,
-                            output_tokens: r.get(15)?,
-                            cache_read_tokens: r.get(16)?,
-                            cache_creation_tokens: r.get(17)?,
-                            reasoning_tokens: r.get(18)?,
-                        })
-                    } else {
-                        None
-                    },
-                    currency: r.get(19)?,
-                    actual_cost: r.get(20)?,
-                    estimated_cost: r.get(21)?,
-                    price_version: r.get(22)?,
-                    local_id: r.get::<_, i64>(23)? != 0,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        // Rows whose usage was an object with all-null fields collapse to None; acceptable as unknown.
-        let projects: Vec<String> = {
-            let mut s: Vec<String> = rows.iter().map(|c| c.project.clone()).collect();
-            s.sort();
-            s.dedup();
-            s.into_iter().filter(|p| !p.is_empty()).collect()
-        };
-        let models: Vec<String> = {
-            let mut s: Vec<String> = rows.iter().map(|c| c.model.clone()).collect();
-            s.sort();
-            s.dedup();
-            s
-        };
-        let providers: Vec<String> = {
-            let mut s: Vec<String> = rows.iter().map(|c| c.provider.clone()).collect();
-            s.sort();
-            s.dedup();
-            s.into_iter().filter(|p| !p.trim().is_empty()).collect()
-        };
-        let filtered: Vec<UsageCall> = rows
-            .into_iter()
-            .filter(|c| {
-                (mode == "all" || c.mode == mode)
-                    && filter.project.as_ref().is_none_or(|p| &c.project == p)
-                    && filter.model.as_ref().is_none_or(|m| &c.model == m)
-                    && filter.provider.as_ref().is_none_or(|p| &c.provider == p)
-            })
-            .collect();
-        let summary = summarize(&filtered);
-        Ok(UsageListResult {
-            calls: filtered,
-            summary,
-            projects,
-            models,
-            providers,
-        })
+    /// 有没有在跑的、用 DeepSeek 的任务（Peck Loop 直接用它，或者合作里有一段是它）：DeepSeek 余额只在这时候查。
+    pub fn deepseek_running(&self) -> bool {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM runs WHERE json_extract(record,'$.status')='running' AND json_extract(record,'$.who') LIKE '%api:deepseek/%')",
+                [],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap_or(false)
     }
 
     pub fn usage_save_snapshot(&self, card: &ClientCard) -> StoreResult<()> {
@@ -1154,13 +738,6 @@ fn find_executable(command: &str, extra: &[String]) -> Option<PathBuf> {
     None
 }
 
-fn manifest_command(id: &str) -> Option<(PathBuf, Vec<String>, HashMap<String, String>)> {
-    let manifests = crate::agent::load_agent_manifests();
-    let m = manifests.into_iter().find(|m| m.id == id)?;
-    let resolved = find_executable(&m.command, &m.path)?;
-    Some((resolved, m.path.clone(), m.env.clone()))
-}
-
 pub fn codex_binary() -> Option<PathBuf> {
     let bundled = PathBuf::from(
         "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
@@ -1171,10 +748,20 @@ pub fn codex_binary() -> Option<PathBuf> {
     find_executable("codex", &[])
 }
 
-fn installed_map() -> HashMap<String, bool> {
+/// 找 CLI 的那份 PATH（「CLI 目录」+ 站主 shell 的 PATH，和发任务一样，`GatewayConfig::search_path`）。
+fn cli_search_path(store: &Store) -> String {
+    crate::gateway::config::GatewayConfig::load(store).map(|c| c.search_path()).unwrap_or_else(|_| crate::agent::build_augmented_path(&[]))
+}
+
+/// 在那份 PATH 里找一个命令。
+fn cli_bin(command: &str, path: &str) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|dir| dir.join(command)).find(|c| c.is_file())
+}
+
+fn installed_map(path: &str) -> HashMap<String, bool> {
     let mut map = HashMap::new();
-    map.insert("muse-code".into(), manifest_command("muse").is_some());
-    map.insert("grok".into(), manifest_command("grok").is_some());
+    map.insert("muse-code".into(), cli_bin("muse", path).is_some());
+    map.insert("grok".into(), cli_bin("grok", path).is_some());
     map.insert(
         "codex".into(),
         codex_binary().is_some() || PathBuf::from("/Applications/ChatGPT.app").exists(),
@@ -1250,9 +837,10 @@ async fn run_capture_in(
     result
 }
 
-async fn query_muse() -> ClientCard {
+async fn query_muse(path: &str) -> ClientCard {
     let now = now_ms();
-    let Some((bin, _paths, env)) = manifest_command("muse") else {
+    let env = HashMap::from([("PATH".to_string(), path.to_string())]);
+    let Some(bin) = cli_bin("muse", path) else {
         let mut c = ClientCard::base("muse-code");
         c.status = "not_installed".into();
         c.collected_at = now;
@@ -1320,9 +908,10 @@ async fn query_muse() -> ClientCard {
     }
 }
 
-async fn query_grok() -> ClientCard {
+async fn query_grok(path: &str) -> ClientCard {
     let now = now_ms();
-    let Some((bin, _paths, env)) = manifest_command("grok") else {
+    let env = HashMap::from([("PATH".to_string(), path.to_string())]);
+    let Some(bin) = cli_bin("grok", path) else {
         let mut c = ClientCard::base("grok");
         c.status = "not_installed".into();
         c.collected_at = now;
@@ -1775,10 +1364,10 @@ fn event_driven_card(client: &str, variant: &str, collected_at: i64) -> ClientCa
     c
 }
 
-async fn query_client(client: &str, variant: &str, claude: Option<&ClaudeSetup>) -> ClientCard {
+async fn query_client(client: &str, variant: &str, claude: Option<&ClaudeSetup>, path: &str) -> ClientCard {
     match client {
-        "muse-code" => query_muse().await,
-        "grok" => query_grok().await,
+        "muse-code" => query_muse(path).await,
+        "grok" => query_grok(path).await,
         "codex" => query_codex().await,
         "claude-code" => query_claude(claude, variant).await,
         "antigravity" => event_driven_card("antigravity", variant, now_ms()),
@@ -1847,13 +1436,14 @@ pub async fn refresh_clients_inner(
     _force: bool,
 ) -> Vec<ClientCard> {
     let now = now_ms();
-    let (old_map, installed) = {
+    let (old_map, cli_path) = {
         let store = match store_arc.lock() {
             Ok(s) => s,
             Err(_) => return vec![],
         };
-        (store.usage_snapshots().unwrap_or_default(), installed_map())
+        (store.usage_snapshots().unwrap_or_default(), cli_search_path(&store))
     };
+    let installed = installed_map(&cli_path);
     let running = running_clients(&list_processes(), std::process::id() as i64);
     // Claude Code 按「CLI 检测」的目录找（`cli/bin`），带上 Peck 里选的账号目录。
     let claude = claude_setup(&store_arc).await;
@@ -1929,7 +1519,7 @@ pub async fn refresh_clients_inner(
             cards.push(c);
             continue;
         }
-        let queried = query_client(client, variant, claude.as_ref()).await;
+        let queried = query_client(client, variant, claude.as_ref(), &cli_path).await;
         if let Ok(mut m) = monitor.last_query.lock() {
             m.insert(client.to_string(), now_ms());
         }
@@ -1989,23 +1579,9 @@ pub fn start_monitor(
                 .lock()
                 .ok()
                 .is_some_and(|keys| keys.cached("deepseek").is_some());
-            // 没有 DeepSeek 的 Key 就不用扫旧记录表（整表读一遍，还占着库的锁）。
-            let active_deepseek = cached_key
-                && store_arc
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.export_api_calls().ok())
-                    .is_some_and(|v| {
-                        v.get("calls")
-                            .and_then(Value::as_array)
-                            .is_some_and(|calls| {
-                                calls.iter().any(|c| {
-                                    c.get("provider").and_then(Value::as_str) == Some("deepseek")
-                                        && c.get("mode").and_then(Value::as_str) == Some("real")
-                                        && c.get("finishedAt").is_some_and(Value::is_null)
-                                })
-                            })
-                    });
+            // DeepSeek 余额只在真的有 DeepSeek 请求在跑时查（v1.0.3 起看在跑的任务；以前看旧 API 层的调用表，v0.8 以后就不写了）。
+            let real = api.mode.lock().is_ok_and(|m| *m == crate::mode::ApiMode::Real);
+            let active_deepseek = cached_key && real && store_arc.lock().ok().is_some_and(|s| s.deepseek_running());
             if active_deepseek {
                 let _ = refresh_balance(
                     "deepseek".into(),
@@ -2027,54 +1603,6 @@ pub fn start_monitor(
 }
 
 // ---------- Tauri commands ----------
-
-#[tauri::command]
-pub async fn usage_list(
-    filter: UsageFilter,
-    state: State<'_, AppState>,
-) -> Result<UsageListResult, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.usage_sync_own().map_err(|e| e.to_string())?;
-    store.usage_calls(&filter).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn usage_import(
-    json: String,
-    state: State<'_, AppState>,
-) -> Result<ImportResult, String> {
-    let invalid = count_invalid(&json);
-    let calls = parse_import(&json)?;
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    let mut result = store
-        .usage_insert_calls(&calls)
-        .map_err(|e| e.to_string())?;
-    result.invalid = invalid;
-    Ok(result)
-}
-
-#[tauri::command]
-pub async fn usage_export_csv(
-    window: tauri::WebviewWindow,
-    filter: UsageFilter,
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
-    let csv = {
-        let store = state.store.lock().map_err(|e| e.to_string())?;
-        store.usage_sync_own().map_err(|e| e.to_string())?;
-        build_csv(&store.usage_calls(&filter).map_err(|e| e.to_string())?.calls)
-    };
-    crate::export::save_export(
-        &window,
-        "导出用量台账 CSV",
-        &format!("peck-usage-{}.csv", now_ms()),
-        "CSV",
-        "csv",
-        csv.into_bytes(),
-        "保存 CSV 失败",
-    )
-    .await
-}
 
 #[tauri::command]
 pub async fn usage_clients(state: State<'_, AppState>) -> Result<Vec<ClientCard>, String> {
@@ -2110,7 +1638,8 @@ pub async fn usage_manual_snapshot(
     card.status = "ok".into();
     card.manual = true;
     card.fresh = false;
-    card.installed = installed_map()
+    let cli_path = state.store.lock().map(|s| cli_search_path(&s)).map_err(|e| e.to_string())?;
+    card.installed = installed_map(&cli_path)
         .get(input.client.as_str())
         .copied()
         .unwrap_or(false);
@@ -2365,37 +1894,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn fixture_call(
-        id: &str,
-        mode: &str,
-        usage: Option<UsageTokens>,
-        currency: Option<&str>,
-        actual: Option<f64>,
-    ) -> UsageCall {
-        UsageCall {
-            source: "peck".into(),
-            request_id: id.into(),
-            project: "fixture-project".into(),
-            run_id: None,
-            task_id: None,
-            round: Some(1),
-            mode: mode.into(),
-            provider: "fixture".into(),
-            model: "fixture-model".into(),
-            role: "worker".into(),
-            started_at: 1000,
-            finished_at: Some(2000),
-            status: "completed".into(),
-            budget_counted: true,
-            usage,
-            currency: currency.map(str::to_string),
-            actual_cost: actual,
-            estimated_cost: None,
-            price_version: None,
-            local_id: false,
-        }
-    }
-
     fn memory_store() -> Store {
         let path =
             std::env::temp_dir().join(format!("peck-usage-fixture-{}.db", uuid::Uuid::new_v4()));
@@ -2403,174 +1901,25 @@ mod tests {
     }
 
     #[test]
-    fn usage_import_dedupes_on_second_import_fixture() {
-        let store = memory_store();
-        let json = r#"{"schemaVersion":1,"source":"peck","coverage":"fixture","exportedAt":1,"calls":[{"source":"peck","requestId":"fixture-1","project":"p","mode":"real","provider":"x","model":"m","role":"worker","startedAt":1,"finishedAt":2,"status":"completed","budgetCounted":true,"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":null,"cacheCreationTokens":null,"reasoningTokens":null},"currency":null,"actualCost":null,"estimatedCost":null,"priceVersion":null}]}"#;
-        let calls = parse_import(json).unwrap();
-        let first = store.usage_insert_calls(&calls).unwrap();
-        let second = store.usage_insert_calls(&calls).unwrap();
-        assert_eq!(first.imported, 1);
-        assert_eq!(second.imported, 0);
-        assert_eq!(second.skipped, 1);
-        let list = store.usage_calls(&UsageFilter::default()).unwrap();
-        assert_eq!(list.summary.request_count, 1);
-    }
-
-    #[test]
-    fn usage_unknown_tokens_and_costs_are_not_zero_fixture() {
-        let calls = vec![fixture_call("a", "real", None, Some("USD"), None)];
-        let s = summarize(&calls);
-        assert_eq!(s.tokens.input, None);
-        assert_eq!(s.tokens.unknown_count, 1);
-        assert_eq!(s.costs[0].actual, None);
-        assert_eq!(s.costs[0].actual_unknown_count, 1);
-    }
-
-    #[test]
-    fn usage_multi_currency_never_merges_fixture() {
-        let calls = vec![
-            fixture_call("a", "real", None, Some("USD"), Some(1.0)),
-            fixture_call("b", "real", None, Some("CNY"), Some(7.0)),
-        ];
-        let s = summarize(&calls);
-        assert_eq!(s.costs.len(), 2);
-        assert!(s
-            .costs
-            .iter()
-            .any(|c| c.currency.as_deref() == Some("USD") && c.actual == Some(1.0)));
-        assert!(s
-            .costs
-            .iter()
-            .any(|c| c.currency.as_deref() == Some("CNY") && c.actual == Some(7.0)));
-    }
-
-    #[test]
-    fn usage_default_filter_is_real_only_fixture() {
-        let store = memory_store();
-        store
-            .usage_insert_calls(&[
-                fixture_call("r1", "real", None, None, None),
-                fixture_call("m1", "mock", None, None, None),
-            ])
-            .unwrap();
-        assert_eq!(
-            store
-                .usage_calls(&UsageFilter::default())
-                .unwrap()
-                .summary
-                .request_count,
-            1
-        );
-        let all = store
-            .usage_calls(&UsageFilter {
-                mode: Some("all".into()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(all.summary.request_count, 2);
-    }
-
-    #[test]
-    fn usage_provider_filter_isolates_real_and_mock_fixture() {
-        let store = memory_store();
-        let mut deepseek = fixture_call(
-            "ds-real",
-            "real",
-            Some(UsageTokens {
-                input_tokens: Some(100),
-                output_tokens: Some(10),
-                ..Default::default()
-            }),
-            Some("CNY"),
-            Some(1.5),
-        );
-        deepseek.provider = "deepseek".into();
-        deepseek.model = "deepseek-chat".into();
-        let mut anthropic = fixture_call(
-            "an-real",
-            "real",
-            Some(UsageTokens {
-                input_tokens: Some(7),
-                ..Default::default()
-            }),
-            Some("USD"),
-            Some(0.25),
-        );
-        anthropic.provider = "anthropic".into();
-        anthropic.model = "claude-sonnet-4-5".into();
-        let mut mocked = fixture_call(
-            "ds-mock",
-            "mock",
-            Some(UsageTokens {
-                input_tokens: Some(5000),
-                ..Default::default()
-            }),
-            None,
-            None,
-        );
-        mocked.provider = "deepseek".into();
-        mocked.model = "deepseek-chat".into();
-        store
-            .usage_insert_calls(&[deepseek, anthropic, mocked])
-            .unwrap();
-
-        // 默认 real：mock 的 deepseek 记录不得混入真实汇总。
-        let real = store.usage_calls(&UsageFilter::default()).unwrap();
-        assert_eq!(real.summary.request_count, 2);
-        assert_eq!(real.summary.tokens.input, Some(107));
-        assert_eq!(
-            real.providers,
-            vec!["anthropic".to_string(), "deepseek".to_string()]
-        );
-
-        // real + deepseek：只剩真实 DeepSeek，token 与费用不串到 Anthropic 或 mock。
-        let ds = store
-            .usage_calls(&UsageFilter {
-                provider: Some("deepseek".into()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(ds.calls.len(), 1);
-        assert_eq!(ds.summary.request_count, 1);
-        assert_eq!(ds.summary.tokens.input, Some(100));
-        assert_eq!(ds.summary.tokens.output, Some(10));
-        assert_eq!(ds.summary.costs.len(), 1);
-        assert_eq!(ds.summary.costs[0].currency.as_deref(), Some("CNY"));
-        assert_eq!(ds.summary.costs[0].actual, Some(1.5));
-        assert_eq!(ds.calls[0].mode, "real");
-
-        // 切到 mock 模式时同供应商只取 mock 记录，真实记录不重复计数。
-        let mock_only = store
-            .usage_calls(&UsageFilter {
-                mode: Some("mock".into()),
-                provider: Some("deepseek".into()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(mock_only.summary.request_count, 1);
-        assert_eq!(mock_only.summary.tokens.input, Some(5000));
-
-        // Anthropic 只带自己的 USD 费用。
-        let an = store
-            .usage_calls(&UsageFilter {
-                provider: Some("anthropic".into()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(an.summary.request_count, 1);
-        assert_eq!(an.summary.tokens.input, Some(7));
-        assert_eq!(an.summary.costs.len(), 1);
-        assert_eq!(an.summary.costs[0].currency.as_deref(), Some("USD"));
-
-        // 未记录的供应商返回空列表与零汇总，不补默认数据。
-        let none = store
-            .usage_calls(&UsageFilter {
-                provider: Some("openai".into()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert!(none.calls.is_empty());
-        assert_eq!(none.summary.request_count, 0);
+    fn deepseek_balance_only_while_a_deepseek_task_runs() {
+        let mut store = memory_store();
+        let dir = std::env::temp_dir().join(format!("peck-usage-ws-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ws = crate::workspace::open_workspace(dir.to_str().unwrap()).unwrap();
+        store.save_workspace(&ws).unwrap();
+        let session = store.create_session(&ws.id, Some("t".into())).unwrap();
+        let plan = crate::flow::DispatchPlan { steps: vec![] };
+        let mut run = store.create_run(&session.id, "x", 960_001, &plan).unwrap();
+        run.who = Some("cli:codex".into());
+        store.save_run(&run).unwrap();
+        assert!(!store.deepseek_running(), "别家的不算");
+        run.who = Some("team:api:anthropic/claude-opus-5-5|api:deepseek/deepseek-flash|".into());
+        store.save_run(&run).unwrap();
+        assert!(store.deepseek_running(), "合作里有一段是 DeepSeek 也算");
+        run.status = crate::events::RunStatus::Succeeded;
+        store.save_run(&run).unwrap();
+        assert!(!store.deepseek_running(), "做完了就不查");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -2586,29 +1935,6 @@ mod tests {
         assert!(card.raw_label.contains("mint"));
         let missing = parse_muse_usage(&json!({"schemaVersion":1,"allowance":{"tier":"pro"}}), 1);
         assert_eq!(missing.status, "fields_missing");
-    }
-
-    #[test]
-    fn usage_import_rejects_missing_ids_and_updates_own_request() {
-        let raw = r#"{"schemaVersion":1,"source":"peck","calls":[{"source":"peck","mode":"real","model":"fixture"}]}"#;
-        assert!(parse_import(raw).unwrap().is_empty());
-        assert_eq!(count_invalid(raw), 1);
-        let store = memory_store();
-        let mut call = fixture_call("same-request", "real", None, None, None);
-        call.status = "running".into();
-        call.finished_at = None;
-        store.usage_update_own_calls(&[call.clone()]).unwrap();
-        call.status = "completed".into();
-        call.finished_at = Some(2000);
-        call.usage = Some(UsageTokens {
-            input_tokens: Some(123),
-            ..Default::default()
-        });
-        store.usage_update_own_calls(&[call]).unwrap();
-        let list = store.usage_calls(&UsageFilter::default()).unwrap();
-        assert_eq!(list.calls.len(), 1);
-        assert_eq!(list.calls[0].status, "completed");
-        assert_eq!(list.summary.tokens.input, Some(123));
     }
 
     #[test]
@@ -2843,15 +2169,4 @@ mod tests {
         assert_eq!(loaded["codex"].account_id.as_deref(), Some("acct-a"));
     }
 
-    #[test]
-    fn usage_csv_has_header_first_and_only_record_rows() {
-        let csv = build_csv(&[fixture_call("a", "real", None, Some("USD"), None)]);
-        let lines: Vec<_> = csv.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].starts_with("source,requestId,"));
-        assert!(lines[1].starts_with("peck,a,"));
-        assert_eq!(lines[0].split(',').count(), lines[1].split(',').count());
-        assert_eq!(build_csv(&[]).lines().count(), 1);
-        assert!(csv.contains(",USD,"));
-    }
 }

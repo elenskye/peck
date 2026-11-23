@@ -192,12 +192,10 @@ impl ModelSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryGroup {
-    /// Peck 自己的循环 + API 模型。
+    /// Peck Loop + API 模型。
     Peck,
     /// CLI 引擎。
     Cli,
-    /// 现有的接力和规划 + 实施（v0.8 并进多引擎合作）。
-    Flow,
 }
 
 /// 模型列表里的一项。`id` 就是发任务时的「谁来干」。

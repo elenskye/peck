@@ -161,7 +161,7 @@ impl CodexConverter {
                         duration_ms: item["durationMs"].as_u64(),
                     }]
                 } else {
-                    // Peck 的委派（v0.9 B1）：和 Peck 循环一样写。
+                    // Peck 的委派（v0.9 B1）：和 Peck Loop 一样写。
                     let (kind, title) = if name == "peck.delegate_task" {
                         (ToolKind::Other, format!("交给子任务：{}", item["arguments"]["task"].as_str().unwrap_or("").chars().take(60).collect::<String>()))
                     } else {

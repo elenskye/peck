@@ -417,7 +417,6 @@ fn pump<R: tokio::io::AsyncRead + Unpin + Send + 'static>(mut reader: R, tx: mps
 mod tests {
     use super::super::testing::TempProject;
     use super::*;
-    use crate::gateway::event::PermissionLevel;
     use serde_json::json;
 
     fn never() -> watch::Receiver<bool> {
@@ -467,7 +466,7 @@ mod tests {
     async fn runs_streams_and_reports_exit_codes() {
         let p = TempProject::new();
         p.write("a.txt", "hello\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let mut seen = String::new();
         let out = run(&ctx, &json!({"command":"cat a.txt; echo err >&2; exit 3"}), Sandbox::Project, never(), |s| seen.push_str(&s)).await.unwrap();
         assert_eq!(out.exit_code, Some(3));
@@ -485,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn timeouts_and_stops_end_the_whole_group() {
         let p = TempProject::new();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let started = Instant::now();
         let out = run(&ctx, &json!({"command":"(sleep 30; echo late > late.txt) & sleep 30","timeout_sec":1}), Sandbox::Project, never(), |_| {}).await.unwrap();
         assert!(out.timed_out && started.elapsed() < Duration::from_secs(10));
@@ -511,7 +510,7 @@ mod tests {
     async fn dropping_the_command_future_ends_the_whole_group() {
         // 调用方直接丢掉 future（abort）时：孙进程也不能留下。
         let p = TempProject::new();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let task = tokio::spawn(async move {
             run(&ctx, &json!({"command":"(sleep 2; echo late > late.txt) & sleep 30"}), Sandbox::Project, never(), |_| {}).await
         });
@@ -526,7 +525,7 @@ mod tests {
     #[tokio::test]
     async fn the_sandbox_blocks_writes_outside_but_not_the_network() {
         let p = TempProject::new();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let outside = std::env::var("HOME").unwrap() + "/peck-sandbox-probe.txt";
         let out = run(&ctx, &json!({"command": format!("echo x > {outside}")}), Sandbox::Project, never(), |_| {}).await.unwrap();
         assert!(!out.ok() && out.sandbox_denied(), "{}", out.output);
@@ -549,7 +548,7 @@ mod tests {
         // 只读的其他文件夹放在 /private/tmp 下（那里本来谁都能写）
         let ro = std::path::PathBuf::from(format!("/private/tmp/peck-ro-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&ro).unwrap();
-        let ctx = p.ctx(PermissionLevel::Edit).with_extra(&[(ro.clone(), false)]);
+        let ctx = p.ctx().with_extra(&[(ro.clone(), false)]);
         std::fs::create_dir_all(p.dir.join("vendor/sub/.git/hooks")).unwrap();
         std::fs::create_dir_all(p.dir.join(".github")).unwrap();
         let hook = run(&ctx, &json!({"command":"echo x > vendor/sub/.git/hooks/post-checkout"}), Sandbox::Project, never(), |_| {}).await.unwrap();

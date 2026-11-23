@@ -1,12 +1,12 @@
 // 浏览器 `?mock` 里替代 Rust IPC：数据来自 mockData.ts，只在内存，刷新重置。
 import {
   MOCK_API_STATUS,
-  MOCK_API_TASKS,
   MOCK_DIFFS,
+  MOCK_EVENTS,
   MOCK_FILES,
   MOCK_HIDDEN,
-  MOCK_MESSAGES,
   MOCK_RUNS,
+  type MockDiff,
   MOCK_SESSIONS,
   MOCK_WORKSPACES,
 } from "@/dev/mockData";
@@ -16,12 +16,11 @@ import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccoun
 import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs } from "@/lib/ipc";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
 import { cliRounds, delegateRound, fixRounds, reviewRounds, specRounds, stage, type Member } from "@/dev/teamMock";
-import type { ApiConfig, ApiStatus, ApiTask } from "@/lib/api";
+import type { ApiConfig, ApiStatus } from "@/lib/api";
 import type {
-  DiffResult,
+  FileChangeKind,
   FileListing,
   FilePreview,
-  Message,
   Permission,
   ProjectOverview,
   RunRecord,
@@ -33,10 +32,9 @@ import type {
   Workspace,
 } from "@/lib/types";
 
-const DEMO_NOTICE = "浏览器演示数据，没有调用真实 AI。";
 const emptyPreview = new URLSearchParams(window.location.search).has("empty");
 // 演示「文件夹不在了」：多一个找不到文件夹的项目（`?mock&empty` 时没有）。
-const MISSING_DEMO: Workspace = { id: "ws-old-site", path: "~/code/old-site", name: "old-site", lastOpenedAt: Date.now() - 20 * 86_400_000, gitBranch: "main", gitignoreConfigured: true };
+const MISSING_DEMO: Workspace = { id: "ws-old-site", path: "~/code/old-site", name: "old-site", lastOpenedAt: Date.now() - 20 * 86_400_000, gitBranch: "main" };
 let workspacesState: Workspace[] = emptyPreview ? [] : [...MOCK_WORKSPACES, MISSING_DEMO];
 const missingFolders = new Set<string>(emptyPreview ? [] : [MISSING_DEMO.path]);
 const layoutState: { projects: string[]; tasks: Record<string, string[]> } = { projects: [], tasks: {} };
@@ -53,7 +51,7 @@ function taskBrief(s: Session) {
   const last = runs[runs.length - 1];
   return {
     id: s.id, workspaceId: s.workspaceId, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, runCount: runs.length, archivedAt: s.archivedAt ?? null,
-    lastRun: last ? { id: last.id, number: last.number, flowId: last.flowId, flowName: last.flowName, status: last.status, startedAt: last.startedAt, finishedAt: last.finishedAt, files: [...last.files], who: last.who, undoneAt: last.undoneAt } : null,
+    lastRun: last ? { id: last.id, number: last.number, status: last.status, startedAt: last.startedAt, finishedAt: last.finishedAt, files: [...last.files], who: last.who, undoneAt: last.undoneAt } : null,
     skillsWaiting: skillsWaitingOf(runs),
   };
 }
@@ -71,11 +69,9 @@ function skillsWaitingOf(runs: RunRecord[]): number {
   }
   return n;
 }
-const messagesState: Record<string, Message[]> = structuredClone(MOCK_MESSAGES);
 const runsState: Record<string, RunRecord[]> = structuredClone(MOCK_RUNS);
 // 键是 `${runId}:${path}`；新发的任务也按这个键存。
-const diffsState: Record<string, DiffResult> = structuredClone(MOCK_DIFFS);
-const apiTasksState: Record<string, ApiTask[]> = structuredClone(MOCK_API_TASKS);
+const diffsState: Record<string, MockDiff> = structuredClone(MOCK_DIFFS);
 const filesState: Record<string, Record<string, string>> = structuredClone(MOCK_FILES);
 const apiStatusState: ApiStatus = structuredClone(MOCK_API_STATUS);
 let settingsState: string | null = null;
@@ -112,18 +108,15 @@ export const mockIpc = {
       return { ...existing };
     }
     const name = path.split("/").filter(Boolean).pop() || "project";
-    const created: Workspace = { id: `ws-${Date.now()}`, path, name, lastOpenedAt: Date.now(), gitBranch: "main", gitignoreConfigured: true };
+    const created: Workspace = { id: `ws-${Date.now()}`, path, name, lastOpenedAt: Date.now(), gitBranch: "main" };
     workspacesState = [created, ...workspacesState];
     filesState[created.id] = { "README.md": `# ${name}\n` };
     return created;
   },
 
-  async workspaceListRecent(): Promise<Workspace[]> {
-    return [...workspacesState].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
-  },
-
   async overview(): Promise<ProjectOverview[]> {
-    const visible = arrange((await this.workspaceListRecent()).filter((w) => !w.hidden), layoutState.projects, (w) => w.id);
+    const recent = [...workspacesState].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+    const visible = arrange(recent.filter((w) => !w.hidden), layoutState.projects, (w) => w.id);
     return visible.map((workspace) => ({
       workspace,
       missing: missingFolders.has(workspace.path),
@@ -206,12 +199,12 @@ export const mockIpc = {
     const ws = workspacesState.find((w) => w.id === id);
     if (ws) ws.hidden = true;
   },
-  async workspaceRelocate(id: string, path?: string): Promise<Workspace | null> {
+  async workspaceRelocate(id: string): Promise<Workspace | null> {
     const ws = workspacesState.find((w) => w.id === id);
     if (!ws) throw new Error("没找到这个项目。");
     // 浏览器里没有选文件夹的窗：演示就当选了同名的新位置。
     missingFolders.delete(ws.path);
-    ws.path = path ?? ws.path.replace(/^~\/code\//, "~/Documents/GitHub/");
+    ws.path = ws.path.replace(/^~\/code\//, "~/Documents/GitHub/");
     filesState[ws.id] ??= { "README.md": `# ${ws.name}\n` };
     return { ...ws };
   },
@@ -225,7 +218,6 @@ export const mockIpc = {
     if ((runsState[id] ?? []).some((r) => r.status === "running")) throw new Error("这个任务在跑，先停下再删。");
     sessionsState = sessionsState.filter((s) => s.id !== id);
     delete runsState[id];
-    delete messagesState[id];
   },
   async layoutSave(args: { projects?: string[]; workspaceId?: string; tasks?: string[] }): Promise<void> {
     if (args.projects) layoutState.projects = [...args.projects];
@@ -238,7 +230,6 @@ export const mockIpc = {
   async sessionCreate(workspaceId: string, title?: string): Promise<Session> {
     const session: Session = { id: `sess-${Date.now()}`, workspaceId, title: title || "新任务", createdAt: Date.now(), updatedAt: Date.now() };
     sessionsState = [session, ...sessionsState];
-    messagesState[session.id] = [];
     runsState[session.id] = [];
     return session;
   },
@@ -260,15 +251,11 @@ export const mockIpc = {
     }
   },
 
-  async changesGetDiff(runId: string, stepId?: string, filePath?: string): Promise<DiffResult> {
+  async changesGetDiff(runId: string, filePath: string): Promise<string> {
+    const found = diffsState[`${runId}:${filePath}`];
+    if (found) return found.unifiedDiff;
     const record = findRun(runId);
-    const targetPath = filePath || record?.files[0]?.path || ".peck/tasks.md";
-    const found = diffsState[`${runId}:${targetPath}`];
-    if (found) return { ...found, runId, stepId };
-    return {
-      runId, stepId, filePath: targetPath, kind: "modify", language: "typescript", additions: 1, deletions: 0,
-      unifiedDiff: `diff --git a/${targetPath} b/${targetPath}\n--- a/${targetPath}\n+++ b/${targetPath}\n@@ -1,2 +1,3 @@\n+// 任务 ${record?.number ?? runId} 改过这里（演示数据）\n export const updated = true;\n`,
-    };
+    return `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n@@ -1,2 +1,3 @@\n+// 任务 ${record?.number ?? runId} 改过这里（演示数据）\n export const updated = true;\n`;
   },
 
   async filesList(workspaceId: string): Promise<FileListing> {
@@ -388,10 +375,6 @@ export const mockIpc = {
     console.info(`[通知] ${title}：${body}`);
   },
 
-  /** API 模式任务的调用与审查历史。 */
-  async apiTaskHistory(runId: string): Promise<ApiTask[]> {
-    return structuredClone(apiTasksState[runId] ?? []);
-  },
   async apiStatus(): Promise<ApiStatus> {
     return structuredClone(apiStatusState);
   },
@@ -480,7 +463,7 @@ export const mockIpc = {
     if (!args.who.startsWith("cli:") || !replay) throw new Error("这个入口只跑 CLI 引擎（cli:…）。");
     if (!args.prompt.trim()) throw new Error("先写一句话。");
     const label = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who)?.label ?? engine;
-    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", `cli-${engine}`, label);
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", label);
     if (args.worktree) {
       record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
       worktreeState[runId] = { files: {}, conflicts: [] };
@@ -503,13 +486,13 @@ export const mockIpc = {
     const reviewer = args.reviewBy ? member(args.reviewBy.who) : null;
     const title = [writer && `${writer.label} 写规范`, `${builder.label} 实施`, reviewer && `${reviewer.label} 审查`].filter(Boolean).join(" → ");
     const who = `team:${args.planBy?.who ?? ""}|${args.who}|${args.reviewBy?.who ?? ""}`;
-    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, who, args.permission ?? "edit", "team", title);
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, who, args.permission ?? "edit", title);
     if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
     const files = (filesState[workspaceId] ??= {});
     const demo = peckDemo(runId, files, "", { window: 1_000_000, project: false });
     const editPath = demo.edit.path;
     const sub = args.delegate ? MOCK_MODEL_ENTRIES.find((e) => e.id === args.delegate) : undefined;
-    // 实施的是 Peck 循环：主线剧本（委派的话插一段子任务）；是 CLI：回放它录下来的过程。
+    // 实施的是 Peck Loop：主线剧本（委派的话插一段子任务）；是 CLI：回放它录下来的过程。
     const buildRounds: Round[] = builder.who.startsWith("api:")
       ? [...demo.rounds.slice(0, 1), ...(sub ? [delegateRound(runId, { who: sub.id, label: sub.label }, editPath)] : []), ...demo.rounds.slice(1)]
       : cliRounds(builder);
@@ -533,8 +516,8 @@ export const mockIpc = {
     return runId;
   },
   // ── 定时任务：只在内存；演示里不会到点自己跑。设是「定时」那个剧本演的，这里只列、取消、点错过的卡片 ──
-  async scheduleList(workspaceId?: string): Promise<Schedule[]> {
-    return structuredClone(schedulesState.filter((x) => !workspaceId || x.workspaceId === workspaceId));
+  async scheduleList(): Promise<Schedule[]> {
+    return structuredClone(schedulesState);
   },
   async scheduleDelete(id: string): Promise<void> {
     schedulesState = schedulesState.filter((x) => x.id !== id);
@@ -616,8 +599,8 @@ export const mockIpc = {
     const off = workspacesState.find((w) => w.id === workspaceId)?.settings?.skillsOff ?? [];
     return {
       commands: [
-        { name: "fix-todo", description: "把 TODO 注释都处理掉", hint: "[目录]", scope: "project", folder: null },
-        { name: "changelog", description: "按最近的提交写 CHANGELOG", hint: null, scope: "user", folder: null },
+        { name: "fix-todo", description: "把 TODO 注释都处理掉", hint: "[目录]", folder: null },
+        { name: "changelog", description: "按最近的提交写 CHANGELOG", hint: null, folder: "release" },
       ],
       skills: [
         { name: "release", description: "How to cut a release of this project", scope: "project", off: off.includes("release") },
@@ -626,7 +609,7 @@ export const mockIpc = {
       ],
     };
   },
-  async slashExpand(_workspaceId: string, name: string, args: string): Promise<string> {
+  async slashExpand(name: string, args: string): Promise<string> {
     if (name === "fix-todo") return `把${args ? ` ${args} 里` : "项目里"}的 TODO 注释都处理掉：能做的做了，做不了的改成一句说明为什么。`;
     if (name === "changelog") return `按最近的提交写一段 CHANGELOG，放在 CHANGELOG.md 最上面。${args ? `\n\n${args}` : ""}`;
     throw new Error(`没有 /${name} 这个命令。`);
@@ -655,7 +638,7 @@ export const mockIpc = {
       ...project,
       ...mcpState.map((g) => ({ name: g.name, command: g.command, args: g.args, source: "settings" as const, on: g.enabled && !off.includes(g.name) && !project.some((p) => p.name === g.name), offInSettings: !g.enabled, overridden: project.some((p) => p.name === g.name), allowed: false, tools: mockHints[g.name] ?? [] })),
     ];
-    return { rows, skipped: project.length ? [["figma", "Peck 循环只接 stdio 的 MCP 服务器（这个是网址那种，CLI 自己读）"]] : [], error: null };
+    return { rows, skipped: project.length ? [["figma", "Peck Loop 只接 stdio 的 MCP 服务器（这个是网址那种，CLI 自己读）"]] : [], error: null };
   },
   async projectMcpTest(_workspaceId: string, name: string): Promise<McpToolInfo[]> {
     await new Promise((r) => setTimeout(r, 400));
@@ -676,14 +659,14 @@ export const mockIpc = {
     run.waiting?.(control);
   },
 
-  // ── Peck 循环（Phase 6）：照剧本演一遍（读 → 搜 → 改 → 跑 → 高危卡片 → 清单 → 问 → 收尾）；花费上限设得很低会停 ──
+  // ── Peck Loop（Phase 6）：照剧本演一遍（读 → 搜 → 改 → 跑 → 高危卡片 → 清单 → 问 → 收尾）；花费上限设得很低会停 ──
   async harnessRunStart(args: HarnessRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
-    if (!args.who.startsWith("api:")) throw new Error("这个入口只跑 Peck 循环（api:…）。");
+    if (!args.who.startsWith("api:")) throw new Error("这个入口只跑 Peck Loop（api:…）。");
     if (!args.prompt.trim()) throw new Error("先写一句话。");
     const model = args.who.slice(4);
     const entry = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who);
     const label = `Peck · ${entry?.label ?? model}`;
-    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", "peck", label);
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", label);
     if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
     const files = (filesState[workspaceId] ??= {});
     const project = (memoryState[workspaceId]?.length ?? 0) > 0 || "AGENTS.md" in files || "CLAUDE.md" in files;
@@ -866,7 +849,7 @@ function demoPicture(label: string, page = false): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-// ── 记忆、验证命令、dev server（v0.6，演示）──
+// ── 记忆、dev server（v0.6，演示）──
 let memoryCounter = 0;
 const memoryState: Record<string, MemoryNote[]> = {
   "ws-peck": [
@@ -876,7 +859,7 @@ const memoryState: Record<string, MemoryNote[]> = {
 };
 const serverState: Record<string, Record<string, BgInfo>> = {};
 
-// ── 统一事件的任务（CLI 引擎、Peck 循环、ONE SHOT）：回放 ──
+// ── 统一事件的任务（CLI 引擎、Peck Loop、ONE SHOT）：回放 ──
 /** 项目设置 SKILLS 的演示数据（v0.10 C3）：slashList 那几个加上批进来的。 */
 const skillRowsState: Record<string, SkillRow[]> = {};
 function mockSkillRows(workspaceId: string): SkillRow[] {
@@ -894,8 +877,8 @@ function mockSkillRows(workspaceId: string): SkillRow[] {
 }
 
 const agentRuns = new Map<string, { waiting: null | ((c: Control) => void); stopped: boolean; emit?: (body: ReplayEvent) => AgentEvent; atEnd: Array<() => void> }>();
-const agentEventsState: Record<string, AgentEvent[]> = {};
-/** 这个月 Peck 循环（API）已经花了多少（演示）。 */
+const agentEventsState: Record<string, AgentEvent[]> = structuredClone(MOCK_EVENTS);
+/** 这个月 Peck Loop（API）已经花了多少（演示）。 */
 let mockMonthSpend = 0.42;
 // 设置 → 权限里的「总是允许」：演示两条。
 let mockAllow: AllowRule[] = [
@@ -940,7 +923,7 @@ function screenshotRound(runId: string): ReplayEvent[] {
   ];
 }
 
-/** 和 Rust 的 history::family_of 一样：Peck 循环（不管哪个模型）、某个 CLI、合作。 */
+/** 和 Rust 的 history::family_of 一样：Peck Loop（不管哪个模型）、某个 CLI、合作。 */
 const familyOf = (who?: string | null) => (!who ? "old" : who.startsWith("api:") ? "peck" : who.startsWith("team:") ? "team" : who.startsWith("cli:") ? who : `old:${who}`);
 
 /** 换了引擎接着发（分叉）：这一家上一次以后别家做过几次，写一行。 */
@@ -950,40 +933,34 @@ function forkNotice(sessionId: string, runId: string, family: string, to: string
   runs.forEach((r, i) => { if (familyOf(r.who) === family) last = i; });
   const since = runs.slice(last + 1);
   if (since.length === 0) return [];
-  const from = [...new Set(since.map((r) => r.flowName))];
+  const from = [...new Set(since.map((r) => r.steps[0]?.agentName ?? r.who ?? "旧记录"))];
   return [{ type: "notice", level: "info", text: `换成 ${to} 接着做：前面 ${since.length} 次（${from.join("、")}）的经过带过去了；原来的会话留着，换回去照样接得上。` }];
 }
 
-function createAgentRecord(sessionId: string, prompt: string, who: string, permission: Permission, flowId: string, label: string) {
+function createAgentRecord(sessionId: string, prompt: string, who: string, permission: Permission, label: string) {
   const workspaceId = workspaceOfSession(sessionId);
   if (workspaceIsBusy(workspaceId)) throw new Error("同一个项目一次跑一个任务。");
   const number = runCounter++;
   const runId = `run-${number}`;
   const engine = who.replace(/^(api|cli):/, "").split("/")[0];
-  const step: StepDescriptor = { id: `${runId}-step-1`, stepIndex: 0, agentId: who.startsWith("api:") ? "peck" : engine, agentName: label, title: label, status: "running", expects: [], startedAt: Date.now() };
-  const record: RunRecord = { id: runId, number, sessionId, flowId, flowName: label, prompt, status: "running", startedAt: Date.now(), steps: [step], tasks: [], files: [], logs: [], who, permission };
+  const step: StepDescriptor = { id: `${runId}-step-1`, stepIndex: 0, agentId: who.startsWith("api:") ? "peck" : engine, agentName: label, title: label, status: "running", startedAt: Date.now() };
+  const record: RunRecord = { id: runId, number, sessionId, prompt, status: "running", startedAt: Date.now(), steps: [step], files: [], who, permission };
   runsState[sessionId] = [...(runsState[sessionId] ?? []), record];
-  messagesState[sessionId] = [...(messagesState[sessionId] ?? []), { id: `msg-u-${number}`, sessionId, role: "user", content: prompt, createdAt: Date.now() }];
   const session = sessionsState.find((s) => s.id === sessionId);
   if (session) session.updatedAt = Date.now();
   return { runId, record, workspaceId };
 }
 
 function finishAgentRecord(record: RunRecord, end: AgentEnd, label: string) {
-  record.status = end.reason === "done" ? "succeeded" : end.reason === "interrupted" || end.reason === "cancelled" ? "cancelled" : "failed";
+  record.status = end.reason === "done" ? "succeeded" : end.reason === "interrupted" ? "cancelled" : "failed";
   record.finishedAt = Date.now();
   record.summary = end.reason === "done" ? end.text || `${label} 做完了。` : record.status === "cancelled" ? "已停止。" : end.error ?? "没做完。";
-  const stepId = record.steps[0]?.id ?? "";
-  record.steps = record.steps.map((s) => ({ ...s, status: record.status === "succeeded" ? "succeeded" : record.status === "cancelled" ? "cancelled" : "failed", finishedAt: Date.now(), durationMs: Date.now() - (s.startedAt ?? Date.now()), executionMode: "mock", notice: DEMO_NOTICE }));
-  record.files = end.diffs.map((d) => ({ path: d.path, kind: d.change === "added" ? "create" : d.change === "deleted" ? "delete" : "modify", additions: d.additions ?? 0, deletions: d.deletions ?? 0, stepId }));
+  record.steps = record.steps.map((s) => ({ ...s, status: record.status === "succeeded" ? "succeeded" : record.status === "cancelled" ? "cancelled" : "failed", finishedAt: Date.now(), durationMs: Date.now() - (s.startedAt ?? Date.now()) }));
+  const kindOf = (d: FileDiff): FileChangeKind => (d.change === "added" ? "create" : d.change === "deleted" ? "delete" : "modify");
+  record.files = end.diffs.map((d) => ({ path: d.path, kind: kindOf(d), additions: d.additions ?? 0, deletions: d.deletions ?? 0 }));
   for (const d of end.diffs) {
-    diffsState[`${record.id}:${d.path}`] = {
-      runId: record.id, stepId, filePath: d.path, kind: d.change === "added" ? "create" : d.change === "deleted" ? "delete" : "modify",
-      language: /\.tsx?$/.test(d.path) ? "typescript" : "text", additions: d.additions ?? 0, deletions: d.deletions ?? 0,
-      unifiedDiff: d.patch ?? "", contentAfter: undefined,
-    } as DiffResult;
+    diffsState[`${record.id}:${d.path}`] = { kind: kindOf(d), additions: d.additions ?? 0, deletions: d.deletions ?? 0, unifiedDiff: d.patch ?? "" };
   }
-  messagesState[record.sessionId] = [...(messagesState[record.sessionId] ?? []), { id: `msg-a-${record.number}`, sessionId: record.sessionId, role: "assistant", content: record.summary, runId: record.id, createdAt: Date.now() }];
 }
 
 /** 一轮一轮演；每轮开头看花费上限。碰到审批、提问停下等回答；被拒的命令换成「没批」。 */
@@ -1013,7 +990,7 @@ async function replayAgent(
   let spent = 0;
   let text = "";
   let limit: string | null = null;
-  // 剧本自己写了收尾（验证反复失败停下这类）：照它的原因结束。
+  // 剧本自己写了收尾（比如上下文压完还满）：照它的原因结束。
   let scripted: { reason: TurnEndReason; error: string | null } | null = null;
   for (const e of header) send(e);
   for (let i = 0; i < rounds.length && !run.stopped && !scripted; i++) {

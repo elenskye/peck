@@ -1,6 +1,5 @@
 export type StepStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled";
-export type StreamType = "stdout" | "stderr";
 export type FileChangeKind = "create" | "modify" | "delete";
 
 export interface Workspace {
@@ -9,7 +8,6 @@ export interface Workspace {
   name: string;
   lastOpenedAt: number;
   gitBranch?: string;
-  gitignoreConfigured?: boolean;
   /** 「移出列表」了（左栏不列）。 */
   hidden?: boolean;
   /** 项目设置：在这个项目里发任务默认谁来干、哪一档权限；空着跟全局。 */
@@ -25,7 +23,7 @@ export interface ProjectSettings {
   folders?: ProjectFolder[];
   /** 这个项目的环境变量（v0.7；v0.10 起 CLI 引擎也带）。 */
   env?: EnvVar[];
-  /** 这个项目里 Peck 循环不起的 MCP 服务器（v0.10 A2，按名字）。 */
+  /** 这个项目里 Peck Loop 不起的 MCP 服务器（v0.10 A2，按名字）。 */
   mcpOff?: string[];
   /** 这个项目里不用的 Skills（v0.10 C2，按名字）。 */
   skillsOff?: string[];
@@ -44,27 +42,11 @@ export interface Session {
   archivedAt?: number | null;
 }
 
-export interface Message {
-  id: string;
-  sessionId: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  runId?: string;
-  createdAt: number;
-}
-
-export interface TaskItem {
-  id: string;
-  text: string;
-  completed: boolean;
-}
-
 export interface FileChangeItem {
   path: string;
   kind: FileChangeKind;
   additions: number;
   deletions: number;
-  stepId: string;
 }
 
 export interface StepDescriptor {
@@ -74,42 +56,24 @@ export interface StepDescriptor {
   agentName: string;
   title: string;
   status: StepStatus;
-  expects: string[];
   exitCode?: number;
   durationMs?: number;
   startedAt?: number;
   finishedAt?: number;
-  executionMode?: "mock" | "cli" | "api-mock" | "api-real";
-  notice?: string;
-}
-
-export interface RawLogEntry {
-  id: string;
-  runId: string;
-  stepId: string;
-  agentId: string;
-  stream: StreamType;
-  chunk: string;
-  timestamp: number;
 }
 
 export interface RunRecord {
   id: string;
   number: number;
   sessionId: string;
-  flowId: string;
-  flowName: string;
   prompt: string;
   status: RunStatus;
   startedAt: number;
   finishedAt?: number;
   steps: StepDescriptor[];
-  tasks: TaskItem[];
   files: FileChangeItem[];
-  stepFiles?: Record<string, FileChangeItem[]>;
-  logs: RawLogEntry[];
   summary?: string;
-  /** 谁来干：muse、grok、muse>grok、grok>muse、mock；API 模式和旧记录没有。 */
+  /** 谁来干：`api:<供应商>/<模型>`、`cli:<引擎>`、`team:<写规范>|<实施>|<审查>`；v0.8 以前的旧记录没有。 */
   who?: string;
   permission?: Permission;
   /** 「撤销整个任务」的时间。 */
@@ -141,8 +105,6 @@ export interface TaskBrief {
   lastRun?: {
     id: string;
     number: number;
-    flowId: string;
-    flowName: string;
     status: RunStatus;
     startedAt: number;
     finishedAt?: number;
@@ -172,23 +134,8 @@ export interface FilePreview {
   dataUrl?: string | null;
 }
 
-export interface UndoFile { path: string; kind: FileChangeKind; changedSince: boolean }
-export interface UndoPreview { runId: string; files: UndoFile[] }
-
 export type TermEvent =
   | { type: "Output"; payload: { id: string; chunk: string } }
   | { type: "Exit"; payload: { id: string; code: number | null; durationMs: number; cwd: string; stopped: boolean } };
 export interface TermState { cwd: string; running: string | null }
 export type Activity = "idle" | "running" | "waiting";
-
-export interface DiffResult {
-  runId: string;
-  stepId?: string;
-  filePath: string;
-  kind: FileChangeKind;
-  language: string;
-  additions: number;
-  deletions: number;
-  unifiedDiff: string;
-  contentAfter?: string;
-}

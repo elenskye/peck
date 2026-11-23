@@ -1,5 +1,5 @@
 //! 发任务（Gateway 版）：「谁来干」是 CLI 引擎（模型列表里的 `cli:<引擎>`）的任务走这里。
-//! 旧的 `run_dispatch`（按清单起进程）照旧在，接力和规划 + 实施还走它；Peck 自己的循环（`api:…`）
+//! 旧的 `run_dispatch`（按清单起进程）照旧在，接力和规划 + 实施还走它；Peck Loop（`api:…`）
 //! 由 Phase 6 的 `harness/` 接。
 //!
 //! 和旧的一样的地方：任务记录（runs 表，多记一个 `engine`）、一个项目一次一个任务、影子仓库的快照
@@ -17,7 +17,7 @@ use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::harness::run::permission_of;
 use crate::process::ProcessCancelHandle;
 use crate::run::ActiveRunContext;
-use crate::snapshot::{record_run_base, record_step_finish, record_step_start, ShadowRepo};
+use crate::snapshot::{record_run_base, record_run_finish, ShadowRepo};
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -48,7 +48,7 @@ pub async fn gateway_run_start(
     images: Option<Vec<super::ImageInput>>,
     // 委派给哪个 API 模型（v0.9 B1）：CLI 经 Peck 的本机 MCP 调 delegate_task。
     delegate: Option<String>,
-    // 花费上限（委派的子任务是 Peck 循环，照算）。
+    // 花费上限（委派的子任务是 Peck Loop，照算）。
     cost_cap: Option<f64>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
@@ -164,7 +164,7 @@ pub(crate) fn start_engine_run(
             return Err("项目文件夹不在了，重新打开一次。".into());
         }
         crate::worktree::pending_in_session(&db, &session_id)?;
-        // 项目的其他文件夹（v0.10，CLI 也认）：独立工作区里一律只读（和 Peck 循环一样）；能改的也锁上。
+        // 项目的其他文件夹（v0.10，CLI 也认）：独立工作区里一律只读（和 Peck Loop 一样）；能改的也锁上。
         let folders: Vec<(PathBuf, bool)> = if worktree { ws.settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { ws.settings.live_folders() };
         let writable: Vec<PathBuf> = if level == PermissionLevel::Plan { vec![] } else { folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect() };
         let mut touching = vec![workspace.clone()];
@@ -176,17 +176,12 @@ pub(crate) fn start_engine_run(
         let run_id = format!("run-{number}");
         let step_id = format!("{run_id}-step-1");
         let plan = DispatchPlan {
-            flow_id: format!("cli-{engine}"),
-            flow_name: label.clone(),
-            clean_input: prompt.clone(),
             steps: vec![ResolvedStepPlan {
                 id: step_id.clone(),
                 step_index: 0,
                 agent_id: engine.clone(),
                 agent_name: label.clone(),
                 title: label.clone(),
-                rendered_prompt: prompt.clone(),
-                rendered_expects: vec![],
             }],
         };
         if worktree && !crate::worktree::available(&workspace) {
@@ -265,13 +260,13 @@ pub(crate) fn start_engine_run(
             }
             // Peck 替 CLI 审批（站主 2026-11-16 Phase 13）：CLI 自己的审批比 Peck 的档位严（Codex 的 EDIT 连 cat 都问），
             // 要跑的命令先按 Peck 这一档的规则看，用不着问的直接批掉、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。
-            // 委派出去的子任务（v0.9 B1，事件带 subagent_id）是 Peck 循环自己按档位问的，不替它批、不改卡片。
+            // 委派出去的子任务（v0.9 B1，事件带 subagent_id）是 Peck Loop 自己按档位问的，不替它批、不改卡片。
             if e.subagent_id.is_none() {
                 if let Some(request_id) = rule_allows(level, &e.body, &rule_root, &allowed) {
                     let _ = rule_tx.send(Control::ApproveByRule { request_id });
                     return;
                 }
-                // MCP 工具：Peck 记得它的标注（只读、会改、会删改）就照 Peck 循环的规矩办。
+                // MCP 工具：Peck 记得它的标注（只读、会改、会删改）就照 Peck Loop 的规矩办。
                 match mcp_hint(level, &e.body, &hints, &allowed) {
                     Some(HintAction::Approve(request_id)) => {
                         let _ = rule_tx.send(Control::ApproveByRule { request_id });
@@ -283,7 +278,7 @@ pub(crate) fn start_engine_run(
                     }
                     None => {}
                 }
-                // 引擎没标高危、Peck 的规则看是高危的命令（删文件、推送……）：卡片标红、不给「总是允许」，和 Peck 循环一样。
+                // 引擎没标高危、Peck 的规则看是高危的命令（删文件、推送……）：卡片标红、不给「总是允许」，和 Peck Loop 一样。
                 if let Some(flagged) = flag_high_risk(&e.body, &rule_root) {
                     out(&AgentEvent { body: flagged, ..e.clone() });
                     return;
@@ -294,10 +289,7 @@ pub(crate) fn start_engine_run(
         if !default_account {
             sink = sink.without_quota_sync();
         }
-        let run_sink = RunSink::Persistent {
-            target: Box::new(RunSink::new_memory().0),
-            store: store.clone(),
-        };
+        let run_sink = RunSink::new(store.clone());
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Info, text });
         }
@@ -306,7 +298,6 @@ pub(crate) fn start_engine_run(
         let before = repo.as_ref().and_then(|r| {
             let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
             record_run_base(&id, r, tree.clone());
-            record_step_start(&id, &step_id, r, tree.clone());
             Some(tree)
         });
         // 能改的其他文件夹（v0.10）也拍快照：改动记在任务上、跟着任务回退。
@@ -318,15 +309,11 @@ pub(crate) fn start_engine_run(
                 agent_id: engine.clone(),
                 agent_name: label.clone(),
                 title: label.clone(),
-                rendered_prompt: String::new(),
-                rendered_expects: vec![],
             }
             .to_descriptor(status)
         };
         run_sink.emit(RunEvent::RunStarted {
             run_id: id.clone(),
-            flow_id: format!("cli-{engine}"),
-            flow_name: label.clone(),
             steps: vec![descriptor(StepStatus::Pending)],
         });
         run_sink.emit(RunEvent::StepStarted {
@@ -334,12 +321,6 @@ pub(crate) fn start_engine_run(
             step_id: step_id.clone(),
             step_index: 0,
             agent_id: engine.clone(),
-        });
-        run_sink.emit(RunEvent::StepExecution {
-            run_id: id.clone(),
-            step_id: step_id.clone(),
-            mode: "cli".into(),
-            notice: format!("调用 {label}（结构化接口）；要批的事、要问的事会弹卡片。"),
         });
 
         // 停止：`run_cancel` 改成发打断（委派出去的子任务也一起停）。
@@ -430,11 +411,11 @@ pub(crate) fn start_engine_run(
         let mut changeset = ChangeSetSummary::default();
         if let (Some(r), Some(before)) = (repo.as_ref(), before.as_ref()) {
             if let Ok(after) = r.create_snapshot(&format!("{step_id}-after")) {
-                record_step_finish(&id, &step_id, after.clone());
-                changeset = r.diff_changeset(before, &after, &step_id).unwrap_or_default();
+                record_run_finish(&id, after.clone());
+                changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
-        crate::harness::run::finish_extras(&id, &step_id, &extras, &mut changeset);
+        crate::harness::run::finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
         run_sink.emit(RunEvent::StepFinished {
@@ -477,7 +458,7 @@ pub(crate) fn folders_note(folders: &[(PathBuf, bool)], level: PermissionLevel) 
 }
 
 /// 界面 → 引擎：审批、回答、追加、打断。任务已经结束就报错。
-/// CLI 发来的一条审批能不能按 Peck 的规则直接批：EDIT、AUTO 档里要跑的命令，Peck 自己的循环这一档也不会问的。
+/// CLI 发来的一条审批能不能按 Peck 的规则直接批：EDIT、AUTO 档里要跑的命令，Peck Loop 这一档也不会问的。
 /// 能批给回 request_id。PLAN 不替它批（CLI 自己的只读模式说了算）；改文件、MCP 这些也照旧给站主。
 pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::path::Path, allowed: &std::collections::HashSet<String>) -> Option<String> {
     use super::event::ToolKind;
@@ -506,7 +487,7 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
     };
     let ok = match kind {
         ToolKind::Run => matches!(check_command(level, detail, root, allowed), Ask::No),
-        // 改文件：EDIT、AUTO 本来就不问改项目里的；临时目录 Peck 循环的沙箱也放开。别处、.git 里的照旧给站主。
+        // 改文件：EDIT、AUTO 本来就不问改项目里的；临时目录 Peck Loop 的沙箱也放开。别处、.git 里的照旧给站主。
         // 一行一个文件（Codex 一次改几个文件时）：每个都在项目里才批。
         ToolKind::Edit => detail.lines().filter(|l| !l.trim().is_empty()).all(|l| edit_in_bounds(std::path::Path::new(l.trim()), root)),
         _ => false,
@@ -527,7 +508,7 @@ pub(crate) enum HintAction {
 }
 
 /// CLI（主要是 Grok、Antigravity：ACP 不带工具标注，每调一次都问）问要不要调 MCP 工具：Peck 起过、TEST 过这台服务器、
-/// 记得这个工具的标注，就照 Peck 循环的规矩办（v0.10，roadmap A2）。认不得的照旧给站主。
+/// 记得这个工具的标注，就照 Peck Loop 的规矩办（v0.10，roadmap A2）。认不得的照旧给站主。
 /// 卡片标题是转换器写的「MCP <服务器> · <工具>」；Antigravity 的服务器名是「插件_服务器」，按后半截认。
 pub(crate) fn mcp_hint(level: PermissionLevel, body: &EventBody, hints: &McpHints, allowed: &std::collections::HashSet<String>) -> Option<HintAction> {
     use super::event::{ApprovalDecision, ToolKind};
@@ -717,7 +698,7 @@ mod tests {
         let session = store.create_session(&ws.id, None).unwrap();
         // 快照登记表是整个进程共用的，别的测试会用 run-105：先占一个大号，这个任务拿到 run-910002。
         let mut store = store;
-        let filler = DispatchPlan { flow_id: "x".into(), flow_name: "x".into(), clean_input: "x".into(), steps: vec![] };
+        let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 910_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
         let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
@@ -883,9 +864,6 @@ mod tests {
         store.save_workspace(&ws).unwrap();
         let session = store.create_session(&ws.id, None).unwrap();
         let plan = DispatchPlan {
-            flow_id: "cli-codex".into(),
-            flow_name: "Codex".into(),
-            clean_input: "x".into(),
             steps: vec![],
         };
         store.create_run(&session.id, "x", 1, &plan).unwrap();
@@ -896,7 +874,7 @@ mod tests {
     }
 }
 
-// ── Phase 6 追加：Peck 循环（`api:…`）和 ONE SHOT 的任务也登记在这里，界面照旧用 `gateway_control` ──
+// ── Phase 6 追加：Peck Loop（`api:…`）和 ONE SHOT 的任务也登记在这里，界面照旧用 `gateway_control` ──
 
 /// 登记一个任务的控制通道（`harness/run.rs` 起任务时用）。
 pub(crate) fn register_control(run_id: &str, tx: mpsc::UnboundedSender<Control>) {

@@ -14,7 +14,7 @@ type Out = Box<dyn Fn(&AgentEvent) + Send + Sync>;
 pub struct EventSink {
     inner: Arc<Inner>,
     subagent_id: Option<String>,
-    /// 接力、审查的一段（v0.8）：这一段的引擎（事件日志的 `engine` 列按它记，花费上限才认得出 Peck 循环）；
+    /// 接力、审查的一段（v0.8）：这一段的引擎（事件日志的 `engine` 列按它记，花费上限才认得出 Peck Loop）；
     /// 引擎自己收尾的 `turn.completed` 不发，记在这里，由发任务的那一层发 `stage.completed`。
     stage: Option<Arc<StageSlot>>,
     /// 委派出去的子任务（v0.9 B1，`for_delegate`）：它自己的 `session.started`、`turn.started`、`turn.completed`
@@ -99,7 +99,7 @@ impl EventSink {
         }
     }
 
-    /// 委派出去、整段跑一个 Peck 循环的子任务（v0.9 B1）：带 `subagent_id`，子任务自己的开头和收尾不发；
+    /// 委派出去、整段跑一个 Peck Loop 的子任务（v0.9 B1）：带 `subagent_id`，子任务自己的开头和收尾不发；
     /// 发出去的每一条再给 `tap` 一份。
     pub fn for_delegate(&self, subagent_id: impl Into<String>, tap: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Self {
         Self {

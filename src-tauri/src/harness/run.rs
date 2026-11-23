@@ -1,14 +1,14 @@
-//! 发 Peck 循环的任务（「谁来干」是 `api:<供应商>/<模型>`）和 ONE SHOT。
+//! 发 Peck Loop 的任务（「谁来干」是 `api:<供应商>/<模型>`）和 ONE SHOT。
 //!
 //! 和 CLI 引擎的任务（`gateway/runner.rs`）一样：任务记录（`runs.engine` 记 `peck`）、一个项目一次一个、
 //! 影子仓库的快照（改动记在任务上、能按快照回退）、`run_cancel` 能停、审批和回答走 `gateway_control`。
 //! 多出来的：一个任务里的对话存着（下一句接着发）、「这个项目总是允许」存着、花费上限按这个月已花的算。
 //!
-//! ONE SHOT：只读回答（Peck 循环按 PLAN 档、只给读的工具；CLI 引擎按 PLAN 档），不占任务号、不锁项目、
+//! ONE SHOT：只读回答（Peck Loop 按 PLAN 档、只给读的工具；CLI 引擎按 PLAN 档），不占任务号、不锁项目、
 //! 不锁终端、不存快照；事件照样进事件日志（花费算进这个月）。Antigravity 只做直接调用，不进 ONE SHOT。
 
 use super::context::ProjectLayer;
-use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS};
+use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS, DEFAULT_ONESHOT_ROUNDS, DEFAULT_SUB_ROUNDS};
 use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
@@ -16,7 +16,7 @@ use crate::gateway::log::EventSink;
 use crate::gateway::{catalog, engines, providers, runner, AgentBackend, AgentTask, Control, Message, ModelProvider};
 use crate::process::ProcessCancelHandle;
 use crate::run::ActiveRunContext;
-use crate::snapshot::{record_run_base, record_step_finish, record_step_start, ShadowRepo};
+use crate::snapshot::{record_run_base, record_run_finish, ShadowRepo};
 use crate::state::AppState;
 use crate::store::{now_ms, Store, StoreResult};
 use rusqlite::{params, OptionalExtension};
@@ -75,7 +75,7 @@ pub fn month_start_ms(now_ms: i64) -> i64 {
 }
 
 impl Store {
-    /// 这个任务里 Peck 循环的对话（没有就是空的）。
+    /// 这个任务里 Peck Loop 的对话（没有就是空的）。
     pub fn harness_conversation(&self, session_id: &str) -> StoreResult<Vec<Message>> {
         let raw: Option<String> = self
             .conn
@@ -84,7 +84,7 @@ impl Store {
         Ok(raw.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
     }
 
-    /// 这个任务的 Peck 循环对话上次是哪个模型（`/compact` 存回去时照旧写它）。
+    /// 这个任务的 Peck Loop 对话上次是哪个模型（`/compact` 存回去时照旧写它）。
     pub fn harness_conversation_model(&self, session_id: &str) -> StoreResult<String> {
         let raw: Option<String> = self
             .conn
@@ -145,7 +145,7 @@ impl Store {
         )?)
     }
 
-    /// 从 `since`（毫秒）起 Peck 循环（API）花了多少美元。算不出花费的请求不计。
+    /// 从 `since`（毫秒）起 Peck Loop（API）花了多少美元。算不出花费的请求不计。
     pub fn harness_spend_since(&self, since: i64) -> StoreResult<f64> {
         Ok(self.conn.query_row(
             "SELECT COALESCE(SUM(json_extract(event, '$.cost.usd')), 0.0) FROM agent_events
@@ -180,7 +180,7 @@ pub(crate) fn memories_of(store: &Arc<Mutex<Store>>, workspace_id: &str) -> Vec<
 }
 
 pub(crate) fn model_id_of(who: &str) -> Result<String, String> {
-    let id = who.strip_prefix("api:").ok_or("这个入口只跑 Peck 循环（api:…）。")?;
+    let id = who.strip_prefix("api:").ok_or("这个入口只跑 Peck Loop（api:…）。")?;
     catalog::catalog().model(id).ok_or_else(|| format!("模型目录里没有 {id}。"))?;
     Ok(id.to_string())
 }
@@ -193,7 +193,7 @@ pub(crate) fn model_label(model_id: &str) -> String {
     }
 }
 
-/// 发一个 Peck 循环的任务。返回任务 id；过程经 `channel` 来（统一事件）。
+/// 发一个 Peck Loop 的任务。返回任务 id；过程经 `channel` 来（统一事件）。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn harness_run_start(
@@ -280,28 +280,42 @@ pub(crate) fn attachment_note(paths: &[PathBuf]) -> String {
     format!("\n\n（站主附了 {} 张图，存在这些本机文件里，需要就读：\n{}）", paths.len(), list.join("\n"))
 }
 
-/// 「委派给」选的模型：只认 API 模型（Peck 循环跑子任务）。空着就不委派。
+/// 「委派给」选的模型：只认 API 模型（Peck Loop 跑子任务）。空着就不委派。
 pub(crate) async fn delegate_of(state: &AppState, pick: Option<&str>) -> Result<Option<super::r#loop::Delegate>, String> {
     let Some(raw) = pick.map(str::trim).filter(|p| !p.is_empty()) else { return Ok(None) };
     let id = raw.strip_prefix("api:").unwrap_or(raw);
     catalog::catalog().model(id).ok_or_else(|| format!("委派的模型不在目录里：{id}。"))?;
     let provider = providers::for_model(state, id).await.map_err(|e| e.message)?;
-    Ok(Some(super::r#loop::Delegate { model_id: id.to_string(), provider }))
+    Ok(Some(super::r#loop::Delegate { model_id: id.to_string(), provider, rounds: sub_rounds(&state.store) }))
 }
 
-/// 一个任务最多几轮（v0.10，设置 → 花费上限里能调，默认 40）：读界面设置里存的 `maxRounds`，5–400 之间。
-/// 手动发的、合作的、定时任务的 Peck 循环都按它；ONE SHOT（12）和委派的子任务（24）不变。
+/// 一个任务最多几轮（设置 → GENERAL，默认 40）：手动发的、合作的、定时任务的 Peck Loop 都按它。
 pub(crate) fn max_rounds(store: &Arc<Mutex<Store>>) -> u32 {
-    let saved = store.lock().ok().and_then(|db| db.setting("ui").ok().flatten());
-    rounds_from(saved.as_deref())
+    rounds_setting(store, "maxRounds", DEFAULT_MAX_ROUNDS)
 }
 
-fn rounds_from(saved: Option<&str>) -> u32 {
+/// ONE SHOT 最多几轮（v1.0.3 起设置 → GENERAL 能调，默认 12）。
+fn oneshot_rounds(store: &Arc<Mutex<Store>>) -> u32 {
+    rounds_setting(store, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS)
+}
+
+/// 委派的子任务最多几轮（v1.0.3 起设置 → GENERAL 能调，默认 24）：Peck Loop 和 CLI 委派的都按它。
+fn sub_rounds(store: &Arc<Mutex<Store>>) -> u32 {
+    rounds_setting(store, "subRounds", DEFAULT_SUB_ROUNDS)
+}
+
+/// 读界面设置里存的轮数，5–400 之间；没存、存坏了用默认的。
+fn rounds_setting(store: &Arc<Mutex<Store>>, key: &str, default: u32) -> u32 {
+    let saved = store.lock().ok().and_then(|db| db.setting("ui").ok().flatten());
+    rounds_from(saved.as_deref(), key, default)
+}
+
+fn rounds_from(saved: Option<&str>, key: &str, default: u32) -> u32 {
     saved
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|v| v.get("maxRounds").and_then(serde_json::Value::as_u64))
+        .and_then(|v| v.get(key).and_then(serde_json::Value::as_u64))
         .map(|n| n.clamp(5, 400) as u32)
-        .unwrap_or(DEFAULT_MAX_ROUNDS)
+        .unwrap_or(default)
 }
 
 pub(crate) struct PeckRun {
@@ -349,15 +363,13 @@ pub(crate) fn snapshot_extras(run_id: &str, folders: &[(PathBuf, bool)], level: 
 }
 
 /// 其他文件夹做完的快照和改动（路径写绝对路径）。
-pub(crate) fn finish_extras(run_id: &str, step_id: &str, extras: &[(ShadowRepo, String)], into: &mut ChangeSetSummary) {
+pub(crate) fn finish_extras(run_id: &str, extras: &[(ShadowRepo, String)], into: &mut ChangeSetSummary) {
     for (repo, before) in extras {
         let Ok(after) = repo.create_snapshot(&format!("{run_id}-extra-after")) else { continue };
         crate::snapshot::record_extra_finish(run_id, &repo.workspace_path, after.clone());
-        let Ok(cs) = repo.diff_changeset(before, &after, step_id) else { continue };
+        let Ok(cs) = repo.diff_changeset(before, &after) else { continue };
         for mut f in cs.files {
             f.path = repo.workspace_path.join(&f.path).to_string_lossy().into_owned();
-            into.total_additions += f.additions;
-            into.total_deletions += f.deletions;
             into.files.push(f);
         }
     }
@@ -442,17 +454,12 @@ pub(crate) fn start_peck_run(
         let run_id = format!("run-{number}");
         let step_id = format!("{run_id}-step-1");
         let plan = DispatchPlan {
-            flow_id: "peck".into(),
-            flow_name: label.clone(),
-            clean_input: prompt.clone(),
             steps: vec![ResolvedStepPlan {
                 id: step_id.clone(),
                 step_index: 0,
                 agent_id: "peck".into(),
                 agent_name: label.clone(),
                 title: label.clone(),
-                rendered_prompt: prompt.clone(),
-                rendered_expects: vec![],
             }],
         };
         if worktree && !crate::worktree::available(&workspace) {
@@ -575,7 +582,7 @@ pub(crate) fn start_peck_run(
             }
             out(e);
         });
-        let run_sink = RunSink::Persistent { target: Box::new(RunSink::new_memory().0), store: store.clone() };
+        let run_sink = RunSink::new(store.clone());
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text });
         }
@@ -588,7 +595,6 @@ pub(crate) fn start_peck_run(
         let before = repo.as_ref().and_then(|r| {
             let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
             record_run_base(&id, r, tree.clone());
-            record_step_start(&id, &step_id, r, tree.clone());
             Some(tree)
         });
         let extras = snapshot_extras(&id, &folders, level);
@@ -599,24 +605,14 @@ pub(crate) fn start_peck_run(
                 agent_id: "peck".into(),
                 agent_name: label.clone(),
                 title: label.clone(),
-                rendered_prompt: String::new(),
-                rendered_expects: vec![],
             }
             .to_descriptor(status)
         };
         run_sink.emit(RunEvent::RunStarted {
             run_id: id.clone(),
-            flow_id: "peck".into(),
-            flow_name: label.clone(),
             steps: vec![descriptor(StepStatus::Pending)],
         });
         run_sink.emit(RunEvent::StepStarted { run_id: id.clone(), step_id: step_id.clone(), step_index: 0, agent_id: "peck".into() });
-        run_sink.emit(RunEvent::StepExecution {
-            run_id: id.clone(),
-            step_id: step_id.clone(),
-            mode: "api".into(),
-            notice: format!("{label}：Peck 自己的循环和工具箱；要批的事、要问的事会弹卡片。"),
-        });
         // 停止：`run_cancel` 改成发打断。
         let interrupt = control_tx.clone();
         let mut cancel_rx = cancel_rx;
@@ -655,7 +651,7 @@ pub(crate) fn start_peck_run(
                     RunStatus::Succeeded,
                     if end_text.trim().is_empty() { format!("{label} 做完了。") } else { end_text },
                 ),
-                TurnEndReason::Interrupted | TurnEndReason::Cancelled => (StepStatus::Cancelled, RunStatus::Cancelled, "已停止。".into()),
+                TurnEndReason::Interrupted => (StepStatus::Cancelled, RunStatus::Cancelled, "已停止。".into()),
                 TurnEndReason::Limit => (StepStatus::Failed, RunStatus::Failed, end_error.unwrap_or_else(|| "到了上限，先停下。".into())),
                 TurnEndReason::Refused => (StepStatus::Failed, RunStatus::Failed, "模型拒绝了这个请求。".into()),
                 TurnEndReason::Error => (StepStatus::Failed, RunStatus::Failed, format!("没做完：{}", end_error.unwrap_or_else(|| "出错了。".into()))),
@@ -665,11 +661,11 @@ pub(crate) fn start_peck_run(
         let mut changeset = ChangeSetSummary::default();
         if let (Some(r), Some(before)) = (repo.as_ref(), before.as_ref()) {
             if let Ok(after) = r.create_snapshot(&format!("{step_id}-after")) {
-                record_step_finish(&id, &step_id, after.clone());
-                changeset = r.diff_changeset(before, &after, &step_id).unwrap_or_default();
+                record_run_finish(&id, after.clone());
+                changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
-        finish_extras(&id, &step_id, &extras, &mut changeset);
+        finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
         run_sink.emit(RunEvent::StepFinished {
@@ -722,7 +718,7 @@ pub async fn harness_oneshot(
         let provider = providers::for_model(&state, &model_id).await.map_err(|e| e.message)?;
         let config = LoopConfig {
             model_id,
-            max_rounds: 12,
+            max_rounds: oneshot_rounds(&state.store),
             budget: budget(&state.store, cost_cap),
             live_spend: Some(live_spend(&state.store)),
             oneshot: true,
@@ -836,20 +832,20 @@ fn read_spill(root: &Path, path: &Path) -> Result<String, String> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Spend {
-    /// 这个月 Peck 循环（API）花了多少美元。
+    /// 这个月 Peck Loop（API）花了多少美元。
     pub month_usd: f64,
     /// 这个月从哪天算起（毫秒）。
     pub since: i64,
 }
 
-/// `/compact`（v0.10 C2）：把这个任务存着的 Peck 循环对话压一压，不叫模型、不花钱——长的工具输出落盘、
+/// `/compact`（v0.10 C2）：把这个任务存着的 Peck Loop 对话压一压，不叫模型、不花钱——长的工具输出落盘、
 /// 最近两轮以外的工具输出换成一句「做过什么」、旧的思考和环境块去掉（自动压缩的前两步）。下一句发出去就小了。
 #[tauri::command]
 pub fn harness_compact(session_id: String, state: tauri::State<'_, AppState>) -> Result<String, String> {
     let db = state.store.lock().map_err(|e| e.to_string())?;
     let mut messages = db.harness_conversation(&session_id).map_err(|e| e.to_string())?;
     if messages.is_empty() {
-        return Err("这个任务还没有 Peck 循环的对话（CLI 的会话由它自己管）。".into());
+        return Err("这个任务还没有 Peck Loop 的对话（CLI 的会话由它自己管）。".into());
     }
     let size = |m: &[Message]| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0);
     let before = size(&messages);
@@ -934,12 +930,18 @@ mod tests {
 
     #[test]
     fn max_rounds_follow_the_setting_within_bounds() {
-        assert_eq!(rounds_from(None), DEFAULT_MAX_ROUNDS);
-        assert_eq!(rounds_from(Some(r#"{"costCap":20}"#)), DEFAULT_MAX_ROUNDS);
-        assert_eq!(rounds_from(Some(r#"{"maxRounds":80}"#)), 80);
-        assert_eq!(rounds_from(Some(r#"{"maxRounds":1}"#)), 5);
-        assert_eq!(rounds_from(Some(r#"{"maxRounds":9999}"#)), 400);
-        assert_eq!(rounds_from(Some("不是 JSON")), DEFAULT_MAX_ROUNDS);
+        let task = |saved| rounds_from(saved, "maxRounds", DEFAULT_MAX_ROUNDS);
+        assert_eq!(task(None), DEFAULT_MAX_ROUNDS);
+        assert_eq!(task(Some(r#"{"costCap":20}"#)), DEFAULT_MAX_ROUNDS);
+        assert_eq!(task(Some(r#"{"maxRounds":80}"#)), 80);
+        assert_eq!(task(Some(r#"{"maxRounds":1}"#)), 5);
+        assert_eq!(task(Some(r#"{"maxRounds":9999}"#)), 400);
+        assert_eq!(task(Some("不是 JSON")), DEFAULT_MAX_ROUNDS);
+        // ONE SHOT、子任务各读各的，没存用各自的默认（v1.0.3）。
+        let saved = Some(r#"{"maxRounds":80,"oneshotRounds":30}"#);
+        assert_eq!(rounds_from(saved, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS), 30);
+        assert_eq!(rounds_from(saved, "subRounds", DEFAULT_SUB_ROUNDS), DEFAULT_SUB_ROUNDS);
+        assert_eq!(rounds_from(Some(r#"{"subRounds":2}"#), "subRounds", DEFAULT_SUB_ROUNDS), 5);
     }
 
     use super::*;
@@ -1047,7 +1049,7 @@ mod tests {
         let session = store.create_session(&ws.id, None).unwrap();
         // 快照登记表是整个进程共用的，别的测试会用 run-105：先占一个大号。
         let mut store = store;
-        let filler = DispatchPlan { flow_id: "x".into(), flow_name: "x".into(), clean_input: "x".into(), steps: vec![] };
+        let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 930_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
         let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
@@ -1110,8 +1112,8 @@ mod tests {
         };
         let paths: Vec<&str> = record.files.iter().map(|f| f.path.as_str()).collect();
         assert!(paths.contains(&lib_file.to_string_lossy().as_ref()) && paths.contains(&keep.to_string_lossy().as_ref()), "{paths:?}");
-        let diff = crate::snapshot::get_diff_for_run(&run_id, None, Some(&keep.to_string_lossy()), None).unwrap();
-        assert!(diff.unified_diff.contains("+mint"), "{}", diff.unified_diff);
+        let diff = crate::snapshot::get_diff_for_run(&run_id, &keep.to_string_lossy()).unwrap();
+        assert!(diff.contains("+mint"), "{diff}");
         crate::snapshot::undo_run(&snapshot).unwrap();
         assert!(!lib_file.exists());
         assert_eq!(std::fs::read_to_string(&keep).unwrap(), "原来的\n");
@@ -1134,7 +1136,7 @@ mod tests {
         let session = store.create_session(&ws.id, None).unwrap();
         // 快照登记表是整个进程共用的，别的测试会用 run-105：先占一个大号。
         let mut store = store;
-        let filler = DispatchPlan { flow_id: "x".into(), flow_name: "x".into(), clean_input: "x".into(), steps: vec![] };
+        let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 940_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
         let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
@@ -1205,7 +1207,7 @@ mod tests {
         let (root, store, ws) = temp_store();
         let session = store.create_session(&ws.id, None).unwrap();
         let mut store = store;
-        let filler = DispatchPlan { flow_id: "x".into(), flow_name: "x".into(), clean_input: "x".into(), steps: vec![] };
+        let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 920_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
         let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();

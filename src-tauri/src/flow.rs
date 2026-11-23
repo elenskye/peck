@@ -7,9 +7,6 @@ use crate::events::{StepDescriptor, StepStatus};
 /// Concrete resolved execution plan produced by routing user input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispatchPlan {
-    pub flow_id: String,
-    pub flow_name: String,
-    pub clean_input: String,
     pub steps: Vec<ResolvedStepPlan>,
 }
 
@@ -20,8 +17,6 @@ pub struct ResolvedStepPlan {
     pub agent_id: String,
     pub agent_name: String,
     pub title: String,
-    pub rendered_prompt: String,
-    pub rendered_expects: Vec<String>,
 }
 
 impl ResolvedStepPlan {
@@ -33,13 +28,10 @@ impl ResolvedStepPlan {
             agent_name: self.agent_name.clone(),
             title: self.title.clone(),
             status,
-            expects: self.rendered_expects.clone(),
             exit_code: None,
             duration_ms: None,
             started_at: None,
             finished_at: None,
-            execution_mode: None,
-            notice: None,
         }
     }
 }

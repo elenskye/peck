@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use tauri::{ipc::Channel, State};
 
 use crate::snapshot::{
-    get_diff_for_run, restore_snapshot, saved_snapshot, DiffResult, ShadowRepo,
+    get_diff_for_run, restore_snapshot, saved_snapshot, ShadowRepo,
 };
 use crate::state::AppState;
 use crate::store::{ProjectOverview, RunRecord, Session};
@@ -105,19 +105,15 @@ pub async fn run_cancel(run_id: String, state: State<'_, AppState>) -> Result<()
     Ok(())
 }
 
+/// 一个任务改的某个文件的 Diff（统一格式）：FILES 标出这次加的行。
 #[tauri::command]
-pub async fn changes_get_diff(
-    run_id: String,
-    step_id: Option<String>,
-    file_path: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<DiffResult, String> {
+pub async fn changes_get_diff(run_id: String, file_path: String, state: State<'_, AppState>) -> Result<String, String> {
     let db = state.store.lock().map_err(|e| e.to_string())?;
     if let Some(snapshot) = db.snapshot(&run_id).map_err(|e| e.to_string())? {
         restore_snapshot(snapshot);
     }
     drop(db);
-    get_diff_for_run(&run_id, step_id.as_deref(), file_path.as_deref(), None)
+    get_diff_for_run(&run_id, &file_path)
 }
 
 #[tauri::command]

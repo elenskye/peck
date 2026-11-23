@@ -39,12 +39,11 @@ pub fn shape(ctx: &ToolContext, label: &str, full: &str, failed: bool) -> (Strin
 mod tests {
     use super::super::tools::testing::TempProject;
     use super::*;
-    use crate::gateway::event::PermissionLevel;
 
     #[test]
     fn long_output_keeps_head_tail_and_the_whole_file() {
         let p = TempProject::new();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let short = "ok\n".repeat(10);
         assert_eq!(shape(&ctx, "bash", &short, false), (short.clone(), None));
         let full: String = (0..5000).map(|i| format!("line {i:05}\n")).collect();

@@ -54,7 +54,7 @@ impl ScriptedModel {
         }
     }
 
-    /// Peck 循环的演示剧本，工具名照 Phase 6 的九个工具。
+    /// Peck Loop 的演示剧本，工具名照 Phase 6 的九个工具。
     pub fn peck_demo(pace: Duration) -> Self {
         let usage = |input: u64, output: u64, cache_read: u64| TokenUsage {
             input: Some(input),

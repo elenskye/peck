@@ -1,4 +1,4 @@
-// 统一事件 → 界面上的样子。Peck 循环和 CLI 引擎同一套：
+// 统一事件 → 界面上的样子。 Peck Loop 和 CLI 引擎同一套：
 // - 回答（Markdown，边出字边显示）；
 // - 连续的工具调用和思考折叠成一组，头上一行英文（v1.0.1 学 Claude Code：「Read 4 files, edited 2 files, ran 1 command · 38s」），
 //   在跑的那一步露出来；思考不算一步：在想时那一组下面一行「Thinking… 3s」，想完就不显示，也不打断上下的步骤；
@@ -78,6 +78,8 @@ export interface StageView {
   verdict?: ReviewVerdict | null;
   /** 审查按验收标准逐条判的结果（v0.9）。 */
   checks?: CriterionCheck[];
+  /** 写规范那一段的回答、工具调用和思考（v1.0.3）：收在这一段的头里，点开看规范全文和读过的文件，不进主线。 */
+  items?: ViewItem[];
 }
 
 /** 一段思考（只用来显示「Thinking… 3s」，想完不显示）。 */
@@ -93,7 +95,7 @@ export type ViewItem =
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
   | { kind: "error"; id: string; text: string }
   | { kind: "compacted"; id: string; step: CompactStep; text: string; before: number; after: number; summary?: string | null }
-  /** 一组验证命令（连着跑的放一张卡片；模型停下后的那一轮带 round）。 */
+  /** 一条后台命令或留着的 dev server（最新的状态）。 */
   | { kind: "background"; id: string; bg: BackgroundView }
   /** 模型提议存一条 Skill（v0.10 C3）：不打断，卡片留在提的地方，跑着、跑完都能批。 */
   | { kind: "skill"; id: string; skill: SkillProposalView };
@@ -180,8 +182,11 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   // 用量：一回合一次（turn）的加起来；累计（cumulative）的取最后一条。
   let turnUsage: UsageLine | null = null;
   let cumulative: UsageLine | null = null;
+  // 写规范那一段的话、工具调用、思考收进那一段（对话里只露实施那一个的输出）；卡片、提醒、出错照旧在主线。
+  const box = (): ViewItem[] => (stageNow?.items ?? view.items);
   const lastGroup = (): Extract<ViewItem, { kind: "tools" }> | null => {
-    const last = view.items[view.items.length - 1];
+    const items = box();
+    const last = items[items.length - 1];
     return last && last.kind === "tools" ? last : null;
   };
   for (const e of events) {
@@ -211,7 +216,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         if (!item) {
           item = { kind: "text", id: `t-${key}-${e.seq}`, text: "", done: false, stage: stageNow?.stage };
           texts.set(key, item);
-          view.items.push(item);
+          box().push(item);
         }
         if (e.type === "message.delta") item.text += e.text;
         else { item.text = e.text; item.done = true; }
@@ -220,7 +225,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
       case "stage.started": {
         // 上一段的话收尾（它的引擎不会再说了）。
         for (const t of texts.values()) t.done = true;
-        stageNow = { stage: e.stage, engine: e.engine, title: e.title, startedAt: e.at };
+        stageNow = { stage: e.stage, engine: e.engine, title: e.title, startedAt: e.at, items: e.stage === "spec" ? [] : undefined };
         view.stages.push(stageNow);
         view.items.push({ kind: "stage", id: `s-${e.seq}`, info: stageNow });
         break;
@@ -247,7 +252,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
           // 并进前面那一组工具调用；前面不是就新开一组（后面的工具调用接着进这一组）。
           const group = lastGroup();
           if (group) group.thoughts.push(item);
-          else view.items.push({ kind: "tools", id: `g-r-${rkey}-${e.seq}`, calls: [], thoughts: [item] });
+          else box().push({ kind: "tools", id: `g-r-${rkey}-${e.seq}`, calls: [], thoughts: [item] });
         }
         if (e.type === "reasoning.delta") item.text += e.text;
         else { item.text = e.text || item.text; item.done = true; item.endedAt = e.at; }
@@ -263,7 +268,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
           thoughtsDone(e.at);
           const group = lastGroup();
           if (group) group.calls.push(call);
-          else view.items.push({ kind: "tools", id: `g-${e.callId}-${e.seq}`, calls: [call], thoughts: [] });
+          else box().push({ kind: "tools", id: `g-${e.callId}-${e.seq}`, calls: [call], thoughts: [] });
         }
         const pending = [...approvals.values()].find((a) => a.callId === e.callId);
         if (pending) call.approval = { title: pending.title, decision: pending.decision, by: pending.by, highRisk: pending.highRisk };
@@ -333,7 +338,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [] };
         break;
       case "context.compacted":
-        view.items.push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
+        box().push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
         break;
       case "memory.proposed": {
         const m = (view.memory ??= { notes: [], reviewed: null });
@@ -371,7 +376,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         else view.items.push({ kind: "error", id: `e-${e.seq}`, text: e.message });
         break;
       case "subagent.started": {
-        // 交出去的那一步：Peck 循环的委派、Claude Code 的 Task 编号和那一步一样；CLI 经本机 MCP 委派的对不上，
+        // 交出去的那一步：Peck Loop 的委派、Claude Code 的 Task 编号和那一步一样；CLI 经本机 MCP 委派的对不上，
         // 挂到最近一个还在跑、名字里有 delegate_task 的那一步。
         let parent = tools.get(e.subagentId);
         if (!parent) {
@@ -411,7 +416,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   if (stopped && !view.ended && events.length > 0) {
     // 记录上已经结束、事件里却没有收尾：按「停下了」收掉，时间记到最后一条事件。
     const at = events[events.length - 1].at;
-    view.ended = { reason: "cancelled", error: null };
+    view.ended = { reason: "interrupted", error: null };
     for (const call of tools.values()) if (call.status === "running") { call.status = "cancelled"; call.endedAt = at; }
     for (const t of texts.values()) t.done = true;
     for (const t of thoughts.values()) { if (!t.done) t.endedAt = at; t.done = true; }
@@ -542,7 +547,7 @@ export function groupSpan(calls: ToolView[], now: number, thoughts: ThoughtView[
   return Math.max(0, end - start);
 }
 
-// 各引擎给的步骤标题是中文、一个字的动词打头（Peck 循环在 harness/tools、CLI 在 gateway/convert）。
+// 各引擎给的步骤标题是中文、一个字的动词打头（Peck Loop 在 harness/tools、CLI 在 gateway/convert）。
 // 在这里翻成英文，旧记录也一样；认不出的照原样。
 const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^后台跑 (.*)$/s, "Run in background $1"],
@@ -600,6 +605,22 @@ export function englishTitle(title: string): string {
     return out.replace(/、/g, ", ").replace(/（/g, " (").replace(/）/g, ")");
   }
   return title;
+}
+
+/** 一段里读过的文件（按先后、去重）：读文件那几步的标题是「读 a.ts」，Codex 一步读几个用「、」连着；读 Skill 不算。 */
+export function readFiles(items: ViewItem[]): string[] {
+  const out: string[] = [];
+  for (const item of items) {
+    if (item.kind !== "tools") continue;
+    for (const c of item.calls) {
+      const m = c.kind === "read" ? c.title.match(/^读 (?!Skill )(.+)$/s) : null;
+      for (const p of m ? m[1].split("、") : []) {
+        const path = p.trim();
+        if (path && !out.includes(path)) out.push(path);
+      }
+    }
+  }
+  return out;
 }
 
 /** 落盘的完整输出路径（bash_run 的结果里写着「完整的存在 …」）。 */
@@ -679,7 +700,7 @@ export interface CostRow {
   /** 合作里的哪一段；`main` 是没分段的任务的主线，`sub` 是委派的子任务。 */
   role: StageRole | "main" | "sub";
   title: string;
-  /** 引擎 id：`peck` 是 Peck 循环（API 按量）；别的是 CLI（订阅）。 */
+  /** 引擎 id：`peck` 是 Peck Loop（API 按量）；别的是 CLI（订阅）。 */
   engine: string;
   model: string | null;
   usage: UsageLine | null;

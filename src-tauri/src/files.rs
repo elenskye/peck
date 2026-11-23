@@ -346,13 +346,11 @@ mod tests {
         fs::create_dir_all(ws.join("src")).unwrap();
         fs::create_dir_all(ws.join("node_modules/react")).unwrap();
         fs::create_dir_all(ws.join(".git")).unwrap();
-        fs::create_dir_all(ws.join(".peck")).unwrap();
-        fs::write(ws.join(".gitignore"), "node_modules/\n*.log\n.peck/\n").unwrap();
+        fs::write(ws.join(".gitignore"), "node_modules/\n*.log\n").unwrap();
         fs::write(ws.join("src/main.ts"), "export const a = 1;\n").unwrap();
         fs::write(ws.join("node_modules/react/index.js"), "x").unwrap();
         fs::write(ws.join("debug.log"), "x").unwrap();
         fs::write(ws.join(".git/HEAD"), "ref").unwrap();
-        fs::write(ws.join(".peck/tasks.md"), "- [ ] a\n").unwrap();
         fs::write(ws.join("logo.png"), [0u8, 1, 2]).unwrap();
         fs::write(ws.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
 
@@ -362,7 +360,6 @@ mod tests {
             paths,
             vec![
                 ".gitignore",
-                ".peck/tasks.md",
                 "blob.bin",
                 "logo.png",
                 "src/main.ts"

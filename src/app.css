@@ -199,36 +199,22 @@ body { overflow: hidden; }
 .task-clock { margin-left: auto; font-size: 40px; }
 .task-clock--off { color: var(--color-text-3); text-shadow: none; }
 .task .pk-blocks { margin: var(--space-7) 0 var(--space-6); }
-.steps { display: flex; flex-direction: column; }
 .step-body { min-width: 0; }
 .step-head { display: flex; align-items: baseline; gap: var(--space-4); width: 100%; }
-.step-head .step-tri { align-self: center; color: var(--color-text-3); }
 .step-head:hover:not(:disabled) .pk-step-name { color: var(--color-cyan-text); }
 .step-head:disabled { cursor: default; }
-.step-notice { color: var(--color-text-3); }
 .out { margin-top: var(--space-4); padding: var(--space-5) var(--space-7); font-family: var(--font-code); font-size: var(--text-code); line-height: var(--leading-code); color: var(--color-text-2); }
 .out p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .out--full { display: flex; flex-direction: column; gap: var(--space-3); }
 .out-lines { max-height: 260px; }
 .out-acts { display: flex; align-items: center; gap: var(--space-4); font-family: var(--font-body); }
-.step-retry { display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-3); }
 .fold { margin: 0 0 var(--space-4); }
-.steps + .fold { margin-top: var(--space-4); }
 .fold-head { display: flex; align-items: center; gap: var(--space-4); height: var(--size-row); font-size: var(--text-small); color: var(--color-text-2); }
 .fold-head .pk-i, .fold-head em { color: var(--color-text-3); }
 .fold-head:hover { color: var(--color-text); }
 .checklist { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3) var(--space-10); }
 .checklist li { display: flex; align-items: flex-start; gap: var(--space-4); font-size: var(--text-small); line-height: 20px; }
 .checklist li.is-done { color: var(--color-text-3); }
-.api-history { display: flex; flex-direction: column; gap: var(--space-3); margin: var(--space-2) 0 var(--space-3) var(--space-10); }
-.api-task, .api-tool { padding: var(--space-3) 0; border-top: 1px dotted var(--color-line-strong); }
-.api-task--child { margin-left: var(--space-8); }
-.api-task > summary, .api-tool > summary { display: flex; align-items: center; gap: var(--space-4); cursor: pointer; font-size: var(--text-small); color: var(--color-text-3); }
-.api-task > summary::-webkit-details-marker, .api-tool > summary::-webkit-details-marker { display: none; }
-.api-task > summary b { color: var(--color-text); }
-.api-tool { margin-left: var(--space-8); }
-.api-tool > summary span:last-child { margin-left: auto; }
-.api-tool pre { margin: var(--space-3) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-2); max-height: 180px; overflow: auto; }
 .summary { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px dotted var(--color-line-strong); }
 .summary-top { display: flex; align-items: center; gap: var(--space-6); }
 .summary-top > div { display: flex; flex-direction: column; }
@@ -236,10 +222,6 @@ body { overflow: hidden; }
 .summary-n { margin-left: auto; display: flex; gap: var(--space-4); }
 .summary-n span { font-size: var(--text-count); }
 .summary-text { font-size: var(--text-body); line-height: var(--leading-body); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 228px; overflow: auto; }
-.verify { display: flex; flex-direction: column; gap: var(--space-1); }
-.verify p { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
-.verify p.is-ok .pk-i { color: var(--color-ok); }
-.verify p.is-warn .pk-i { color: var(--color-warn); }
 .task-bar { margin-top: var(--space-6); padding: var(--space-5) var(--space-7); min-height: var(--size-header); }
 .back { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-body); color: var(--color-text-2); }
 .task .back { margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px dotted var(--color-line-strong); }
@@ -251,8 +233,6 @@ body { overflow: hidden; }
 .right--wide .pk-tabs { align-self: flex-start; display: inline-flex; width: auto; }
 .right--wide .pk-tabs > button { flex: none; padding: 0 var(--space-7); }
 .right > .pk-bar { flex: none; }
-.changes-body--wide { flex-direction: row; gap: var(--space-9); }
-@media (prefers-reduced-motion: reduce) { .pk-tree.fx-out > *, .pk-tree.fx-back > *, .changes-foot .back.fx-back { animation: none !important; } .changes-fx { display: none; } }
 .preview { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
 .preview-head { flex: none; display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
 .preview-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
@@ -270,7 +250,7 @@ body { overflow: hidden; }
 .dl-m { user-select: none; -webkit-user-select: none; }
 .dl-t { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text); }
 .md { flex: 1 1 0; display: flex; flex-direction: column; gap: var(--space-3); font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-text-2); }
-.md code, .md-code { color: var(--color-text); background: var(--color-raised); padding: 0 var(--space-2); }
+.md code { color: var(--color-text); background: var(--color-raised); padding: 0 var(--space-2); }
 
 .files-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .files-tree { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
@@ -343,18 +323,18 @@ body { overflow: hidden; }
 .set-inline { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-4); }
 .set-inline .pk-field { flex: 1 1 200px; min-width: 0; height: var(--size-button); }
 .set-inline .pk-field[style] { flex: none; }
-/* 供应商的 Key 一格网格：Key 框和 Aliyun 业务空间 ID 框右边对齐（v0.10 Refine）。 */
+/* 供应商的 Key 一格网格：Key 框占前两格，SAVE、REMOVE 在后面；Aliyun 的地域在下一行，它的 SAVE 和上面的 SAVE 对齐。 */
 .set-keys { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
 .set-keys .pk-field { min-width: 0; height: var(--size-button); }
 /* 输入框里的 input 默认有 20 个字宽的最小宽度，窄的时候把右边的按钮挤出去：让它跟着框缩（v1.0.1，设置页放大后才看得出）。 */
 :is(.set-keys, .set-inline) .pk-field input { width: 0; }
-/* 设置页很窄时（放大以后窗口又小）：Aliyun 的地域单独一行，业务空间 ID 框占它让出来的位置。 */
+.set-keys > .set-keys-wide { grid-column: 1 / 3; }
+.set-keys > .pk-seg + .pk-btn { grid-column: 3; }
+/* 设置页很窄时（放大以后窗口又小）：Aliyun 的地域单独一行。 */
 .set-pane { container-type: inline-size; }
 @container (max-width: 380px) {
   .set-keys > .pk-seg { grid-column: 1 / -1; justify-self: start; }
-  .set-keys > .pk-seg + .pk-field { grid-column: 1 / 3; }
 }
-.set-keys > .set-keys-wide { grid-column: 1 / 3; }
 /* 价格表的编辑：进、出、缓存命中、缓存写入、高峰倍数一排。 */
 .set-price-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-4) var(--space-5); margin-top: var(--space-5); }
 .set-price-f { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
@@ -376,8 +356,6 @@ body { overflow: hidden; }
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
 .chip-quiet { display: inline-flex; align-items: center; gap: var(--space-3); height: var(--size-chip); padding: 0 var(--space-5); clip-path: var(--pk-clip2); background: var(--color-panel-2); font-size: var(--text-body); color: var(--color-text-2); }
 .chip-quiet .pk-i { color: var(--color-bad); }
-.quota-calls { max-height: 200px; margin-top: var(--space-5); }
-.quota-calls p { display: flex; justify-content: space-between; gap: var(--space-6); padding: var(--space-3) 0; border-top: 1px dotted var(--color-line-strong); font-size: var(--text-small); }
 
 @media (prefers-reduced-motion: reduce) {
   .brand-mark { animation: none; }
@@ -489,7 +467,7 @@ body { overflow: hidden; }
 
 /* ---------- QUOTA 页的图（v0.5 Refine 2） ----------
    系列色跟着引擎走：浅色就是身份色；深色用同一色相的深一级（大面积填色太亮刺眼），六色按图里的叠放顺序
-   （Antigravity、Peck 循环、Grok、Muse、Claude Code、Codex）跑过色弱和明暗校验，深浅都过。字一律用文字色，不用系列色。 */
+   （Antigravity、Peck Loop、Grok、Muse、Claude Code、Codex）跑过色弱和明暗校验，深浅都过。字一律用文字色，不用系列色。 */
 :root, [data-theme="dark"] { --chart-antigravity: #71A505; --chart-api: #4F94E8; --chart-grok: #C58131; --chart-muse: #987CE9; --chart-claude-code: #CD795B; --chart-codex: #CA5DDB; }
 [data-theme="light"] { --chart-antigravity: #4D7C0F; --chart-api: #2563EB; --chart-grok: #A35E00; --chart-muse: #6D4AE8; --chart-claude-code: #B4532A; --chart-codex: #A21CAF; }
 .quota h2.t-title { margin-top: var(--space-11); }
@@ -540,9 +518,6 @@ body { overflow: hidden; }
 .q-window-r { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .q-spark { flex: none; }
 .q-spark--none { display: inline-block; width: 72px; height: 22px; border-bottom: 1px dotted var(--color-line); }
-.q-legacy { margin-top: var(--space-11); }
-.q-legacy > summary { cursor: pointer; }
-.q-legacy[open] > summary { margin-bottom: var(--space-4); }
 
 /* 选项片的字太长（模型名）就截断，悬停看全名；输入框下那一行不再被挤得换行。 */
 .pk-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -571,7 +546,6 @@ body { overflow: hidden; }
 .pk-chip-label .who-k { font-style: normal; color: var(--color-text-3); margin-right: 6px; }
 
 /* 右栏五个页签的图标（站主 2026-11-13 要的，8×8 像素格，画法同方案里的图标）：CHANGES 加减、LOG 时间线、ONE SHOT 闪电、FILES 两张纸；TERM 用方案里的终端。要并进 visual-atelier 方案。 */
-.pk-i--changes{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M3 0h1v1h-1zM3 1h1v1h-1zM1 2h5v1h-5zM3 3h1v1h-1zM3 4h1v1h-1zM1 6h5v1h-5z'/%3E%3C/svg%3E")}
 .pk-i--log{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 0h2v1h-2zM3 0h4v1h-4zM0 1h1v1h-1zM0 2h1v1h-1zM0 3h2v1h-2zM3 3h5v1h-5zM0 4h1v1h-1zM0 5h1v1h-1zM0 6h2v1h-2zM3 6h3v1h-3z'/%3E%3C/svg%3E")}
 .pk-i--oneshot{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M5 0h2v1h-2zM4 1h2v1h-2zM3 2h2v1h-2zM2 3h5v1h-5zM1 4h5v1h-5zM3 5h2v1h-2zM2 6h2v1h-2zM1 7h2v1h-2z'/%3E%3C/svg%3E")}
 .pk-i--files{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M2 0h6v1h-6zM2 1h1v1h-1zM7 1h1v1h-1zM0 2h6v1h-6zM7 2h1v1h-1zM0 3h1v1h-1zM5 3h1v1h-1zM7 3h1v1h-1zM0 4h1v1h-1zM5 4h1v1h-1zM7 4h1v1h-1zM0 5h1v1h-1zM5 5h3v1h-3zM0 6h1v1h-1zM5 6h1v1h-1zM0 7h6v1h-6z'/%3E%3C/svg%3E")}
@@ -611,12 +585,10 @@ body { overflow: hidden; }
 .agent-compact > .fold-head { color: var(--color-text-3); }
 .agent-summary { margin: var(--space-2) 0 var(--space-3) var(--space-10); padding-left: var(--space-6); border-left: 1px dotted var(--color-line-strong); font-size: var(--text-small); color: var(--color-text-2); }
 
-/* 验证卡片：Peck 替模型跑的验证命令 */
-
-/* 第一次打开项目：Peck 猜的验证命令 */
-.app .verify-text { display: block; width: 100%; min-height: 96px; margin: var(--space-3) 0 0; padding: var(--space-5) var(--space-6); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: vertical; font-family: var(--font-code); font-size: var(--text-code); line-height: var(--leading-code); color: var(--color-text); }
-.app .verify-text:disabled { opacity: .6; }
-.app .verify-text:focus { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+/* 多行的文字框：Skill 正文、项目的环境变量。 */
+.app .text-edit { display: block; width: 100%; min-height: 96px; margin: var(--space-3) 0 0; padding: var(--space-5) var(--space-6); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: vertical; font-family: var(--font-code); font-size: var(--text-code); line-height: var(--leading-code); color: var(--color-text); }
+.app .text-edit:disabled { opacity: .6; }
+.app .text-edit:focus { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
 .hint.is-bad { color: var(--color-bad); }
 
 /* 输入框里 @ 旧任务 */
@@ -628,7 +600,6 @@ body { overflow: hidden; }
 .md-task { padding: 0 var(--space-2); background: var(--color-cyan-soft); color: var(--color-cyan-text); white-space: nowrap; }
 
 /* 菜单里的一句说明；dev server 在跑的点 */
-.menu-note { max-width: 300px; white-space: normal; font-family: var(--font-body); font-weight: 400; letter-spacing: 0; line-height: 1.5; }
 .pk-dot.dot-live { background: var(--color-ok); }
 
 /* 记忆 */
@@ -677,7 +648,7 @@ body { overflow: hidden; }
 .media-frame--html { background: #fff; }
 .files-md { flex: 1 1 0; min-height: 0; padding: var(--space-4) var(--space-2); }
 
-/* CHANGES：按块接受 / 拒绝、行内批注 */
+/* PREVIEW 批注那一行里的小按钮 */
 .dl-act { margin: 0; padding: 0 var(--space-2); border: 0; background: none; font-family: var(--font-dots); font-weight: 900; font-size: 11px; letter-spacing: .06em; color: var(--color-text-3); cursor: pointer; }
 .dl-act:hover:not(:disabled) { color: var(--color-cyan-text); }
 .dl-act:disabled { opacity: .5; cursor: default; }
@@ -720,6 +691,13 @@ body { overflow: hidden; }
 .agent-stage em { margin-left: auto; font-style: normal; color: var(--color-text-3); display: inline-flex; align-items: center; gap: var(--space-2); }
 .agent-stage.is-bad em, .agent-stage-err { color: var(--color-bad); }
 .agent-stage-err { flex-basis: 100%; }
+/* 写规范那一段收成一行（v1.0.3）：整行能点，点开看规范全文和读过的文件。 */
+.agent-stage-fold { width: 100%; }
+.agent-stage-fold:hover, .agent-stage-fold:hover .t-label { color: var(--color-text); }
+.agent-stage-fold > .pk-i { color: var(--color-text-3); }
+.agent-spec { margin: var(--space-2) 0 var(--space-4); padding: var(--space-4) var(--space-6); box-shadow: inset 1px 0 0 var(--color-line); }
+.agent-spec-h { margin-top: var(--space-4); font-size: var(--text-small); color: var(--color-text-3); }
+.agent-spec-files { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--text-small); color: var(--color-text-2); overflow-wrap: anywhere; }
 .agent-verdict { font-style: normal; padding: 0 var(--space-3); box-shadow: inset 0 0 0 1px currentColor; }
 .agent-verdict.is-ok { color: var(--color-ok); }
 .agent-verdict.is-warn { color: var(--color-warn); }

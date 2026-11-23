@@ -3,7 +3,6 @@ import { mockIpc } from "@/dev/mockIpc";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, PriceTier } from "@/lib/agentEvents";
 import type {
   Activity,
-  DiffResult,
   FileListing,
   FilePreview,
   Permission,
@@ -51,9 +50,9 @@ export const ipc = {
     return invoke<void>("workspace_remove", { id });
   },
   /** 文件夹不在了：换一个文件夹（不给路径就弹选文件夹的窗）。 */
-  async workspaceRelocate(id: string, path?: string): Promise<Workspace | null> {
-    if (isMockMode()) return mockIpc.workspaceRelocate(id, path);
-    return invoke<Workspace | null>("workspace_relocate", { id, path: path ?? null });
+  async workspaceRelocate(id: string): Promise<Workspace | null> {
+    if (isMockMode()) return mockIpc.workspaceRelocate(id);
+    return invoke<Workspace | null>("workspace_relocate", { id });
   },
   async workspaceReveal(id: string): Promise<void> {
     if (isMockMode()) return;
@@ -120,19 +119,10 @@ export const ipc = {
     return invoke<void>("run_cancel", { runId });
   },
 
-  async changesGetDiff(
-    runId: string,
-    stepId?: string,
-    filePath?: string,
-  ): Promise<DiffResult> {
-    if (isMockMode()) {
-      return mockIpc.changesGetDiff(runId, stepId, filePath);
-    }
-    return invoke<DiffResult>("changes_get_diff", {
-      runId,
-      stepId,
-      filePath,
-    });
+  /** 这个任务改的某个文件的 Diff（统一格式）：FILES 标出加的行。 */
+  async changesGetDiff(runId: string, filePath: string): Promise<string> {
+    if (isMockMode()) return mockIpc.changesGetDiff(runId, filePath);
+    return invoke<string>("changes_get_diff", { runId, filePath });
   },
 
   async overview(): Promise<ProjectOverview[]> {
@@ -285,7 +275,7 @@ export const ipc = {
     return invoke<void>("gateway_control", { runId, control });
   },
 
-  // ── Peck 循环（v0.5 Phase 6，src-tauri/src/harness/）：「谁来干」是 api:<供应商>/<模型> 的走这里 ──
+  // ── Peck Loop（v0.5 Phase 6，src-tauri/src/harness/）：「谁来干」是 api:<供应商>/<模型> 的走这里 ──
   /** 返回任务 id；过程是统一事件（和 CLI 引擎同一套）。审批、回答、打断照旧用 gatewayControl。 */
   async harnessRunStart(args: HarnessRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
     if (isMockMode()) return mockIpc.harnessRunStart(args, onEvent);
@@ -345,16 +335,16 @@ export const ipc = {
     return invoke<SkillRow[]>("skill_restore", { workspaceId, name, id });
   },
   /** 选了一个命令文件：展开成要发出去的这句话。 */
-  async slashExpand(workspaceId: string, name: string, args: string): Promise<string> {
-    if (isMockMode()) return mockIpc.slashExpand(workspaceId, name, args);
-    return invoke<string>("slash_expand", { workspaceId, name, args });
+  async slashExpand(name: string, args: string): Promise<string> {
+    if (isMockMode()) return mockIpc.slashExpand(name, args);
+    return invoke<string>("slash_expand", { name, args });
   },
-  /** `/compact`：压一压这个任务存着的 Peck 循环对话（不叫模型）。 */
+  /** `/compact`：压一压这个任务存着的 Peck Loop 对话（不叫模型）。 */
   async harnessCompact(sessionId: string): Promise<string> {
     if (isMockMode()) return mockIpc.harnessCompact(sessionId);
     return invoke<string>("harness_compact", { sessionId });
   },
-  /** 项目设置：这个项目的 Peck 循环会用到的 MCP（设置里的 + 项目 .mcp.json 里的）。 */
+  /** 项目设置：这个项目的 Peck Loop 会用到的 MCP（设置里的 + 项目 .mcp.json 里的）。 */
   async projectMcpList(workspaceId: string): Promise<ProjectMcpView> {
     if (isMockMode()) return mockIpc.projectMcpList(workspaceId);
     return invoke<ProjectMcpView>("project_mcp_list", { workspaceId });
@@ -371,9 +361,9 @@ export const ipc = {
     return invoke<string>("harness_oneshot", { ...args, channel });
   },
   // ── 定时任务：在对话里设、改、取消（模型的工具）；界面只列出来看，错过的弹卡片 ──
-  async scheduleList(workspaceId?: string): Promise<Schedule[]> {
-    if (isMockMode()) return mockIpc.scheduleList(workspaceId);
-    return invoke<Schedule[]>("schedule_list", { workspaceId: workspaceId ?? null });
+  async scheduleList(): Promise<Schedule[]> {
+    if (isMockMode()) return mockIpc.scheduleList();
+    return invoke<Schedule[]>("schedule_list");
   },
   async scheduleDelete(id: string): Promise<void> {
     if (isMockMode()) return mockIpc.scheduleDelete(id);
@@ -414,7 +404,7 @@ export const ipc = {
     if (isMockMode()) return mockIpc.harnessOutputRead(path);
     return invoke<string>("harness_output_read", { path });
   },
-  /** 这个月 Peck 循环（API）花了多少。 */
+  /** 这个月 Peck Loop（API）花了多少。 */
   async harnessSpend(): Promise<{ monthUsd: number; since: number }> {
     if (isMockMode()) return mockIpc.harnessSpend();
     return invoke<{ monthUsd: number; since: number }>("harness_spend");
@@ -560,7 +550,8 @@ export interface McpServerConfig {
 export type ToolHint = "read" | "write" | "destructive";
 
 /** 一个斜杠命令文件（.claude/commands/*.md，v0.10 C2）。 */
-export interface CommandFile { name: string; description: string; hint?: string | null; scope: "project" | "user"; folder?: string | null }
+/** Peck 命令库（数据目录的 commands/）里的一个命令文件。 */
+export interface CommandFile { name: string; description: string; hint?: string | null; folder?: string | null }
 /** 一个 Skill（SKILL.md，v0.10 C2）。 */
 /** scope：项目的 .claude/skills、项目的 skills/、站主的 ~/.claude/skills、Peck 自带的。 */
 export interface SkillInfo { name: string; description: string; scope: "project" | "project-skills" | "user" | "peck"; off: boolean }
@@ -657,9 +648,9 @@ export interface AllowRule {
 /** 一次请求花的（spend.rs）。 */
 export interface SpendPoint {
   at: number;
-  /** peck（Peck 循环和 ONE SHOT）或 CLI 引擎 id。 */
+  /** peck（Peck Loop 和 ONE SHOT）或 CLI 引擎 id。 */
   engine: string;
-  /** Peck 循环：目录里的模型 id；ONE SHOT：oneshot；CLI：引擎 id。 */
+  /** Peck Loop：目录里的模型 id；ONE SHOT：oneshot；CLI：引擎 id。 */
   key: string;
   usd: number | null;
   estimated: boolean;

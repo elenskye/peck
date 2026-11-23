@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::events::{
-    FileChangeItem, RunEvent, RunStatus, StepDescriptor, StepStatus, StreamType, TaskItem,
-};
+use crate::events::{FileChangeItem, RunEvent, RunStatus, StepDescriptor, StepStatus};
 use crate::flow::DispatchPlan;
 use crate::snapshot::{saved_snapshot, RunSnapshotRecord};
 use crate::workspace::Workspace;
@@ -32,51 +30,20 @@ pub struct Session {
     pub archived_at: Option<i64>,
 }
 
-/// 对话消息那张表的一行。界面不再读它（过程都在事件日志里），表照旧写；只有测试读回来核对。
-#[cfg(test)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub id: String,
-    pub session_id: String,
-    pub role: String,
-    pub content: String,
-    pub run_id: Option<String>,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RawLogEntry {
-    pub id: String,
-    pub run_id: String,
-    pub step_id: String,
-    pub agent_id: String,
-    pub stream: StreamType,
-    pub chunk: String,
-    pub timestamp: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRecord {
     pub id: String,
     pub number: u64,
     pub session_id: String,
-    pub flow_id: String,
-    pub flow_name: String,
     pub prompt: String,
     pub status: RunStatus,
     pub started_at: i64,
     pub finished_at: Option<i64>,
     pub steps: Vec<StepDescriptor>,
-    pub tasks: Vec<TaskItem>,
     pub files: Vec<FileChangeItem>,
-    #[serde(default)]
-    pub step_files: std::collections::HashMap<String, Vec<FileChangeItem>>,
-    pub logs: Vec<RawLogEntry>,
     pub summary: Option<String>,
-    /// 谁来干：`muse`、`grok`、`muse>grok`、`grok>muse`、`mock`；API 模式和旧记录没有。
+    /// 谁来干：`api:<供应商>/<模型>`、`cli:<引擎>`、`team:<写规范>|<实施>|<审查>`；v0.8 以前的旧记录没有。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub who: Option<String>,
     /// 发任务时选的权限档：`plan` / `edit` / `auto`。
@@ -118,8 +85,6 @@ fn is_zero(n: &u32) -> bool {
 pub struct RunBrief {
     pub id: String,
     pub number: u64,
-    pub flow_id: String,
-    pub flow_name: String,
     pub status: RunStatus,
     pub started_at: i64,
     pub finished_at: Option<i64>,
@@ -290,20 +255,7 @@ impl Store {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        // 旧版的对话没有自己的名字，用第一句话当任务名。
-        let title = if matches!(session.title.as_str(), "新会话" | "默认发令会话" | "新任务") {
-            self.conn
-                .query_row(
-                    "SELECT content FROM messages WHERE session_id=?1 AND role='user'
-                    ORDER BY created_at, rowid LIMIT 1",
-                    [&session.id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?
-                .unwrap_or(session.title.clone())
-        } else {
-            session.title.clone()
-        };
+        let title = session.title.clone();
         Ok(Some(TaskBrief {
             id: session.id,
             workspace_id: session.workspace_id,
@@ -368,25 +320,6 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    #[cfg(test)]
-    pub fn messages(&self, session_id: &str) -> StoreResult<Vec<Message>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, role, content, run_id, created_at
-            FROM messages WHERE session_id=?1 ORDER BY created_at, rowid",
-        )?;
-        let rows = stmt.query_map([session_id], |row| {
-            Ok(Message {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                run_id: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    }
-
     pub fn next_run_number(&self) -> StoreResult<u64> {
         Ok(self.conn.query_row(
             "SELECT COALESCE(MAX(number), 104) + 1 FROM runs",
@@ -406,8 +339,6 @@ impl Store {
             id: format!("run-{number}"),
             number,
             session_id: session_id.into(),
-            flow_id: plan.flow_id.clone(),
-            flow_name: plan.flow_name.clone(),
             prompt: prompt.into(),
             status: RunStatus::Running,
             started_at: now_ms(),
@@ -417,10 +348,7 @@ impl Store {
                 .iter()
                 .map(|s| s.to_descriptor(StepStatus::Pending))
                 .collect(),
-            tasks: vec![],
             files: vec![],
-            step_files: Default::default(),
-            logs: vec![],
             summary: None,
             who: None,
             permission: None,
@@ -451,25 +379,6 @@ impl Store {
                 ],
             )?;
         }
-        tx.execute(
-            "INSERT INTO messages VALUES(?1, ?2, 'user', ?3, NULL, ?4)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                session_id,
-                prompt,
-                record.started_at
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO messages VALUES(?1, ?2, 'assistant', ?3, ?4, ?5)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                session_id,
-                format!("交给 {}。改动在右栏。", plan.flow_name),
-                record.id,
-                record.started_at
-            ],
-        )?;
         tx.execute(
             "UPDATE sessions SET updated_at=?1 WHERE id=?2",
             params![record.started_at, session_id],
@@ -540,12 +449,6 @@ impl Store {
             "UPDATE sessions SET updated_at=?1 WHERE id=?2",
             params![now_ms(), record.session_id],
         )?;
-        if let Some(summary) = &record.summary {
-            tx.execute(
-                "UPDATE messages SET content=?1 WHERE run_id=?2 AND role='assistant'",
-                params![summary, record.id],
-            )?;
-        }
         tx.commit()?;
         Ok(())
     }
@@ -554,8 +457,6 @@ impl Store {
         let run_id = match event {
             RunEvent::RunStarted { run_id, .. }
             | RunEvent::StepStarted { run_id, .. }
-            | RunEvent::StepExecution { run_id, .. }
-            | RunEvent::StepOutput { run_id, .. }
             | RunEvent::StepFinished { run_id, .. }
             | RunEvent::RunFinished { run_id, .. } => run_id,
         };
@@ -577,39 +478,6 @@ impl Store {
                     step.exit_code = None;
                 }
             }
-            RunEvent::StepExecution {
-                step_id,
-                mode,
-                notice,
-                ..
-            } => {
-                if let Some(step) = run.steps.iter_mut().find(|s| s.id == *step_id) {
-                    step.execution_mode = Some(mode.clone());
-                    step.notice = Some(notice.clone());
-                }
-            }
-            RunEvent::StepOutput {
-                step_id,
-                stream,
-                chunk,
-                ..
-            } => {
-                let agent_id = run
-                    .steps
-                    .iter()
-                    .find(|s| s.id == *step_id)
-                    .map(|s| s.agent_id.clone())
-                    .unwrap_or_default();
-                run.logs.push(RawLogEntry {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    run_id: run.id.clone(),
-                    step_id: step_id.clone(),
-                    agent_id,
-                    stream: *stream,
-                    chunk: chunk.clone(),
-                    timestamp: now,
-                });
-            }
             RunEvent::StepFinished {
                 step_id,
                 status,
@@ -618,8 +486,6 @@ impl Store {
                 changeset,
                 ..
             } => {
-                run.step_files
-                    .insert(step_id.clone(), changeset.files.clone());
                 if let Some(step) = run.steps.iter_mut().find(|s| s.id == *step_id) {
                     step.status = *status;
                     step.exit_code = *exit_code;
@@ -666,20 +532,11 @@ impl Store {
             if run.status == RunStatus::Running {
                 run.status = RunStatus::Failed;
                 run.finished_at = Some(now_ms());
-                run.summary = Some("上次退出时任务被打断了；可以重跑没做完的那一步。".into());
+                run.summary = Some("上次退出时任务被打断了。".into());
                 for step in &mut run.steps {
                     if step.status == StepStatus::Running {
                         step.status = StepStatus::Failed;
                         step.finished_at = run.finished_at;
-                    }
-                }
-                if !run.steps.iter().any(|s| s.status == StepStatus::Failed) {
-                    if let Some(step) = run
-                        .steps
-                        .iter_mut()
-                        .find(|s| s.status == StepStatus::Pending)
-                    {
-                        step.status = StepStatus::Failed;
                     }
                 }
                 self.save_run(&run)?;
@@ -694,23 +551,18 @@ mod tests {
     use super::*;
     use crate::events::{ChangeSetSummary, EventSink};
     use crate::flow::ResolvedStepPlan;
-    use crate::snapshot::{get_diff_for_run, record_run_base, record_step_finish, record_step_start, restore_snapshot, ShadowRepo};
+    use crate::snapshot::{get_diff_for_run, record_run_base, record_run_finish, restore_snapshot, ShadowRepo};
     use crate::workspace::open_workspace;
     use std::sync::{Arc, Mutex};
 
     fn plan_for(run: &str) -> DispatchPlan {
         DispatchPlan {
-            flow_id: "peck".into(),
-            flow_name: "Peck".into(),
-            clean_input: "build".into(),
             steps: vec![ResolvedStepPlan {
                 id: format!("{run}-step-1"),
                 step_index: 0,
                 agent_id: "peck".into(),
                 agent_name: "Peck".into(),
                 title: "Peck".into(),
-                rendered_prompt: "build".into(),
-                rendered_expects: vec![],
             }],
         }
     }
@@ -728,18 +580,16 @@ mod tests {
         let session = db.create_session(&ws.id, Some("History test".into())).unwrap();
         db.create_run(&session.id, "build", 700105, &plan_for("run-700105")).unwrap();
         let shared = Arc::new(Mutex::new(db));
-        let (memory, _) = EventSink::new_memory();
-        let sink = EventSink::Persistent { target: Box::new(memory), store: shared.clone() };
+        let sink = EventSink::new(shared.clone());
         // 一个做完的任务：快照、改文件、收尾，都经任务事件存进记录。
         let repo = ShadowRepo::open_or_init(&workspace).unwrap();
         let before = repo.create_snapshot("run-700105-base").unwrap();
         record_run_base("run-700105", &repo, before.clone());
-        record_step_start("run-700105", "run-700105-step-1", &repo, before.clone());
         sink.emit(RunEvent::StepStarted { run_id: "run-700105".into(), step_id: "run-700105-step-1".into(), step_index: 0, agent_id: "peck".into() });
         std::fs::write(workspace.join("a.txt"), "after\n").unwrap();
         let after = repo.create_snapshot("run-700105-step-1-after").unwrap();
-        record_step_finish("run-700105", "run-700105-step-1", after.clone());
-        let changeset = repo.diff_changeset(&before, &after, "run-700105-step-1").unwrap();
+        record_run_finish("run-700105", after.clone());
+        let changeset = repo.diff_changeset(&before, &after).unwrap();
         assert_eq!(changeset.files.len(), 1);
         sink.emit(RunEvent::StepFinished { run_id: "run-700105".into(), step_id: "run-700105-step-1".into(), status: StepStatus::Succeeded, exit_code: None, duration_ms: 5, changeset });
         sink.emit(RunEvent::RunFinished { run_id: "run-700105".into(), status: RunStatus::Succeeded, summary: "做完了。".into() });
@@ -768,8 +618,8 @@ mod tests {
         snapshot.run_id = format!("restored-{}", uuid::Uuid::new_v4());
         let restored_id = snapshot.run_id.clone();
         restore_snapshot(snapshot);
-        let diff = get_diff_for_run(&restored_id, None, Some("a.txt"), None).unwrap();
-        assert_eq!(diff.content_after.as_deref(), Some("after\n"));
+        let diff = get_diff_for_run(&restored_id, "a.txt").unwrap();
+        assert!(diff.contains("+after"), "{diff}");
         let _ = ChangeSetSummary::default();
         drop(reopened);
         std::fs::remove_dir_all(root).unwrap();

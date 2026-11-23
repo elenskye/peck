@@ -1,5 +1,5 @@
 // 统一事件（v0.5 Model Gateway 的契约）：和 src-tauri/src/gateway/event.rs、caps.rs、catalog.rs 一一对应。
-// 改一边就改另一边（Rust 测试会查这里有没有漏掉事件类型）。v0.6 云端加了上下文、记忆、验证、后台几类（两个 Phase 都是云端的）。
+// 改一边就改另一边（Rust 测试会查这里有没有漏掉事件类型）。
 //
 // 用量的口径：input 是没走缓存的输入，cacheRead / cacheWrite 另算，三者相加才是整个提示；
 // output 包括思考，reasoning 只是其中思考的那部分。
@@ -11,7 +11,7 @@ export type SkillReviewStatus = "saved" | "queued" | "skipped" | "failed";
 
 export type PermissionLevel = "plan" | "edit" | "auto";
 
-export type TurnEndReason = "done" | "limit" | "refused" | "cancelled" | "interrupted" | "error";
+export type TurnEndReason = "done" | "limit" | "refused" | "interrupted" | "error";
 
 /** 线协议。思考只在「供应商 + 线协议 + 模型」都一样时回放。 */
 export type Wire = "messages" | "responses" | "chat" | "gemini";
@@ -56,7 +56,7 @@ export interface PlanStep {
 /** 这次允许、总是允许、这次拒绝、总是拒绝。 */
 export type ApprovalDecision = "allow_once" | "allow_always" | "deny_once" | "deny_always";
 
-export type ResolvedBy = "user" | "rule" | "engine";
+export type ResolvedBy = "user" | "rule";
 
 export interface TokenUsage {
   input?: number | null;
@@ -69,7 +69,7 @@ export interface TokenUsage {
 }
 
 /** 花费从哪来：实报、按价格表算、CLI 估、不知道。 */
-export type CostSource = "reported" | "priced" | "estimated" | "unknown";
+export type CostSource = "priced" | "estimated" | "unknown";
 
 export interface Cost {
   /** 美元；unknown 时为 null，不是 0。 */
@@ -93,7 +93,7 @@ export interface McpServer {
   status: string;
 }
 
-// ── 上下文、验证、后台（v0.6）──
+// ── 上下文、后台（v0.6）──
 
 /** system：Peck 的说明和工具；project：项目说明和记忆；conversation：对话和思考；tools：工具的输出。 */
 export interface ContextPart {
@@ -217,13 +217,12 @@ export type EventBody =
   // ── 自己写 Skill（v0.10 C3）──
   | { type: "skill.proposed"; proposalId: string; name: string; description: string; body: string; scope: SkillScope; location: string; diff?: string | null; warnings?: string[]; similar?: string[] }
   | { type: "skill.reviewed"; proposalId: string; status: SkillReviewStatus; name: string; location: string; error?: string | null }
-  // ── 验证和后台（v0.6）──
+  // ── 后台命令（v0.6）──
   | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
   // ── 合作（v0.8）──
   | { type: "stage.started"; stage: StageRole; engine: string; model?: string | null; title: string }
   | { type: "stage.completed"; stage: StageRole; reason: TurnEndReason; error?: string | null; verdict?: ReviewVerdict | null; checks?: CriterionCheck[] }
   | { type: "notice"; level: NoticeLevel; text: string }
-  | { type: "retry"; attempt: number; delayMs: number; reason: string }
   | { type: "error"; message: string; fatal: boolean }
   /** 不认识的事件：原件在事件日志里。 */
   | { type: "raw"; source: string; kind?: string | null };
@@ -264,6 +263,7 @@ export interface Price {
   tiers?: PriceTier[];
 }
 
+/** `flow` 只在前端：「谁来干」里拼出来的接力那一项（`ModelPicker` 的 `RELAY_ENTRY`），后端不发。 */
 export type EntryGroup = "peck" | "cli" | "flow";
 
 export interface ModelEntry {
@@ -381,6 +381,6 @@ export interface GatewayRunArgs {
   images?: { mediaType: string; data: string }[];
   /** 委派给哪个 API 模型（v0.9 B1）：CLI 经 Peck 的本机 MCP 调 `delegate_task`。Antigravity 不委派。 */
   delegate?: string;
-  /** 花费上限（委派的子任务是 Peck 循环，照算）。 */
+  /** 花费上限（委派的子任务是 Peck Loop，照算）。 */
   costCap?: number | null;
 }

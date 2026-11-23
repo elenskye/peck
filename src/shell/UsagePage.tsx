@@ -2,20 +2,19 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { listen } from "@tauri-apps/api/event";
 import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, isMockMode, type QuotaPoint, type SpendOverview, type SpendPoint } from "@/lib/ipc";
-import { usageApi, type BalanceCard, type ClientCard, type UsageListResult } from "@/lib/usage";
+import { usageApi, type BalanceCard, type ClientCard } from "@/lib/usage";
 import { agentName, cn } from "@/lib/utils";
-import { Btn, Field, Info, MenuChip, ModHead, Seg } from "@/ui";
+import { Btn, Field, Info, ModHead, Seg } from "@/ui";
 
 // 额度与花费（usage.rs + spend.rs 的事件日志）。原来要等站主用 Peck 另做一个（src/quota/），2026-11-13 站主改了主意：这一页就是它，本地的 Claude 接着做。
 
 const STATUS: Record<string, string> = { ok: "读到了", not_installed: "没装", not_running: "没在运行", not_logged_in: "没登录", fields_missing: "现在读不到", read_failed: "读取失败", stale_stopped: "已停止 · 最后一次的快照", unknown: "未知", missing_key: "没配 Key", query_failed: "读取失败" };
 const when = (t: number | null | undefined) => (t ? new Date(t).toLocaleString("zh-CN", { hour12: false }) : "未知");
-const num = (v: number | null) => (v === null ? "未知" : v.toLocaleString());
 
 /** 图里的系列：固定顺序（相邻两色色弱也分得开，校验过），颜色跟着引擎走，不跟名次。 */
 const SERIES = ["antigravity", "api", "grok", "muse", "claude-code", "codex"] as const;
 type Series = (typeof SERIES)[number];
-const SERIES_NAME: Record<Series, string> = { antigravity: "Antigravity", api: "Peck 循环", grok: "Grok", muse: "Muse", "claude-code": "Claude Code", codex: "Codex" };
+const SERIES_NAME: Record<Series, string> = { antigravity: "Antigravity", api: "Peck Loop", grok: "Grok", muse: "Muse", "claude-code": "Claude Code", codex: "Codex" };
 const seriesOf = (engine: string): Series => (engine === "peck" ? "api" : (SERIES as readonly string[]).includes(engine) ? (engine as Series) : "api");
 const fill = (s: Series) => `var(--chart-${s})`;
 
@@ -23,18 +22,6 @@ const money = (v: number) => (v >= 100 ? `$${v.toFixed(0)}` : v >= 1 ? `$${v.toF
 const tokens = (v: number) => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : `${v}`);
 const dayKey = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
 const dayLabel = (t: number) => { const d = new Date(t); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-
-function Filter({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (v: string) => void }) {
-  return (
-    <MenuChip sm up={false} ariaLabel={label} label={(options.find(([id]) => id === value)?.[1] ?? label).toUpperCase()}>
-      {(close) => options.map(([id, name]) => (
-        <button key={id} type="button" role="menuitem" className={cn("pk-menu-item", id === value && "is-on")} onClick={() => { onChange(id); close(); }}>
-          <i /><b>{name.toUpperCase()}</b><span />
-        </button>
-      ))}
-    </MenuChip>
-  );
-}
 
 /** 宽度跟着容器变（图按真实像素画，字不会被缩放）。 */
 function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
@@ -119,10 +106,6 @@ export const UsagePage: React.FC<{ onClose: () => void; say: (message: unknown) 
             {clients.map((c) => <ClientQuota key={c.client} card={c} history={(spend?.quota ?? []).filter((q) => q.engine === (c.client === "muse-code" ? "muse" : c.client))} say={say} onCard={(card) => setClients((prev) => prev.map((x) => (x.client === card.client ? card : x)))} />)}
           </div>
 
-          <details className="q-legacy">
-            <summary className="lbl">旧的规划 + 实施的调用记录</summary>
-            <LegacyCalls say={say} />
-          </details>
         </div>
       </div>
     </section>
@@ -378,37 +361,3 @@ const Spark: React.FC<{ points: QuotaPoint[]; color: string }> = ({ points, colo
   );
 };
 
-/** 旧的 API 层（规划 + 实施）的调用记录：筛选、导入导出照旧，收起来放在最后。 */
-const LegacyCalls: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
-  const [list, setList] = useState<UsageListResult | null>(null);
-  const [mode, setMode] = useState("real");
-  const [project, setProject] = useState("");
-  const [model, setModel] = useState("");
-  const [provider, setProvider] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
-  const filter = { mode, project: project || undefined, model: model || undefined, provider: provider || undefined };
-  const reload = useCallback(async () => { setList(await usageApi.list(filter)); }, [mode, project, model, provider]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { void reload().catch(say); }, [reload]); // eslint-disable-line react-hooks/exhaustive-deps
-  const s = list?.summary;
-  return (
-    <>
-      <div className="set-inline">
-        <Filter label="哪种请求" value={mode} onChange={setMode} options={[["real", "真实"], ["mock", "模拟"], ["all", "全部"]]} />
-        <Filter label="项目" value={project} onChange={setProject} options={[["", "全部项目"], ...(list?.projects ?? []).map((p): [string, string] => [p, p])]} />
-        <Filter label="供应商" value={provider} onChange={setProvider} options={[["", "全部供应商"], ...(list?.providers ?? []).map((p): [string, string] => [p, p])]} />
-        <Filter label="模型" value={model} onChange={setModel} options={[["", "全部模型"], ...(list?.models ?? []).map((p): [string, string] => [p, p])]} />
-        <span className="grow" />
-        <Btn sm onClick={() => fileRef.current?.click()}>IMPORT</Btn>
-        <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; void (async () => { const r = await usageApi.importJson(await f.text()); await reload(); say(`导入好了：新增 ${r.imported}，重复跳过 ${r.skipped}，无效 ${r.invalid}`); })().catch(say); e.target.value = ""; }} />
-        <Btn sm onClick={() => void usageApi.exportCsv(filter).then((p) => say(p ? "CSV 导出好了" : "没有导出")).catch(say)}>EXPORT CSV</Btn>
-      </div>
-      {s && <p className="hint">{s.requestCount} 次请求 · 输入 {num(s.tokens.input)} · 输出 {num(s.tokens.output)} Token{s.costs.map((c, i) => <span key={i}> · {c.currency ?? "未知币种"} 实际 {c.actual ?? "未知"}，估算 {c.estimated ?? "未知"}</span>)}</p>}
-      <div className="quota-calls scroll">
-        {(list?.calls ?? []).map((c) => (
-          <p key={`${c.source}-${c.requestId}`}><span>{c.project || "未知项目"} · {c.provider || "未知供应商"} · {c.model}{c.mode === "mock" ? " · 模拟" : ""}</span><span className="hint">{c.status} · {when(c.startedAt)} · {c.usage ? num(c.usage.inputTokens) : "未知"} Token</span></p>
-        ))}
-        {list && list.calls.length === 0 && <p className="empty-line">还没有记录。</p>}
-      </div>
-    </>
-  );
-};

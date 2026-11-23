@@ -1,6 +1,6 @@
 //! CLI 也能委派（v0.9 Phase 14 B1）：CLI 引擎（Claude Code、Codex、Grok；Antigravity 只做直接调用，不委派；Muse 还没接上）
 //! 跑任务时，Peck 的本机 MCP（`gateway/mcp.rs`）多给一个 `delegate_task`。CLI 调它，Peck 用 AGENTS 里选的委派模型
-//! 起一个子任务：Peck 循环，同一个项目（独立工作区里就是那个工作区）、同一档权限，不能再委派、不问站主、不写清单
+//! 起一个子任务：Peck Loop，同一个项目（独立工作区里就是那个工作区）、同一档权限，不能再委派、不问站主、不写清单
 //! 和记忆，最多 24 轮。子任务的事件进这个任务的事件日志（带 `subagentId`，界面挂在 CLI 那一步下面），审批照样弹给
 //! 站主（编号带前缀，`runner::route_control` 按前缀转过来），用量带模型 id、算进任务和花费上限。跑完把报告和
 //! 改了的文件回给 CLI。一个任务（会话）最多 6 次，前几句用掉的也算。
@@ -17,9 +17,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-
-/// 子任务的轮数上限（和 Peck 循环的委派一样）。
-pub const SUB_ROUNDS: u32 = 24;
 
 const SUB_BRIEF: &str = "You are a sub-agent: the main agent handed you one subtask (below). Do exactly that, then report briefly what you did, what you changed and anything you could not do. Don't ask the user questions and don't widen the scope.";
 
@@ -61,7 +58,7 @@ pub(crate) fn prepare(
     let worktree_of = (cwd != workspace.as_path()).then(|| workspace.clone());
     let config = LoopConfig {
         model_id: delegate.model_id.clone(),
-        max_rounds: SUB_ROUNDS,
+        max_rounds: delegate.rounds,
         budget: budget(store, cost_cap),
         live_spend: Some(live_spend(store)),
         oneshot: false,
@@ -191,7 +188,7 @@ pub async fn run(d: &CliDelegate, sink: &EventSink, task: &str, files: &[String]
     };
     let (status, word) = match reason {
         TurnEndReason::Done => (ToolStatus::Ok, "做完了".to_string()),
-        TurnEndReason::Interrupted | TurnEndReason::Cancelled => (ToolStatus::Cancelled, "被停下了".to_string()),
+        TurnEndReason::Interrupted => (ToolStatus::Cancelled, "被停下了".to_string()),
         _ => (ToolStatus::Failed, format!("没做完（{}）", error.unwrap_or_else(|| "出错了".into()))),
     };
     sink.emit(EventBody::SubagentCompleted { subagent_id: id, status });
@@ -248,7 +245,7 @@ mod tests {
             Duration::ZERO,
         ));
         let requests = child.requests.clone();
-        let d = prepare(&store, Delegate { model_id: model.into(), provider: child }, "run-del", &session.id, &ws_dir, PermissionLevel::Auto, None).unwrap();
+        let d = prepare(&store, Delegate { model_id: model.into(), provider: child, rounds: crate::harness::r#loop::DEFAULT_SUB_ROUNDS }, "run-del", &session.id, &ws_dir, PermissionLevel::Auto, None).unwrap();
         assert!(prompt_note(&d).contains("delegate_task"));
         let (sink, events) = EventSink::memory("claude-code");
         let text = run(&d, &sink, "把 a.txt 改成「二」", &["a.txt".into()]).await.unwrap();

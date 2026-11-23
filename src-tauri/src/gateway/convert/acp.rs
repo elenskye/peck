@@ -152,12 +152,12 @@ impl AcpConverter {
                 let inner = input["tool_name"].as_str().or(u["title"].as_str().filter(|t| t.contains("__")));
                 match inner {
                     Some(t) if t.ends_with("ask_user") => (ToolKind::Mcp, "问站主".into()),
-                    // Peck 的委派（v0.9 B1）：和 Peck 循环一样写。
+                    // Peck 的委派（v0.9 B1）：和 Peck Loop 一样写。
                     Some(t) if t.ends_with("delegate_task") => {
                         let task = input["arguments"]["task"].as_str().or(input["parameters"]["task"].as_str()).or(input["task"].as_str()).unwrap_or("");
                         (ToolKind::Other, if task.is_empty() { "交给子任务".into() } else { format!("交给子任务：{}", short(task, 60)) })
                     }
-                    // `dw__new_canvas` 写成「MCP dw · new_canvas」，和 Peck 循环、Codex 的一样。
+                    // `dw__new_canvas` 写成「MCP dw · new_canvas」，和 Peck Loop、Codex 的一样。
                     Some(t) => match t.split_once("__") {
                         Some((server, tool)) if !server.is_empty() && !tool.is_empty() => (ToolKind::Mcp, format!("MCP {server} · {}", short(tool, 50))),
                         _ => (ToolKind::Mcp, format!("用 {}", short(t, 60))),

@@ -49,6 +49,6 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 | `README.md` | 是什么、模块、怎么装和用 |
 | `HANDOFF.md` | 每轮做完更新：只留当前状态、没验的、已知问题、下一步，不追加历史 |
 | `docs/roadmap.md` | 定位、当前版本、Phase 表、之后要做的、现行授权和账本 |
-| `docs/architecture.md` | 选型、一个任务怎么跑、数据和迁移、Gateway、Peck 循环、视觉同步和打包、代码位置 |
+| `docs/architecture.md` | 选型、一个任务怎么跑、数据和迁移、Gateway、 Peck Loop 、视觉同步和打包、代码位置 |
 | `docs/design.md` | 界面的用词、默认取舍、布局、各处的样子 |
 | `docs/testing.md` | 怎么测、更新正式版的步骤、原生和真跑的办法 |

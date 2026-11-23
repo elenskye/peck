@@ -1,4 +1,4 @@
-//! Peck 循环：一个回合里反复「问模型 → 跑它要的工具 → 把结果放回去」，直到模型不再要工具。
+//! Peck Loop：一个回合里反复「问模型 → 跑它要的工具 → 把结果放回去」，直到模型不再要工具。
 //!
 //! - 模型经 Gateway 的 [`ModelProvider`] 调（真 API 或假模型），对话用和供应商无关的 `Message` / `Part`；
 //!   思考的私有数据原样挂在 `Part::Reasoning.opaque` 上，下一轮原样放回（换了供应商由 provider 丢掉）。
@@ -34,7 +34,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 
+/// 轮数上限的默认值（设置 → GENERAL 能调，见 `run::max_rounds`）：一个任务、ONE SHOT、委派的子任务。
 pub const DEFAULT_MAX_ROUNDS: u32 = 40;
+pub const DEFAULT_ONESHOT_ROUNDS: u32 = 12;
+pub const DEFAULT_SUB_ROUNDS: u32 = 24;
 
 /// 花费上限：这个月已经花了多少，上限多少（美元）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,7 +46,7 @@ pub struct Budget {
     pub spent_usd: f64,
 }
 
-/// 这个月 Peck 循环和 ONE SHOT 一共花了多少（从事件日志现算，包括别的任务同时花的）。读不到为空。
+/// 这个月 Peck Loop 和 ONE SHOT 一共花了多少（从事件日志现算，包括别的任务同时花的）。读不到为空。
 pub type SpendProbe = std::sync::Arc<dyn Fn() -> Option<f64> + Send + Sync>;
 
 /// `search_tasks`：（关键词，任务号）→ 给模型看的结果。
@@ -120,6 +123,8 @@ pub struct LoopConfig {
 pub struct Delegate {
     pub model_id: String,
     pub provider: Arc<dyn ModelProvider>,
+    /// 子任务最多几轮（设置 → GENERAL）。
+    pub rounds: u32,
 }
 
 /// 一个任务里最多委派几次。
@@ -127,7 +132,7 @@ pub const MAX_DELEGATIONS: u32 = 6;
 
 type AllowHook = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// Peck 自己的循环 + 一个模型。`conversation` 进来是之前的对话，跑完是加上这一回合的。
+/// Peck Loop + 一个模型。`conversation` 进来是之前的对话，跑完是加上这一回合的。
 pub struct PeckBackend {
     provider: Arc<dyn ModelProvider>,
     config: LoopConfig,
@@ -177,7 +182,7 @@ impl AgentBackend for PeckBackend {
         let used = self.config.delegations_used;
         Box::pin(async move {
             let level = if config.oneshot { PermissionLevel::Plan } else { task.permission };
-            let ctx = ToolContext::new(&task.cwd, level, config.spill_dir.clone(), config.runtime_dir.clone(), config.env.clone())
+            let ctx = ToolContext::new(&task.cwd, config.spill_dir.clone(), config.runtime_dir.clone(), config.env.clone())
                 .map_err(|e| GatewayError::new(ErrorKind::Internal, e))?
                 .with_extra(&config.context.folders);
             let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -1341,7 +1346,7 @@ impl Run {
         let mut config = self.config.clone();
         config.model_id = d.model_id.clone();
         config.delegate = None;
-        config.max_rounds = 24;
+        config.max_rounds = d.rounds;
         config.session_ref = None;
         // 子任务不提 Skill（v0.10 C3）、不碰快照和定时任务：那是主线的事。
         config.context.project.skill_root = None;
@@ -1405,7 +1410,7 @@ impl Run {
         let changed: Vec<String> = self.ctx.diff_summary().into_iter().filter(|f| !before.contains(&f.path)).map(|f| f.path).collect();
         let (status, word) = match end.reason {
             TurnEndReason::Done => (ToolStatus::Ok, "做完了".to_string()),
-            TurnEndReason::Interrupted | TurnEndReason::Cancelled => (ToolStatus::Cancelled, "被停下了".to_string()),
+            TurnEndReason::Interrupted => (ToolStatus::Cancelled, "被停下了".to_string()),
             _ => (ToolStatus::Failed, format!("没做完（{}）", end.error.clone().unwrap_or_else(|| "出错了".into()))),
         };
         self.emit(EventBody::SubagentCompleted { subagent_id: call_id.to_string(), status });
@@ -2037,7 +2042,7 @@ mod tests {
         let child = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![], Duration::ZERO));
         let child_requests = child.requests.clone();
         let mut cfg = config(&p, "deepseek/deepseek-flash");
-        cfg.delegate = Some(Delegate { model_id: "deepseek/deepseek-flash".into(), provider: child });
+        cfg.delegate = Some(Delegate { model_id: "deepseek/deepseek-flash".into(), provider: child, rounds: DEFAULT_SUB_ROUNDS });
         // 这个任务前几句已经委派了 6 次：这一句一次都不能再委派。
         cfg.delegations_used = MAX_DELEGATIONS;
         let backend = PeckBackend::new(parent, cfg, vec![]);
@@ -2071,7 +2076,7 @@ mod tests {
         let child_requests = child.requests.clone();
         let parent_requests = parent.requests.clone();
         let mut cfg = config(&p, "deepseek/deepseek-flash");
-        cfg.delegate = Some(Delegate { model_id: "deepseek/deepseek-flash".into(), provider: child });
+        cfg.delegate = Some(Delegate { model_id: "deepseek/deepseek-flash".into(), provider: child, rounds: DEFAULT_SUB_ROUNDS });
         let backend = PeckBackend::new(parent, cfg, vec![]);
         let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "改 a"), |_| None).await;
         assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));

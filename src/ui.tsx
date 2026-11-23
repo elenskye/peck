@@ -6,7 +6,7 @@ import { cn, type DotKind } from "@/lib/utils";
 export type IconName =
   | "check" | "x" | "play" | "ask" | "bang" | "term" | "file" | "folder" | "shield" | "globe" | "trash" | "pen"
   | "undo" | "bell" | "send" | "out" | "clock" | "lock" | "plus" | "expand" | "collapse" | "chat" | "triR" | "triD"
-  | "stop" | "gear" | "changes" | "log" | "oneshot" | "files" | "archive";
+  | "stop" | "gear" | "log" | "oneshot" | "files" | "archive";
 
 export const Icon: React.FC<{ name: IconName; size?: 12 | 16 | 24; className?: string }> = ({ name, size = 16, className }) => (
   <i aria-hidden="true" className={cn("pk-i", `pk-i--${name}`, size !== 16 && `pk-i--${size}`, className)} />
@@ -27,11 +27,11 @@ export const DotCheck: React.FC = () => (
 
 export const Dot: React.FC<{ kind: DotKind }> = ({ kind }) => <i className={cn("pk-dot", kind && `pk-dot--${kind}`)} />;
 
-/** n 格方块进度：前 `lit` 格亮，下一格是头；`still` 时不动。 */
-export const Blocks: React.FC<{ n?: number; lit: number; still?: boolean; head?: boolean; small?: boolean }> = ({ n = 28, lit, still, head = true, small }) => (
-  <div className={cn("pk-blocks", still && "pk-blocks--still", small && "pk-blocks--sm")} style={{ ["--pk-n" as string]: n }} aria-hidden="true">
-    {Array.from({ length: n }, (_, i) => (
-      <i key={i} className={i < lit ? "is-on" : i === lit && head && !still ? "is-head" : undefined} style={i < lit && !still ? { animationDelay: `${(i * 0.07).toFixed(2)}s` } : undefined} />
+/** 28 格方块进度：前 `lit` 格亮，下一格是头；`still` 时不动。 */
+export const Blocks: React.FC<{ lit: number; still?: boolean }> = ({ lit, still }) => (
+  <div className={cn("pk-blocks", still && "pk-blocks--still")} style={{ ["--pk-n" as string]: 28 }} aria-hidden="true">
+    {Array.from({ length: 28 }, (_, i) => (
+      <i key={i} className={i < lit ? "is-on" : i === lit && !still ? "is-head" : undefined} style={i < lit && !still ? { animationDelay: `${(i * 0.07).toFixed(2)}s` } : undefined} />
     ))}
   </div>
 );

@@ -4,7 +4,7 @@
 //!   或其中几个；`scope: "project"` 是整个项目回到那时）。回退哪一档都当高危，站主批了才动。
 //! - `schedule_task` / `list_schedules` / `cancel_schedule`：设、看、取消这个项目的定时任务（`schedule.rs`）。
 //!
-//! Peck 循环直接调（`loop.rs`），CLI 引擎经本机 MCP 调（`gateway/mcp.rs`），两边是同一套；怎么用写在自带的两个
+//! Peck Loop 直接调（`loop.rs`），CLI 引擎经本机 MCP 调（`gateway/mcp.rs`），两边是同一套；怎么用写在自带的两个
 //! Skill 里（`defaults/skills/`，`skills.rs` 里嵌着）和工具说明里。
 
 use crate::events::RunStatus;
@@ -389,11 +389,11 @@ fn unit_for(root: &Path, shadow: &Path, base: &str, latest: &str, before: bool, 
     let repo = ShadowRepo::with_shadow_dir(root, shadow)?;
     let now_tree = repo.create_snapshot(label)?;
     let tree = if before { base } else { latest }.to_string();
-    let mut files: Vec<UndoFile> = repo.diff_changeset(&tree, &now_tree, "")?.files.into_iter().map(|f| UndoFile { path: f.path, kind: f.kind, changed_since: false }).collect();
+    let mut files: Vec<UndoFile> = repo.diff_changeset(&tree, &now_tree)?.files.into_iter().map(|f| UndoFile { path: f.path, kind: f.kind, changed_since: false }).collect();
     if !project {
         // 没有步骤收尾过（刚开始就被打断）时，拿现在的样子当任务后的样子。
         let after = if latest == base { now_tree.as_str() } else { latest };
-        let touched: std::collections::HashSet<String> = repo.diff_changeset(base, after, "")?.files.into_iter().map(|f| f.path).collect();
+        let touched: std::collections::HashSet<String> = repo.diff_changeset(base, after)?.files.into_iter().map(|f| f.path).collect();
         files.retain(|f| touched.contains(&f.path));
     }
     Ok(Unit { repo, tree, root: extra, files })
@@ -465,13 +465,13 @@ fn describe(s: &Schedule) -> String {
     lines.join("\n")
 }
 
-/// 测试里搭一个带任务快照的项目（这里、Peck 循环、本机 MCP 的测试都用）。
+/// 测试里搭一个带任务快照的项目（这里、Peck Loop、本机 MCP 的测试都用）。
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
     use crate::flow::DispatchPlan;
     pub use crate::harness::tools::testing::TempProject;
-    use crate::snapshot::{record_run_base, record_step_finish, record_step_start};
+    use crate::snapshot::{record_run_base, record_run_finish};
 
     pub struct World {
         pub p: TempProject,
@@ -495,18 +495,16 @@ pub(crate) mod testing {
     pub fn task(w: &World, number: u64, change: impl FnOnce(&TempProject)) -> RunRecord {
         let repo = ShadowRepo::with_shadow_dir(&w.p.dir, &w.root.join("shadow")).unwrap();
         let id = format!("run-{number}");
-        let step = format!("{id}-step-1");
-        let plan = DispatchPlan { flow_id: "peck".into(), flow_name: "Peck".into(), clean_input: "改".into(), steps: vec![] };
+        let plan = DispatchPlan { steps: vec![] };
         let mut db = w.store.lock().unwrap();
         let mut record = db.create_run(&w.session, &format!("第 {number} 次"), number, &plan).unwrap();
         let base = repo.create_snapshot(&format!("{id}-base")).unwrap();
         record_run_base(&id, &repo, base.clone());
-        record_step_start(&id, &step, &repo, base.clone());
         change(&w.p);
         let after = repo.create_snapshot(&format!("{id}-after")).unwrap();
-        record_step_finish(&id, &step, after.clone());
+        record_run_finish(&id, after.clone());
         record.status = RunStatus::Succeeded;
-        record.files = repo.diff_changeset(&base, &after, &step).unwrap().files;
+        record.files = repo.diff_changeset(&base, &after).unwrap().files;
         db.save_run(&record).unwrap();
         record
     }

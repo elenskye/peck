@@ -3,13 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { api, type ApiStatus } from "@/lib/api";
 import { ipc, isMockMode, type ImageInput, type Schedule, type TeamPick } from "@/lib/ipc";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
-import { DEFAULT_SETTINGS, loadSettings, migratePick, saveSettings, type AppSettings } from "@/lib/settings";
+import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from "@/lib/settings";
 import { applyPreset, canDelegate, presetProblems } from "@/lib/presets";
 import { involvedIds, quotaHint, swapPatch } from "@/lib/quota";
 import { usageApi, type ClientCard } from "@/lib/usage";
 import { applyTheme } from "@/lib/theme";
 import type { Permission, ProjectOverview, RunRecord, TermEvent } from "@/lib/types";
-import { isAgentRun, plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
+import { plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
 import { waitingOnYou } from "@/lib/agentView";
 import { TopBar } from "@/shell/TopBar";
 import { LeftColumn, ProjectsPage } from "@/shell/LeftColumn";
@@ -57,7 +57,7 @@ const App: React.FC = () => {
   const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null);
   /** 模型列表（「谁来干」）。 */
   const [entries, setEntries] = useState<ModelEntry[]>([]);
-  /** 统一事件：任务号 → 过程（Peck 循环、CLI 引擎的任务）。 */
+  /** 统一事件：任务号 → 过程（Peck Loop、CLI 引擎的任务）。 */
   const [agentEvents, setAgentEvents] = useState<Record<string, AgentEvent[]>>({});
   /** 这次打开 App 以后发出去、还没做完的任务：任务号 → 它在哪个项目、哪个任务里。 */
   const [live, setLive] = useState<Record<string, { projectId: string; taskId: string }>>({});
@@ -231,8 +231,8 @@ const App: React.FC = () => {
     try {
       const loadedRuns = await ipc.sessionGetRuns(id);
       setRunsByTask((prev) => ({ ...prev, [id]: loadedRuns }));
-      // Peck 循环、CLI 引擎的任务：过程在事件日志里（这次打开 App 以后正在收的不重读）。
-      const agentRuns = loadedRuns.filter((r) => isAgentRun(r) && !liveRef.current[r.id]);
+      // 过程在事件日志里（这次打开 App 以后正在收的不重读；v0.8 以前的旧记录读回来是空的）。
+      const agentRuns = loadedRuns.filter((r) => !liveRef.current[r.id]);
       const loaded = await Promise.all(agentRuns.map(async (r) => [r.id, await ipc.gatewayEvents(r.id).catch(() => [] as AgentEvent[])] as const));
       if (loaded.length) setAgentEvents((prev) => {
         const next = { ...prev };
@@ -256,7 +256,7 @@ const App: React.FC = () => {
   const loadTaskRef = useRef((_id: string) => Promise.resolve());
   loadTaskRef.current = async (id: string) => { if (taskIdRef.current === id) await loadTask(id); };
 
-  /** Peck 循环、CLI 引擎的任务（统一事件）：收事件；要你批、要你答时 Peck 不在前面就发通知；做完重读任务。 */
+  /** Peck Loop、CLI 引擎的任务（统一事件）：收事件；要你批、要你答时 Peck 不在前面就发通知；做完重读任务。 */
   // 流式的事件一条一条来（每个字一条）：攒 40ms 一起放进去，不然每来一条整个任务就重算、重画一遍。
   // 用定时器不用 requestAnimationFrame：窗口藏起来时后者不走。
   const pendingEvents = useRef<Record<string, AgentEvent[]>>({});
@@ -301,7 +301,7 @@ const App: React.FC = () => {
         setLive((prev) => { const next = { ...prev }; delete next[runId]; return next; });
         void refreshProjects();
         if (s.notifyDone && !document.hasFocus()) {
-          const word = event.reason === "done" ? "做完了" : event.reason === "interrupted" || event.reason === "cancelled" ? "已停止" : "停下了";
+          const word = event.reason === "done" ? "做完了" : event.reason === "interrupted" ? "已停止" : "停下了";
           void ipc.notify(`Peck · ${word}`, plainLine(ctx.prompt).slice(0, 80)).catch(() => {});
         }
       })();
@@ -443,22 +443,6 @@ const App: React.FC = () => {
     } catch (e) { say(e); }
   }, [runningRunId, live, refreshProjects, taskId, loadTask, say]);
 
-  /** 旧记录（v0.8 以前的接力、规划 + 实施、假 Agent）没做完的：不重放旧的那一步，用现在选的谁从现在的文件接着做。 */
-  const retryStep = useCallback(async (target: RunRecord, _stepId: string) => {
-    // 归档的任务（只在设置 → ARCHIVE 里打开看）不重跑：拿回左栏才能接着发。
-    if (!project || !taskId || peekTask) return;
-    if (busy) { say("同一个项目一次跑一个任务"); return; }
-    try {
-      let evidence = "";
-      if (target.flowId.startsWith("api-")) {
-        const history = await api.taskHistory(target.id).catch(() => []);
-        evidence = history.flatMap((t) => t.tools ?? []).slice(-6).map((t) => `${t.tool.name} (${t.status}): ${t.output.slice(0, 1500)}`).join("\n");
-      }
-      const who = chosenEntry(entries, settingsRef.current)?.id ?? settingsRef.current.pick;
-      await send(`接着做上一个任务：先核对现在的文件，再做完。不要直接重放旧的步骤，被打断的那一步可能已经改过文件。\n原来要做的：${target.prompt}\n上次的结果：${target.summary ?? ""}${evidence ? `\n最后几次工具调用：\n${evidence}` : ""}`, who, (target.permission as Permission | undefined) ?? settingsRef.current.permission);
-    } catch (e) { say(e); }
-  }, [project, taskId, peekTask, busy, entries, send, say]);
-
   const openProject = useCallback(async (path?: string) => {
     try {
       const opened = path ? await ipc.workspaceOpen(path) : await ipc.workspaceChoose();
@@ -520,14 +504,13 @@ const App: React.FC = () => {
   const applyProjectDefaults = (id: string | null) => {
     const ws = projects.find((p) => p.workspace.id === id)?.workspace;
     const patch: Partial<AppSettings> = {};
-    // v0.8 以前项目里存的旧接力、规划 + 实施、假 Agent 照全局的办法换掉（换不了的不动现在选的）。
     // 项目指定了合作预设（v0.9 B2）：套用它（里面有用不了的就不换，提示一句），不看 who。
     const preset = ws?.settings?.preset ? settingsRef.current.presets.find((p) => p.id === ws.settings!.preset) : undefined;
     const problems = preset ? presetProblems(preset, entries) : [];
     if (preset && !problems.length) Object.assign(patch, applyPreset(preset, settingsRef.current));
     else if (preset) say(`这个项目的预设「${preset.name}」现在用不了：${problems.join("；")}`);
-    const moved = !preset && ws?.settings?.who ? migratePick(ws.settings.who, settingsRef.current.relay) : null;
-    if (moved?.pick && moved.pick !== settingsRef.current.pick) { patch.pick = moved.pick; if (moved.relay !== settingsRef.current.relay) patch.relay = moved.relay; }
+    const who = !preset ? ws?.settings?.who : null;
+    if (who && who !== settingsRef.current.pick) patch.pick = who;
     if (ws?.settings?.permission && ws.settings.permission !== settingsRef.current.permission) patch.permission = ws.settings.permission as Permission;
     if (Object.keys(patch).length) updateSettings(patch);
   };
@@ -746,7 +729,6 @@ const App: React.FC = () => {
                   if (event.type === "skill.reviewed") void refreshProjects();
                 }}
                 onStop={stop}
-                onRetryStep={retryStep}
                 onOpenSettings={() => { setSettingsAt(undefined); setPage("settings"); }}
                 onShowAgents={() => { if (settingsRef.current.fold.agents) updateSettings({ fold: { ...settingsRef.current.fold, agents: false } }); setAgentsFlash((n) => n + 1); }}
                 onRelocate={relocateProject}

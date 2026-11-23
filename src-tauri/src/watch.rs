@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-/// Parsed `.gitignore` rule matcher that respects workspace ignore patterns
-/// while **always force-including `.peck/`**.
+/// Parsed `.gitignore` rule matcher that respects workspace ignore patterns.
 #[derive(Debug, Clone, Default)]
 pub struct GitignoreRules {
     patterns: Vec<IgnorePattern>,
@@ -37,10 +36,6 @@ impl GitignoreRules {
             let anchored = without_trailing.starts_with('/');
             let clean = without_trailing.trim_start_matches('/').to_string();
 
-            // Never ignore `.peck` in the workspace watcher
-            if clean == ".peck" || clean.starts_with(".peck/") {
-                continue;
-            }
             if !clean.is_empty() {
                 patterns.push(IgnorePattern {
                     raw: clean,
@@ -53,15 +48,10 @@ impl GitignoreRules {
     }
 
     /// Returns `true` if `rel_path` (using `/` separators) should be ignored.
-    /// Rule: `.git` is always ignored; `.peck` and `.peck/**` are NEVER ignored.
+    /// Rule: `.git` and `.DS_Store` are always ignored.
     pub fn is_ignored(&self, rel_path: &str, is_dir: bool) -> bool {
         let normalized = rel_path.trim_matches('/');
         if normalized.is_empty() {
-            return false;
-        }
-
-        // Force-include `.peck` and anything inside `.peck/`
-        if normalized == ".peck" || normalized.starts_with(".peck/") {
             return false;
         }
 
@@ -144,14 +134,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gitignore_rules_respects_gitignore_but_forces_peck_inclusion() {
+    fn test_gitignore_rules_respects_gitignore() {
         let rules = GitignoreRules::from_gitignore_str(
             r#"
             # Dependencies & build
             node_modules/
             dist/
             *.log
-            .peck/
             "#,
         );
 
@@ -161,10 +150,6 @@ mod tests {
         assert!(rules.is_ignored("npm-debug.log", false));
         assert!(rules.is_ignored(".git", true));
 
-        // `.peck/` MUST NEVER be ignored even though `.peck/` is in `.gitignore`
-        assert!(!rules.is_ignored(".peck", true));
-        assert!(!rules.is_ignored(".peck/tasks.md", false));
-        assert!(!rules.is_ignored(".peck/handoff/run-105/intent.md", false));
         assert!(!rules.is_ignored("src/App.tsx", false));
     }
 }

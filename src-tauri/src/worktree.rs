@@ -239,7 +239,7 @@ pub struct ApplyResult {
 pub fn apply(repo: &ShadowRepo, main: &Path, base_tree: &str, run_id: &str, force: bool) -> Result<ApplyResult, String> {
     let worktree = repo.workspace_path.clone();
     let now = repo.create_snapshot(&format!("{run_id}-worktree-apply"))?;
-    let changes = repo.diff_changeset(base_tree, &now, "")?;
+    let changes = repo.diff_changeset(base_tree, &now)?;
     let mut result = ApplyResult { tree: now, ..Default::default() };
     let main_repo = ShadowRepo::with_shadow_dir(main, &repo.shadow_dir)?;
     for f in &changes.files {

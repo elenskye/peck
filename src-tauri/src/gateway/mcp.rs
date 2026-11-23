@@ -5,7 +5,7 @@
 //! - `delegate_task`：选了委派时（v0.9 B1，见 `harness/delegate.rs`）。
 //! - `create_skill`：提议存一条 Skill（v0.10 C3，见 `skill_propose`），五家 CLI 都给（站主 2026-11-16 定）。
 //! - `restore_snapshot`、`schedule_task`、`list_schedules`、`cancel_schedule`（v1.0.2，见 `harness/extras.rs`）：
-//!   快照回退和定时任务，和 Peck 循环同一套；回退先弹高危卡片，站主批了才动。
+//!   快照回退和定时任务，和 Peck Loop 同一套；回退先弹高危卡片，站主批了才动。
 //!
 //! 所以 v0.10 起每个 CLI 任务都挂这个入口（只这一次进程，不改 CLI 的配置）。
 //!

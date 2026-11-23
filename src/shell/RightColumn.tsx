@@ -294,7 +294,7 @@ const TaskLog: React.FC<{ run: RunRecord | null }> = ({ run }) => {
 /** 边干活边问：选一个引擎（API 模型和 CLI，Antigravity 除外），按 PLAN 档只读回答，不锁终端，答完一行花费。 */
 const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, settings, onSettings, onToTask, wide, onWide, say, shown }) => {
   const hide = shown ? undefined : { display: "none" };
-  const options = entries.filter((e) => e.available && e.group !== "flow" && canAutomate(e));
+  const options = entries.filter((e) => e.available && canAutomate(e));
   const pick = options.find((e) => e.id === settings.oneshotPick) ?? options.find((e) => e.id === settings.pick) ?? options.find((e) => e.group === "peck") ?? options[0] ?? null;
   const [question, setQuestion] = useState("");
   const [asked, setAsked] = useState("");
@@ -387,8 +387,8 @@ function useStored<T>(key: string, init: T): [T, (next: T) => void] {
 // ---------- FILES ----------
 
 /** 文件行（这次任务改到的标 NEW、DEL、+ −）。 */
-const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; on?: boolean; depth?: number; dir?: "open" | "closed"; gone?: boolean; onClick: () => void }> = ({ name, title, mark, on, depth = 0, dir, gone, onClick }) => (
-  <button type="button" title={title} className={cn("pk-row", dir && "pk-row--dir", (mark?.kind === "delete" || gone) && "pk-row--del", on && "is-on", gone && "pk-anim-dissolve")} style={depth ? { paddingLeft: 6 + depth * 14 } : undefined} onClick={onClick}>
+const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; on?: boolean; depth?: number; dir?: "open" | "closed"; onClick: () => void }> = ({ name, title, mark, on, depth = 0, dir, onClick }) => (
+  <button type="button" title={title} className={cn("pk-row", dir && "pk-row--dir", mark?.kind === "delete" && "pk-row--del", on && "is-on")} style={depth ? { paddingLeft: 6 + depth * 14 } : undefined} onClick={onClick}>
     <Icon name={dir === "open" ? "triD" : dir === "closed" ? "triR" : "file"} size={12} />
     <span className="pk-row-name">{name}</span>
     {mark?.kind === "create" ? <em className="pk-tag pk-tag--new">NEW</em> : mark?.kind === "delete" ? <em className="pk-tag pk-tag--del">DEL</em> : <span />}
@@ -398,10 +398,10 @@ const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; o
 );
 
 /** 用编辑器、访达打开这个文件（v0.8）。 */
-const OpenBtns: React.FC<{ workspaceId: string; path: string; app: string; say: (m: unknown) => void; off?: boolean }> = ({ workspaceId, path, app, say, off }) => (
+const OpenBtns: React.FC<{ workspaceId: string; path: string; app: string; say: (m: unknown) => void }> = ({ workspaceId, path, app, say }) => (
   <>
-    <Btn v="ghost" sm disabled={off} title={app ? `用 ${app} 打开` : "用默认的 App 打开"} onClick={() => void ipc.openPath(workspaceId, path, "editor", app).catch(say)}>OPEN</Btn>
-    <Btn v="ghost" sm disabled={off} title="在访达里选中" onClick={() => void ipc.openPath(workspaceId, path, "finder").catch(say)}>FINDER</Btn>
+    <Btn v="ghost" sm title={app ? `用 ${app} 打开` : "用默认的 App 打开"} onClick={() => void ipc.openPath(workspaceId, path, "editor", app).catch(say)}>OPEN</Btn>
+    <Btn v="ghost" sm title="在访达里选中" onClick={() => void ipc.openPath(workspaceId, path, "finder").catch(say)}>FINDER</Btn>
   </>
 );
 
@@ -522,7 +522,7 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
     if (!workspaceId || !path) return;
     void ipc.filesRead(workspaceId, path, run?.id).then((p) => { if (!cancelled) setPreview(p); }).catch((e) => { if (!cancelled) say(e); });
     if (run && mark && mark.kind !== "delete") {
-      void ipc.changesGetDiff(run.id, undefined, path).then((d) => { if (!cancelled) setMarks(addedLines(d.unifiedDiff)); }).catch(() => {});
+      void ipc.changesGetDiff(run.id, path).then((d) => { if (!cancelled) setMarks(addedLines(d)); }).catch(() => {});
     }
     return () => { cancelled = true; };
     // 只有这个任务改到的文件才跟着任务重读（图片、PDF、Office 不在任务里改就不反复读、不反复起 Quick Look）。

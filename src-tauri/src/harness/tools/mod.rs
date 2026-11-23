@@ -1,4 +1,4 @@
-//! Peck 循环的十二个工具（`update_plan`、`ask_user`、`memory`、`search_tasks`、`bash_background` 由循环自己处理：
+//! Peck Loop 的十二个工具（`update_plan`、`ask_user`、`memory`、`search_tasks`、`bash_background` 由循环自己处理：
 //! 要等站主、要发事件、要读任务记录或者要起后台进程）。v0.6 加了后三个。
 //!
 //! 读的工具只看项目里（外加这个任务落盘的命令输出）；改的工具只改项目里、不碰 `.git`；
@@ -80,9 +80,6 @@ pub fn stamp_of(bytes: &[u8]) -> Stamp {
 pub struct ToolContext {
     /// 项目根（规范化过的绝对路径）。
     pub root: PathBuf,
-    /// 权限档。现在没有工具读它（档位在循环那一层判）；`new` 的参数和测试里几十处 `ctx(level)` 都带着，先留着。
-    #[allow(dead_code)]
-    pub level: PermissionLevel,
     /// 命令输出太长时整份落盘的目录（这个任务一个）。
     pub spill_dir: PathBuf,
     /// 跑命令用的环境（站主 shell 的那份，去掉像 Key 的变量）。
@@ -107,13 +104,13 @@ pub struct ExtraRoot {
 }
 
 impl ToolContext {
-    pub fn new(root: &Path, level: PermissionLevel, spill_dir: PathBuf, runtime_dir: PathBuf, env: Vec<(String, String)>) -> Result<Self, String> {
+    /// 档位不在这里：在循环那一层判（`permission.rs`）。
+    pub fn new(root: &Path, spill_dir: PathBuf, runtime_dir: PathBuf, env: Vec<(String, String)>) -> Result<Self, String> {
         let root = root
             .canonicalize()
             .map_err(|_| "项目文件夹打不开。".to_string())?;
         Ok(Self {
             root,
-            level,
             spill_dir,
             env,
             runtime_dir,
@@ -676,11 +673,11 @@ pub(crate) mod testing {
         pub fn read(&self, rel: &str) -> String {
             std::fs::read_to_string(self.dir.join(rel)).unwrap()
         }
-        pub fn ctx(&self, level: PermissionLevel) -> ToolContext {
+        pub fn ctx(&self) -> ToolContext {
             let spill = self.dir.with_extension("spill");
             let runtime = self.dir.with_extension("runtime");
             let env = vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())];
-            ToolContext::new(&self.dir, level, spill, runtime, env).unwrap()
+            ToolContext::new(&self.dir, spill, runtime, env).unwrap()
         }
     }
 
@@ -735,7 +732,7 @@ mod tests {
         let p = TempProject::new();
         let lib = TempProject::new();
         let ro = TempProject::new();
-        let ctx = p.ctx(PermissionLevel::Edit).with_extra(&[(lib.dir.clone(), true), (ro.dir.clone(), false), (p.dir.join("inner"), true)]);
+        let ctx = p.ctx().with_extra(&[(lib.dir.clone(), true), (ro.dir.clone(), false), (p.dir.join("inner"), true)]);
         assert_eq!(ctx.extra.len(), 2, "项目里面的不算其他文件夹");
         let in_lib = lib.dir.join("a.rs");
         assert_eq!(ctx.resolve_path(&in_lib.to_string_lossy(), true).unwrap(), in_lib);

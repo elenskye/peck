@@ -346,14 +346,13 @@ pub fn apply_patch(ctx: &ToolContext, input: &Value) -> Result<ToolResult, Strin
 mod tests {
     use super::super::testing::TempProject;
     use super::*;
-    use crate::gateway::event::PermissionLevel;
     use serde_json::json;
 
     #[test]
     fn adds_updates_moves_and_deletes_in_one_patch() {
         let p = TempProject::new();
         p.write("src/app.ts", "function render() {\n  return 1;\n}\n\nfunction other() {\n  return 1;\n}\n").write("old.txt", "x\n").write("a.md", "a\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let patch = "*** Begin Patch\n*** Add File: notes/new.txt\n+你好\n+world\n*** Update File: src/app.ts\n@@ function other() {\n-  return 1;\n+  return 2;\n*** Update File: a.md\n*** Move to: b.md\n@@\n-a\n+b\n*** Delete File: old.txt\n*** End Patch\n";
         let r = apply_patch(&ctx, &json!({ "patch": patch })).unwrap();
         assert!(r.ok, "{}", r.text);
@@ -380,7 +379,7 @@ mod tests {
     fn a_missing_context_changes_nothing_and_whitespace_is_forgiven() {
         let p = TempProject::new();
         p.write("a.txt", "one\ntwo  \nthree\n").write("b.txt", "keep\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let bad = "*** Begin Patch\n*** Update File: b.txt\n-keep\n+changed\n*** Update File: a.txt\n-nope\n+x\n*** End Patch";
         let err = apply_patch(&ctx, &json!({ "patch": bad })).unwrap_err();
         assert!(err.contains("a.txt") && err.contains("一处都没改"), "{err}");
@@ -399,7 +398,7 @@ mod tests {
     fn move_to_itself_keeps_the_file_crlf_stays_and_bare_additions_append() {
         let p = TempProject::new();
         p.write("a.txt", "a\n").write("w.txt", "x\r\ny\r\nz\r\n").write("e.txt", "first\nlast\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let same = "*** Begin Patch\n*** Update File: a.txt\n*** Move to: a.txt\n@@\n-a\n+b\n*** End Patch";
         assert!(apply_patch(&ctx, &json!({ "patch": same })).unwrap().ok);
         assert_eq!(p.read("a.txt"), "b\n");

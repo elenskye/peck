@@ -1,4 +1,4 @@
-// 输入框的斜杠命令（v0.10 C2）：Peck 自己的几个，加上项目和站主的命令文件（.claude/commands/*.md）。
+// 输入框的斜杠命令（v0.10 C2）：Peck 自己的几个，加上 Peck 命令库（数据目录的 commands/*.md，v1.0.3 起不读 .claude/commands）。
 // 命令文件选了以后把正文展开进这句话（后端 slash_expand），哪家引擎都能用；CLI 自己的交互式命令（/model、/login）不转发。
 
 import type { RunRecord } from "@/lib/types";
@@ -9,8 +9,7 @@ export interface SlashItem {
   hint?: string | null;
   /** peck：Peck 自己的；file：命令文件。 */
   kind: "peck" | "file";
-  /** 命令文件在哪：project、user。 */
-  scope?: string;
+  /** 命令文件在命令库的哪个子文件夹。 */
   folder?: string | null;
   /** 选了马上做（不用再写参数）。 */
   instant?: boolean;
@@ -22,7 +21,7 @@ export const PECK_COMMANDS: SlashItem[] = [
   { name: "auto", description: "切到 AUTO；后面写了话就用 AUTO 发出去", hint: "[这句话]", kind: "peck" },
   { name: "new", description: "这个项目里新开一个任务", kind: "peck", instant: true },
   { name: "review", description: "审查上一次的改动（AGENTS 里选的审查；没选就用现在这个），只读", kind: "peck", instant: true },
-  { name: "compact", description: "压一压这个任务的对话（Peck 循环；不叫模型、不花钱）", kind: "peck", instant: true },
+  { name: "compact", description: "压一压这个任务的对话（Peck Loop；不叫模型、不花钱）", kind: "peck", instant: true },
   { name: "undo", description: "撤销上一次的改动：交给模型用任务快照放回去，动之前等你批", kind: "peck", instant: true },
   { name: "cost", description: "这个任务、这个月花了多少", kind: "peck", instant: true },
 ];

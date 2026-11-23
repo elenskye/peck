@@ -36,10 +36,14 @@ export interface AppSettings {
   permission: Permission;
   /** 任务做完、失败、要你批或答时发 macOS 通知（Peck 不在最前面时）。 */
   notifyDone: boolean;
-  /** 每月花费上限（美元）：Peck 循环（API）这个月花到这么多，下一次请求前停下。空着不管。 */
+  /** 每月花费上限（美元）：Peck Loop（API）这个月花到这么多，下一次请求前停下。空着不管。 */
   costCap: number | null;
-  /** Peck 循环一个任务最多几轮（v0.10，5–400，默认 40；后台发任务时读这里存的）。 */
+  /** Peck Loop 一个任务最多几轮（v0.10，5–400，默认 40；后台发任务时读这里存的）。 */
   maxRounds: number;
+  /** ONE SHOT 最多几轮（v1.0.3，5–400，默认 12）。 */
+  oneshotRounds: number;
+  /** 委派的子任务最多几轮（v1.0.3，5–400，默认 24；Peck Loop 和 CLI 委派的都按它）。 */
+  subRounds: number;
   /** Dock 里的 App 图标。 */
   appIcon: "j2" | "a3";
   /** 用哪个编辑器打开文件（v0.8，App 的名字，比如 Visual Studio Code；空着用系统默认的 App）。 */
@@ -68,28 +72,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyDone: true,
   costCap: 20,
   maxRounds: 40,
+  oneshotRounds: 12,
+  subRounds: 24,
   appIcon: "j2",
   editorApp: "",
   seen: {},
   seenSince: 0,
 };
-
-/** v0.4 存的「模式 + 谁来干」换成模型列表里的 id。 */
-function legacyPick(saved: { mode?: string; who?: { cli?: string; api?: string } }): string {
-  if (saved.mode === "api") return "";
-  const cli = saved.who?.cli;
-  if (cli === "muse>grok" || cli === "grok>muse") return `flow:${cli}`;
-  if (cli === "muse" || cli === "grok") return `cli:${cli}`;
-  return "";
-}
-
-/** v0.8 以前存的「谁来干」：旧的接力换成新的接力（同样两家），规划 + 实施、假 Agent 没了，回到默认。 */
-export function migratePick(pick: string, relay: AppSettings["relay"]): { pick: string; relay: AppSettings["relay"] } {
-  const old = pick.match(/^flow:(muse|grok)>(muse|grok)$/);
-  if (old) return { pick: "relay", relay: { spec: `cli:${old[1]}`, build: `cli:${old[2]}` } };
-  if (pick.startsWith("flow:") || pick === "mock") return { pick: "", relay };
-  return { pick, relay };
-}
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
@@ -99,13 +88,13 @@ export async function loadSettings(): Promise<AppSettings> {
       void saveSettings(fresh).catch(() => {});
       return fresh;
     }
-    const saved = JSON.parse(raw) as Partial<AppSettings> & { mode?: string; who?: { cli?: string; api?: string } };
-    const moved = migratePick(saved.pick ?? legacyPick(saved), { ...saved.relay });
+    // 旧版本存的 `mode`、`who`（v0.8 以前的「谁来干」）不要了：读的时候丢掉，下次存就没了。
+    const { mode: _mode, who: _who, ...saved } = JSON.parse(raw) as Partial<AppSettings> & { mode?: unknown; who?: unknown };
     const settings: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...saved,
-      pick: moved.pick,
-      relay: moved.relay,
+      pick: saved.pick ?? "",
+      relay: { ...saved.relay },
       review: saved.review ?? "",
       delegate: saved.delegate ?? "",
       presets: normalizePresets(saved.presets),

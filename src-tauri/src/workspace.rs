@@ -29,13 +29,13 @@ pub struct ProjectSettings {
     /// 这个项目默认用哪套合作预设（v0.9 B2，预设的 id；预设本身存在界面设置里）。有它就不看 `who`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
-    /// 项目即环境（v0.7）：主文件夹以外的文件夹，每个自己选能改还是只读。Peck 循环的工具和命令都认。
+    /// 项目即环境（v0.7）：主文件夹以外的文件夹，每个自己选能改还是只读。 Peck Loop 的工具和命令都认。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<ProjectFolder>,
-    /// 这个项目的环境变量（v0.7）：Peck 循环的命令、后台命令、TERM 都带上；v0.10 起 CLI 引擎也带。
+    /// 这个项目的环境变量（v0.7）：Peck Loop 的命令、后台命令、TERM 都带上；v0.10 起 CLI 引擎也带。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvVar>,
-    /// 这个项目里 Peck 循环不起的 MCP 服务器（v0.10 A2）：项目 `.mcp.json` 里的、设置里的都按名字关。
+    /// 这个项目里 Peck Loop 不起的 MCP 服务器（v0.10 A2）：项目 `.mcp.json` 里的、设置里的都按名字关。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mcp_off: Vec<String>,
     /// 这个项目里不用的 Skills（v0.10 C2，按名字）。

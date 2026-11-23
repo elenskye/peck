@@ -1,6 +1,5 @@
-//! 旧的 API 层（v0.2 起）剩下的：Key（钥匙串，Gateway 也用）、模拟 / 真实模式、百炼地域这类设置、
-//! 旧的调用和规划 + 实施记录（只读，QUOTA 页和旧任务的历史要看）。
-//! v0.8 Phase 11 删掉了旧的请求层、规划 + 实施（并进 Peck 循环的委派和合作）、开发者选项里的单次请求。
+//! Key（钥匙串，Gateway 也用）、模拟 / 真实模式、Aliyun 的地域。
+//! 旧的 API 层（v0.2–v0.7 的请求层、规划 + 实施）和它的调用记录 v1.0.3 起不再读（库里的行留着）。
 pub mod keys;
 pub mod profiles;
 mod storage;
@@ -8,8 +7,8 @@ mod storage;
 use crate::mode::ApiMode;
 use crate::state::AppState;
 use keys::Keys;
-use profiles::{AgentProfile, Config, ModelProfile, Provider};
-use serde::{Deserialize, Serialize};
+use profiles::{Config, Provider};
+use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
 
@@ -28,33 +27,6 @@ impl ApiState {
             })),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiCall {
-    pub id: String,
-    #[serde(default)]
-    pub task_id: Option<String>,
-    #[serde(default)]
-    pub run_id: Option<String>,
-    #[serde(default)]
-    pub round: Option<u32>,
-    pub mode: ApiMode,
-    pub role: String,
-    pub model: ModelProfile,
-    pub settings: AgentProfile,
-    pub prompt: String,
-    pub started_at: i64,
-    pub finished_at: Option<i64>,
-    pub status: String,
-    pub budget_counted: bool,
-    pub text: String,
-    pub reasoning: String,
-    /// 原来是旧请求层的整条回应；现在只读，留着原样。
-    #[serde(default)]
-    pub response: Option<serde_json::Value>,
-    pub error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -81,7 +53,7 @@ pub async fn api_status(state: State<'_, AppState>) -> Result<Status, String> {
     };
     Ok(Status {
         mode,
-        providers: config.providers(),
+        providers: profiles::providers(),
         config,
         keys,
     })
@@ -89,7 +61,6 @@ pub async fn api_status(state: State<'_, AppState>) -> Result<Status, String> {
 
 #[tauri::command]
 pub async fn api_save_config(config: Config, state: State<'_, AppState>) -> Result<(), String> {
-    config.validate()?;
     state
         .store
         .lock()
@@ -161,13 +132,6 @@ pub async fn api_key_set(
     Ok(())
 }
 
-/// 旧的规划 + 实施任务的调用和审查历史（只读，原样给界面）。
-#[tauri::command]
-pub async fn api_task_history(run_id: String, state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
-    let store = state.store.lock().map_err(|_| "读不到历史。")?;
-    store.api_tasks(&run_id).map_err(|e| e.to_string())
-}
-
 /// 发 HTTP 的客户端（QUOTA 页查余额用）：不跟重定向、不自动重试。
 pub fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -186,32 +150,14 @@ mod tests {
     use crate::store::Store;
 
     #[test]
-    fn config_mode_and_old_records_survive_restart() {
-        let path = std::env::temp_dir().join(format!("peck-api-history-{}.db", uuid::Uuid::new_v4()));
+    fn config_and_mode_survive_restart() {
+        let path = std::env::temp_dir().join(format!("peck-api-settings-{}.db", uuid::Uuid::new_v4()));
         let store = Store::open(&path).unwrap();
-        let config = Config::default();
-        store.save_api_config(&config).unwrap();
+        store.save_api_config(&Config { aliyun_region: profiles::AliyunRegion::Singapore }).unwrap();
         store.save_api_mode(ApiMode::Mock).unwrap();
-        store
-            .conn
-            .execute(
-                "INSERT INTO api_calls(id,task_id,started_at,record) VALUES('c1',NULL,1,?1)",
-                [serde_json::json!({"id":"c1","mode":"mock","role":"worker","model":config.models[0],"settings":config.agents[0],"prompt":"x","startedAt":1,"finishedAt":null,"status":"running","budgetCounted":true,"text":"部分","reasoning":"","response":null,"error":null}).to_string()],
-            )
-            .unwrap();
-        store.conn.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
-        store.conn.execute("INSERT INTO api_tasks(id,run_id,parent_id,role,status,record) VALUES('t1','run-1',NULL,'worker','running',?1)", [r#"{"id":"t1","status":"running","tools":[{"status":"running"}]}"#]).unwrap();
         drop(store);
         let store = Store::open(&path).unwrap();
-        store.recover_api_calls().unwrap();
-        store.recover_worker_tasks().unwrap();
         assert_eq!(store.api_mode().unwrap(), Some(ApiMode::Mock));
-        let saved = store.api_calls().unwrap();
-        assert_eq!(saved[0].status, "interrupted");
-        assert_eq!(saved[0].text, "部分");
-        let tasks = store.api_tasks("run-1").unwrap();
-        assert_eq!(tasks[0]["status"], "interrupted");
-        assert_eq!(tasks[0]["tools"][0]["status"], "interrupted");
-        assert!(store.export_api_calls().unwrap()["calls"].as_array().unwrap().len() == 1);
+        assert!(matches!(store.api_config().unwrap().aliyun_region, profiles::AliyunRegion::Singapore));
     }
 }

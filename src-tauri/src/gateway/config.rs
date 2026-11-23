@@ -134,56 +134,20 @@ fn shell_path_dirs() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// 「CLI 目录」没设时自己找一个：旧清单（`agents/*.toml`）里写的 CLI 旁边的 `bin/`、站主 shell 的 PATH，
-/// 哪个目录里能找到的引擎最多（至少两家）就用哪个。找不到返回 `None`，照旧在 PATH 里找。
-/// `shell`：也看站主 shell 的 PATH（第一次要等 shell 读完，最多 8 秒）。
-pub fn discover_cli_dir(data_dir: &std::path::Path, commands: &[&str], shell: bool) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    let mut push = |p: PathBuf| {
-        if !candidates.contains(&p) {
-            candidates.push(p);
-        }
-    };
-    if let Ok(entries) = std::fs::read_dir(data_dir.join("agents")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            for line in text.lines() {
-                let Some(value) = line.trim().strip_prefix("command").map(str::trim).and_then(|v| v.strip_prefix('=')) else { continue };
-                let command = crate::agent::expand_tilde(value.trim().trim_matches('"'));
-                if !command.is_absolute() {
-                    continue;
-                }
-                // `…/cli/muse/muse` → `…/cli/bin`，也看 `…/cli/muse` 自己。
-                if let Some(dir) = command.parent() {
-                    if let Some(root) = dir.parent() {
-                        push(root.join("bin"));
-                    }
-                    push(dir.to_path_buf());
-                }
-            }
-        }
-    }
-    if shell {
-        for dir in shell_path_dirs() {
-            push(dir);
-        }
-    }
+/// 「CLI 目录」没设时自己找一个：几个候选目录里（站主 shell 的 PATH），哪个能找到的引擎最多（至少两家）就用哪个。
+/// 找不到返回 `None`，照旧在 PATH 里找。
+fn discover_cli_dir(candidates: &[PathBuf], commands: &[&str]) -> Option<PathBuf> {
     let count = |dir: &PathBuf| commands.iter().filter(|c| is_executable(&dir.join(c))).count();
     candidates
-        .into_iter()
-        .map(|d| (count(&d), d))
+        .iter()
+        .map(|d| (count(d), d))
         .filter(|(n, _)| *n >= 2)
         .max_by_key(|(n, _)| *n)
-        .map(|(_, d)| d)
+        .map(|(_, d)| d.clone())
 }
 
-/// 打开 App 时：「CLI 目录」空着就自己找一个存上，设置里看得到、能改。先不带 shell 的 PATH 同步找一遍（快，
-/// 模型列表第一次读就用得上），找不到再在后台带上 shell 的 PATH 找。
-pub fn fill_cli_dir(store: &std::sync::Arc<std::sync::Mutex<Store>>, shell: bool) {
+/// 打开 App 时（在后台线程里，要等站主的 shell 读完，最多 8 秒）：「CLI 目录」空着就自己找一个存上，设置里看得到、能改。
+pub fn fill_cli_dir(store: &std::sync::Arc<std::sync::Mutex<Store>>) {
     let empty = store
         .lock()
         .ok()
@@ -194,7 +158,7 @@ pub fn fill_cli_dir(store: &std::sync::Arc<std::sync::Mutex<Store>>, shell: bool
     }
     let commands: Vec<String> = super::catalog::catalog().engines.iter().map(|e| e.command.clone()).collect();
     let refs: Vec<&str> = commands.iter().map(String::as_str).collect();
-    let Some(dir) = discover_cli_dir(&crate::mode::app_data_dir(), &refs, shell) else {
+    let Some(dir) = discover_cli_dir(&shell_path_dirs(), &refs) else {
         return;
     };
     if let Ok(s) = store.lock() {
@@ -263,31 +227,26 @@ pub fn adc_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn finds_the_cli_dir_next_to_the_old_manifests() {
+    fn finds_the_dir_with_the_most_engines() {
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("peck-cli-{}", uuid::Uuid::new_v4()));
         let bin = root.join("cli/bin");
+        let other = root.join("other");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::create_dir_all(root.join("cli/muse")).unwrap();
-        for name in ["claude", "codex", "muse"] {
-            let f = bin.join(name);
+        std::fs::create_dir_all(&other).unwrap();
+        for (dir, name) in [(&bin, "claude"), (&bin, "codex"), (&bin, "muse"), (&other, "codex")] {
+            let f = dir.join(name);
             std::fs::write(&f, "#!/bin/sh\n").unwrap();
             std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         std::fs::write(bin.join("grok"), "not executable").unwrap();
-        let data = root.join("data");
-        std::fs::create_dir_all(data.join("agents")).unwrap();
-        std::fs::write(
-            data.join("agents/muse.toml"),
-            format!("id = \"muse\"\ncommand     = \"{}\"\n", root.join("cli/muse/muse").display()),
-        )
-        .unwrap();
         let commands = ["claude", "codex", "muse", "grok", "agy"];
-        assert_eq!(discover_cli_dir(&data, &commands, false), Some(bin.clone()));
+        let candidates = [other.clone(), bin.clone()];
+        assert_eq!(discover_cli_dir(&candidates, &commands), Some(bin.clone()));
         // 只有一家的目录不算。
         std::fs::remove_file(bin.join("codex")).unwrap();
         std::fs::remove_file(bin.join("muse")).unwrap();
-        assert_eq!(discover_cli_dir(&data, &commands, false), None);
+        assert_eq!(discover_cli_dir(&candidates, &commands), None);
         let _ = std::fs::remove_dir_all(root);
     }
 

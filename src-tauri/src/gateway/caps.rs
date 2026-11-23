@@ -64,7 +64,7 @@ pub enum UsageGranularity {
 }
 
 impl AgentCaps {
-    /// Peck 自己的循环 + 一家 API 模型。
+    /// Peck Loop + 一家 API 模型。
     pub fn peck_loop() -> Self {
         Self {
             streaming: true,

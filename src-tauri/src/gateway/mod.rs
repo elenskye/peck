@@ -2,11 +2,11 @@
 //!
 //! 两个接口：
 //! - [`ModelProvider`]：裸模型。给对话和工具定义，流式回字、回思考、回要调用的工具；
-//!   工具由调用方（Peck 自己的循环，`harness/`）执行。
+//!   工具由调用方（Peck Loop，`harness/`）执行。
 //! - [`AgentBackend`]：整包引擎（Codex、Claude Code、Muse、Grok、Antigravity）。给一句话，
 //!   引擎自己读写跑；过程转成统一事件（[`event`]），要批的事、要问的事走控制通道（[`Control`]）。
 //!
-//! Peck 自己的循环（Phase 6 的 `harness/`）也实现 [`AgentBackend`]：里面用 [`ModelProvider`]
+//! Peck Loop（Phase 6 的 `harness/`）也实现 [`AgentBackend`]：里面用 [`ModelProvider`]
 //! 调模型、自己跑工具，对外出同一套事件。这样界面只认一套。
 //!
 //! 这一层不认识界面，也不认识任务表；事件写进事件日志和发给界面由 [`log::EventSink`] 做。
@@ -196,7 +196,7 @@ pub enum StopReason {
 
 // ───────────────────────── 整包引擎 ─────────────────────────
 
-/// 一个 CLI 引擎（或 Peck 自己的循环）。一次 `run` 是一个任务的一个回合（续接时带 `resume`）。
+/// 一个 CLI 引擎（或 Peck Loop）。一次 `run` 是一个任务的一个回合（续接时带 `resume`）。
 pub trait AgentBackend: Send + Sync {
     fn caps(&self) -> caps::AgentCaps;
     /// 跑一个回合。事件全部经 `sink` 发出（第一条是 `session.started`，最后一条是 `turn.completed`）；
@@ -207,7 +207,7 @@ pub trait AgentBackend: Send + Sync {
         sink: log::EventSink,
         control: mpsc::UnboundedReceiver<Control>,
     ) -> BoxFuture<Result<RunOutcome, GatewayError>>;
-    /// CLI 引擎：在哪找到的程序（任务开头查它读没读到项目的 MCP 用）。Peck 循环、假引擎没有。
+    /// CLI 引擎：在哪找到的程序（任务开头查它读没读到项目的 MCP 用）。 Peck Loop、假引擎没有。
     fn setup(&self) -> Option<&engines::EngineSetup> {
         None
     }

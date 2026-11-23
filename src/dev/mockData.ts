@@ -1,13 +1,9 @@
-// `?mock` 的假数据：项目列表、每个项目最近几次任务、在跑的和完成的、CLI 模式和 API 模式各有。
+// `?mock` 的假数据：项目列表、每个项目最近几次任务（在跑的、做完的、失败的、接力的、归档的），每次带一段事件日志。
 // 只在浏览器里用，刷新重置。用词照 docs/design.md。
-import type { ApiStatus, ApiTask, ModelProfile, RunLimits } from "@/lib/api";
-import type {
-  DiffResult,
-  Message,
-  RunRecord,
-  Session,
-  Workspace,
-} from "@/lib/types";
+import type { ApiStatus } from "@/lib/api";
+import type { AgentCaps, AgentEvent, FileDiff, ToolKind } from "@/lib/agentEvents";
+import type { FileChangeKind, RunRecord, Session, StepDescriptor, Workspace } from "@/lib/types";
+import type { ReplayEvent } from "@/dev/gatewayMock";
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -17,286 +13,166 @@ const DAY = 86_400_000;
 // ---------- 项目 ----------
 
 export const MOCK_WORKSPACES: Workspace[] = [
-  {
-    id: "ws-notebook",
-    path: "/Users/me/Documents/GitHub/notebook",
-    name: "notebook",
-    lastOpenedAt: NOW - 2 * MIN,
-    gitBranch: "feat/search",
-    gitignoreConfigured: true,
-  },
-  {
-    id: "ws-peck",
-    path: "/Users/me/Documents/GitHub/personal-cli-studio/peck",
-    name: "peck",
-    lastOpenedAt: NOW - 1 * HOUR,
-    gitBranch: "main",
-    gitignoreConfigured: true,
-  },
-  {
-    id: "ws-gateway",
-    path: "/Users/me/Documents/GitHub/edge-gateway",
-    name: "edge-gateway",
-    lastOpenedAt: NOW - 1 * DAY,
-    gitBranch: "release/v2.4",
-    gitignoreConfigured: false,
-  },
+  { id: "ws-notebook", path: "/Users/me/Documents/GitHub/notebook", name: "notebook", lastOpenedAt: NOW - 2 * MIN, gitBranch: "feat/search" },
+  { id: "ws-peck", path: "/Users/me/Documents/GitHub/personal-cli-studio/peck", name: "peck", lastOpenedAt: NOW - 1 * HOUR, gitBranch: "main" },
+  { id: "ws-gateway", path: "/Users/me/Documents/GitHub/edge-gateway", name: "edge-gateway", lastOpenedAt: NOW - 1 * DAY, gitBranch: "release/v2.4" },
 ];
 
 // ---------- 任务（一次对话就是一个任务） ----------
 
 export const MOCK_SESSIONS: Session[] = [
-  // notebook：在跑一个，完成两个
+  // notebook：在跑一个，做完两个
   { id: "task-12", workspaceId: "ws-notebook", title: "笔记列表加搜索框", createdAt: NOW - 6 * MIN, updatedAt: NOW - 20_000 },
   { id: "task-11", workspaceId: "ws-notebook", title: "日期统一成 YYYY-MM-DD", createdAt: NOW - 3 * HOUR, updatedAt: NOW - 3 * HOUR + 4 * MIN },
   { id: "task-10", workspaceId: "ws-notebook", title: "导出 Markdown 时保留标签", createdAt: NOW - 1 * DAY, updatedAt: NOW - 1 * DAY + 9 * MIN },
-  // peck：一个 API 规划 + 实施完成，一个 CLI 失败
+  // peck：一个接力做完，一个 CLI 失败
   { id: "task-9", workspaceId: "ws-peck", title: "设置面板加通知开关", createdAt: NOW - 1 * HOUR - 30 * MIN, updatedAt: NOW - 1 * HOUR },
   { id: "task-8", workspaceId: "ws-peck", title: "菜单栏图标在跑时变样", createdAt: NOW - 5 * HOUR, updatedAt: NOW - 5 * HOUR + 2 * MIN },
-  // edge-gateway：一个旧的完成
+  // edge-gateway：一个接力做完
   { id: "task-7", workspaceId: "ws-gateway", title: "限流中间件按路由配置", createdAt: NOW - 2 * DAY, updatedAt: NOW - 2 * DAY + 11 * MIN },
-  // edge-gateway：一个归档了的旧任务（左栏不列，设置 → ARCHIVE 里看）
+  // edge-gateway：一个归档了的任务（左栏不列，设置 → ARCHIVE 里看）
   { id: "task-6", workspaceId: "ws-gateway", title: "健康检查接口带上版本号", createdAt: NOW - 6 * DAY, updatedAt: NOW - 6 * DAY + 4 * MIN, archivedAt: NOW - 3 * DAY },
 ];
 
-// ---------- 对话 ----------
+// ---------- 任务记录和事件日志 ----------
 
-export const MOCK_MESSAGES: Record<string, Message[]> = {
-  "task-12": [
-    { id: "m-12-1", sessionId: "task-12", role: "user", content: "给笔记列表顶部加一个搜索框，按标题和正文模糊匹配，输入时实时过滤，清空后恢复全部。", createdAt: NOW - 6 * MIN },
-    { id: "m-12-2", sessionId: "task-12", role: "assistant", content: "交给 Muse → Grok：Muse 先写规范，Grok 按规范实施。改动在右栏。", runId: "run-12", createdAt: NOW - 6 * MIN + 2_000 },
-  ],
-  "task-11": [
-    { id: "m-11-1", sessionId: "task-11", role: "user", content: "把界面里所有日期显示统一成 YYYY-MM-DD，用一个共用的格式化函数。", createdAt: NOW - 3 * HOUR },
-    { id: "m-11-2", sessionId: "task-11", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-11", createdAt: NOW - 3 * HOUR + 2_000 },
-  ],
-  "task-10": [
-    { id: "m-10-1", sessionId: "task-10", role: "user", content: "导出 Markdown 的时候把笔记的标签写进文件头（YAML front matter）。", createdAt: NOW - 1 * DAY },
-    { id: "m-10-2", sessionId: "task-10", role: "assistant", content: "交给 API 模式 · 单模型干活（DeepSeek Flash）。", runId: "run-10", createdAt: NOW - 1 * DAY + 2_000 },
-  ],
-  "task-9": [
-    { id: "m-9-1", sessionId: "task-9", role: "user", content: "设置里加一个「通知」开关，默认开，关了以后任务完成不发 macOS 通知。", createdAt: NOW - 1 * HOUR - 30 * MIN },
-    { id: "m-9-2", sessionId: "task-9", role: "assistant", content: "交给 API 模式 · 规划 + 实施（规划 Claude Opus 5.5，实施 DeepSeek Flash）。", runId: "run-9", createdAt: NOW - 1 * HOUR - 30 * MIN + 2_000 },
-  ],
-  "task-8": [
-    { id: "m-8-1", sessionId: "task-8", role: "user", content: "有任务在跑的时候把菜单栏小图标换成带点的那个。", createdAt: NOW - 5 * HOUR },
-    { id: "m-8-2", sessionId: "task-8", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-8", createdAt: NOW - 5 * HOUR + 2_000 },
-  ],
-  "task-6": [
-    { id: "m-6-1", sessionId: "task-6", role: "user", content: "/healthz 的返回里带上构建版本号和提交号。", createdAt: NOW - 6 * DAY },
-    { id: "m-6-2", sessionId: "task-6", role: "assistant", content: "交给 Grok 单个跑完整个任务。", runId: "run-6", createdAt: NOW - 6 * DAY + 2_000 },
-  ],
-  "task-7": [
-    { id: "m-7-1", sessionId: "task-7", role: "user", content: "限流中间件改成可以按路由单独配置阈值，没配的用全局默认。", createdAt: NOW - 2 * DAY },
-    { id: "m-7-2", sessionId: "task-7", role: "assistant", content: "交给 Muse → Grok：Muse 先写规范，Grok 按规范实施。", runId: "run-7", createdAt: NOW - 2 * DAY + 2_000 },
-  ],
+const SEED_CAPS: AgentCaps = {
+  streaming: true, reasoningReplay: true, tools: "peck", approvals: "live", askUser: true, steer: true, interrupt: true,
+  resume: true, mcpInject: false, usage: "per_turn", cost: "priced", quota: false, switchModel: true, needsTty: false, directOnly: false,
 };
 
-// ---------- 任务记录 ----------
+const started = (engine: string, model: string | null = null): ReplayEvent => ({ type: "session.started", engine, model, caps: SEED_CAPS, tools: [], mcp: [] });
+const say = (id: string, text: string): ReplayEvent => ({ type: "message.completed", itemId: id, text });
+const tool = (callId: string, name: string, kind: ToolKind, title: string, input: unknown = {}): ReplayEvent => ({ type: "tool_call.started", callId, name, kind, title, input });
+const ok = (callId: string, output: string, extra: { exitCode?: number; diff?: FileDiff[] } = {}): ReplayEvent => ({ type: "tool_call.completed", callId, status: "ok", output, exitCode: extra.exitCode ?? null, diff: extra.diff ?? [], durationMs: 900 });
+const edited = (path: string, additions: number, deletions: number, created = false): FileDiff => ({ path, change: created ? "added" : "modified", additions, deletions });
+const usage = (usd: number, source: "priced" | "estimated" = "priced"): ReplayEvent => ({ type: "usage.updated", usage: { input: 9_200, output: 1_400, cacheRead: 4_100, cacheWrite: null, reasoning: null }, cost: { usd, source }, scope: "turn" });
+const turnEnd = (reason: "done" | "error" = "done", error: string | null = null): ReplayEvent => ({ type: "turn.completed", turnId: "turn-1", reason, error });
+const stage = (role: "spec" | "implement", engine: string, model: string | null, title: string, body: ReplayEvent[]): ReplayEvent[] => [
+  { type: "stage.started", stage: role, engine, model, title },
+  started(engine, model),
+  ...body,
+  { type: "stage.completed", stage: role, reason: "done", error: null, verdict: null },
+];
 
-const DEMO_NOTICE = "浏览器演示数据，没有调用真实 AI。";
+/** 编上号、按时间排开（从 `from` 起，每条隔 `gap` 毫秒）。 */
+const stamp = (events: ReplayEvent[], from: number, gap: number): AgentEvent[] => events.map((e, i) => ({ ...(e as object), seq: i, at: from + i * gap }) as AgentEvent);
+
+/** 只有一步的任务记录（现在的任务都这样）。 */
+function step(runId: string, agentId: string, label: string, status: StepDescriptor["status"], from: number, to?: number): StepDescriptor {
+  return { id: `${runId}-step-1`, stepIndex: 0, agentId, agentName: label, title: label, status, startedAt: from, ...(to ? { finishedAt: to, durationMs: to - from } : {}) };
+}
+const file = (path: string, kind: FileChangeKind, additions: number, deletions: number) => ({ path, kind, additions, deletions });
+
+const SPEC_9 = `## 目标
+设置里加一个「通知」开关，默认开；关了以后任务做完不发 macOS 通知。
+
+## 改哪些文件
+- \`src-tauri/src/settings.rs\`：加 \`notifications\` 字段，默认 true
+- \`src-tauri/src/notify.rs\`：发通知前读这个开关
+
+## 步骤
+1. 读两处现在的写法
+2. 加字段和默认值
+3. 发通知前判断
+4. 跑 \`cargo test\`
+
+## 验收标准
+1. 新装的设置里 \`notifications\` 是 true
+2. 关了以后 \`notify\` 直接返回
+3. \`cargo test\` 过
+
+## 不做什么
+不动通知的文案和样式。`;
+
+const SPEC_7 = `## 目标
+限流中间件支持按路由单独配置阈值，没配的用全局默认。
+
+## 改哪些文件
+- \`internal/ratelimit/config.go\`：加 \`PerRoute map[string]Limit\`
+- \`internal/ratelimit/middleware.go\`：先查路由，查不到用全局
+- \`internal/ratelimit/middleware_test.go\`：补两个用例
+
+## 步骤
+1. 配置加表
+2. 中间件改查找顺序
+3. 补用例，跑 \`go test ./...\`
+
+## 验收标准
+1. 配了的路由按自己的阈值
+2. 没配的回落全局
+3. \`go test ./...\` 过
+
+## 不做什么
+不改全局默认值。`;
 
 const run12: RunRecord = {
-  id: "run-12",
-  number: 12,
-  sessionId: "task-12",
-  flowId: "muse-grok",
-  flowName: "Muse → Grok",
-  prompt: MOCK_MESSAGES["task-12"][0].content,
-  status: "running",
-  startedAt: NOW - 6 * MIN,
-  steps: [
-    { id: "run-12-spec", stepIndex: 0, agentId: "muse", agentName: "Muse", title: "写规范", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [".peck/handoff/12/intent.md", ".peck/tasks.md"], exitCode: 0, durationMs: 38_000, startedAt: NOW - 6 * MIN, finishedAt: NOW - 6 * MIN + 38_000 },
-    { id: "run-12-build", stepIndex: 1, agentId: "grok", agentName: "Grok", title: "实施", executionMode: "mock", notice: DEMO_NOTICE, status: "running", expects: [], startedAt: NOW - 5 * MIN },
-  ],
-  tasks: [
-    { id: "run-12-t1", text: "写规范（.peck/handoff/12/intent.md）", completed: true },
-    { id: "run-12-t2", text: "新建 SearchBox 组件（src/components/SearchBox.tsx）", completed: true },
-    { id: "run-12-t3", text: "笔记列表接上搜索框，按标题和正文过滤", completed: false },
-    { id: "run-12-t4", text: "清空输入恢复全部，补一个用例", completed: false },
-  ],
-  files: [
-    { path: ".peck/handoff/12/intent.md", kind: "create", additions: 31, deletions: 0, stepId: "run-12-spec" },
-    { path: ".peck/tasks.md", kind: "create", additions: 6, deletions: 0, stepId: "run-12-spec" },
-    { path: "src/components/SearchBox.tsx", kind: "create", additions: 42, deletions: 0, stepId: "run-12-build" },
-    { path: "src/pages/NoteList.tsx", kind: "modify", additions: 0, deletions: 0, stepId: "run-12-build" },
-  ],
-  logs: [
-    { id: "l-12-1", runId: "run-12", stepId: "run-12-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 读项目结构：src/pages/NoteList.tsx、src/store/notes.ts", timestamp: NOW - 6 * MIN + 3_000 },
-    { id: "l-12-2", runId: "run-12", stepId: "run-12-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 写规范 → .peck/handoff/12/intent.md（31 行）", timestamp: NOW - 6 * MIN + 30_000 },
-    { id: "l-12-3", runId: "run-12", stepId: "run-12-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 写任务清单 → .peck/tasks.md（4 条）", timestamp: NOW - 6 * MIN + 36_000 },
-    { id: "l-12-4", runId: "run-12", stepId: "run-12-build", agentId: "grok", stream: "stdout", chunk: "[grok] 读规范 .peck/handoff/12/intent.md", timestamp: NOW - 5 * MIN },
-    { id: "l-12-5", runId: "run-12", stepId: "run-12-build", agentId: "grok", stream: "stdout", chunk: "[grok] 新建 src/components/SearchBox.tsx（+42）", timestamp: NOW - 3 * MIN },
-    { id: "l-12-6", runId: "run-12", stepId: "run-12-build", agentId: "grok", stream: "stdout", chunk: "[grok] 正在改 src/pages/NoteList.tsx …", timestamp: NOW - 20_000 },
-  ],
+  id: "run-12", number: 12, sessionId: "task-12",
+  prompt: "给笔记列表顶部加一个搜索框，按标题和正文模糊匹配，输入时实时过滤，清空后恢复全部。",
+  status: "running", startedAt: NOW - 6 * MIN,
+  steps: [step("run-12", "peck", "Peck · Claude Fable 5.2", "running", NOW - 6 * MIN)],
+  files: [file("src/components/SearchBox.tsx", "create", 12, 0)],
+  who: "api:anthropic/claude-fable-5-2", permission: "edit",
 };
 
 const run11: RunRecord = {
-  id: "run-11",
-  number: 11,
-  sessionId: "task-11",
-  flowId: "single-grok",
-  flowName: "Grok",
-  prompt: MOCK_MESSAGES["task-11"][0].content,
-  status: "succeeded",
-  startedAt: NOW - 3 * HOUR + 2_000,
-  finishedAt: NOW - 3 * HOUR + 4 * MIN,
-  summary: "新增 formatDate，替换了 2 处日期显示。验证：pnpm check 通过。",
-  steps: [
-    { id: "run-11-build", stepIndex: 0, agentId: "grok", agentName: "Grok", title: "跑完整个任务", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 226_000, startedAt: NOW - 3 * HOUR + 2_000, finishedAt: NOW - 3 * HOUR + 4 * MIN },
-  ],
-  tasks: [
-    { id: "run-11-t1", text: "新增 formatDate(date) → YYYY-MM-DD（src/lib/date.ts）", completed: true },
-    { id: "run-11-t2", text: "笔记列表和详情页的日期改用 formatDate", completed: true },
-    { id: "run-11-t3", text: "pnpm check 通过", completed: true },
-  ],
-  files: [
-    { path: "src/lib/date.ts", kind: "create", additions: 9, deletions: 0, stepId: "run-11-build" },
-    { path: "src/pages/NoteList.tsx", kind: "modify", additions: 2, deletions: 1, stepId: "run-11-build" },
-    { path: "src/pages/NoteDetail.tsx", kind: "modify", additions: 2, deletions: 1, stepId: "run-11-build" },
-  ],
-  logs: [
-    { id: "l-11-1", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] 找到 2 处 toLocaleDateString()", timestamp: NOW - 3 * HOUR + 10_000 },
-    { id: "l-11-2", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] 新建 src/lib/date.ts（+9）", timestamp: NOW - 3 * HOUR + 60_000 },
-    { id: "l-11-3", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] 改 src/pages/NoteList.tsx（+2 -1）、src/pages/NoteDetail.tsx（+2 -1）", timestamp: NOW - 3 * HOUR + 150_000 },
-    { id: "l-11-4", runId: "run-11", stepId: "run-11-build", agentId: "grok", stream: "stdout", chunk: "[grok] pnpm check … 通过", timestamp: NOW - 3 * HOUR + 220_000 },
-  ],
+  id: "run-11", number: 11, sessionId: "task-11",
+  prompt: "把界面里所有日期显示统一成 YYYY-MM-DD，用一个共用的格式化函数。",
+  status: "succeeded", startedAt: NOW - 3 * HOUR + 2_000, finishedAt: NOW - 3 * HOUR + 4 * MIN,
+  summary: "新增 formatDate，替换了 2 处日期显示。pnpm check 通过。",
+  steps: [step("run-11", "grok", "Grok", "succeeded", NOW - 3 * HOUR + 2_000, NOW - 3 * HOUR + 4 * MIN)],
+  files: [file("src/lib/date.ts", "create", 9, 0), file("src/pages/NoteList.tsx", "modify", 2, 1), file("src/pages/NoteDetail.tsx", "modify", 2, 1)],
+  who: "cli:grok", permission: "edit",
 };
 
 const run10: RunRecord = {
-  id: "run-10",
-  number: 10,
-  sessionId: "task-10",
-  flowId: "api-worker",
-  flowName: "API 模式 · 单模型干活 · DeepSeek Flash",
-  prompt: MOCK_MESSAGES["task-10"][0].content,
-  status: "succeeded",
-  startedAt: NOW - 1 * DAY + 2_000,
-  finishedAt: NOW - 1 * DAY + 9 * MIN,
-  summary: "导出时写入 tags 字段，补了一个单元测试。验证：vitest 3 个用例通过。",
-  steps: [
-    { id: "run-10-worker", stepIndex: 0, agentId: "api-worker", agentName: "DeepSeek Flash", title: "单模型干活", executionMode: "api-mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 7 * MIN, startedAt: NOW - 1 * DAY + 2_000, finishedAt: NOW - 1 * DAY + 9 * MIN },
-  ],
-  tasks: [
-    { id: "run-10-t1", text: "exportMarkdown 写入 front matter 的 tags", completed: true },
-    { id: "run-10-t2", text: "补 export.test.ts 用例", completed: true },
-  ],
-  files: [
-    { path: "src/lib/export.ts", kind: "modify", additions: 7, deletions: 1, stepId: "run-10-worker" },
-    { path: "src/lib/export.test.ts", kind: "modify", additions: 11, deletions: 0, stepId: "run-10-worker" },
-  ],
-  logs: [
-    { id: "l-10-1", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 1 轮 · read_file src/lib/export.ts", timestamp: NOW - 1 * DAY + 5_000 },
-    { id: "l-10-2", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 2 轮 · write_file src/lib/export.ts", timestamp: NOW - 1 * DAY + 90_000 },
-    { id: "l-10-3", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 3 轮 · write_file src/lib/export.test.ts", timestamp: NOW - 1 * DAY + 200_000 },
-    { id: "l-10-4", runId: "run-10", stepId: "run-10-worker", agentId: "api-worker", stream: "stdout", chunk: "第 4 轮 · run_command pnpm vitest run src/lib/export.test.ts → 3 passed", timestamp: NOW - 1 * DAY + 400_000 },
-  ],
+  id: "run-10", number: 10, sessionId: "task-10",
+  prompt: "导出 Markdown 的时候把笔记的标签写进文件头（YAML front matter）。",
+  status: "succeeded", startedAt: NOW - 1 * DAY + 2_000, finishedAt: NOW - 1 * DAY + 9 * MIN,
+  summary: "导出时写入 tags 字段，补了一个单元测试。vitest 3 个用例通过。",
+  steps: [step("run-10", "peck", "Peck · DeepSeek V4.1 Flash 1017", "succeeded", NOW - 1 * DAY + 2_000, NOW - 1 * DAY + 9 * MIN)],
+  files: [file("src/lib/export.ts", "modify", 7, 1), file("src/lib/export.test.ts", "modify", 11, 0)],
+  who: "api:deepseek/deepseek-flash", permission: "edit",
 };
 
 const run9: RunRecord = {
-  id: "run-9",
-  number: 9,
-  sessionId: "task-9",
-  flowId: "api-supervisor",
-  flowName: "API 模式 · 规划 + 实施 · Claude Opus 5.5 / DeepSeek Flash",
-  prompt: MOCK_MESSAGES["task-9"][0].content,
-  status: "succeeded",
-  startedAt: NOW - 1 * HOUR - 30 * MIN + 2_000,
-  finishedAt: NOW - 1 * HOUR,
-  summary: "规划拆成 1 个子任务，实施一次通过。改了设置存储和通知发送两处。验证：cargo test 通过。",
-  steps: [
-    { id: "run-9-plan", stepIndex: 0, agentId: "api-supervisor", agentName: "Claude Opus 5.5", title: "规划和审查", executionMode: "api-mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 28 * MIN, startedAt: NOW - 1 * HOUR - 30 * MIN + 2_000, finishedAt: NOW - 1 * HOUR },
-    { id: "run-9-impl", stepIndex: 1, agentId: "api-worker", agentName: "DeepSeek Flash", title: "实施：通知开关", executionMode: "api-mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 12 * MIN, startedAt: NOW - 1 * HOUR - 20 * MIN, finishedAt: NOW - 1 * HOUR - 8 * MIN },
-  ],
-  tasks: [
-    { id: "run-9-t1", text: "设置里加 notifications 字段，默认 true", completed: true },
-    { id: "run-9-t2", text: "发通知前读这个开关", completed: true },
-    { id: "run-9-t3", text: "cargo test 通过", completed: true },
-  ],
-  files: [
-    { path: "src-tauri/src/settings.rs", kind: "modify", additions: 6, deletions: 0, stepId: "run-9-impl" },
-    { path: "src-tauri/src/notify.rs", kind: "modify", additions: 3, deletions: 1, stepId: "run-9-impl" },
-  ],
-  logs: [
-    { id: "l-9-1", runId: "run-9", stepId: "run-9-plan", agentId: "api-supervisor", stream: "stdout", chunk: "规划：1 个子任务「通知开关」，写入范围 src-tauri/src/settings.rs、src-tauri/src/notify.rs", timestamp: NOW - 1 * HOUR - 25 * MIN },
-    { id: "l-9-2", runId: "run-9", stepId: "run-9-impl", agentId: "api-worker", stream: "stdout", chunk: "第 1 轮 · read_file src-tauri/src/settings.rs", timestamp: NOW - 1 * HOUR - 19 * MIN },
-    { id: "l-9-3", runId: "run-9", stepId: "run-9-impl", agentId: "api-worker", stream: "stdout", chunk: "第 3 轮 · run_command cargo test → ok", timestamp: NOW - 1 * HOUR - 9 * MIN },
-    { id: "l-9-4", runId: "run-9", stepId: "run-9-plan", agentId: "api-supervisor", stream: "stdout", chunk: "审查：通过。开关默认开，关了不发通知，测试覆盖两种情况。", timestamp: NOW - 1 * HOUR - 2 * MIN },
-  ],
+  id: "run-9", number: 9, sessionId: "task-9",
+  prompt: "设置里加一个「通知」开关，默认开，关了以后任务完成不发 macOS 通知。",
+  status: "succeeded", startedAt: NOW - 1 * HOUR - 30 * MIN + 2_000, finishedAt: NOW - 1 * HOUR,
+  summary: "settings.rs 加了 notifications 字段（默认 true），notify.rs 发通知前读开关。cargo test 通过。",
+  steps: [step("run-9", "team", "Peck · Claude Opus 5.5 写规范 → Peck · DeepSeek V4.1 Flash 1017 实施", "succeeded", NOW - 1 * HOUR - 30 * MIN + 2_000, NOW - 1 * HOUR)],
+  files: [file("src-tauri/src/settings.rs", "modify", 6, 0), file("src-tauri/src/notify.rs", "modify", 3, 1)],
+  who: "team:api:anthropic/claude-opus-5-5|api:deepseek/deepseek-flash|", permission: "edit",
 };
 
 const run8: RunRecord = {
-  id: "run-8",
-  number: 8,
-  sessionId: "task-8",
-  flowId: "single-grok",
-  flowName: "Grok",
-  prompt: MOCK_MESSAGES["task-8"][0].content,
-  status: "failed",
-  startedAt: NOW - 5 * HOUR + 2_000,
-  finishedAt: NOW - 5 * HOUR + 2 * MIN,
-  summary: "Grok 登录过期，没改任何文件。重新登录后可以重跑这一步。",
-  steps: [
-    { id: "run-8-build", stepIndex: 0, agentId: "grok", agentName: "Grok", title: "跑完整个任务", executionMode: "mock", notice: DEMO_NOTICE, status: "failed", expects: [], exitCode: 1, durationMs: 4_000, startedAt: NOW - 5 * HOUR + 2_000, finishedAt: NOW - 5 * HOUR + 6_000 },
-  ],
-  tasks: [],
+  id: "run-8", number: 8, sessionId: "task-8",
+  prompt: "有任务在跑的时候把菜单栏小图标换成带点的那个。",
+  status: "failed", startedAt: NOW - 5 * HOUR + 2_000, finishedAt: NOW - 5 * HOUR + 2 * MIN,
+  summary: "没做完：Grok 没登录，在终端跑 grok login 再试。没改文件。",
+  steps: [step("run-8", "grok", "Grok", "failed", NOW - 5 * HOUR + 2_000, NOW - 5 * HOUR + 2 * MIN)],
   files: [],
-  logs: [
-    { id: "l-8-1", runId: "run-8", stepId: "run-8-build", agentId: "grok", stream: "stderr", chunk: "[grok] error: not logged in. Run `grok login` and try again.", timestamp: NOW - 5 * HOUR + 5_000 },
-  ],
+  who: "cli:grok", permission: "edit",
 };
 
 const run7: RunRecord = {
-  id: "run-7",
-  number: 7,
-  sessionId: "task-7",
-  flowId: "muse-grok",
-  flowName: "Muse → Grok",
-  prompt: MOCK_MESSAGES["task-7"][0].content,
-  status: "succeeded",
-  startedAt: NOW - 2 * DAY + 2_000,
-  finishedAt: NOW - 2 * DAY + 11 * MIN,
-  summary: "Muse 写了规范和 4 条任务，Grok 改了 3 个文件。验证：go test ./... 通过。",
-  steps: [
-    { id: "run-7-spec", stepIndex: 0, agentId: "muse", agentName: "Muse", title: "写规范", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [".peck/handoff/7/intent.md", ".peck/tasks.md"], exitCode: 0, durationMs: 50_000, startedAt: NOW - 2 * DAY + 2_000, finishedAt: NOW - 2 * DAY + 52_000 },
-    { id: "run-7-build", stepIndex: 1, agentId: "grok", agentName: "Grok", title: "实施", executionMode: "mock", notice: DEMO_NOTICE, status: "succeeded", expects: [], exitCode: 0, durationMs: 9 * MIN, startedAt: NOW - 2 * DAY + 60_000, finishedAt: NOW - 2 * DAY + 11 * MIN },
-  ],
-  tasks: [
-    { id: "run-7-t1", text: "写规范（.peck/handoff/7/intent.md）", completed: true },
-    { id: "run-7-t2", text: "RateLimit 配置加 per_route 表", completed: true },
-    { id: "run-7-t3", text: "中间件先查路由阈值，没有再用全局", completed: true },
-    { id: "run-7-t4", text: "go test ./... 通过", completed: true },
-  ],
-  files: [
-    { path: ".peck/handoff/7/intent.md", kind: "create", additions: 24, deletions: 0, stepId: "run-7-spec" },
-    { path: ".peck/tasks.md", kind: "create", additions: 6, deletions: 0, stepId: "run-7-spec" },
-    { path: "internal/ratelimit/config.go", kind: "modify", additions: 14, deletions: 2, stepId: "run-7-build" },
-    { path: "internal/ratelimit/middleware.go", kind: "modify", additions: 9, deletions: 3, stepId: "run-7-build" },
-    { path: "internal/ratelimit/middleware_test.go", kind: "modify", additions: 22, deletions: 0, stepId: "run-7-build" },
-  ],
-  logs: [
-    { id: "l-7-1", runId: "run-7", stepId: "run-7-spec", agentId: "muse", stream: "stdout", chunk: "[muse] 写规范 → .peck/handoff/7/intent.md（24 行）、任务清单 4 条", timestamp: NOW - 2 * DAY + 50_000 },
-    { id: "l-7-2", runId: "run-7", stepId: "run-7-build", agentId: "grok", stream: "stdout", chunk: "[grok] 改 internal/ratelimit/config.go、middleware.go，补 middleware_test.go", timestamp: NOW - 2 * DAY + 8 * MIN },
-    { id: "l-7-3", runId: "run-7", stepId: "run-7-build", agentId: "grok", stream: "stdout", chunk: "[grok] go test ./... → ok", timestamp: NOW - 2 * DAY + 10 * MIN },
-  ],
+  id: "run-7", number: 7, sessionId: "task-7",
+  prompt: "限流中间件改成可以按路由单独配置阈值，没配的用全局默认。",
+  status: "succeeded", startedAt: NOW - 2 * DAY + 2_000, finishedAt: NOW - 2 * DAY + 11 * MIN,
+  summary: "Muse 写了规范，Grok 改了 3 个文件。go test ./... 通过。",
+  steps: [step("run-7", "team", "Muse 写规范 → Grok 实施", "succeeded", NOW - 2 * DAY + 2_000, NOW - 2 * DAY + 11 * MIN)],
+  files: [file("internal/ratelimit/config.go", "modify", 14, 2), file("internal/ratelimit/middleware.go", "modify", 9, 3), file("internal/ratelimit/middleware_test.go", "modify", 22, 0)],
+  who: "team:cli:muse|cli:grok|", permission: "edit",
 };
 
 const run6: RunRecord = {
-  ...run7,
-  id: "run-6",
-  number: 6,
-  sessionId: "task-6",
-  flowId: "grok",
-  flowName: "Grok",
-  prompt: MOCK_MESSAGES["task-6"][0].content,
-  startedAt: NOW - 6 * DAY + 2_000,
-  finishedAt: NOW - 6 * DAY + 4 * MIN,
-  summary: "Grok 在 /healthz 里加了 version、commit 两个字段，构建时注入。验证：go test ./... 通过。",
-  steps: [{ ...run7.steps[1], id: "run-6-build", stepIndex: 0, startedAt: NOW - 6 * DAY + 2_000, finishedAt: NOW - 6 * DAY + 4 * MIN }],
-  tasks: [],
+  id: "run-6", number: 6, sessionId: "task-6",
+  prompt: "/healthz 的返回里带上构建版本号和提交号。",
+  status: "succeeded", startedAt: NOW - 6 * DAY + 2_000, finishedAt: NOW - 6 * DAY + 4 * MIN,
+  summary: "/healthz 加了 version、commit 两个字段，构建时注入。go test ./... 通过。",
+  steps: [step("run-6", "grok", "Grok", "succeeded", NOW - 6 * DAY + 2_000, NOW - 6 * DAY + 4 * MIN)],
   files: [],
-  stepFiles: {},
-  logs: [],
+  who: "cli:grok", permission: "edit",
 };
 
 /** 每个任务的记录，键是任务 id。 */
@@ -310,16 +186,100 @@ export const MOCK_RUNS: Record<string, RunRecord[]> = {
   "task-6": [run6],
 };
 
+/** 每次的事件日志（中栏的过程）。run-12 一直在跑：最后一步没收尾，也没有 turn.completed。 */
+export const MOCK_EVENTS: Record<string, AgentEvent[]> = {
+  "run-12": stamp([
+    started("peck", "anthropic/claude-fable-5-2"),
+    { type: "turn.started", turnId: "turn-1" },
+    { type: "plan.updated", steps: [{ text: "看笔记列表和数据从哪来", status: "completed" }, { text: "新建 SearchBox 组件", status: "completed" }, { text: "列表接上搜索框、按标题和正文过滤", status: "in_progress" }] },
+    say("m1", "我先看一下笔记列表和数据是怎么来的。"),
+    tool("c1", "read_file", "read", "读 src/pages/NoteList.tsx"), ok("c1", "export function NoteList() { … }"),
+    tool("c2", "read_file", "read", "读 src/store/notes.ts"), ok("c2", "export function useNotes() { … }"),
+    tool("c3", "write_file", "edit", "写 src/components/SearchBox.tsx"), ok("c3", "写好了", { diff: [edited("src/components/SearchBox.tsx", 12, 0, true)] }),
+    say("m2", "组件好了，接到列表上。"),
+    tool("c4", "write_patch", "edit", "改 src/pages/NoteList.tsx"),
+  ], NOW - 6 * MIN, 20_000),
+  "run-11": stamp([
+    started("grok"),
+    say("m1", "找到 2 处 toLocaleDateString()，先加一个共用的 formatDate。"),
+    tool("c1", "Grep", "search", "搜「toLocaleDateString」"), ok("c1", "src/pages/NoteList.tsx:21\nsrc/pages/NoteDetail.tsx:8"),
+    tool("c2", "Write", "edit", "写 src/lib/date.ts"), ok("c2", "", { diff: [edited("src/lib/date.ts", 9, 0, true)] }),
+    tool("c3", "Edit", "edit", "改 src/pages/NoteList.tsx"), ok("c3", "", { diff: [edited("src/pages/NoteList.tsx", 2, 1)] }),
+    tool("c4", "Edit", "edit", "改 src/pages/NoteDetail.tsx"), ok("c4", "", { diff: [edited("src/pages/NoteDetail.tsx", 2, 1)] }),
+    tool("c5", "Bash", "run", "跑 pnpm check"), ok("c5", "$ tsc --noEmit", { exitCode: 0 }),
+    say("m2", "新增 formatDate，替换了 2 处日期显示。pnpm check 通过。"),
+    usage(0.031, "estimated"),
+    turnEnd(),
+  ], NOW - 3 * HOUR + 2_000, 15_000),
+  "run-10": stamp([
+    started("peck", "deepseek/deepseek-flash"),
+    tool("c1", "read_file", "read", "读 src/lib/export.ts"), ok("c1", "export function exportMarkdown(note: Note): string { … }"),
+    tool("c2", "write_patch", "edit", "改 src/lib/export.ts"), ok("c2", "改好了", { diff: [edited("src/lib/export.ts", 7, 1)] }),
+    tool("c3", "write_patch", "edit", "改 src/lib/export.test.ts"), ok("c3", "改好了", { diff: [edited("src/lib/export.test.ts", 11, 0)] }),
+    tool("c4", "bash_run", "run", "跑 pnpm vitest run src/lib/export.test.ts"), ok("c4", "Test Files  1 passed (1)\nTests  3 passed (3)", { exitCode: 0 }),
+    say("m1", "导出时把 tags 写进 front matter，补了一个用例。vitest 3 个用例通过。\n\n→ 导入 Markdown 时也读回标签"),
+    usage(0.0042),
+    turnEnd(),
+  ], NOW - 1 * DAY + 2_000, 60_000),
+  "run-9": stamp([
+    { type: "turn.started", turnId: "turn-1" },
+    ...stage("spec", "peck", "anthropic/claude-opus-5-5", "Peck · Claude Opus 5.5 写规范", [
+      tool("s1", "read_file", "read", "读 src-tauri/src/settings.rs"), ok("s1", "pub struct Settings { … }"),
+      tool("s2", "read_file", "read", "读 src-tauri/src/notify.rs"), ok("s2", "pub fn notify(title: &str) { … }"),
+      say("s-spec", SPEC_9),
+      usage(0.021),
+    ]),
+    ...stage("implement", "peck", "deepseek/deepseek-flash", "Peck · DeepSeek V4.1 Flash 1017 实施", [
+      say("b1", "照规范改两处。"),
+      tool("b2", "write_patch", "edit", "改 src-tauri/src/settings.rs"), ok("b2", "改好了", { diff: [edited("src-tauri/src/settings.rs", 6, 0)] }),
+      tool("b3", "write_patch", "edit", "改 src-tauri/src/notify.rs"), ok("b3", "改好了", { diff: [edited("src-tauri/src/notify.rs", 3, 1)] }),
+      tool("b4", "bash_run", "run", "跑 cargo test"), ok("b4", "test result: ok. 41 passed; 0 failed", { exitCode: 0 }),
+      say("b5", "settings.rs 加了 notifications 字段（默认 true），notify.rs 发通知前读开关。cargo test 通过。"),
+      usage(0.0036),
+    ]),
+    turnEnd(),
+  ], NOW - 1 * HOUR - 30 * MIN + 2_000, 90_000),
+  "run-8": stamp([
+    started("grok"),
+    { type: "error", message: "Grok 没登录：在终端跑 grok login 再试。", fatal: true },
+    turnEnd("error", "Grok 没登录：在终端跑 grok login 再试。"),
+  ], NOW - 5 * HOUR + 2_000, 4_000),
+  "run-7": stamp([
+    { type: "turn.started", turnId: "turn-1" },
+    ...stage("spec", "muse", null, "Muse 写规范", [
+      tool("s1", "read", "read", "读 internal/ratelimit/config.go"), ok("s1", "type Config struct { … }"),
+      tool("s2", "read", "read", "读 internal/ratelimit/middleware.go"), ok("s2", "func Middleware(cfg Config) … { … }"),
+      say("s-spec", SPEC_7),
+      usage(0.012, "estimated"),
+    ]),
+    ...stage("implement", "grok", null, "Grok 实施", [
+      tool("b1", "edit", "edit", "改 internal/ratelimit/config.go"), ok("b1", "", { diff: [edited("internal/ratelimit/config.go", 14, 2)] }),
+      tool("b2", "edit", "edit", "改 internal/ratelimit/middleware.go"), ok("b2", "", { diff: [edited("internal/ratelimit/middleware.go", 9, 3)] }),
+      tool("b3", "edit", "edit", "改 internal/ratelimit/middleware_test.go"), ok("b3", "", { diff: [edited("internal/ratelimit/middleware_test.go", 22, 0)] }),
+      tool("b4", "execute", "run", "跑 go test ./..."), ok("b4", "ok  edge-gateway/internal/ratelimit  0.41s", { exitCode: 0 }),
+      say("b5", "按规范改了 3 个文件：配置加 PerRoute，中间件先查路由再回落全局，补了两个用例。go test ./... 通过。"),
+      usage(0.024, "estimated"),
+    ]),
+    turnEnd(),
+  ], NOW - 2 * DAY + 2_000, 50_000),
+  "run-6": stamp([
+    started("grok"),
+    tool("c1", "Bash", "run", "跑 go test ./..."), ok("c1", "ok  edge-gateway/internal/health  0.12s", { exitCode: 0 }),
+    say("m1", "/healthz 加了 version、commit 两个字段，构建时用 -ldflags 注入。go test ./... 通过。"),
+    usage(0.009, "estimated"),
+    turnEnd(),
+  ], NOW - 6 * DAY + 2_000, 30_000),
+};
+
 // ---------- Diff（键 `${runId}:${path}`） ----------
 
-function created(runId: string, stepId: string, path: string, body: string, language = "markdown"): DiffResult {
+/** 演示的 Diff：FILES 用它标出这次加的行；新建的文件内容也从这里取。 */
+export interface MockDiff { kind: FileChangeKind; additions: number; deletions: number; unifiedDiff: string; contentAfter?: string }
+
+function created(path: string, body: string): MockDiff {
   const lines = body.replace(/\n$/, "").split("\n");
   return {
-    runId,
-    stepId,
-    filePath: path,
     kind: "create",
-    language,
     additions: lines.length,
     deletions: 0,
     contentAfter: body,
@@ -327,61 +287,8 @@ function created(runId: string, stepId: string, path: string, body: string, lang
   };
 }
 
-const INTENT_12 = `# 笔记列表搜索框 · 规范
-
-> 任务 12 · Muse 写 · 项目 notebook
-
-## 目标
-笔记列表顶部放一个搜索框，按标题和正文模糊匹配，输入时实时过滤，清空后恢复全部。
-
-## 要点
-- 匹配不分大小写；中文直接按子串。
-- 过滤只在前端做，不改存储。
-- 空结果显示「没有匹配的笔记」。
-
-## 文件
-| 文件 | 改法 |
-|---|---|
-| src/components/SearchBox.tsx | 新建：受控输入框，带清空按钮 |
-| src/pages/NoteList.tsx | 接上搜索框，列表按关键字过滤 |
-`;
-
-const TASKS_12 = `# 任务清单
-
-- [x] 写规范（.peck/handoff/12/intent.md）
-- [x] 新建 SearchBox 组件（src/components/SearchBox.tsx）
-- [ ] 笔记列表接上搜索框，按标题和正文过滤
-- [ ] 清空输入恢复全部，补一个用例
-`;
-
-const INTENT_7 = `# 限流按路由配置 · 规范
-
-> 任务 7 · Muse 写 · 项目 edge-gateway
-
-## 目标
-限流中间件支持按路由单独配置阈值，没配的用全局默认。
-
-## 要点
-- 配置里加 per_route: map[string]Limit。
-- 中间件先查路由，查不到再用全局。
-- 补两个用例：命中路由阈值、回落全局。
-`;
-
-const TASKS_7 = `# 任务清单
-
-- [x] 写规范（.peck/handoff/7/intent.md）
-- [x] RateLimit 配置加 per_route 表
-- [x] 中间件先查路由阈值，没有再用全局
-- [x] go test ./... 通过
-`;
-
-export const MOCK_DIFFS: Record<string, DiffResult> = {
-  "run-12:.peck/handoff/12/intent.md": created("run-12", "run-12-spec", ".peck/handoff/12/intent.md", INTENT_12),
-  "run-12:.peck/tasks.md": created("run-12", "run-12-spec", ".peck/tasks.md", TASKS_12),
-  "run-12:src/components/SearchBox.tsx": created(
-    "run-12",
-    "run-12-build",
-    "src/components/SearchBox.tsx",
+export const MOCK_DIFFS: Record<string, MockDiff> = {
+  "run-12:src/components/SearchBox.tsx": created("src/components/SearchBox.tsx",
     `import React from "react";
 
 export interface SearchBoxProps {
@@ -404,24 +311,15 @@ export const SearchBox: React.FC<SearchBoxProps> = ({ value, onChange }) => (
     )}
   </div>
 );
-`,
-    "typescript",
-  ),
+`),
   "run-12:src/pages/NoteList.tsx": {
-    runId: "run-12",
-    stepId: "run-12-build",
-    filePath: "src/pages/NoteList.tsx",
     kind: "modify",
-    language: "typescript",
     additions: 0,
     deletions: 0,
     unifiedDiff: "",
   },
 
-  "run-11:src/lib/date.ts": created(
-    "run-11",
-    "run-11-build",
-    "src/lib/date.ts",
+  "run-11:src/lib/date.ts": created("src/lib/date.ts",
     `/** 日期统一显示成 YYYY-MM-DD。 */
 export function formatDate(input: Date | number | string): string {
   const d = new Date(input);
@@ -430,15 +328,9 @@ export function formatDate(input: Date | number | string): string {
   const day = String(d.getDate()).padStart(2, "0");
   return \`\${y}-\${m}-\${day}\`;
 }
-`,
-    "typescript",
-  ),
+`),
   "run-11:src/pages/NoteList.tsx": {
-    runId: "run-11",
-    stepId: "run-11-build",
-    filePath: "src/pages/NoteList.tsx",
     kind: "modify",
-    language: "typescript",
     additions: 2,
     deletions: 1,
     unifiedDiff: `diff --git a/src/pages/NoteList.tsx b/src/pages/NoteList.tsx
@@ -457,11 +349,7 @@ export function formatDate(input: Date | number | string): string {
          </li>`,
   },
   "run-11:src/pages/NoteDetail.tsx": {
-    runId: "run-11",
-    stepId: "run-11-build",
-    filePath: "src/pages/NoteDetail.tsx",
     kind: "modify",
-    language: "typescript",
     additions: 2,
     deletions: 1,
     unifiedDiff: `diff --git a/src/pages/NoteDetail.tsx b/src/pages/NoteDetail.tsx
@@ -477,11 +365,7 @@ export function formatDate(input: Date | number | string): string {
   },
 
   "run-10:src/lib/export.ts": {
-    runId: "run-10",
-    stepId: "run-10-worker",
-    filePath: "src/lib/export.ts",
     kind: "modify",
-    language: "typescript",
     additions: 7,
     deletions: 1,
     unifiedDiff: `diff --git a/src/lib/export.ts b/src/lib/export.ts
@@ -500,11 +384,7 @@ export function formatDate(input: Date | number | string): string {
  }`,
   },
   "run-10:src/lib/export.test.ts": {
-    runId: "run-10",
-    stepId: "run-10-worker",
-    filePath: "src/lib/export.test.ts",
     kind: "modify",
-    language: "typescript",
     additions: 11,
     deletions: 0,
     unifiedDiff: `diff --git a/src/lib/export.test.ts b/src/lib/export.test.ts
@@ -527,11 +407,7 @@ export function formatDate(input: Date | number | string): string {
   },
 
   "run-9:src-tauri/src/settings.rs": {
-    runId: "run-9",
-    stepId: "run-9-impl",
-    filePath: "src-tauri/src/settings.rs",
     kind: "modify",
-    language: "rust",
     additions: 6,
     deletions: 0,
     unifiedDiff: `diff --git a/src-tauri/src/settings.rs b/src-tauri/src/settings.rs
@@ -549,11 +425,7 @@ export function formatDate(input: Date | number | string): string {
 +}`,
   },
   "run-9:src-tauri/src/notify.rs": {
-    runId: "run-9",
-    stepId: "run-9-impl",
-    filePath: "src-tauri/src/notify.rs",
     kind: "modify",
-    language: "rust",
     additions: 3,
     deletions: 1,
     unifiedDiff: `diff --git a/src-tauri/src/notify.rs b/src-tauri/src/notify.rs
@@ -569,14 +441,8 @@ export function formatDate(input: Date | number | string): string {
  }`,
   },
 
-  "run-7:.peck/handoff/7/intent.md": created("run-7", "run-7-spec", ".peck/handoff/7/intent.md", INTENT_7),
-  "run-7:.peck/tasks.md": created("run-7", "run-7-spec", ".peck/tasks.md", TASKS_7),
   "run-7:internal/ratelimit/config.go": {
-    runId: "run-7",
-    stepId: "run-7-build",
-    filePath: "internal/ratelimit/config.go",
     kind: "modify",
-    language: "plaintext",
     additions: 14,
     deletions: 2,
     unifiedDiff: `diff --git a/internal/ratelimit/config.go b/internal/ratelimit/config.go
@@ -604,11 +470,7 @@ export function formatDate(input: Date | number | string): string {
  }`,
   },
   "run-7:internal/ratelimit/middleware.go": {
-    runId: "run-7",
-    stepId: "run-7-build",
-    filePath: "internal/ratelimit/middleware.go",
     kind: "modify",
-    language: "plaintext",
     additions: 9,
     deletions: 3,
     unifiedDiff: `diff --git a/internal/ratelimit/middleware.go b/internal/ratelimit/middleware.go
@@ -633,11 +495,7 @@ export function formatDate(input: Date | number | string): string {
  		})`,
   },
   "run-7:internal/ratelimit/middleware_test.go": {
-    runId: "run-7",
-    stepId: "run-7-build",
-    filePath: "internal/ratelimit/middleware_test.go",
     kind: "modify",
-    language: "plaintext",
     additions: 22,
     deletions: 0,
     unifiedDiff: `diff --git a/internal/ratelimit/middleware_test.go b/internal/ratelimit/middleware_test.go
@@ -669,60 +527,6 @@ export function formatDate(input: Date | number | string): string {
 +	}
 +}`,
   },
-};
-
-// ---------- API 模式的调用历史（右栏「调用与审查历史」） ----------
-
-const LIMITS: RunLimits = { maxRounds: 12, maxToolCalls: 80, maxContextBytes: 180000, maxTotalTokens: 500000, maxDelegations: 4, maxReworks: 1, workerMaxRounds: 6 };
-
-const DEEPSEEK: ModelProfile = { id: "deepseek-flash", name: "DeepSeek Flash", providerId: "deepseek", apiModel: "deepseek-flash", contextWindow: 128000, maxOutputTokens: 8192, thinking: "switch", efforts: [], tools: true };
-const OPUS: ModelProfile = { id: "claude-opus-5-5", name: "Claude Opus 5.5", providerId: "anthropic", apiModel: "claude-opus-5-5", contextWindow: 200000, maxOutputTokens: 16000, thinking: "switch", efforts: ["low", "medium", "high"], tools: true };
-
-export const MOCK_API_TASKS: Record<string, ApiTask[]> = {
-  "run-10": [
-    {
-      id: "apitask-10", runId: "run-10", parentId: null, previousTaskId: null, stepId: "run-10-worker",
-      title: "导出 Markdown 时保留标签", paths: [], acceptance: "", attempt: 1, review: null,
-      changeset: { files: run10.files },
-      mode: "mock", model: DEEPSEEK, settings: { role: "worker", modelId: "deepseek-flash", thinking: false, effort: null, maxOutputTokens: 8192 },
-      status: "completed", round: 4, limits: LIMITS, callIds: ["call-10-1", "call-10-2", "call-10-3", "call-10-4"],
-      summary: run10.summary ?? null, inputTokens: 18_420, outputTokens: 2_310,
-      tools: [
-        { callId: "call-10-1", tool: { id: "t1", name: "read_file", arguments: { path: "src/lib/export.ts" } }, status: "completed", output: "export function exportMarkdown(note: Note): string { … }", startedAt: NOW - 1 * DAY + 5_000, finishedAt: NOW - 1 * DAY + 5_200 },
-        { callId: "call-10-2", tool: { id: "t2", name: "write_file", arguments: { path: "src/lib/export.ts" } }, status: "completed", output: "写入 18 行", startedAt: NOW - 1 * DAY + 90_000, finishedAt: NOW - 1 * DAY + 90_300 },
-        { callId: "call-10-3", tool: { id: "t3", name: "write_file", arguments: { path: "src/lib/export.test.ts" } }, status: "completed", output: "写入 27 行", startedAt: NOW - 1 * DAY + 200_000, finishedAt: NOW - 1 * DAY + 200_300 },
-        { callId: "call-10-4", tool: { id: "t4", name: "run_command", arguments: { command: "pnpm vitest run src/lib/export.test.ts" } }, status: "completed", output: "Test Files  1 passed (1)\nTests  3 passed (3)", startedAt: NOW - 1 * DAY + 400_000, finishedAt: NOW - 1 * DAY + 412_000 },
-      ],
-    },
-  ],
-  "run-9": [
-    {
-      id: "apitask-9", runId: "run-9", parentId: null, previousTaskId: null, stepId: "run-9-plan",
-      title: "设置面板加通知开关", paths: [], acceptance: "", attempt: 1, review: null,
-      changeset: { files: [] },
-      mode: "mock", model: OPUS, settings: { role: "supervisor", modelId: "claude-opus-5-5", thinking: true, effort: "medium", maxOutputTokens: 16000 },
-      status: "completed", round: 3, limits: LIMITS, callIds: ["call-9-1", "call-9-2", "call-9-3"],
-      summary: "拆成 1 个子任务交给实施的模型；审查通过。", inputTokens: 9_800, outputTokens: 1_450,
-      tools: [
-        { callId: "call-9-1", tool: { id: "t1", name: "list_files", arguments: { path: "src-tauri/src" } }, status: "completed", output: "settings.rs\nnotify.rs\n…", startedAt: NOW - 1 * HOUR - 28 * MIN, finishedAt: NOW - 1 * HOUR - 28 * MIN + 300 },
-        { callId: "call-9-2", tool: { id: "t2", name: "delegate_task", arguments: { title: "通知开关", paths: ["src-tauri/src/settings.rs", "src-tauri/src/notify.rs"] } }, status: "completed", output: "子任务完成，改了 2 个文件", startedAt: NOW - 1 * HOUR - 20 * MIN, finishedAt: NOW - 1 * HOUR - 8 * MIN },
-      ],
-    },
-    {
-      id: "apitask-9-1", runId: "run-9", parentId: "apitask-9", previousTaskId: null, stepId: "run-9-impl",
-      title: "通知开关", paths: ["src-tauri/src/settings.rs", "src-tauri/src/notify.rs"], acceptance: "设置里有 notifications 字段默认 true；关了不发通知；cargo test 通过", attempt: 1,
-      review: { decision: "accept", feedback: "开关默认开，关了不发通知，测试覆盖两种情况。", reviewedAt: NOW - 1 * HOUR - 2 * MIN },
-      changeset: { files: run9.files },
-      mode: "mock", model: DEEPSEEK, settings: { role: "worker", modelId: "deepseek-flash", thinking: false, effort: null, maxOutputTokens: 8192 },
-      status: "completed", round: 3, limits: LIMITS, callIds: ["call-9-w1", "call-9-w2", "call-9-w3"],
-      summary: "settings.rs 加 notifications 字段（默认 true），notify.rs 发通知前读开关。cargo test 通过。", inputTokens: 12_300, outputTokens: 1_900,
-      tools: [
-        { callId: "call-9-w1", tool: { id: "t1", name: "read_file", arguments: { path: "src-tauri/src/settings.rs" } }, status: "completed", output: "pub struct Settings { … }", startedAt: NOW - 1 * HOUR - 19 * MIN, finishedAt: NOW - 1 * HOUR - 19 * MIN + 200 },
-        { callId: "call-9-w2", tool: { id: "t2", name: "write_file", arguments: { path: "src-tauri/src/notify.rs" } }, status: "completed", output: "写入 11 行", startedAt: NOW - 1 * HOUR - 14 * MIN, finishedAt: NOW - 1 * HOUR - 14 * MIN + 300 },
-        { callId: "call-9-w3", tool: { id: "t3", name: "run_command", arguments: { command: "cargo test" } }, status: "completed", output: "test result: ok. 41 passed; 0 failed", startedAt: NOW - 1 * HOUR - 9 * MIN, finishedAt: NOW - 1 * HOUR - 8 * MIN },
-      ],
-    },
-  ],
 };
 
 // ---------- 项目里的文件（右栏 FILES） ----------
@@ -767,31 +571,23 @@ export const MOCK_FILES: Record<string, Record<string, string>> = {
 /** 照忽略规则藏起来的文件夹（演示）。 */
 export const MOCK_HIDDEN: Record<string, number> = { "ws-notebook": 2, "ws-peck": 3, "ws-gateway": 1 };
 
-// ---------- 设置里的供应商、模型（演示） ----------
+// ---------- 设置里的供应商（演示） ----------
 
 export const MOCK_API_STATUS: ApiStatus = {
   mode: "mock",
   providers: [
-    { id: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com", protocol: "anthropic" },
-    { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", protocol: "chatCompletions" },
-    { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com", protocol: "responses" },
-    { id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com", protocol: "gemini" },
-    { id: "aliyun", name: "Aliyun", baseUrl: "https://dashscope.aliyuncs.com", protocol: "qwen" },
+    { id: "anthropic", name: "Anthropic" },
+    { id: "deepseek", name: "DeepSeek" },
+    { id: "openai", name: "OpenAI" },
+    { id: "google", name: "Google Gemini" },
+    { id: "aliyun", name: "Aliyun" },
   ],
-  config: {
-    models: [OPUS, DEEPSEEK],
-    agents: [
-      { role: "supervisor", modelId: "claude-opus-5-5", thinking: true, effort: "medium", maxOutputTokens: 16000 },
-      { role: "worker", modelId: "deepseek-flash", thinking: false, effort: null, maxOutputTokens: 8192 },
-    ],
-    aliyunRegion: "beijing",
-    aliyunWorkspaceId: "",
-  },
+  config: { aliyunRegion: "beijing" },
   keys: [
     { providerId: "anthropic", state: "saved" },
     { providerId: "deepseek", state: "saved" },
     { providerId: "openai", state: "missing" },
-    { providerId: "gemini", state: "missing" },
+    { providerId: "google", state: "missing" },
     { providerId: "aliyun", state: "missing" },
   ],
 };

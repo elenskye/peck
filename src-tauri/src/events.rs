@@ -10,20 +10,10 @@ pub struct StepDescriptor {
     pub agent_name: String,
     pub title: String,
     pub status: StepStatus,
-    pub expects: Vec<String>,
     pub exit_code: Option<i32>,
     pub duration_ms: Option<u64>,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
-    pub execution_mode: Option<String>,
-    pub notice: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum StreamType {
-    Stdout,
-    Stderr,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,28 +37,17 @@ pub enum RunStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct TaskItem {
-    pub id: String,
-    pub text: String,
-    pub completed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct FileChangeItem {
     pub path: String,
     pub kind: String, // "create" | "modify" | "delete"
     pub additions: usize,
     pub deletions: usize,
-    pub step_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeSetSummary {
     pub files: Vec<FileChangeItem>,
-    pub total_additions: usize,
-    pub total_deletions: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,8 +56,6 @@ pub enum RunEvent {
     #[serde(rename_all = "camelCase")]
     RunStarted {
         run_id: String,
-        flow_id: String,
-        flow_name: String,
         steps: Vec<StepDescriptor>,
     },
     #[serde(rename_all = "camelCase")]
@@ -87,20 +64,6 @@ pub enum RunEvent {
         step_id: String,
         step_index: usize,
         agent_id: String,
-    },
-    #[serde(rename_all = "camelCase")]
-    StepExecution {
-        run_id: String,
-        step_id: String,
-        mode: String,
-        notice: String,
-    },
-    #[serde(rename_all = "camelCase")]
-    StepOutput {
-        run_id: String,
-        step_id: String,
-        stream: StreamType,
-        chunk: String,
     },
     #[serde(rename_all = "camelCase")]
     StepFinished {
@@ -119,53 +82,21 @@ pub enum RunEvent {
     },
 }
 
-/// Event sink for `RunEvent` streams: an in-memory collector, or one that also persists
-/// each event into the run record.
+/// 把任务记录的变化（开始、那一步开始和做完、收尾）写进 `runs` 那一行。存不进去只在终端里记一笔。
 #[derive(Clone)]
-pub enum EventSink {
-    Memory(Arc<Mutex<Vec<RunEvent>>>),
-    Persistent {
-        target: Box<EventSink>,
-        store: Arc<Mutex<crate::store::Store>>,
-    },
+pub struct EventSink {
+    store: Arc<Mutex<crate::store::Store>>,
 }
 
 impl EventSink {
-    pub fn new_memory() -> (Self, Arc<Mutex<Vec<RunEvent>>>) {
-        let store = Arc::new(Mutex::new(Vec::new()));
-        (Self::Memory(store.clone()), store)
+    pub fn new(store: Arc<Mutex<crate::store::Store>>) -> Self {
+        Self { store }
     }
 
     pub fn emit(&self, event: RunEvent) {
-        match self {
-            Self::Persistent { target, store } => {
-                let result = store
-                    .lock()
-                    .map_err(|e| e.to_string())
-                    .and_then(|mut db| db.record_event(&event).map_err(|e| e.to_string()));
-                if let Err(error) = result {
-                    eprintln!("Peck 历史保存失败: {error}");
-                    let value = serde_json::to_value(&event).unwrap_or_default();
-                    target.emit(RunEvent::StepOutput {
-                        run_id: value["payload"]["runId"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                        step_id: value["payload"]["stepId"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                        stream: StreamType::Stderr,
-                        chunk: format!("历史保存失败：{error}"),
-                    });
-                }
-                target.emit(event);
-            }
-            Self::Memory(buf) => {
-                if let Ok(mut guard) = buf.lock() {
-                    guard.push(event);
-                }
-            }
+        let result = self.store.lock().map_err(|e| e.to_string()).and_then(|mut db| db.record_event(&event).map_err(|e| e.to_string()));
+        if let Err(error) = result {
+            eprintln!("Peck 历史保存失败: {error}");
         }
     }
 }

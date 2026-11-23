@@ -162,7 +162,6 @@ pub fn search_text(ctx: &ToolContext, input: &Value) -> Result<ToolResult, Strin
 mod tests {
     use super::super::testing::TempProject;
     use super::*;
-    use crate::gateway::event::PermissionLevel;
     use serde_json::json;
 
     fn project() -> TempProject {
@@ -178,7 +177,7 @@ mod tests {
     #[test]
     fn literal_by_default_and_respects_gitignore() {
         let p = project();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let r = search_text(&ctx, &json!({"pattern":"<h1>"})).unwrap().text;
         assert!(r.contains("src/App.tsx:2: <h1>Todo</h1>"), "{r}");
         assert!(r.contains("src/b.ts:1:"));
@@ -192,7 +191,7 @@ mod tests {
     #[test]
     fn modes_glob_context_and_paging() {
         let p = project();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         assert_eq!(search_text(&ctx, &json!({"pattern":"<h1>","mode":"files"})).unwrap().text, "src/App.tsx\nsrc/b.ts");
         assert_eq!(search_text(&ctx, &json!({"pattern":"<h1>","mode":"count","glob":"*.tsx"})).unwrap().text, "src/App.tsx:1");
         let r = search_text(&ctx, &json!({"pattern":"Todo","context":1,"path":"src"})).unwrap().text;

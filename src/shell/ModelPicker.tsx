@@ -1,5 +1,5 @@
 // 「谁来干」（站主 2026-11-13 定；v0.8 改）。
-//   FLOW：怎么干——API（Peck 循环配一个 API 模型）、CLI（一个 CLI 整包干）、接力（任意两个，前一个写规范、
+//   FLOW：怎么干——API（Peck Loop 配一个 API 模型）、CLI（一个 CLI 整包干）、接力（任意两个，前一个写规范、
 //         后一个实施；API 模型和 CLI 都行，Antigravity 除外）。审查、委派是另外两行（AGENTS 里）。
 //   这里的 WhoPicker 是 ONE SHOT 和项目设置用的小号：只有 API、CLI。
 // 支持思考强度的模型、CLI 旁边再出一个强度选择。
@@ -33,7 +33,7 @@ export const RELAY_ENTRY: ModelEntry = {
 
 /** 能选的：用得了的，加上接力（至少有一个不是只做直接调用的才有）。 */
 export function pickable(entries: ModelEntry[]): ModelEntry[] {
-  const list = entries.filter((e) => e.available && e.group !== "flow");
+  const list = entries.filter((e) => e.available);
   return list.some((e) => !e.directOnly) ? [...list, RELAY_ENTRY] : list;
 }
 
@@ -47,7 +47,7 @@ export function teamable(entries: ModelEntry[]): ModelEntry[] {
 export type FlowKind = "api" | "cli" | "relay";
 
 const FLOWS: Array<{ id: FlowKind; label: string; note: string; none: string }> = [
-  { id: "api", label: "API", note: "Peck 循环 · 一个 API 模型", none: "先在设置里配 Key" },
+  { id: "api", label: "API", note: "Peck Loop · 一个 API 模型", none: "先在设置里配 Key" },
   { id: "cli", label: "CLI", note: "一个 CLI 整包干", none: "没检测到 CLI" },
 ];
 

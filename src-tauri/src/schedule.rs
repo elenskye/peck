@@ -1,5 +1,5 @@
 //! 定时任务：到点了 Peck 替站主在这个项目里发一句话。入口在对话里（v1.0.2）：模型用 `schedule_task` /
-//! `list_schedules` / `cancel_schedule` 设、看、取消（`harness/extras.rs`，Peck 循环直接调、CLI 经本机 MCP 调），
+//! `list_schedules` / `cancel_schedule` 设、看、取消（`harness/extras.rs`，Peck Loop 直接调、CLI 经本机 MCP 调），
 //! 界面只在 PROJECTS 头上列出来看。
 //!
 //! - **谁来干**：设的时候 AGENTS 里选的那一套（接力、审查、委派都带着）；站主话里点了名的就用点名的那一个。
@@ -617,7 +617,7 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
     )
 }
 
-/// 界面设置里的每月花费上限（定时任务的 Peck 循环也受它管）。
+/// 界面设置里的每月花费上限（定时任务的 Peck Loop 也受它管）。
 fn cost_cap(state: &AppState) -> Option<f64> {
     let raw = state.store.lock().ok()?.setting("ui").ok()??;
     serde_json::from_str::<serde_json::Value>(&raw).ok()?.get("costCap")?.as_f64()
@@ -719,9 +719,9 @@ async fn tick(app: &tauri::AppHandle) {
 }
 
 #[tauri::command]
-pub async fn schedule_list(workspace_id: Option<String>, state: tauri::State<'_, AppState>) -> Result<Vec<Schedule>, String> {
+pub async fn schedule_list(state: tauri::State<'_, AppState>) -> Result<Vec<Schedule>, String> {
     let db = state.store.lock().map_err(|_| "读不到定时任务。")?;
-    db.schedules(workspace_id.as_deref()).map_err(|e| e.to_string())
+    db.schedules(None).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

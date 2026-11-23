@@ -1,4 +1,4 @@
-//! 统一事件：Peck 自己的循环和每个 CLI 引擎都转成这一套，界面只认它。
+//! 统一事件：Peck Loop 和每个 CLI 引擎都转成这一套，界面只认它。
 //!
 //! 和 `src/lib/agentEvents.ts` 一一对应（改一边就改另一边；`tests::ts_mirror_lists_every_type` 会查）。
 //! 每条事件在事件日志里另存一份原件（`raw` 列），不认识的东西变成 `raw` 事件，不丢、不报错。
@@ -31,7 +31,7 @@ pub enum EventBody {
     /// 引擎起来了：它是谁、能做什么、带了哪些工具和 MCP。
     #[serde(rename = "session.started")]
     SessionStarted {
-        /// 引擎 id：`peck`（Peck 自己的循环）、`codex`、`claude-code`、`muse`、`grok`、`antigravity`。
+        /// 引擎 id：`peck`（Peck Loop）、`codex`、`claude-code`、`muse`、`grok`、`antigravity`。
         engine: String,
         #[serde(default)]
         model: Option<String>,
@@ -187,7 +187,7 @@ pub enum EventBody {
         usage: TokenUsage,
         cost: Cost,
         scope: UsageScope,
-        /// 哪个模型花的（v0.9）：Peck 循环填目录里的模型 id（委派的子任务是子任务的模型），QUOTA 按它记；
+        /// 哪个模型花的（v0.9）：Peck Loop 填目录里的模型 id（委派的子任务是子任务的模型），QUOTA 按它记；
         /// CLI 引擎不填（按引擎记）。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
@@ -243,9 +243,9 @@ pub enum EventBody {
         name: String,
         description: String,
         body: String,
-        /// `project`（项目的 `.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`user`（`~/.claude/skills`）。
+        /// `project`（项目的 `.claude/skills`）、`project-skills`（和 AGENTS.md 同级的 `skills/`）、`user`（Peck 的全局 Skill，数据目录的 `skills/`）。
         scope: String,
-        /// 给人看的位置：`.claude/skills/<名字>/SKILL.md`、`~/.claude/skills/<名字>/SKILL.md`。
+        /// 给人看的位置：`.claude/skills/<名字>/SKILL.md`、`Peck/skills/<名字>/SKILL.md`（全局）。
         location: String,
         /// 同名的已经有了：这次是替换，`diff` 是旧的 → 新的（统一格式）。
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,12 +313,6 @@ pub enum EventBody {
     // ── 其他 ──
     #[serde(rename = "notice")]
     Notice { level: NoticeLevel, text: String },
-    #[serde(rename = "retry")]
-    Retry {
-        attempt: u32,
-        delay_ms: u64,
-        reason: String,
-    },
     #[serde(rename = "error")]
     Error {
         message: String,
@@ -373,7 +367,6 @@ impl EventBody {
             Self::StageStarted { .. } => "stage.started",
             Self::StageCompleted { .. } => "stage.completed",
             Self::Notice { .. } => "notice",
-            Self::Retry { .. } => "retry",
             Self::Error { .. } => "error",
             Self::Raw { .. } => "raw",
         }
@@ -381,7 +374,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 34] = [
+    pub const TYPE_NAMES: [&'static str; 33] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -413,7 +406,6 @@ impl EventBody {
         "stage.started",
         "stage.completed",
         "notice",
-        "retry",
         "error",
         "raw",
     ];
@@ -530,9 +522,7 @@ pub enum TurnEndReason {
     Limit,
     /// 模型拒绝。
     Refused,
-    /// 站主停的。
-    Cancelled,
-    /// 站主打断（中途插话、换方向）。
+    /// 站主停的、打断的。
     Interrupted,
     Error,
 }
@@ -664,8 +654,6 @@ pub enum ResolvedBy {
     User,
     /// Peck 的规则（「这个项目总是允许」、档位）。
     Rule,
-    /// 引擎自己定的（预先配置的权限）。
-    Engine,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -717,7 +705,6 @@ impl Cost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CostSource {
-    Reported,
     Priced,
     Estimated,
     Unknown,

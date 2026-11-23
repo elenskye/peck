@@ -68,8 +68,12 @@ export const MOCK_CRITERIA = (editPath: string) => [`\`${editPath}\` 开头的�
 /** 写规范（只读）：看两眼，按固定格式写一份规范，带编号的验收标准。 */
 export function specRounds(runId: string, writer: Member, builder: Member, editPath: string): Round[] {
   const criteria = MOCK_CRITERIA(editPath).map((c, i) => `${i + 1}. ${c}`).join("\n");
+  const thought = "先看要改的文件和周围的写法，再按五个标题写。";
   return stage("spec", writer, [
-    [tool(`${runId}-s1`, "read_file", "read", `读 ${editPath}`, { path: editPath }), done(`${runId}-s1`, "     1\t// …（演示）")],
+    [...(thought.match(/.{1,6}/g) ?? []).map((t) => ({ type: "reasoning.delta", itemId: `${runId}-st`, text: t }) as ReplayEvent), { type: "reasoning.completed", itemId: `${runId}-st`, text: thought, opaque: null } as ReplayEvent],
+    [tool(`${runId}-s1`, "read_file", "read", `读 ${editPath}`, { path: editPath })],
+    [done(`${runId}-s1`, "     1\t// …（演示）"), tool(`${runId}-s2`, "read_file", "read", "读 README.md", { path: "README.md" })],
+    [done(`${runId}-s2`, "# peck（演示）")],
     [
       ...say(`${runId}-spec`, `## 目标\n照这句话改好，别的不动（给 ${builder.label}）。\n\n## 改哪些文件\n\`${editPath}\`：开头加一行说明。\n\n## 步骤\n1. 先读文件\n2. 改一处\n3. 跑一遍检查\n\n## 验收标准\n${criteria}\n\n## 不做什么\n不动别的文件和样式。`),
       usage(0.004),
@@ -102,7 +106,7 @@ export function reviewRounds(runId: string, reviewer: Member, editPath: string, 
     "review",
     reviewer,
     [
-      [tool(`${runId}-r1`, "read_file", "read", `读 ${editPath}`, { path: editPath }), done(`${runId}-r1`, "     1\t// 待办：标题改成中文（Peck 循环演示）")],
+      [tool(`${runId}-r1`, "read_file", "read", `读 ${editPath}`, { path: editPath }), done(`${runId}-r1`, "     1\t// 待办：标题改成中文（Peck Loop 演示）")],
       [...say(`${runId}-review`, text), usage(0.006)],
     ],
     pass ? "pass" : "changes",
@@ -112,7 +116,7 @@ export function reviewRounds(runId: string, reviewer: Member, editPath: string, 
 
 /** 按审查改一次。 */
 export function fixRounds(runId: string, builder: Member, editPath: string): Round[] {
-  const patch = `--- a/${editPath}\n+++ b/${editPath}\n@@ -1,1 +1,1 @@\n-// 待办：标题改成中文（Peck 循环演示）\n+// 已改：标题改成中文（Peck 循环演示）\n`;
+  const patch = `--- a/${editPath}\n+++ b/${editPath}\n@@ -1,1 +1,1 @@\n-// 待办：标题改成中文（Peck Loop 演示）\n+// 已改：标题改成中文（Peck Loop 演示）\n`;
   return stage("fix", builder, [
     [
       tool(`${runId}-f1`, "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: "// 待办", new_text: "// 已改" }] }),

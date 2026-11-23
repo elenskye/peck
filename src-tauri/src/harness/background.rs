@@ -9,7 +9,7 @@
 
 use super::tools::bash::{self, Exec, Sandbox};
 use super::tools::{clip_bytes, tail_bytes, ToolContext};
-use crate::gateway::event::{BackgroundKind, BackgroundStatus, EventBody, PermissionLevel};
+use crate::gateway::event::{BackgroundKind, BackgroundStatus, EventBody};
 use crate::store::now_ms;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -250,7 +250,7 @@ pub struct Spec {
 }
 
 pub fn start(spec: Spec, on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
-    let ctx = ToolContext::new(&spec.workspace, PermissionLevel::Auto, spec.log_dir.clone(), spec.runtime_dir.clone(), spec.env.clone())?.with_extra(&spec.extra);
+    let ctx = ToolContext::new(&spec.workspace, spec.log_dir.clone(), spec.runtime_dir.clone(), spec.env.clone())?.with_extra(&spec.extra);
     let cwd = ctx.resolve_path(spec.cwd.as_deref().unwrap_or("."), false)?;
     if !cwd.is_dir() {
         return Err(format!("{} 不是文件夹。", ctx.rel(&cwd)));

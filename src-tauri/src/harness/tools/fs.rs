@@ -266,7 +266,6 @@ pub fn write_file(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String
 mod tests {
     use super::super::testing::TempProject;
     use super::*;
-    use crate::gateway::event::PermissionLevel;
     use serde_json::json;
 
     #[test]
@@ -274,7 +273,7 @@ mod tests {
         let p = TempProject::new();
         let body: String = (1..=500).map(|i| format!("line {i}\r\n")).collect::<String>() + "last line without newline";
         p.write("big.txt", &body);
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         for input in [json!({"path": "big.txt"}), json!({"path": "big.txt", "start_line": 498, "line_count": 5}), json!({"path": "big.txt", "start_line": 10, "line_count": 3})] {
             let whole = read_file_within(&ctx, &input, u64::MAX).unwrap().text;
             let streamed = read_file_within(&ctx, &input, 100).unwrap().text;
@@ -284,7 +283,7 @@ mod tests {
         assert!(tail.starts_with("   501\tlast line without newline\n"));
         assert!(read_file_within(&ctx, &json!({"path": "big.txt", "start_line": 600}), 100).unwrap_err().contains("只有 501 行"));
         // 流式读的不算「读过」：不能整个覆盖
-        let fresh = p.ctx(PermissionLevel::Edit);
+        let fresh = p.ctx();
         read_file_within(&fresh, &json!({"path": "big.txt"}), 100).unwrap();
         assert!(fresh.read_stamp(&p.dir.join("big.txt")).is_none());
     }
@@ -298,7 +297,7 @@ mod tests {
             .write("dist/out.js", "")
             .write("x.log", "")
             .write("README.md", "");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let one = list_directory(&ctx, &json!({})).unwrap().text;
         assert!(one.contains("src/") && one.contains("README.md") && one.contains(".gitignore"));
         assert!(!one.contains("dist") && !one.contains("x.log") && !one.contains("a.ts"));
@@ -311,7 +310,7 @@ mod tests {
         let p = TempProject::new();
         let body: String = (1..=2500).map(|i| format!("line {i}\n")).collect();
         p.write("big.txt", &body).write("bin.dat", "a\0b");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let r = read_file(&ctx, &json!({"path":"big.txt"})).unwrap().text;
         assert!(r.starts_with("     1\tline 1\n"));
         assert!(r.contains("  2000\tline 2000\n"));
@@ -333,7 +332,7 @@ mod tests {
         p.write("a/old.rs", "").write("b/new.rs", "").write("c.txt", "");
         let old = std::fs::File::options().write(true).open(p.dir.join("a/old.rs")).unwrap();
         old.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let r = find_files(&ctx, &json!({"pattern":"*.rs"})).unwrap().text;
         assert_eq!(r, "b/new.rs\na/old.rs");
         let r = find_files(&ctx, &json!({"pattern":"b/**/*.rs"})).unwrap().text;
@@ -345,7 +344,7 @@ mod tests {
     fn overwriting_needs_a_fresh_read() {
         let p = TempProject::new();
         p.write("a.txt", "one\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let refused = write_file(&ctx, &json!({"path":"a.txt","content":"two\n"})).unwrap_err();
         assert!(refused.contains("先用 read_file"));
         assert_eq!(p.read("a.txt"), "one\n");

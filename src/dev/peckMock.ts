@@ -1,4 +1,4 @@
-// `?mock` 里 Peck 循环的剧本（主线和 Rust 的 ScriptedModel::peck_demo 同一个流程）：
+// `?mock` 里 Peck Loop 的剧本（主线和 Rust 的 ScriptedModel::peck_demo 同一个流程）：
 // 看目录 → 读 → 搜 → 改 → 跑一条输出很长的命令（落盘）→ 删 dist（高危卡片）→ 清单 → 想记住两条 → 问一句 → 收尾。
 // 一轮是一次模型请求：先报上下文多大，再出思考和字、报用量和花费，然后是这一轮要的工具。
 //
@@ -92,7 +92,7 @@ function done(callId: string, output: string, extra: Partial<Extract<EventBody, 
   return { type: "tool_call.completed", callId, status: "ok", output, exitCode: null, diff: [], durationMs: 180, ...extra };
 }
 
-/** Peck 循环的演示剧本。`files` 是这个项目的假文件（路径 → 内容）；`prompt` 里的字挑场景（见文件开头）。 */
+/** Peck Loop 的演示剧本。`files` 是这个项目的假文件（路径 → 内容）；`prompt` 里的字挑场景（见文件开头）。 */
 export function peckDemo(runId: string, files: Record<string, string>, prompt = "", options: DemoOptions = { window: 1_000_000, project: false }): { rounds: Round[]; edit: { path: string; before: string; after: string }; /** 这个剧本改不改那个文件。 */ edits: boolean } {
   const o = options;
   const scenario: Scenario | "main" = /长任务/.test(prompt) ? "long" : /撤销|撤掉|回退/.test(prompt) ? "restore" : /定时|每周|每天|每隔/.test(prompt) ? "schedule" : /dev server/i.test(prompt) ? "server" : "main";
@@ -101,9 +101,9 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
   const before = files[editPath] ?? "";
   const lines = before.split("\n");
   const first = lines[0] ?? "";
-  const after = `// 待办：标题改成中文（Peck 循环演示）\n${before}`;
+  const after = `// 待办：标题改成中文（Peck Loop 演示）\n${before}`;
   const word = first.replace(/[^\w<>]+/g, " ").trim().split(" ").find((w) => w.length > 2) ?? "export";
-  const patch = `--- a/${editPath}\n+++ b/${editPath}\n@@ -1,3 +1,4 @@\n+// 待办：标题改成中文（Peck 循环演示）\n ${lines.slice(0, 3).join("\n ")}\n`;
+  const patch = `--- a/${editPath}\n+++ b/${editPath}\n@@ -1,3 +1,4 @@\n+// 待办：标题改成中文（Peck Loop 演示）\n ${lines.slice(0, 3).join("\n ")}\n`;
   const top = [...new Set(paths.map((p) => (p.includes("/") ? `${p.split("/")[0]}/` : p)))];
   const testLog = Array.from({ length: 1400 }, (_, i) => (i % 70 === 0 ? `\n RUN  v3.2.0 /project · 第 ${i / 70 + 1} 组` : `  ✓ src/case-${String(i).padStart(4, "0")}.test.ts (3 tests) ${2 + (i % 9)}ms`)).join("\n");
   const tail = "\n Test Files  1400 passed (1400)\n      Tests  4200 passed (4200)\n   Duration  6.12s";
@@ -111,7 +111,7 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
   const shown = `退出码 0（6.4s）\n[输出共 ${Math.ceil((testLog + tail).length / 1024)} KB，太长：完整的存在 ${spillAt}（用 read_file 分段读）。下面是开头和结尾]\n${testLog.slice(0, 2048)}\n…（中间省略）…\n${(testLog + tail).slice(-6144)}`;
   MOCK_SPILLS[spillAt] = testLog + tail;
   const editRound = (id: string, extra: ReplayEvent[] = []): ReplayEvent[] => [
-    tool(id, "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: first, new_text: `// 待办：标题改成中文（Peck 循环演示）\n${first}` }] }),
+    tool(id, "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: first, new_text: `// 待办：标题改成中文（Peck Loop 演示）\n${first}` }] }),
     done(id, `改好了 1 处：\n\n${editPath} 第 1 行：\n${num(after.split("\n").slice(0, 4))}`, { diff: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] }),
     { type: "diff.updated", files: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] },
     ...extra,
@@ -144,7 +144,7 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
       context(o, 1700, 3900),
       ...say(4, "找到了，在开头加一行说明。"),
       usage(600, 140, 6500, 0.00024),
-      tool("c4", "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: first, new_text: `// 待办：标题改成中文（Peck 循环演示）\n${first}` }] }),
+      tool("c4", "write_patch", "edit", `改 ${editPath}`, { edits: [{ path: editPath, old_text: first, new_text: `// 待办：标题改成中文（Peck Loop 演示）\n${first}` }] }),
       done("c4", `改好了 1 处：\n\n${editPath} 第 1 行：\n${num(after.split("\n").slice(0, 4))}`, { diff: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] }),
       { type: "diff.updated", files: [{ path: editPath, change: "modified", additions: 1, deletions: 0, patch }] },
     ],
@@ -183,7 +183,7 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
       tool("c7s", "create_skill", "other", "想存成 Skill zh-ui-copy", { name: "zh-ui-copy", scope: "project" }),
       { type: "skill.proposed", proposalId: "skill-demo-1", name: "zh-ui-copy", scope: "project", location: ".claude/skills/zh-ui-copy/SKILL.md",
         description: "把界面文案改成中文：先查用词对照，改完跑 pnpm test",
-        body: "## 什么时候用\n\n要把界面上的英文改成中文的时候。\n\n## 步骤\n\n1. 先看 `docs/design.md` 的用词对照，专有名词（API、Key、MCP）保留英文。\n2. 用 `search_text` 找出所有要改的字。\n3. 改完跑 `pnpm test`（4200 个测试，6 秒左右）。\n4. 日志在 /Users/me/proj/.peck/logs 里看。",
+        body: "## 什么时候用\n\n要把界面上的英文改成中文的时候。\n\n## 步骤\n\n1. 先看 `docs/design.md` 的用词对照，专有名词（API、Key、MCP）保留英文。\n2. 用 `search_text` 找出所有要改的字。\n3. 改完跑 `pnpm test`（4200 个测试，6 秒左右）。\n4. 日志在 /Users/me/proj/logs 里看。",
         warnings: ["第 10 行有绝对路径：换个项目、换台机器就不对"], similar: [] },
       done("c7s", "提议了 Skill zh-ui-copy（.claude/skills/zh-ui-copy/SKILL.md）。站主批了才写进去：接着干活，这个任务里别指望它已经在，也别自己写 SKILL.md。"),
       tool("c7r", "create_skill", "other", "想存成 Skill release", { name: "release", scope: "project" }),

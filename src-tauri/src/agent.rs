@@ -1,56 +1,10 @@
-use serde::{Deserialize, Serialize};
+//! 找 CLI：展开 `~`、拼出找命令用的 PATH、按 PATH 找到可执行文件、读 `--version`。
+//! v1.0.3 删了旧的 Agent 清单（数据目录的 `agents/*.toml`）：找 CLI 只看设置里的「CLI 目录」和站主 shell 的 PATH。
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
-
-use crate::mode::app_data_dir;
-
-const DEFAULT_MUSE_TOML: &str = include_str!("../defaults/agents/muse.toml");
-const DEFAULT_GROK_TOML: &str = include_str!("../defaults/agents/grok.toml");
-
-/// Raw TOML representation of an Agent manifest (`agents/*.toml`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentManifest {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default = "default_cwd_template")]
-    pub cwd: String,
-    #[serde(default = "default_stdin_mode")]
-    pub stdin: String, // "none" | "prompt"
-    #[serde(default = "default_timeout_str")]
-    pub timeout: String,
-    #[serde(default)]
-    pub path: Vec<String>,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
-fn default_cwd_template() -> String {
-    "{{workspace}}".to_string()
-}
-
-fn default_stdin_mode() -> String {
-    "none".to_string()
-}
-
-fn default_timeout_str() -> String {
-    "30m".to_string()
-}
-
-impl AgentManifest {
-    /// Parse an `AgentManifest` from a TOML string.
-    pub fn from_toml_str(raw: &str) -> Result<Self, String> {
-        toml::from_str::<Self>(raw).map_err(|e| format!("Failed to parse agent TOML: {e}"))
-    }
-}
 
 /// Expand leading `~/` to the user's `$HOME` directory.
 pub fn expand_tilde(path_str: &str) -> PathBuf {
@@ -63,7 +17,7 @@ pub fn expand_tilde(path_str: &str) -> PathBuf {
 }
 
 /// Build an augmented `PATH` string combining:
-/// 1. Custom `path` entries from the Agent manifest
+/// 1. Extra directories (the CLI directory, the user's shell `PATH`)
 /// 2. Standard macOS CLI & toolchain locations (`~/Library/pnpm/bin`, `~/.cargo/bin`, `/opt/homebrew/bin`, `/usr/local/bin`)
 /// 3. Existing `PATH` environment variable
 pub fn build_augmented_path(extra_paths: &[String]) -> String {
@@ -114,100 +68,6 @@ pub fn build_augmented_path(extra_paths: &[String]) -> String {
         .ok()
         .and_then(|os| os.into_string().ok())
         .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".to_string())
-}
-
-/// Ensure default `agents/*.toml` files exist in `<app_data_dir>/agents/` and load all manifests.
-/// Falls back cleanly to built-in defaults if filesystem write is restricted.
-pub fn load_agent_manifests() -> Vec<AgentManifest> {
-    let agents_dir = app_data_dir().join("agents");
-    let _ = seed_default_agents(&agents_dir);
-
-    if let Ok(loaded) = load_manifests_from_dir(&agents_dir) {
-        if !loaded.is_empty() {
-            return loaded;
-        }
-    }
-
-    builtin_default_manifests()
-}
-
-pub fn builtin_default_manifests() -> Vec<AgentManifest> {
-    [DEFAULT_MUSE_TOML, DEFAULT_GROK_TOML]
-        .iter()
-        .filter_map(|raw| AgentManifest::from_toml_str(raw).ok())
-        .collect()
-}
-
-fn seed_default_agents(agents_dir: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(agents_dir)?;
-    let defaults = [
-        ("muse.toml", DEFAULT_MUSE_TOML),
-        ("grok.toml", DEFAULT_GROK_TOML),
-    ];
-    for (filename, content) in defaults {
-        let target = agents_dir.join(filename);
-        if !target.exists() {
-            fs::write(target, content)?;
-        } else {
-            let raw = fs::read_to_string(&target)?;
-            if let Ok(mut manifest) = AgentManifest::from_toml_str(&raw) {
-                let legacy_args = match filename {
-                    "muse.toml" => vec![
-                        "generate",
-                        "--prompt",
-                        "{{prompt}}",
-                        "--handoff",
-                        "{{handoff}}",
-                    ],
-                    "grok.toml" => vec![
-                        "build",
-                        "--context",
-                        "{{handoff}}/intent.md",
-                        "--tasks",
-                        ".peck/tasks.md",
-                    ],
-                    _ => vec![],
-                };
-                let default = AgentManifest::from_toml_str(content).expect("built-in manifest");
-                if manifest.command == default.command && manifest.args == legacy_args {
-                    manifest.args = default.args;
-                    if manifest.name == "Muse Wonder" {
-                        manifest.name = default.name;
-                    }
-                    let updated =
-                        toml::to_string_pretty(&manifest).map_err(std::io::Error::other)?;
-                    fs::write(target, updated)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn load_manifests_from_dir(dir: &Path) -> Result<Vec<AgentManifest>, String> {
-    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read agents dir: {e}"))?;
-    let mut manifests = Vec::new();
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            if let Ok(raw) = fs::read_to_string(&path) {
-                if let Ok(manifest) = AgentManifest::from_toml_str(&raw) {
-                    manifests.push(manifest);
-                }
-            }
-        }
-    }
-
-    // Sort with muse, grok, mock order first, then alphabetically
-    manifests.sort_by_key(|m| match m.id.as_str() {
-        "muse" => (0, m.id.clone()),
-        "grok" => (1, m.id.clone()),
-        "mock" => (2, m.id.clone()),
-        _ => (3, m.id.clone()),
-    });
-
-    Ok(manifests)
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -304,50 +164,4 @@ pub async fn probe_command_version(
         ));
     }
     line.ok_or_else(|| "--version 没有输出".to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_builtin_agent_manifests() {
-        let manifests = builtin_default_manifests();
-        assert_eq!(manifests.len(), 2);
-        assert_eq!(manifests[0].id, "muse");
-        assert_eq!(manifests[1].id, "grok");
-    }
-
-    #[test]
-    fn legacy_templates_are_updated_without_losing_custom_environment() {
-        let dir = std::env::temp_dir().join(format!("peck-agent-config-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut legacy = AgentManifest::from_toml_str(DEFAULT_GROK_TOML).unwrap();
-        legacy.args = [
-            "build",
-            "--context",
-            "{{handoff}}/intent.md",
-            "--tasks",
-            ".peck/tasks.md",
-        ]
-        .map(String::from)
-        .to_vec();
-        legacy.env.insert("CUSTOM_FLAG".into(), "retained".into());
-        std::fs::write(dir.join("grok.toml"), toml::to_string(&legacy).unwrap()).unwrap();
-        seed_default_agents(&dir).unwrap();
-        let updated = load_manifests_from_dir(&dir).unwrap();
-        let grok = updated.iter().find(|a| a.id == "grok").unwrap();
-        assert_eq!(grok.args[0], "-p");
-        assert_eq!(grok.env["CUSTOM_FLAG"], "retained");
-        let mut custom = grok.clone();
-        custom.args = vec!["custom-entry".into()];
-        std::fs::write(dir.join("grok.toml"), toml::to_string(&custom).unwrap()).unwrap();
-        seed_default_agents(&dir).unwrap();
-        let reloaded = load_manifests_from_dir(&dir).unwrap();
-        assert_eq!(
-            reloaded.iter().find(|a| a.id == "grok").unwrap().args[0],
-            "custom-entry"
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
 }

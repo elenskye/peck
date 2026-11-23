@@ -123,7 +123,7 @@ impl ClaudeCodeConverter {
                 ToolKind::Other,
                 format!("子任务 {}", short(input["description"].as_str().unwrap_or(""), 60)),
             ),
-            // Peck 自己的本机 MCP（v0.9）：和 Peck 循环一样写。
+            // Peck 自己的本机 MCP（v0.9）：和 Peck Loop 一样写。
             "mcp__peck__delegate_task" => (ToolKind::Other, format!("交给子任务：{}", short(input["task"].as_str().unwrap_or(""), 60))),
             "mcp__peck__ask_user" => (ToolKind::Mcp, "问站主".into()),
             "mcp__peck__create_skill" => (ToolKind::Other, format!("想存成 Skill {}", short(input["name"].as_str().unwrap_or(""), 60))),

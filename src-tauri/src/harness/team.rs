@@ -3,7 +3,7 @@
 //!
 //! 一个任务还是一个任务号、一份任务前快照、一条事件日志（改动记录、回退、独立工作区照常）；每一段是一个
 //! 引擎跑一回合：前面一条 `stage.started`，这一段引擎自己的 `turn.completed` 换成 `stage.completed`
-//! （`EventSink::for_stage`），整个任务最后一条 `turn.completed`。每一段的引擎可以是 API 模型（Peck 循环）
+//! （`EventSink::for_stage`），整个任务最后一条 `turn.completed`。每一段的引擎可以是 API 模型（Peck Loop）
 //! 或 CLI；Antigravity 只做直接调用，不进来（站主 2026-11-12 定）。审批、回答、追加、打断都走同一个
 //! 控制通道，转给正在跑的那一段。
 
@@ -17,7 +17,7 @@ use crate::gateway::log::EventSink;
 use crate::gateway::{catalog, engines, mcp, providers, runner, AgentBackend, AgentTask, Control, ModelProvider};
 use crate::process::ProcessCancelHandle;
 use crate::run::ActiveRunContext;
-use crate::snapshot::{record_run_base, record_step_finish, record_step_start, ShadowRepo};
+use crate::snapshot::{record_run_base, record_run_finish, ShadowRepo};
 use crate::state::AppState;
 use crate::store::Store;
 use serde::Deserialize;
@@ -133,7 +133,7 @@ pub async fn team_run_start(
         Some(p) => Some(member_of(&state, p).await?),
         None => None,
     };
-    // 委派：实施的是 Peck 循环照旧；是 CLI（v0.9 B1）经本机 MCP（start_team_run 里按这一段准备）。
+    // 委派：实施的是 Peck Loop 照旧；是 CLI（v0.9 B1）经本机 MCP（start_team_run 里按这一段准备）。
     let delegate = super::run::delegate_of(&state, delegate.as_deref()).await?;
     let images = super::run::checked_images(images)?;
     start_team_run(
@@ -173,7 +173,7 @@ pub(crate) struct TeamRun {
     pub implement: Member,
     pub review: Option<Member>,
     pub delegate: Option<Delegate>,
-    /// 这一句附的图（v0.8）：写规范的、实施的看得到（Peck 循环直接给图，CLI 给存好的文件路径）。
+    /// 这一句附的图（v0.8）：写规范的、实施的看得到（Peck Loop 直接给图，CLI 给存好的文件路径）。
     pub images: Vec<crate::gateway::ImageInput>,
 }
 
@@ -182,7 +182,7 @@ pub fn team_who(spec: Option<&str>, implement: &str, review: Option<&str>) -> St
     format!("team:{}|{implement}|{}", spec.unwrap_or(""), review.unwrap_or(""))
 }
 
-/// Peck 循环那几段共用的东西（每一段按它拼一份 `LoopConfig`）。
+/// Peck Loop 那几段共用的东西（每一段按它拼一份 `LoopConfig`）。
 #[derive(Clone)]
 struct PeckBase {
     store: Arc<Mutex<Store>>,
@@ -473,8 +473,8 @@ struct Stager {
     current: Arc<Mutex<Option<mpsc::UnboundedSender<Control>>>>,
     last_text: Arc<Mutex<String>>,
     /// 正在跑的这一段的档位（事件出口按它替 CLI 审批）。
-    /// 正在跑的这一段是 CLI 时它的档位；Peck 循环那一段为空——它自己按档位问，规则不碰
-    /// （以前也套规则，Peck 循环的「起常驻进程」确认被批成 `ApproveByRule`，循环不认、一直等；v0.10 收尾审查）。
+    /// 正在跑的这一段是 CLI 时它的档位；Peck Loop 那一段为空——它自己按档位问，规则不碰
+    /// （以前也套规则，Peck Loop 的「起常驻进程」确认被批成 `ApproveByRule`，循环不认、一直等；v0.10 收尾审查）。
     stage_level: Arc<Mutex<Option<PermissionLevel>>>,
     /// 实施的是 CLI、选了委派（v0.9 B1）：实施和按审查改那两段的本机 MCP 带 `delegate_task`。
     cli_delegate: Option<Arc<super::delegate::CliDelegate>>,
@@ -547,7 +547,7 @@ impl Stager {
                 }
                 r
             }
-            (Engine::Peck { .. }, None) => Err(crate::gateway::GatewayError::new(crate::gateway::ErrorKind::Internal, "Peck 循环没准备好。")),
+            (Engine::Peck { .. }, None) => Err(crate::gateway::GatewayError::new(crate::gateway::ErrorKind::Internal, "Peck Loop 没准备好。")),
         };
         if let Ok(mut c) = self.current.lock() {
             *c = None;
@@ -597,7 +597,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
     };
     let env = with_project_env(env, &settings.env_pairs());
     let folders: Vec<(PathBuf, bool)> = if worktree { settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { settings.live_folders() };
-    // 项目的其他文件夹：Peck 循环和 CLI（v0.10）都认；能改的锁上。
+    // 项目的其他文件夹：Peck Loop 和 CLI（v0.10）都认；能改的锁上。
     let writable: Vec<PathBuf> = folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect();
     let project_env = settings.env_pairs();
     let (run_id, step_id, workspace, workspace_id, cancel_rx, refs, fork, earlier, prior_changed) = {
@@ -629,17 +629,12 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         let run_id = format!("run-{number}");
         let step_id = format!("{run_id}-step-1");
         let plan = DispatchPlan {
-            flow_id: "team".into(),
-            flow_name: title.clone(),
-            clean_input: prompt.clone(),
             steps: vec![ResolvedStepPlan {
                 id: step_id.clone(),
                 step_index: 0,
                 agent_id: "team".into(),
                 agent_name: title.clone(),
                 title: title.clone(),
-                rendered_prompt: prompt.clone(),
-                rendered_expects: vec![],
             }],
         };
         let mut record = db.create_run(&session_id, &prompt, number, &plan).map_err(|e| e.to_string())?;
@@ -715,7 +710,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
     }
     lead.extend(refs);
     let request = if lead.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", lead.join("\n\n")) };
-    // 附图：CLI 那几段看文件路径，Peck 循环那几段直接给图。
+    // 附图：CLI 那几段看文件路径，Peck Loop 那几段直接给图。
     let attachments = super::run::save_attachments(&session_id, &images);
     let cli_request = format!("{request}{}", super::run::attachment_note(&attachments));
     let fork_note = fork.as_ref().map(|f| super::history::fork_notice(f, &title));
@@ -734,7 +729,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 }
             }
             let level = rule_level.lock().ok().and_then(|l| *l);
-            // 委派出去的子任务（带 subagent_id）、Peck 循环那一段是 Peck 循环自己按档位问的：不替它批、不改卡片。
+            // 委派出去的子任务（带 subagent_id）、Peck Loop 那一段是 Peck Loop 自己按档位问的：不替它批、不改卡片。
             if let (None, Some(level)) = (&e.subagent_id, level) {
                 if let Some(request_id) = runner::rule_allows(level, &e.body, &rule_root, &rule_allowed) {
                     let _ = rule_tx.send(Control::ApproveByRule { request_id });
@@ -786,7 +781,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 }
             }
         });
-        let run_sink = RunSink::Persistent { target: Box::new(RunSink::new_memory().0), store: store.clone() };
+        let run_sink = RunSink::new(store.clone());
         let started = Instant::now();
         if let Some(text) = fork_note {
             base.emit(EventBody::Notice { level: NoticeLevel::Info, text });
@@ -799,7 +794,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         let before = repo.as_ref().and_then(|r| {
             let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
             record_run_base(&id, r, tree.clone());
-            record_step_start(&id, &step_id, r, tree.clone());
             Some(tree)
         });
         let extras = snapshot_extras(&id, &folders, level);
@@ -810,14 +804,11 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 agent_id: "team".into(),
                 agent_name: title.clone(),
                 title: title.clone(),
-                rendered_prompt: String::new(),
-                rendered_expects: vec![],
             }
             .to_descriptor(status)
         };
-        run_sink.emit(RunEvent::RunStarted { run_id: id.clone(), flow_id: "team".into(), flow_name: title.clone(), steps: vec![descriptor(StepStatus::Pending)] });
+        run_sink.emit(RunEvent::RunStarted { run_id: id.clone(), steps: vec![descriptor(StepStatus::Pending)] });
         run_sink.emit(RunEvent::StepStarted { run_id: id.clone(), step_id: step_id.clone(), step_index: 0, agent_id: "team".into() });
-        run_sink.emit(RunEvent::StepExecution { run_id: id.clone(), step_id: step_id.clone(), mode: "team".into(), notice: format!("{title}：一段一段来，要批的事、要问的事会弹卡片。") });
         base.emit(EventBody::TurnStarted { turn_id: format!("turn-{id}") });
 
         let cli_delegate = match (&implement.engine, delegate.clone()) {
@@ -855,7 +846,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             } else {
                 let mut text = r.text.clone();
                 criteria = criteria_of(&text);
-                // 没写验收标准：让它补一次（Peck 循环接着原对话；CLI 能续接就续，不能就把草稿带上）。
+                // 没写验收标准：让它补一次（Peck Loop 接着原对话；CLI 能续接就续，不能就把草稿带上）。
                 if criteria.is_empty() && !stopped.load(Ordering::SeqCst) {
                     let resume = match &writer.engine {
                         Engine::Cli { backend, .. } if backend.caps().resume => r.session_ref.clone(),
@@ -909,7 +900,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 if r.reason != TurnEndReason::Done {
                     end = (r.reason, r.error.or(Some(format!("{} 没审完。", reviewer.label))));
                 } else if verdict_with(&r.text, &r.checks) == ReviewVerdict::Changes && !stopped.load(Ordering::SeqCst) {
-                    // ④ 按审查改：Peck 循环接着原来的对话；CLI 能续接就续，不能就把原话带上。
+                    // ④ 按审查改：Peck Loop 接着原来的对话；CLI 能续接就续，不能就把原话带上。
                     let resume = match &implement.engine {
                         Engine::Cli { backend, .. } if backend.caps().resume => impl_ref.clone(),
                         _ => None,
@@ -944,18 +935,18 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
 
         let (step_status, run_status, summary) = match end.0 {
             TurnEndReason::Done => (StepStatus::Succeeded, RunStatus::Succeeded, if final_text.trim().is_empty() { format!("{title}：做完了。") } else { final_text }),
-            TurnEndReason::Interrupted | TurnEndReason::Cancelled => (StepStatus::Cancelled, RunStatus::Cancelled, "已停止。".into()),
+            TurnEndReason::Interrupted => (StepStatus::Cancelled, RunStatus::Cancelled, "已停止。".into()),
             _ => (StepStatus::Failed, RunStatus::Failed, format!("没做完：{}", end.1.unwrap_or_else(|| "出错了。".into()))),
         };
         runner::interrupt_subs(&id);
         let mut changeset = ChangeSetSummary::default();
         if let (Some(r), Some(before)) = (repo.as_ref(), before.as_ref()) {
             if let Ok(after) = r.create_snapshot(&format!("{step_id}-after")) {
-                record_step_finish(&id, &step_id, after.clone());
-                changeset = r.diff_changeset(before, &after, &step_id).unwrap_or_default();
+                record_run_finish(&id, after.clone());
+                changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
-        finish_extras(&id, &step_id, &extras, &mut changeset);
+        finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
         run_sink.emit(RunEvent::StepFinished {
@@ -1075,7 +1066,7 @@ mod tests {
         store.save_workspace(&ws).unwrap();
         let session = store.create_session(&ws.id, None).unwrap();
         // 快照登记表是整个进程共用的：先占一个大号，免得和别的测试撞号。
-        let filler = DispatchPlan { flow_id: "x".into(), flow_name: "x".into(), clean_input: "x".into(), steps: vec![] };
+        let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 950_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
         let model = "deepseek/deepseek-flash".to_string();

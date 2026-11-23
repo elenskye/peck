@@ -139,7 +139,7 @@ fn run_detail(r: &RunRecord, title: &str) -> String {
     out
 }
 
-/// 这一次是哪一家做的（换引擎按它认）：Peck 循环（不管哪个模型，对话是同一份）、某个 CLI、接力和审查、旧的。
+/// 这一次是哪一家做的（换引擎按它认）：Peck Loop（不管哪个模型，对话是同一份）、某个 CLI、接力和审查、旧的。
 pub fn family_of(who: Option<&str>) -> String {
     match who {
         Some(w) if w.starts_with("api:") => "peck".into(),
@@ -336,7 +336,7 @@ pub fn search_tasks(store: &Store, workspace_id: &str, query: Option<&str>, numb
     Ok(format!("{head}\n{}\n用 number 看某一次的详情。", shown.join("\n")))
 }
 
-/// 给 Peck 循环的 `search_tasks`：这个项目的历史（闭包里握着数据库和项目 id）。
+/// 给 Peck Loop 的 `search_tasks`：这个项目的历史（闭包里握着数据库和项目 id）。
 pub fn probe(store: Arc<Mutex<Store>>, workspace_id: String) -> super::r#loop::HistoryProbe {
     Arc::new(move |query: Option<String>, number: Option<u64>| {
         let db = store.lock().map_err(|_| "读不到任务记录。".to_string())?;
@@ -418,7 +418,7 @@ mod tests {
     }
 
     fn add_run(store: &mut Store, session: &str, number: u64, prompt: &str, summary: &str) -> String {
-        let plan = DispatchPlan { flow_id: "peck".into(), flow_name: "Peck".into(), clean_input: prompt.into(), steps: vec![] };
+        let plan = DispatchPlan { steps: vec![] };
         let mut r = store.create_run(session, prompt, number, &plan).unwrap();
         r.status = RunStatus::Succeeded;
         r.summary = Some(summary.into());

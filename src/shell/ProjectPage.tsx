@@ -126,7 +126,7 @@ export const ProjectPage: React.FC<{
             </Row>
           </div>
 
-          <p className="lbl">FOLDERS<Info text="项目即环境：主文件夹以外的文件夹，每个选只读（READ）或能改（WRITE）。Peck 循环的工具用绝对路径读写它们，命令的沙箱放开能改的那几个；能改的文件夹的改动也进 CHANGES、能撤销。CLI 引擎也认：能改的用它自己的开关挂上（Claude Code、Codex），只读的在每一句后面写明。" /></p>
+          <p className="lbl">FOLDERS<Info text="项目即环境：主文件夹以外的文件夹，每个选只读（READ）或能改（WRITE）。 Peck Loop 的工具用绝对路径读写它们，命令的沙箱放开能改的那几个；能改的文件夹的改动也进 CHANGES、能撤销。CLI 引擎也认：能改的用它自己的开关挂上（Claude Code、Codex），只读的在每一句后面写明。" /></p>
           <div className="set-rows">
             <Row name={<span className="t-code">{shortenHomePath(workspace.path)}</span>}>
               <em className="pk-tag pk-tag--ok">MAIN</em>
@@ -145,8 +145,8 @@ export const ProjectPage: React.FC<{
             <Btn sm icon="folder" disabled={missing || (!native && !folderPath.trim())} onClick={() => void addFolder()}>ADD</Btn>
           </div>
 
-          <p className="lbl">ENV<Info text="一行一个 NAME=value。Peck 循环的命令（包括它起的 dev server）、TERM、CLI 引擎的进程都带上（同名的盖过你终端里的；PATH 不带进 CLI）；值只存在 Peck 的数据库里，不进模型上下文（Peck 循环看得到名字）。" /></p>
-          <textarea className="verify-text" aria-label="这个项目的环境变量" spellCheck={false} disabled={missing} value={envDraft}
+          <p className="lbl">ENV<Info text="一行一个 NAME=value。 Peck Loop 的命令（包括它起的 dev server）、TERM、CLI 引擎的进程都带上（同名的盖过你终端里的；PATH 不带进 CLI）；值只存在 Peck 的数据库里，不进模型上下文（Peck Loop 看得到名字）。" /></p>
+          <textarea className="text-edit" aria-label="这个项目的环境变量" spellCheck={false} disabled={missing} value={envDraft}
             placeholder={"API_BASE=http://localhost:8080\nRUST_LOG=info"} rows={Math.min(12, Math.max(3, envDraft.split("\n").length + 1))} onChange={(e) => setEnvDraft(e.target.value)} />
           <div className="set-inline">
             <Btn sm disabled={missing || envDraft === envText} onClick={saveEnv}>SAVE</Btn>
@@ -157,7 +157,7 @@ export const ProjectPage: React.FC<{
 
           <ProjectSkills workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
 
-          <p className="lbl">MEMORY<Info text="Peck 循环觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；每次发任务都带上。" /></p>
+          <p className="lbl">MEMORY<Info text="Peck Loop 觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；每次发任务都带上。" /></p>
           {memories && memories.length > 0 ? (
             <div className="set-rows">
               {memories.map((m) => (
@@ -204,7 +204,7 @@ export const ProjectPage: React.FC<{
 
 const HINT_WORD: Record<ToolHint, string> = { read: "只读", write: "会改", destructive: "会删改" };
 
-/** 这个项目的 Peck 循环会起哪些 MCP：项目 .mcp.json 里的和设置里的放一起，能对这个项目一个个关；TEST 记下工具标注。 */
+/** 这个项目的 Peck Loop 会起哪些 MCP：项目 .mcp.json 里的和设置里的放一起，能对这个项目一个个关；TEST 记下工具标注。 */
 const ProjectMcp: React.FC<{
   workspaceId: string;
   settings: ProjectSettings;
@@ -227,7 +227,7 @@ const ProjectMcp: React.FC<{
   };
   return (
     <>
-      <p className="lbl">MCP<Info text="Peck 循环在这个项目里起的 MCP 服务器：项目根 .mcp.json 里的（Claude Code 的写法，一份四家都用）和设置 → MCP 里的，同名的以项目的为准。项目里的是项目里的程序，第一次起之前问你一次，.mcp.json 改了再问。TEST 起一次、记下每个工具是只读还是会改：Grok、Antigravity 问要不要调这些工具时，Peck 照这个替它们批只读的。CLI 引擎自己读 .mcp.json，这里关掉只管 Peck 循环。" /></p>
+      <p className="lbl">MCP<Info text="Peck Loop 在这个项目里起的 MCP 服务器：项目根 .mcp.json 里的（Claude Code 的写法，一份四家都用）和设置 → MCP 里的，同名的以项目的为准。项目里的是项目里的程序，第一次起之前问你一次，.mcp.json 改了再问。TEST 起一次、记下每个工具是只读还是会改：Grok、Antigravity 问要不要调这些工具时，Peck 照这个替它们批只读的。CLI 引擎自己读 .mcp.json，这里关掉只管 Peck Loop。" /></p>
       {view?.error && <p className="hint is-bad">{view.error}</p>}
       <div className="set-rows">
         {view?.rows.map((r) => (
@@ -254,7 +254,7 @@ const ProjectMcp: React.FC<{
 
 // ---------- Skills 和命令文件（v0.10 C2） ----------
 
-const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", user: "~/.claude/skills", peck: "Peck 自带" };
+const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", user: "Peck/skills（全局）", peck: "Peck 自带" };
 
 /** 这个项目读到的 Skills（能一个个关）和斜杠命令文件。 */
 const ProjectSkills: React.FC<{
@@ -293,7 +293,7 @@ const ProjectSkills: React.FC<{
   const shown: SkillRow[] = rows ?? (list?.skills.map((k) => ({ ...k, loads: 0, stale: false, versions: 0 })) ?? []);
   return (
     <>
-      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/、你的 ~/.claude/skills/ 里的 SKILL.md，加上 Peck 自带的两个（快照回退、定时任务：教模型用 Peck 自己的工具，只给 Peck 循环）。Peck 循环把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。Claude Code 自己会读这些；这里关掉只管 Peck 循环。模型提议、你批了的 Skill 也写在这几处；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck 循环和 Claude Code 读它的次数算（项目的只算这个项目，全局的算所有项目）。" /></p>
+      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/ 里的 SKILL.md，Peck 的全局 Skill（数据目录的 skills/，只有 Peck 读），加上 Peck 自带的两个（快照回退、定时任务：教模型用 Peck 自己的工具，只给 Peck Loop）。Peck Loop 把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。CLI 自己读项目里的；这里关掉只管 Peck Loop。模型提议、你批了的 Skill 也写在这几处；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck Loop 和 Claude Code 读它的次数算（项目的只算这个项目，全局的算所有项目）。" /></p>
       {list || rows ? (shown.length > 0 ? (
         <div className="set-rows">
           {shown.map((k) => (
@@ -317,13 +317,13 @@ const ProjectSkills: React.FC<{
       ) : <p className="hint">没有。</p>) : (
         <p className="hint">{missing ? "文件夹不在了。" : "在读…"}</p>
       )}
-      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/undo…），加上项目的 .claude/commands/ 和你的 ~/.claude/commands/ 里的 .md。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
+      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/undo…），加上 Peck 命令库（数据目录的 commands/，所有项目共用）里的 .md。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
       {list && list.commands.length > 0 ? (
         <div className="chips">
-          {list.commands.map((c) => <span key={c.name} className="chip-quiet" title={c.description}>/{c.name}{c.scope === "user" ? " · 你的" : ""}</span>)}
+          {list.commands.map((c) => <span key={c.name} className="chip-quiet" title={c.description}>/{c.name}</span>)}
         </div>
       ) : (
-        <p className="hint">{list ? "没有命令文件。" : "在读…"}</p>
+        <p className="hint">{list ? "命令库里还没有命令。" : "在读…"}</p>
       )}
     </>
   );

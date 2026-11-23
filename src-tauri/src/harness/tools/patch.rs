@@ -313,7 +313,6 @@ pub fn commit(ctx: &ToolContext, files: Vec<(PathBuf, Option<String>, String)>) 
 mod tests {
     use super::super::testing::TempProject;
     use super::*;
-    use crate::gateway::event::PermissionLevel;
     use serde_json::json;
 
     fn edit(path: &str, old: &str, new: &str) -> Value {
@@ -324,7 +323,7 @@ mod tests {
     fn a_batch_is_all_or_nothing() {
         let p = TempProject::new();
         p.write("a.txt", "alpha\nbeta\n").write("b.txt", "one\ntwo\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let err = write_patch(&ctx, &json!({"edits":[edit("a.txt","alpha","ALPHA"), edit("b.txt","three","3")]})).unwrap_err();
         assert!(err.contains("第 2 处") && err.contains("一处都没改"));
         assert_eq!(p.read("a.txt"), "alpha\nbeta\n");
@@ -341,7 +340,7 @@ mod tests {
     fn a_failed_rename_rolls_everything_back() {
         let p = TempProject::new();
         p.write("a.txt", "a\n").write("b.txt", "b\n").write("c.txt", "c\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         FAIL_RENAME_AT.with(|f| f.set(Some(2)));
         let err = write_patch(&ctx, &json!({"edits":[edit("a.txt","a","A"), edit("b.txt","b","B"), edit("c.txt","c","C")]})).unwrap_err();
         FAIL_RENAME_AT.with(|f| f.set(None));
@@ -354,7 +353,7 @@ mod tests {
     fn many_matches_list_their_lines_unless_replace_all() {
         let p = TempProject::new();
         p.write("a.txt", "x = 1\ny = 2\nx = 1\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let err = write_patch(&ctx, &json!({"edits":[edit("a.txt","x = 1","x = 9")]})).unwrap_err();
         assert!(err.contains("2 处") && err.contains("第 1、3 行"));
         let all = json!({"edits":[{"path":"a.txt","old_text":"x = 1","new_text":"x = 9","replace_all":true}]});
@@ -366,7 +365,7 @@ mod tests {
     fn loose_matching_is_marked_and_still_unique() {
         let p = TempProject::new();
         p.write("a.md", "标题：待办   \n说明（旧）\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let r = write_patch(&ctx, &json!({"edits":[edit("a.md","标题:待办\n说明(旧)","标题：待办\n说明（新）")]})).unwrap();
         assert!(r.text.contains("宽松匹配"));
         assert_eq!(p.read("a.md"), "标题：待办\n说明（新）\n");
@@ -383,7 +382,7 @@ mod tests {
     fn misses_show_the_closest_lines_and_whitespace() {
         let p = TempProject::new();
         p.write("a.py", "def main():\n\treturn 1\n");
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let err = write_patch(&ctx, &json!({"edits":[edit("a.py","    return 1\n    pass","x")]})).unwrap_err();
         assert!(err.contains("第 2 行"), "{err}");
         assert!(err.contains("只差空白") && err.contains("→"), "{err}");
@@ -396,7 +395,7 @@ mod tests {
         let p = TempProject::new();
         let body: String = (1..=20).map(|i| format!("{i}\n")).collect();
         p.write("n.txt", &body);
-        let ctx = p.ctx(PermissionLevel::Edit);
+        let ctx = p.ctx();
         let r = write_patch(&ctx, &json!({"edits":[edit("n.txt","10\n","ten\n")]})).unwrap();
         assert!(r.text.contains("     7\t7") && r.text.contains("    10\tten") && r.text.contains("    13\t13"));
         assert!(!r.text.contains("     6\t6") && !r.text.contains("    14\t14"));

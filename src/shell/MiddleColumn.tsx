@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { api, type ApiTask } from "@/lib/api";
 import { canAutomate, type AgentEvent, type Control, type ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
@@ -7,8 +6,8 @@ import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPro
 import type { AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
 import { canDelegate } from "@/lib/presets";
-import type { Permission, ProjectOverview, RunRecord, StepDescriptor, TaskBrief } from "@/lib/types";
-import { PERMISSIONS, agentDot, ago, clock, cn, copyText, engineDot, entryDot, isAgentRun, isPeckRun, runState, span, stepName, timer, whoDots, whoLabel , shortenHomePath } from "@/lib/utils";
+import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
+import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath, type DotKind } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
@@ -36,7 +35,6 @@ interface Props {
   /** 往某一次的事件里追加一条（批完「想记住这几条」）。 */
   onAppendEvent: (runId: string, event: AgentEvent) => void;
   onStop: () => void;
-  onRetryStep: (run: RunRecord, stepId: string) => void;
   onControl: (runId: string, control: Control) => Promise<void>;
   onOpenSettings: () => void;
   /** 输入框下点了「谁」：展开、闪一下左栏的 AGENTS。 */
@@ -101,9 +99,9 @@ export function chosenEntry(entries: ModelEntry[], settings: AppSettings): Model
 }
 
 /** 一项怎么干（NEW TASK 上的一行）。 */
-function describeOne(entry: ModelEntry): { name: string; dot: ReturnType<typeof agentDot>; does: string } {
+function describeOne(entry: ModelEntry): { name: string; dot: DotKind; does: string } {
   if (entry.group === "peck") {
-    return { name: `Peck · ${entry.label}`, dot: "api", does: "Peck 自己的循环：读、搜、改（整批一起改）、跑命令、任务清单、问你，都用 Peck 的工具；每一步看得见，花费按价格表算，算进花费上限。" };
+    return { name: `Peck · ${entry.label}`, dot: "api", does: "Peck Loop：读、搜、改（整批一起改）、跑命令、任务清单、问你，都用 Peck 的工具；每一步看得见，花费按价格表算，算进花费上限。" };
   }
   return {
     name: entry.label,
@@ -115,9 +113,9 @@ function describeOne(entry: ModelEntry): { name: string; dot: ReturnType<typeof 
 }
 
 /** 选了谁，NEW TASK 上写它怎么干：接力写两家，开了审查、委派各多一行。 */
-function describe(entry: ModelEntry, entries: ModelEntry[], settings: AppSettings): Array<{ name: string; dot: ReturnType<typeof agentDot>; does: string; model?: string }> {
+function describe(entry: ModelEntry, entries: ModelEntry[], settings: AppSettings): Array<{ name: string; dot: DotKind; does: string; model?: string }> {
   const find = (id?: string) => (id ? entries.find((e) => e.id === id) : undefined);
-  const out: Array<{ name: string; dot: ReturnType<typeof agentDot>; does: string; model?: string }> = [];
+  const out: Array<{ name: string; dot: DotKind; does: string; model?: string }> = [];
   let builder: ModelEntry | undefined = entry;
   if (entry.id === RELAY_ID) {
     const spec = find(settings.relay.spec);
@@ -230,7 +228,6 @@ export const MiddleColumn: React.FC<Props> = (props) => {
               readOnly={!!archivedAt}
               shown={run.id === props.shownRunId}
               onShow={runs.length > 1 ? () => props.onShowRun(run.id) : undefined}
-              onRetryStep={props.onRetryStep}
               onShowFile={(path) => props.onShowRun(run.id, path)}
               busy={busy}
               events={props.agentEvents[run.id]}
@@ -374,7 +371,7 @@ const Composer: React.FC<Props & {
   onPermission: (p: Permission) => void;
   placeholder: string;
 }> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, say, quota, onNewTask }) => {
-  // 独立工作区（v0.7）：git 项目、Peck 循环或 CLI 引擎、不是 PLAN；发出去以后关掉（一次一选）。
+  // 独立工作区（v0.7）：git 项目、Peck Loop 或 CLI 引擎、不是 PLAN；发出去以后关掉（一次一选）。
   const [worktree, setWorktree] = useState(false);
   const worktreeable = !!project.workspace.gitBranch && !!who && (who.group === "peck" || who.group === "cli") && permission !== "plan";
   useEffect(() => { if (!worktreeable) setWorktree(false); }, [worktreeable]);
@@ -402,7 +399,7 @@ const Composer: React.FC<Props & {
     if (!slashQ) return [];
     const files: SlashItem[] = (slashData?.commands ?? [])
       .filter((c) => !PECK_COMMANDS.some((p) => p.name === c.name))
-      .map((c) => ({ name: c.name, description: c.description, hint: c.hint, kind: "file", scope: c.scope, folder: c.folder }));
+      .map((c) => ({ name: c.name, description: c.description, hint: c.hint, kind: "file", folder: c.folder }));
     return matchSlash([...PECK_COMMANDS, ...files], slashQ.query).slice(0, 12);
   }, [slashQ?.query, slashData]); // eslint-disable-line react-hooks/exhaustive-deps
   const [note, setNote] = useState<SlashNote | null>(null);
@@ -468,16 +465,16 @@ const Composer: React.FC<Props & {
       case "cost": {
         onDraft("");
         const month = await ipc.harnessSpend().catch(() => null);
-        setNote({ title: "COST", text: [spent ? `这个任务：${usageText(spent)}` : "这个任务还没有花费记录", month ? `这个月 Peck 循环：${usd(month.monthUsd) ?? "$0"}（CLI 用订阅，额度在 QUOTA 里看）` : null].filter(Boolean).join("\n") });
+        setNote({ title: "COST", text: [spent ? `这个任务：${usageText(spent)}` : "这个任务还没有花费记录", month ? `这个月 Peck Loop：${usd(month.monthUsd) ?? "$0"}（CLI 用订阅，额度在 QUOTA 里看）` : null].filter(Boolean).join("\n") });
         return;
       }
     }
     const known = slashData?.commands.some((c) => c.name === name) || (await ipc.slashList(pid).catch(() => null))?.commands.some((c) => c.name === name);
     if (!known) {
-      say(CLI_ONLY.has(name) ? `/${name} 是 CLI 自己的交互式命令，Peck 不转发${name === "model" ? "：模型在左栏 AGENTS 里换" : ""}` : `没有 /${name} 这个命令（Peck 的、项目和你的 .claude/commands 里都没有）`);
+      say(CLI_ONLY.has(name) ? `/${name} 是 CLI 自己的交互式命令，Peck 不转发${name === "model" ? "：模型在左栏 AGENTS 里换" : ""}` : `没有 /${name} 这个命令（Peck 自己的和命令库里都没有）`);
       return;
     }
-    await sendText(await ipc.slashExpand(pid, name, args), permission);
+    await sendText(await ipc.slashExpand(name, args), permission);
   };
   const pickSlash = (item: SlashItem) => {
     if (item.instant) { onDraft(""); void runSlash(item.name, "").catch(say); return; }
@@ -527,7 +524,7 @@ const Composer: React.FC<Props & {
               <button key={`${c.kind}-${c.name}`} type="button" role="option" aria-selected={i === active} className={cn("pk-menu-item", i === active && "is-on")} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
                 <Dot kind="" />
                 <b className="slash-name t-code">/{c.name}{c.hint ? <em> {c.hint}</em> : null}</b>
-                <span className="slash-desc">{c.description}{c.kind === "file" ? ` · ${c.scope === "user" ? "你的" : "项目的"}${c.folder ? ` ${c.folder}` : ""}` : ""}</span>
+                <span className="slash-desc">{c.description}{c.kind === "file" ? ` · 命令库${c.folder ? ` ${c.folder}` : ""}` : ""}</span>
               </button>
             ))}
           </div>
@@ -617,7 +614,7 @@ const Recap: React.FC<{
   const rows = useMemo(() => (events ? costRows(events, whoLabel(run)) : []), [events, run]);
   const done = state === "succeeded";
   const last = view ? [...view.items].reverse().find((i) => i.kind === "text") : undefined;
-  // 只有 Peck 循环被要求写「→ 下一步」；CLI 引擎回答末尾的箭头列表照原样留在正文里。
+  // 只有 Peck Loop 被要求写「→ 下一步」；CLI 引擎回答末尾的箭头列表照原样留在正文里。
   const steps = last && last.kind === "text" && isPeckRun(run) ? splitNextSteps(last.text).steps : [];
   const wt = run.worktree;
   const facts: string[] = [];
@@ -681,9 +678,8 @@ const TaskModule: React.FC<{
   /** 这个任务里发过好几次才有：让右栏看这一次的记录 */
   onShow?: () => void;
   busy: boolean;
-  onRetryStep: (run: RunRecord, stepId: string) => void;
   onShowFile: (path: string) => void;
-  /** 统一事件（Peck 循环、CLI 引擎的任务才有） */
+  /** 统一事件（v0.8 以前的旧记录没有，过程那里写「这次没有记下过程」） */
   events?: AgentEvent[];
   /** 这次正在跑（这次打开 App 以后发的） */
   live: boolean;
@@ -692,29 +688,24 @@ const TaskModule: React.FC<{
   /** recap 的下一步按钮：放进输入框。 */
   onNext: (text: string) => void;
   say: (message: unknown) => void;
-  /** 归档的任务只读：不重跑、卡片不能批。 */
+  /** 归档的任务只读：卡片不能批。 */
   readOnly?: boolean;
   /** 独立工作区搬回、丢掉了。 */
   onRunUpdated: (record: RunRecord) => void;
-}> = ({ run, latest, shown, onShow, busy, onRetryStep, onShowFile, events, live, onControl, onAppend, onNext, say, readOnly, onRunUpdated }) => {
+}> = ({ run, latest, shown, onShow, busy, onShowFile, events, live, onControl, onAppend, onNext, say, readOnly, onRunUpdated }) => {
   const state = runState(run);
   const running = state === "running";
   const now = useNow(running);
-  const agent = isAgentRun(run);
-  const view = useMemo(() => (agent && events ? foldEvents(events) : null), [agent, events]);
-  const doneSteps = run.steps.filter((s) => s.status === "succeeded").length;
-  const doneTasks = run.tasks.filter((t) => t.completed).length;
+  const view = useMemo(() => (events ? foldEvents(events) : null), [events]);
   const plan = view?.plan ?? null;
   const donePlan = plan ? plan.filter((p) => p.status === "completed").length : 0;
-  // 进度：有任务清单就按清单，没有按步骤；在跑的那一步算半步。
-  const ratio = plan && plan.length > 0 ? donePlan / plan.length : run.tasks.length > 0 ? doneTasks / run.tasks.length : run.steps.length > 0 ? doneSteps / run.steps.length : 0;
+  // 进度：有任务清单就按清单。
+  const ratio = plan && plan.length > 0 ? donePlan / plan.length : 0;
   const lit = state === "succeeded" ? 28 : Math.min(27, Math.round(ratio * 28));
   const adds = run.files.reduce((n, f) => n + f.additions, 0);
   const dels = run.files.reduce((n, f) => n + f.deletions, 0);
   const elapsed = (run.finishedAt ?? now) - run.startedAt;
-  const retryable = (state === "failed" || state === "cancelled") && !busy && !readOnly;
   const dots = whoDots(run);
-  const [open, setOpen] = useState<string | null>(null);
 
   return (
     <section className={cn("pk-mod task", running && "pk-mod--run", state === "failed" && "pk-mod--err", latest && "task--latest")} aria-label={`任务 ${run.number}`}>
@@ -722,7 +713,7 @@ const TaskModule: React.FC<{
       <ModHead
         label="TASK"
         note={<>{dots.map((d) => <Dot key={d} kind={d} />)} {whoLabel(run)}{run.permission ? ` · ${run.permission.toUpperCase()}` : ""}</>}
-        count={agent ? (plan && plan.length ? `${donePlan}/${plan.length}` : undefined) : `${doneSteps}/${run.steps.length}`}
+        count={plan && plan.length ? `${donePlan}/${plan.length}` : undefined}
       >
         {onShow && (
           <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏看任务 ${run.number} 的记录`} onClick={onShow}>LOG</Btn>
@@ -736,40 +727,14 @@ const TaskModule: React.FC<{
         <b className={cn("pk-readout task-clock", state === "succeeded" && "pk-readout--done", !running && state !== "succeeded" && "task-clock--off")}>{timer(elapsed)}</b>
       </div>
       <Blocks lit={lit} still={!running} />
-      {agent ? (
-        <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} nextSteps={latest && (isPeckRun(run) || !!run.who?.startsWith("team:"))} />
-      ) : (
-        <>
-          {run.tasks.length > 0 && <Checklist run={run} />}
-          <ol className="steps">
-            {run.steps.map((step) => (
-              <Step key={step.id} run={run} step={step} now={now} open={open === step.id} onToggle={() => setOpen(open === step.id ? null : step.id)} onRetry={retryable && (step.status === "failed" || step.status === "cancelled") ? () => onRetryStep(run, step.id) : undefined} />
-            ))}
-          </ol>
-        </>
-      )}
-      {run.flowId.startsWith("api-") && <ApiHistory run={run} onShowFile={onShowFile} />}
-      {state === "succeeded" && !agent && (
-        <div className="summary sel">
-          <div className="summary-top">
-            <DotCheck />
-            <div><b className="t-name">做完了</b><span>{run.files.length} 个文件 · 用了 {span(elapsed)}</span></div>
-            <p className="summary-n"><span className="pk-add">+{adds}</span><span className="pk-del">−{dels}</span></p>
-          </div>
-          {run.summary && <p className="summary-text">{run.summary}</p>}
-          <div className="verify">
-            {run.tasks.length > 0 && <p className={doneTasks === run.tasks.length ? "is-ok" : "is-warn"}><Icon name={doneTasks === run.tasks.length ? "check" : "bang"} size={12} />任务清单 {doneTasks}/{run.tasks.length} 条勾了</p>}
-            {run.steps.map((s) => <p key={s.id} className="is-ok"><Icon name="check" size={12} />{stepName(s)}{s.exitCode != null ? ` · 退出码 ${s.exitCode}` : ""}</p>)}
-          </div>
-        </div>
-      )}
+      <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} nextSteps={latest && (isPeckRun(run) || !!run.who?.startsWith("team:"))} />
       {(state === "failed" || state === "cancelled") && run.summary && (
         <div className={cn("pk-bar", state === "failed" && "pk-bar--bad", "task-bar sel")}>
           <Icon name={state === "failed" ? "x" : "stop"} />
           <span className="pk-bar-text">{run.summary}</span>
         </div>
       )}
-      {agent && !running && state !== "undone" && (
+      {!running && state !== "undone" && (
         <Recap run={run} view={view} events={events} adds={adds} dels={dels} latest={latest} busy={busy} onNext={onNext} />
       )}
       {run.worktree && !running && <WorktreeBar run={run} busy={busy} readOnly={readOnly} onRunUpdated={onRunUpdated} say={say} />}
@@ -847,145 +812,3 @@ const MissedCards: React.FC<{ list: Schedule[]; busy: boolean; onMissed: (s: Sch
   );
 };
 
-const Step: React.FC<{ run: RunRecord; step: StepDescriptor; now: number; open: boolean; onToggle: () => void; onRetry?: () => void }> = ({ run, step, now, open, onToggle, onRetry }) => {
-  const kind = step.status === "succeeded" ? "ok" : step.status === "running" ? "run" : step.status === "failed" ? "fail" : step.status === "cancelled" ? "fail" : "todo";
-  const logs = run.logs.filter((l) => l.stepId === step.id);
-  const time = step.status === "running" && step.startedAt ? timer(now - step.startedAt) : step.durationMs != null ? span(step.durationMs) : "";
-  const files = run.stepFiles?.[step.id] ?? run.files.filter((f) => f.stepId === step.id);
-  const tail = logs.slice(-3);
-  const showTail = step.status === "running" && !open && tail.length > 0;
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    void copyText(logs.map((l) => l.chunk).join("\n")).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1400); });
-  };
-  const desc = step.status === "pending" ? "" : step.status === "running" ? (files.length ? `在改，已经动了 ${files.length} 个文件` : "在跑") : [files.length ? `改了 ${files.length} 个文件` : "", step.status === "cancelled" ? "已停止" : "", step.exitCode != null && step.exitCode !== 0 ? `退出码 ${step.exitCode}` : ""].filter(Boolean).join(" · ");
-  return (
-    <li className={cn("pk-step", `pk-step--${kind}`)}>
-      <span className="pk-step-node">
-        {kind === "run" ? <span className="pk-run" /> : kind === "ok" ? <Icon name="check" size={12} /> : kind === "fail" ? <Icon name={step.status === "cancelled" ? "stop" : "x"} size={12} /> : null}
-      </span>
-      <div className="step-body">
-        <button type="button" className="step-head" aria-expanded={open} onClick={onToggle} disabled={step.status === "pending"}>
-          <b className="pk-step-name">{stepName(step)}</b>
-          {step.status !== "pending" && <Icon name={open ? "triD" : "triR"} size={12} className="step-tri" />}
-          <span className="pk-step-time">{time}</span>
-        </button>
-        {desc && <p className="pk-step-desc">{desc}</p>}
-        {(step.status === "failed" || open) && step.notice && <p className="pk-step-desc step-notice">{step.notice}</p>}
-        {showTail && (
-          <div className="pk-mod pk-mod--sunk out sel">
-            {tail.map((l) => <p key={l.id} className={l.stream === "stderr" ? "is-err" : undefined}>{l.chunk}</p>)}
-          </div>
-        )}
-        {open && (
-          <div className="pk-mod pk-mod--sunk out out--full sel">
-            <div className="out-lines scroll">
-              {logs.length === 0 ? <p className="is-dim">这一步还没有输出</p> : logs.map((l) => <p key={l.id} className={l.stream === "stderr" ? (step.status === "failed" ? "is-err" : "is-dim") : undefined}>{l.chunk}</p>)}
-            </div>
-            <div className="out-acts">
-              {step.expects.length > 0 && <span className="hint">该写出：{step.expects.join("、")}</span>}
-              <span className="grow" />
-              {logs.length > 0 && <Btn v="ghost" sm onClick={copy}>{copied ? "COPIED" : "COPY"}</Btn>}
-            </div>
-          </div>
-        )}
-        {onRetry && <div className="step-retry"><Btn v="danger" sm icon="undo" onClick={onRetry}>{run.flowId.startsWith("api-") ? "CONTINUE" : "RETRY"}</Btn><Info text={run.flowId.startsWith("api-") ? "从现在的文件接着发一个任务，不重放跑过的工具" : "修好以后，从这一步重跑"} /></div>}
-      </div>
-    </li>
-  );
-};
-
-/** `.peck/tasks.md` 的任务清单，默认收着。 */
-const Checklist: React.FC<{ run: RunRecord }> = ({ run }) => {
-  const [open, setOpen] = useState(false);
-  const done = run.tasks.filter((t) => t.completed).length;
-  return (
-    <div className="fold">
-      <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon name={open ? "triD" : "triR"} size={12} />
-        <span>任务清单</span>
-        <em className="t-label">{done}/{run.tasks.length}</em>
-      </button>
-      {open && (
-        <ul className="checklist sel">
-          {run.tasks.map((t) => (
-            <li key={t.id} className={t.completed ? "is-done" : undefined}>
-              <span className={cn("pk-check", t.completed && "is-on")}><Icon name="check" size={12} /></span>
-              <span>{t.text}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-};
-
-const REVIEW = { accept: "通过", rework: "返工", takeover: "接手" } as const;
-const CALL_STATE: Record<string, string> = { running: "在跑", completed: "完成", failed: "失败", paused: "到上限停下", cancelled: "已停止", interrupted: "被打断" };
-
-/** API 模式：每个模型的调用和工具记录、交给实施的模型的每一项和审查结果。默认收着。 */
-const ApiHistory: React.FC<{ run: RunRecord; onShowFile: (path: string) => void }> = ({ run, onShowFile }) => {
-  const [open, setOpen] = useState(false);
-  const [tasks, setTasks] = useState<ApiTask[] | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!open) return;
-    let stopped = false;
-    let timerId = 0;
-    const refresh = async () => {
-      try { const next = await api.taskHistory(run.id); if (!stopped) { setTasks(next); setError(""); } }
-      catch (e) { if (!stopped) setError(String(e)); }
-      if (!stopped && run.status === "running") timerId = window.setTimeout(() => void refresh(), 1500);
-    };
-    void refresh();
-    return () => { stopped = true; window.clearTimeout(timerId); };
-  }, [open, run.id, run.status]);
-  const root = tasks?.find((t) => !t.parentId);
-  const sum = (pick: (t: ApiTask) => number | null) => (tasks && tasks.every((t) => pick(t) != null) ? tasks.reduce((n, t) => n + (pick(t) ?? 0), 0).toLocaleString() : "未知");
-  return (
-    <div className="fold">
-      <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon name={open ? "triD" : "triR"} size={12} />
-        <span>调用和审查记录</span>
-      </button>
-      {open && (
-        <div className="api-history sel">
-          {error && <p className="is-err">读不出记录：{error}</p>}
-          {!tasks && !error && <p className="hint">在读…</p>}
-          {tasks && !root && <p className="hint">这个任务没有调用记录。</p>}
-          {tasks && root && (
-            <>
-              <p className="hint">
-                一共 {tasks.reduce((n, t) => n + t.round, 0)}/{root.limits.maxRounds} 轮 · {tasks.reduce((n, t) => n + t.tools.length, 0)}/{root.limits.maxToolCalls} 次工具 · 输入 {sum((t) => t.inputTokens)} / 输出 {sum((t) => t.outputTokens)} Token
-              </p>
-              {tasks.map((t) => (
-                <details key={t.id} className={cn("api-task", t.parentId && "api-task--child")}>
-                  <summary>
-                    <Dot kind={agentDot("api")} />
-                    <b className="t-name">{t.parentId ? `交给实施的模型：${t.title}` : t.settings.role === "supervisor" ? "规划的模型" : "单模型干活"}</b>
-                    <span>{t.model.name} · {CALL_STATE[t.status] ?? t.status}{t.parentId ? ` · 第 ${t.attempt} 次` : ""}{t.review ? ` · ${REVIEW[t.review.decision]}` : ""}</span>
-                  </summary>
-                  <p className="hint">{t.round} 轮 · 输入 {t.inputTokens ?? "未知"} / 输出 {t.outputTokens ?? "未知"} Token · 思考 {t.settings.thinking ? t.settings.effort ?? "默认" : "关"}</p>
-                  {t.paths?.length > 0 && <p className="hint">能改：<span className="t-code">{t.paths.join("、")}</span> · 验收：{t.acceptance}</p>}
-                  {t.review && <p className="note">{REVIEW[t.review.decision]}：{t.review.feedback}</p>}
-                  {t.summary && <p className="note">{t.summary}</p>}
-                  {!!t.changeset?.files.length && <Btn v="ghost" sm onClick={() => onShowFile(t.changeset.files[0].path)}>FILES · {t.changeset.files.length}</Btn>}
-                  {t.tools.map((tool, i) => (
-                    <details key={`${tool.callId}-${i}`} className="api-tool">
-                      <summary className={tool.status === "failed" || tool.status === "interrupted" ? "is-err" : undefined}>
-                        <span className="t-code">{i + 1}. {tool.tool.name}</span><span>{CALL_STATE[tool.status] ?? tool.status} · {clock(tool.startedAt)}</span>
-                      </summary>
-                      <pre className="t-code">{JSON.stringify(tool.tool.arguments, null, 2)}</pre>
-                      <pre className="t-code">{tool.output || "还没有结果"}</pre>
-                    </details>
-                  ))}
-                </details>
-              ))}
-              {root.status === "interrupted" && <p className="note">被打断的操作可能已经改过文件。接着做会新发一个任务、先核对文件，不重放旧的工具。</p>}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};

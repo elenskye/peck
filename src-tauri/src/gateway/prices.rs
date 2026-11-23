@@ -3,7 +3,7 @@
 //! - 内置一份 `defaults/prices.json`（联网查的：美元价取 models.dev，国内的取官方人民币价），站主在设置 → QUOTA 里能改、加、
 //!   刷新（REFRESH 从 models.dev 取美元价；人民币的不跟着刷新，models.dev 只有折算后的美元价）。
 //! - 国内的模型（DeepSeek、Aliyun）按人民币记，汇率默认 1 美元 = 6.7 人民币，能改；算出来的花费都折成美元（上限、QUOTA 都是美元）。
-//! - 用在两处：Peck 循环每次请求的花费（`ModelSpec::cost` 先查这里，查不到才用目录里的价格），QUOTA 页给 CLI 折算（`spend.rs`）。
+//! - 用在两处：Peck Loop 每次请求的花费（`ModelSpec::cost` 先查这里，查不到才用目录里的价格），QUOTA 页给 CLI 折算（`spend.rs`）。
 //! - 站主改的、刷新来的存在 `app_settings` 的 `prices`；内置的随版本更新，改过的盖在上面。
 
 use super::catalog::PriceTier;
@@ -122,7 +122,7 @@ impl Book {
         candidates(name).into_iter().find_map(|c| self.rows.iter().find(|r| r.model.eq_ignore_ascii_case(&c)))
     }
 
-    /// 这一份用量花了多少美元。`tiers`：按单次请求的提示大小换档（Peck 循环是；CLI 报的回合合计不是）。`at`：什么时候用的（高峰价）。
+    /// 这一份用量花了多少美元。`tiers`：按单次请求的提示大小换档（Peck Loop 是；CLI 报的回合合计不是）。`at`：什么时候用的（高峰价）。
     pub fn usd(&self, row: &PriceRow, usage: &TokenUsage, tiers: bool, at: i64) -> f64 {
         let prompt = usage.prompt_total();
         let tier = if tiers { row.tiers.iter().filter(|t| prompt > t.above_tokens).max_by_key(|t| t.above_tokens) } else { None };
@@ -196,7 +196,7 @@ pub fn book() -> Book {
     book_cell().read().map(|b| b.clone()).unwrap_or_else(|_| Book::from_saved(&Saved::default()))
 }
 
-/// Peck 循环每次请求用：查得到就按价格表（带分档），查不到 `None`（再退回目录里的价格）。
+/// Peck Loop 每次请求用：查得到就按价格表（带分档），查不到 `None`（再退回目录里的价格）。
 pub fn usd_for(name: &str, usage: &TokenUsage) -> Option<f64> {
     book_cell().read().ok()?.usd_for(name, usage, true, crate::store::now_ms())
 }

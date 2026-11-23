@@ -27,7 +27,7 @@ export const BUILTIN_PRESETS: Preset[] = [
 
 export const RELAY = "relay";
 
-/** 实施的这一个能不能委派（v0.9 B1）：API 模型（Peck 循环）或经本机 MCP 的 CLI——Claude Code、Codex、Grok、Muse
+/** 实施的这一个能不能委派（v0.9 B1）：API 模型（Peck Loop）或经本机 MCP 的 CLI——Claude Code、Codex、Grok、Muse
  *  （Muse 经会话 MCP，v0.10 接上；文件夹要在 Muse 里信任过）。Antigravity 只做直接调用。 */
 export function canDelegate(entry: Pick<ModelEntry, "id" | "directOnly"> | null | undefined): boolean {
   if (!entry || entry.directOnly) return false;

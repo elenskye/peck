@@ -1,5 +1,5 @@
 //! 外部 MCP 服务器（v0.8 Phase 11）：站主在设置里配的 stdio MCP 服务器（命令 + 参数 + 环境变量）。
-//! Peck 循环发任务时起（ONE SHOT 不起），工具以 `mcp__<服务器>__<工具>` 给模型，任务结束一起停。
+//! Peck Loop 发任务时起（ONE SHOT 不起），工具以 `mcp__<服务器>__<工具>` 给模型，任务结束一起停。
 //!
 //! - 协议：一行一条 JSON-RPC（`initialize` → `notifications/initialized` → `tools/list` / `tools/call`）。
 //!   服务器发来的请求（`ping` 回空、别的回「没有这个方法」），通知不理。
@@ -216,7 +216,7 @@ pub fn read_project(root: &Path, env: &[(String, String)]) -> ProjectMcp {
         }
         let kind = entry.get("type").and_then(Value::as_str).unwrap_or("stdio");
         let Some(command) = entry.get("command").and_then(Value::as_str).filter(|c| !c.trim().is_empty() && kind == "stdio") else {
-            out.skipped.push((raw_name.clone(), "Peck 循环只接 stdio 的 MCP 服务器（这个是网址那种，CLI 自己读）".into()));
+            out.skipped.push((raw_name.clone(), "Peck Loop 只接 stdio 的 MCP 服务器（这个是网址那种，CLI 自己读）".into()));
             continue;
         };
         if out.servers.len() >= MAX_PROJECT_SERVERS {
@@ -250,7 +250,7 @@ pub fn read_project(root: &Path, env: &[(String, String)]) -> ProjectMcp {
     out
 }
 
-/// 这个项目的 Peck 循环要起的：设置里开着的 + 项目里的（同名的以项目的为准），再去掉项目设置里关掉的。
+/// 这个项目的 Peck Loop 要起的：设置里开着的 + 项目里的（同名的以项目的为准），再去掉项目设置里关掉的。
 pub fn merged(global: &[McpServerConfig], project: &[McpServerConfig], off: &[String]) -> Vec<McpServerConfig> {
     let mut out: Vec<McpServerConfig> = global.iter().filter(|g| g.enabled && !project.iter().any(|p| p.name == g.name)).cloned().collect();
     out.extend(project.iter().cloned());
@@ -280,7 +280,7 @@ pub fn set_keys(api: Arc<crate::api::ApiState>) {
     let _ = API.set(api);
 }
 
-/// 一个项目的 Peck 循环要起的 MCP：设置里开着的 + 项目 `.mcp.json` 里的（同名的以项目的为准），去掉项目设置里关掉的。
+/// 一个项目的 Peck Loop 要起的 MCP：设置里开着的 + 项目 `.mcp.json` 里的（同名的以项目的为准），去掉项目设置里关掉的。
 /// 第二个是任务开头要写的提示（`.mcp.json` 写错了）。钥匙串里的变量另用 [`fill_secrets`] 填（别拿着数据库的锁读钥匙串）。
 pub fn for_project(store: &Store, ws: &crate::workspace::Workspace) -> (Vec<McpServerConfig>, Vec<String>) {
     let global = load(store).unwrap_or_default();
@@ -575,7 +575,7 @@ impl McpClient {
     }
 }
 
-/// 一次 MCP 工具调用的结果：给模型的文字、算不算出错、带回来的图（Peck 循环交给能看图的模型）。
+/// 一次 MCP 工具调用的结果：给模型的文字、算不算出错、带回来的图（Peck Loop 交给能看图的模型）。
 #[derive(Debug, Clone, Default)]
 pub struct McpResult {
     pub text: String,
@@ -816,7 +816,7 @@ fn project_env(ws: &crate::workspace::Workspace) -> Vec<(String, String)> {
     crate::harness::run::with_project_env(base, &ws.settings.env_pairs())
 }
 
-/// 项目设置：这个项目的 Peck 循环会用到的 MCP 服务器。
+/// 项目设置：这个项目的 Peck Loop 会用到的 MCP 服务器。
 #[tauri::command]
 pub async fn project_mcp_list(workspace_id: String, state: tauri::State<'_, crate::state::AppState>) -> Result<ProjectMcpView, String> {
     let store = state.store.lock().map_err(|_| "读不到设置。")?;

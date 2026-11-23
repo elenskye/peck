@@ -1,7 +1,7 @@
-// 一次任务的过程（Peck 循环和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
+// 一次任务的过程（Peck Loop 和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, Control } from "@/lib/agentEvents";
-import { COMPACT_STEP, englishTitle, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, englishTitle, foldEvents, readFiles, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
 import { cn, copyText, engineDot, span } from "@/lib/utils";
@@ -20,7 +20,7 @@ interface Props {
   runId?: string;
   /** 往这次的事件里追加一条（批完记忆）。 */
   onAppend?: (event: AgentEvent) => void;
-  /** 最后一段回答末尾的「→ 下一步」交给 recap 做成按钮、正文里藏起来（只有任务最新一次的 Peck 循环）。 */
+  /** 最后一段回答末尾的「→ 下一步」交给 recap 做成按钮、正文里藏起来（只有任务最新一次的 Peck Loop）。 */
   nextSteps?: boolean;
 }
 
@@ -71,7 +71,7 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
     case "background":
       return <BackgroundLine bg={item.bg} />;
     case "stage":
-      return <StageLine info={item.info} now={now} />;
+      return item.info.items ? <SpecStage info={item.info} now={now} /> : <StageLine info={item.info} now={now} />;
   }
 };
 
@@ -109,7 +109,7 @@ const ShotThumb: React.FC<{ output: string | null | undefined }> = ({ output }) 
   );
 };
 
-const STAGE_END: Partial<Record<string, string>> = { done: "做完了", interrupted: "停了", cancelled: "停了", limit: "到了上限", refused: "拒绝了", error: "出错了" };
+const STAGE_END: Partial<Record<string, string>> = { done: "做完了", interrupted: "停了", limit: "到了上限", refused: "拒绝了", error: "出错了" };
 
 /** 接力、审查的一段（v0.8）：谁做哪一段、用了多久；审查写结论。 */
 const StageLine: React.FC<{ info: StageView; now: number }> = ({ info, now }) => {
@@ -141,6 +141,47 @@ const StageLine: React.FC<{ info: StageView; now: number }> = ({ info, now }) =>
         ))}
       </ol>
     )}
+    </>
+  );
+};
+
+/** 写规范那一段（v1.0.3）：收成一行「SPEC · Claude Code 写好了规范 · 1:20 ▸」，点开看规范全文和它读过的文件；
+ *  在跑时下面只露一行：在调工具就是那一步，在想就是 Thinking。对话里只有实施那一个的输出。 */
+const SpecStage: React.FC<{ info: StageView; now: number }> = ({ info, now }) => {
+  const [open, setOpen] = useState(false);
+  const items = info.items ?? [];
+  const running = info.endedAt == null;
+  const ms = (info.endedAt ?? now) - info.startedAt;
+  const ok = !running && (info.reason ?? "done") === "done";
+  const title = ok ? info.title.replace(/写规范$/, "写好了规范").replace(/补验收标准$/, "补好了验收标准") : info.title;
+  const spec = [...items].reverse().find((i): i is Extract<ViewItem, { kind: "text" }> => i.kind === "text" && !!i.text.trim());
+  const files = readFiles(items);
+  const groups = items.filter((i): i is Extract<ViewItem, { kind: "tools" }> => i.kind === "tools");
+  const step = running ? groups.flatMap((g) => g.calls).reverse().find((c) => c.status === "running") : undefined;
+  const thought = running && !step ? groups.flatMap((g) => g.thoughts).find((t) => !t.done) : undefined;
+  return (
+    <>
+      <button type="button" className={cn("agent-stage agent-stage--spec agent-stage-fold", !running && !ok && "is-bad")} aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Dot kind={info.engine === "peck" ? "api" : engineDot(info.engine)} />
+        <b className="t-label">{STAGE_WORD.spec}</b>
+        <span>{title}</span>
+        <em className="t-code">{running ? <><span className="pk-run" />{span(ms)}</> : ok ? span(ms) : `${STAGE_END[info.reason ?? "done"] ?? "结束了"} · ${span(ms)}`}</em>
+        <Icon name={open ? "triD" : "triR"} size={12} />
+        {info.error && <span className="agent-stage-err">{info.error}</span>}
+      </button>
+      {open && (
+        <div className="agent-spec sel">
+          {spec ? <Md text={spec.text} className={cn("agent-text", !spec.done && "is-live")} /> : <p className="agent-line">{running ? "还在写…" : "没写出规范。"}</p>}
+          {files.length > 0 && (
+            <>
+              <p className="agent-spec-h">读过 {files.length} 个文件</p>
+              <ul className="agent-spec-files t-code">{files.map((f) => <li key={f}>{f}</li>)}</ul>
+            </>
+          )}
+        </div>
+      )}
+      {step && <p className="agent-thinking" role="status"><span className="pk-run" /><span>{englishTitle(step.title)}</span><em>{span(Math.max(now - step.startedAt, 0))}</em></p>}
+      {thought && <Thinking since={thought.startedAt} now={now} />}
     </>
   );
 };
@@ -221,7 +262,7 @@ const MemoryCard: React.FC<{ runId: string; notes: string[]; reviewed: { saved: 
 
 /** 一条 Skill 放在哪（给人看）。 */
 function skillWhere(scope: SkillDraft["scope"], name: string): string {
-  return scope === "user" ? `~/.claude/skills/${name}/SKILL.md` : scope === "project-skills" ? `skills/${name}/SKILL.md` : `.claude/skills/${name}/SKILL.md`;
+  return scope === "user" ? `Peck/skills/${name}/SKILL.md` : scope === "project-skills" ? `skills/${name}/SKILL.md` : `.claude/skills/${name}/SKILL.md`;
 }
 
 /** 模型提议存一条 Skill（v0.10 C3）：不打断任务，跑着、跑完都能批。SAVE 存（任务还在跑、要写进项目的，做完再写），
@@ -265,12 +306,12 @@ const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: b
     <section className="pk-mod pk-mod--wait pk-ask agent-card agent-skill" aria-label="想存成 Skill">
       <Edge />
       <div className="pk-anim-reveal">
-        <ModHead label="SKILL" note={<>{replacing ? "想改已有的 Skill" : "想存成 Skill"}<Info text="模型摸出来的、以后用得上的做法。SAVE 才写进 SKILL.md（项目的 .claude/skills/，或者全局的 ~/.claude/skills/），Peck 和 Claude Code 以后的任务都读得到；任务还在跑的话做完再写，不算进这次的改动。不打断任务，什么时候批都行。项目设置 → SKILLS 里能关、能退回旧版。" /></>} />
+        <ModHead label="SKILL" note={<>{replacing ? "想改已有的 Skill" : "想存成 Skill"}<Info text="模型摸出来的、以后用得上的做法。SAVE 才写进 SKILL.md：项目的放 .claude/skills/（Peck 和 Claude Code 都读得到），全局的放 Peck 数据目录的 skills/（只有 Peck 读）；任务还在跑的话做完再写，不算进这次的改动。不打断任务，什么时候批都行。项目设置 → SKILLS 里能关、能退回旧版。" /></>} />
         {editing ? (
           <div className="agent-skill-edit">
             <Field className="t-code" aria-label="Skill 的名字" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             <Field aria-label="一句描述" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
-            <textarea className="verify-text" aria-label="SKILL.md 的正文" spellCheck={false} rows={Math.min(18, draft.body.split("\n").length + 1)} value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
+            <textarea className="text-edit" aria-label="SKILL.md 的正文" spellCheck={false} rows={Math.min(18, draft.body.split("\n").length + 1)} value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
           </div>
         ) : (
           <>
@@ -324,7 +365,7 @@ const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: b
 
 function decisionWord(d?: ApprovalDecision, by?: string): string {
   if (!d) return "等你批";
-  const who = by === "rule" ? "规则" : by === "engine" ? "引擎" : "你";
+  const who = by === "rule" ? "规则" : "你";
   if (d === "allow_always") return `${who}总是允许`;
   if (d === "allow_once") return `${who}批了`;
   return `${who}没批`;
@@ -374,7 +415,7 @@ const Thinking: React.FC<{ since: number; now: number }> = ({ since, now }) => (
 /** 一步上的审批（过程里是英文）。 */
 function decisionEn(d?: ApprovalDecision, by?: string): string {
   if (!d) return "waiting for you";
-  const who = by === "rule" ? "by rule" : by === "engine" ? "by engine" : "by you";
+  const who = by === "rule" ? "by rule" : "by you";
   if (d === "allow_always") return `always allowed ${who}`;
   if (d === "allow_once") return `allowed ${who}`;
   return `denied ${who}`;
