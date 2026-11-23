@@ -399,7 +399,7 @@ const Composer: React.FC<Props & {
     if (!slashQ) return [];
     const files: SlashItem[] = (slashData?.commands ?? [])
       .filter((c) => !PECK_COMMANDS.some((p) => p.name === c.name))
-      .map((c) => ({ name: c.name, description: c.description, hint: c.hint, kind: "file", folder: c.folder }));
+      .map((c) => ({ name: c.name, description: c.description, hint: c.hint, kind: "file", plugin: c.plugin }));
     return matchSlash([...PECK_COMMANDS, ...files], slashQ.query).slice(0, 12);
   }, [slashQ?.query, slashData]); // eslint-disable-line react-hooks/exhaustive-deps
   const [note, setNote] = useState<SlashNote | null>(null);
@@ -471,10 +471,10 @@ const Composer: React.FC<Props & {
     }
     const known = slashData?.commands.some((c) => c.name === name) || (await ipc.slashList(pid).catch(() => null))?.commands.some((c) => c.name === name);
     if (!known) {
-      say(CLI_ONLY.has(name) ? `/${name} 是 CLI 自己的交互式命令，Peck 不转发${name === "model" ? "：模型在左栏 AGENTS 里换" : ""}` : `没有 /${name} 这个命令（Peck 自己的和命令库里都没有）`);
+      say(CLI_ONLY.has(name) ? `/${name} 是 CLI 自己的交互式命令，Peck 不转发${name === "model" ? "：模型在左栏 AGENTS 里换" : ""}` : `没有 /${name} 这个命令（Peck 自己的和这个项目的插件里都没有）`);
       return;
     }
-    await sendText(await ipc.slashExpand(name, args), permission);
+    await sendText(await ipc.slashExpand(pid, name, args), permission);
   };
   const pickSlash = (item: SlashItem) => {
     if (item.instant) { onDraft(""); void runSlash(item.name, "").catch(say); return; }
@@ -524,7 +524,7 @@ const Composer: React.FC<Props & {
               <button key={`${c.kind}-${c.name}`} type="button" role="option" aria-selected={i === active} className={cn("pk-menu-item", i === active && "is-on")} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
                 <Dot kind="" />
                 <b className="slash-name t-code">/{c.name}{c.hint ? <em> {c.hint}</em> : null}</b>
-                <span className="slash-desc">{c.description}{c.kind === "file" ? ` · 命令库${c.folder ? ` ${c.folder}` : ""}` : ""}</span>
+                <span className="slash-desc">{c.description}{c.kind === "file" && c.plugin ? ` · ${c.plugin}` : ""}</span>
               </button>
             ))}
           </div>

@@ -254,7 +254,7 @@ const ProjectMcp: React.FC<{
 
 // ---------- Skills 和命令文件（v0.10 C2） ----------
 
-const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", user: "Peck/skills（全局）", peck: "Peck 自带" };
+const SKILL_WHERE: Record<string, string> = { project: ".claude/skills", "project-skills": "skills/", peck: "Peck 自带" };
 
 /** 这个项目读到的 Skills（能一个个关）和斜杠命令文件。 */
 const ProjectSkills: React.FC<{
@@ -293,7 +293,7 @@ const ProjectSkills: React.FC<{
   const shown: SkillRow[] = rows ?? (list?.skills.map((k) => ({ ...k, loads: 0, stale: false, versions: 0 })) ?? []);
   return (
     <>
-      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/ 里的 SKILL.md，Peck 的全局 Skill（数据目录的 skills/，只有 Peck 读），加上 Peck 自带的两个（快照回退、定时任务：教模型用 Peck 自己的工具，只给 Peck Loop）。Peck Loop 把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。CLI 自己读项目里的；这里关掉只管 Peck Loop。模型提议、你批了的 Skill 也写在这几处；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck Loop 和 Claude Code 读它的次数算（项目的只算这个项目，全局的算所有项目）。" /></p>
+      <p className="lbl">SKILLS<Info text="项目的 .claude/skills/、和 AGENTS.md 同级的 skills/ 里的 SKILL.md，加上 Peck 自带插件的三个（快照回退、定时任务、写 Skill：教模型用 Peck 自己的工具，只给 Peck Loop）。Peck Loop 把名字和一句描述放进系统提示，要用时读全文（过程里写「读 Skill …」）。CLI 自己读项目里的；这里关掉只管 Peck Loop。模型提议、你批了的 Skill 只写进这个项目；替换前的旧版 Peck 存着，点「旧版」能退回。用了几次按 Peck Loop 和 Claude Code 读它的次数算（只算这个项目）。" /></p>
       {list || rows ? (shown.length > 0 ? (
         <div className="set-rows">
           {shown.map((k) => (
@@ -317,13 +317,13 @@ const ProjectSkills: React.FC<{
       ) : <p className="hint">没有。</p>) : (
         <p className="hint">{missing ? "文件夹不在了。" : "在读…"}</p>
       )}
-      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/undo…），加上 Peck 命令库（数据目录的 commands/，所有项目共用）里的 .md。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
+      <p className="lbl">COMMANDS<Info text="输入框打 / 列出来：Peck 自己的几个（/plan、/review、/undo…，不带前缀），加上插件带的（一律 /插件名:命令）。选了以后把内容展开进这句话发出去，哪家引擎都能用（$ARGUMENTS 换成后面写的）。" /></p>
       {list && list.commands.length > 0 ? (
         <div className="chips">
           {list.commands.map((c) => <span key={c.name} className="chip-quiet" title={c.description}>/{c.name}</span>)}
         </div>
       ) : (
-        <p className="hint">{list ? "命令库里还没有命令。" : "在读…"}</p>
+        <p className="hint">{list ? "没有插件带的命令。" : "在读…"}</p>
       )}
     </>
   );

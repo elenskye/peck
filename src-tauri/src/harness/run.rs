@@ -511,7 +511,7 @@ pub(crate) fn start_peck_run(
     }
     let fork_note = fork.as_ref().map(|f| super::history::fork_notice(f, &label));
     let context = ContextConfig {
-        project: ProjectLayer::load(&workspace, memories_of(&store, &workspace_id)).with_skills(&workspace, &settings.skills_off),
+        project: ProjectLayer::load(&workspace, memories_of(&store, &workspace_id)).with_skills(&workspace, &settings),
         environment: true,
         prior_changed,
         refs,
@@ -728,7 +728,7 @@ pub async fn harness_oneshot(
             env: with_project_env(super::tools::bash::shell_env(), &settings.env_pairs()),
             session_ref: None,
             context: ContextConfig {
-                project: ProjectLayer::load(&workspace, memories_of(&state.store, &workspace_id)).with_skills(&workspace, &settings.skills_off),
+                project: ProjectLayer::load(&workspace, memories_of(&state.store, &workspace_id)).with_skills(&workspace, &settings),
                 history: Some(super::history::probe(state.store.clone(), workspace_id.clone())),
                 folders: settings.live_folders(),
                 ..Default::default()

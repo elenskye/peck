@@ -1,0 +1,11 @@
+{
+  "name": "peck-skills",
+  "version": "1.0.0",
+  "description": "让模型把干活时摸出来的、以后用得上的做法提成一条 Skill。只是提议：你点 SAVE 才写进这个项目的 Skill 文件夹，只管这个项目。",
+  "peck": {
+    "title": "Skill Creator",
+    "tools": [
+      { "name": "create_skill", "description": "提议存一条 Skill（名字、一句描述、正文）。弹一张卡片，SAVE 才写进项目；同名的是替换，旧版留着能退回。" }
+    ]
+  }
+}

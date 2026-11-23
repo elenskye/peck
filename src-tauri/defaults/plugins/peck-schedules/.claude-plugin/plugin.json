@@ -1,0 +1,13 @@
+{
+  "name": "peck-schedules",
+  "version": "1.0.0",
+  "description": "定时任务。跟模型说「每周一早上九点检查依赖更新」，到点 Peck 替你在这个项目里发这句话；看、改、取消也在对话里说。",
+  "peck": {
+    "title": "Schedules",
+    "tools": [
+      { "name": "schedule_task", "description": "设或改一个定时任务：什么时候、到点发哪句话、谁来干。" },
+      { "name": "list_schedules", "description": "列出这个项目的定时任务和下一次什么时候跑。" },
+      { "name": "cancel_schedule", "description": "取消一个定时任务。" }
+    ]
+  }
+}

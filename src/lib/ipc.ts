@@ -334,10 +334,10 @@ export const ipc = {
     if (isMockMode()) return mockIpc.skillRestore(workspaceId, name, id);
     return invoke<SkillRow[]>("skill_restore", { workspaceId, name, id });
   },
-  /** 选了一个命令文件：展开成要发出去的这句话。 */
-  async slashExpand(name: string, args: string): Promise<string> {
-    if (isMockMode()) return mockIpc.slashExpand(name, args);
-    return invoke<string>("slash_expand", { name, args });
+  /** 选了一个插件命令：展开成要发出去的这句话。 */
+  async slashExpand(workspaceId: string, name: string, args: string): Promise<string> {
+    if (isMockMode()) return mockIpc.slashExpand(workspaceId, name, args);
+    return invoke<string>("slash_expand", { workspaceId, name, args });
   },
   /** `/compact`：压一压这个任务存着的 Peck Loop 对话（不叫模型）。 */
   async harnessCompact(sessionId: string): Promise<string> {
@@ -549,12 +549,11 @@ export interface McpServerConfig {
 
 export type ToolHint = "read" | "write" | "destructive";
 
-/** 一个斜杠命令文件（.claude/commands/*.md，v0.10 C2）。 */
-/** Peck 命令库（数据目录的 commands/）里的一个命令文件。 */
-export interface CommandFile { name: string; description: string; hint?: string | null; folder?: string | null }
+/** 一个插件带的斜杠命令（v1.1.0）：name 是全名 `<插件名>:<命令>`，plugin 是插件在界面上的名字。 */
+export interface CommandFile { name: string; description: string; hint?: string | null; plugin: string }
 /** 一个 Skill（SKILL.md，v0.10 C2）。 */
-/** scope：项目的 .claude/skills、项目的 skills/、站主的 ~/.claude/skills、Peck 自带的。 */
-export interface SkillInfo { name: string; description: string; scope: "project" | "project-skills" | "user" | "peck"; off: boolean }
+/** scope：项目的 .claude/skills、项目的 skills/、Peck 自带插件的（plugin 是哪个插件）。 */
+export interface SkillInfo { name: string; description: string; scope: "project" | "project-skills" | "peck"; plugin?: string | null; off: boolean }
 export interface SlashList { commands: CommandFile[]; skills: SkillInfo[] }
 /** 一条 Skill 的草稿（v0.10 C3）：模型提的，或者卡片上改过的。 */
 export interface SkillDraft { name: string; description: string; body: string; scope: Exclude<SkillInfo["scope"], "peck"> }

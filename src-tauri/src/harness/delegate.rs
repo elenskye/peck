@@ -68,7 +68,7 @@ pub(crate) fn prepare(
         env: with_project_env(super::tools::bash::shell_env(), &ws.settings.env_pairs()),
         session_ref: None,
         context: ContextConfig {
-            project: ProjectLayer::load(&workspace, memories_of(store, &ws.id)).with_skills(&workspace, &ws.settings.skills_off),
+            project: ProjectLayer::load(&workspace, memories_of(store, &ws.id)).with_skills(&workspace, &ws.settings),
             environment: true,
             folders: ws.settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect(),
             env_names: ws.settings.env.iter().map(|v| v.name.clone()).collect(),

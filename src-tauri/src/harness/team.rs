@@ -485,6 +485,8 @@ struct Stager {
     skill_root: PathBuf,
     /// 快照回退、定时任务（v1.0.2）：CLI 实施、按审查改的那两段经本机 MCP 用。
     extras: Arc<super::extras::Extras>,
+    /// 这个项目里不给的 Peck 工具（v1.1.0：关掉的自带插件的）。
+    tools_off: Vec<String>,
 }
 
 impl Stager {
@@ -537,7 +539,7 @@ impl Stager {
             (Engine::Cli { engine, backend, .. }, _) => {
                 let delegate = if matches!(role, StageRole::Implement | StageRole::Fix) { self.cli_delegate.clone() } else { None };
                 let extras = (!read_only).then(|| self.extras.clone());
-                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()), extras, read_only };
+                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()), extras, read_only, off: self.tools_off.clone() };
                 let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
                 let token = peck_mcp.as_ref().map(|m| m.token.clone());
                 let prompt = format!("{}{}", task.prompt, runner::folders_note(&self.folders, level));
@@ -683,10 +685,11 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         run_id: run_id.clone(),
         setup: crate::schedule::Setup { who: lead.who, model: lead.model, effort: lead.effort, plan_by: spec.as_ref().map(pick_of), review_by: review.as_ref().map(pick_of), delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) },
     });
+    let tools_off = crate::plugins::tools_off(&settings.plugins_off);
     let peck_base = PeckBase {
         store: store.clone(),
         workspace_id: workspace_id.clone(),
-        project: ProjectLayer::load(&workspace, memories_of(&store, &workspace_id)).with_skills(&workspace, &settings.skills_off),
+        project: ProjectLayer::load(&workspace, memories_of(&store, &workspace_id)).with_skills(&workspace, &settings),
         history: super::history::probe(store.clone(), workspace_id.clone()),
         folders: folders.clone(),
         env,
@@ -818,7 +821,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             _ => None,
         };
         let delegate_note = cli_delegate.as_deref().map(super::delegate::prompt_note).unwrap_or_default();
-        let stager = Stager { run_id: id.clone(), cwd: cwd.clone(), level, base: base.clone(), current, last_text, stage_level, cli_delegate, project_env: project_env.clone(), folders: folders.clone(), skill_root: workspace.clone(), extras: peck_tools };
+        let stager = Stager { run_id: id.clone(), cwd: cwd.clone(), level, base: base.clone(), current, last_text, stage_level, cli_delegate, project_env: project_env.clone(), folders: folders.clone(), skill_root: workspace.clone(), extras: peck_tools, tools_off };
         let peck_of = |m: &Member, read_only: bool, brief: Option<String>, with_images: bool| -> Option<PeckBackend> {
             match &m.engine {
                 Engine::Peck { model_id, provider } => {

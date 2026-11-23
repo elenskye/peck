@@ -41,6 +41,8 @@ pub struct ProjectLayer {
     pub skills: Vec<crate::skills::SkillInfo>,
     /// 项目根（v0.10 C3）：有它才给 `create_skill`（提议的 Skill 写进这个项目的 `.claude/skills`）。
     pub skill_root: Option<std::path::PathBuf>,
+    /// 这个项目里不给的 Peck 工具（v1.1.0）：项目设置里关掉的自带插件的那几个。
+    pub tools_off: Vec<String>,
 }
 
 /// 读项目根下的说明文件：`AGENTS.md` 优先，没有就 `CLAUDE.md`。空文件当没有。
@@ -71,13 +73,14 @@ pub fn read_instructions(root: &Path) -> Option<Instructions> {
 
 impl ProjectLayer {
     pub fn load(root: &Path, memories: Vec<String>) -> Self {
-        Self { instructions: read_instructions(root), memories, skills: vec![], skill_root: None }
+        Self { instructions: read_instructions(root), memories, skills: vec![], skill_root: None, tools_off: vec![] }
     }
 
-    /// 带上 Skills（项目设置里关掉的不带）。
-    pub fn with_skills(mut self, root: &Path, off: &[String]) -> Self {
-        self.skills = crate::skills::for_loop(root, off);
-        self.skill_root = Some(root.to_path_buf());
+    /// 带上 Skills（项目设置里关掉的不带）和自带插件的开关：关掉的插件，它的 Skill、工具都不给。
+    pub fn with_skills(mut self, root: &Path, settings: &crate::workspace::ProjectSettings) -> Self {
+        self.skills = crate::skills::for_loop(root, &settings.skills_off, &settings.plugins_off);
+        self.tools_off = crate::plugins::tools_off(&settings.plugins_off);
+        self.skill_root = (!self.tools_off.iter().any(|t| t == super::tools::CREATE_SKILL)).then(|| root.to_path_buf());
         self
     }
 
@@ -106,7 +109,7 @@ impl ProjectLayer {
             if !out.is_empty() {
                 out.push('\n');
             }
-            out.push_str("# Skills\nReusable procedures saved for this project or by the user. When the task matches one, call load_skill with its name first and follow what it says (it may list more files to read).\n");
+            out.push_str("# Skills\nReusable procedures saved in this project or built into Peck. When the task matches one, call load_skill with its name first and follow what it says (it may list more files to read).\n");
             for s in &self.skills {
                 out.push_str(&format!("- {}: {}\n", s.name, s.description.trim()));
             }
@@ -374,7 +377,7 @@ mod tests {
         p.write("AGENTS.md", &"x".repeat(INSTRUCTIONS_MAX + 10));
         let i = read_instructions(&p.dir).unwrap();
         assert!(i.truncated && i.text.len() == INSTRUCTIONS_MAX);
-        let layer = ProjectLayer { instructions: Some(i), memories: vec!["测试用 pnpm test".into()], skills: vec![], skill_root: None };
+        let layer = ProjectLayer { instructions: Some(i), memories: vec!["测试用 pnpm test".into()], skills: vec![], skill_root: None, tools_off: vec![] };
         let text = layer.text().unwrap();
         assert!(text.contains("# Project instructions (AGENTS.md)") && text.contains("cut") && text.contains("- 测试用 pnpm test"));
         assert_eq!(ProjectLayer::default().text(), None);

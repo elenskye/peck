@@ -38,6 +38,28 @@ pub struct Offer {
     pub extras: Option<Arc<crate::harness::extras::Extras>>,
     /// 这一段只读（PLAN、合作里写规范和审查的）：不回退文件。
     pub read_only: bool,
+    /// 这个项目里不给的 Peck 工具（v1.1.0）：项目设置里关掉的自带插件的那几个。
+    pub off: Vec<String>,
+}
+
+impl Offer {
+    /// 这个工具给不给（没被项目关掉）。
+    fn has(&self, tool: &str) -> bool {
+        !self.off.iter().any(|t| t == tool)
+    }
+
+    /// 给 `create_skill`。
+    fn skill(&self) -> Option<&std::path::PathBuf> {
+        self.skill_root.as_ref().filter(|_| self.has("create_skill"))
+    }
+
+    /// 快照回退、定时任务那四个里现在给的。
+    fn extra_names(&self) -> Vec<&'static str> {
+        if self.extras.is_none() {
+            return vec![];
+        }
+        crate::harness::extras::NAMES.into_iter().filter(|n| self.has(n)).collect()
+    }
 }
 
 /// 一个任务登记的入口：事件往哪发、给哪些工具。
@@ -223,11 +245,15 @@ impl McpHub {
                 if offer.delegate.is_some() {
                     lines.push("delegate_task hands a self-contained subtask to a cheaper model working in the same project and returns its report.");
                 }
-                if offer.skill_root.is_some() {
+                if offer.skill().is_some() {
                     lines.push("create_skill proposes saving a reusable procedure you worked out as a skill (SKILL.md); the user approves it. Use it instead of writing skill files yourself.");
                 }
-                if offer.extras.is_some() {
-                    lines.push("restore_snapshot goes back to Peck's snapshot of the project from before or after an earlier task (undo / redo what a task changed); use it when the user asks to undo, revert or restore a task's changes, never on your own. schedule_task, list_schedules and cancel_schedule manage scheduled tasks in this project; use them when the user asks for something to happen at a time or on a schedule. For both, restate what you are about to do and get the user's yes first.");
+                let extra = offer.extra_names();
+                if extra.contains(&crate::harness::extras::RESTORE_SNAPSHOT) {
+                    lines.push("restore_snapshot goes back to Peck's snapshot of the project from before or after an earlier task (undo / redo what a task changed); use it when the user asks to undo, revert or restore a task's changes, never on your own, and restate what you are about to do and get the user's yes first.");
+                }
+                if extra.contains(&crate::harness::extras::SCHEDULE_TASK) {
+                    lines.push("schedule_task, list_schedules and cancel_schedule manage scheduled tasks in this project; use them when the user asks for something to happen at a time or on a schedule, and restate the schedule and get the user's yes first.");
                 }
                 ok(json!({
                     "protocolVersion": m["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
@@ -271,7 +297,7 @@ impl McpHub {
                         "annotations": {"readOnlyHint": false, "destructiveHint": false}
                     }));
                 }
-                if offer.skill_root.is_some() {
+                if offer.skill().is_some() {
                     tools.push(json!({
                         "name": "create_skill",
                         "title": "Propose a skill",
@@ -281,16 +307,22 @@ impl McpHub {
                         "annotations": {"readOnlyHint": true}
                     }));
                 }
-                if offer.extras.is_some() {
+                {
                     use crate::harness::extras as x;
-                    tools.push(json!({"name": x::RESTORE_SNAPSHOT, "title": "Task snapshots", "description": x::RESTORE_DESCRIPTION, "inputSchema": x::restore_schema(), "annotations": {"readOnlyHint": false, "destructiveHint": true}}));
-                    tools.push(json!({"name": x::SCHEDULE_TASK, "title": "Schedule a task", "description": x::SCHEDULE_DESCRIPTION, "inputSchema": x::schedule_schema(), "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
-                    tools.push(json!({"name": x::LIST_SCHEDULES, "title": "List scheduled tasks", "description": x::LIST_SCHEDULES_DESCRIPTION, "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": true}}));
-                    tools.push(json!({"name": x::CANCEL_SCHEDULE, "title": "Cancel a scheduled task", "description": x::CANCEL_SCHEDULE_DESCRIPTION, "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}, "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
+                    let mut extra = vec![
+                        json!({"name": x::RESTORE_SNAPSHOT, "title": "Task snapshots", "description": x::RESTORE_DESCRIPTION, "inputSchema": x::restore_schema(), "annotations": {"readOnlyHint": false, "destructiveHint": true}}),
+                        json!({"name": x::SCHEDULE_TASK, "title": "Schedule a task", "description": x::SCHEDULE_DESCRIPTION, "inputSchema": x::schedule_schema(), "annotations": {"readOnlyHint": false, "destructiveHint": false}}),
+                        json!({"name": x::LIST_SCHEDULES, "title": "List scheduled tasks", "description": x::LIST_SCHEDULES_DESCRIPTION, "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": true}}),
+                        json!({"name": x::CANCEL_SCHEDULE, "title": "Cancel a scheduled task", "description": x::CANCEL_SCHEDULE_DESCRIPTION, "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}, "annotations": {"readOnlyHint": false, "destructiveHint": false}}),
+                    ];
+                    // 自带插件按项目开关（v1.1.0）：关掉的不列。
+                    let given = offer.extra_names();
+                    extra.retain(|t| given.contains(&t["name"].as_str().unwrap_or("")));
+                    tools.extend(extra);
                 }
                 ok(json!({"tools": tools}))
             }
-            "tools/call" if offer.extras.is_some() && crate::harness::extras::NAMES.contains(&m["params"]["name"].as_str().unwrap_or("")) => {
+            "tools/call" if offer.extra_names().contains(&m["params"]["name"].as_str().unwrap_or("")) => {
                 let Some(x) = offer.extras.clone() else { return None };
                 let name = m["params"]["name"].as_str().unwrap_or("").to_string();
                 let args = m["params"]["arguments"].clone();
@@ -302,7 +334,7 @@ impl McpHub {
                 }
             }
             "tools/call" if m["params"]["name"] == "create_skill" => {
-                let Some(root) = offer.skill_root.clone() else {
+                let Some(root) = offer.skill().cloned() else {
                     return ok(json!({"content": [{"type": "text", "text": "skills are off for this task"}], "isError": true}));
                 };
                 let (sink, draft) = (sink.clone(), crate::skill_propose::Draft::from_input(&m["params"]["arguments"]));
@@ -614,8 +646,43 @@ mod tests {
         assert_eq!(r["result"]["isError"], true);
         let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "ask_user", "arguments": {"question": "?"}}})).await;
         assert_eq!(r["result"]["isError"], true, "没给 ask_user 的不收");
+        // 模型提不了全局的（v1.1.0：Skill 只存进项目）。
+        let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+            "params": {"name": "create_skill", "arguments": {"name": "peck-c3-global", "description": "d", "body": "1. x", "scope": "global"}}})).await;
+        assert!(r["result"]["isError"] == true && r["result"]["content"][0]["text"].as_str().unwrap().contains("只能存进这个项目"), "{r}");
         assert!(!root.join(".claude").exists());
         hub.unregister(&mcp.token);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn tools_of_a_builtin_plugin_switched_off_are_not_offered() {
+        use crate::harness::extras::testing as x;
+        let w = x::world();
+        let root = std::env::temp_dir().join(format!("peck-mcp-off-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let hub = McpHub::start().await.unwrap();
+        let sink = EventSink::new("run-mcp-off", None, "codex", None, |_| {});
+        // 项目设置里关了「定时任务」和「写 Skill」两个自带插件。
+        let off = crate::plugins::tools_off(&["peck-schedules".into(), "peck-skills".into()]);
+        let offer = Offer { skill_root: Some(root.clone()), extras: Some(Arc::new(x::extras(&w, "run-mcp-off"))), off, ..Default::default() };
+        let mcp = hub.register_offer(sink, offer);
+        let (_, init) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": PROTOCOL}})).await;
+        let said = init["result"]["instructions"].as_str().unwrap();
+        assert!(said.contains("restore_snapshot") && !said.contains("schedule_task") && !said.contains("create_skill"), "{said}");
+        let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
+        let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(names, vec!["restore_snapshot"]);
+        // 硬调也不收。
+        for (name, args) in [("schedule_task", json!({"prompt": "x", "repeat": "daily", "time": "09:00"})), ("list_schedules", json!({})), ("create_skill", json!({"name": "peck-off", "description": "d", "body": "x"}))] {
+            let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": args}})).await;
+            assert_eq!(r["result"]["isError"], true, "{name}: {r}");
+        }
+        assert!(w.store.lock().unwrap().schedules(Some("wx")).unwrap().is_empty());
+        let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "restore_snapshot", "arguments": {"action": "list"}}})).await;
+        assert!(r["result"]["isError"].as_bool() != Some(true), "{r}");
+        hub.unregister(&mcp.token);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(&w.root);
     }
 }

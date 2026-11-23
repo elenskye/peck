@@ -5,7 +5,7 @@ import { COMPACT_STEP, englishTitle, foldEvents, readFiles, splitNextSteps, grou
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
 import { cn, copyText, engineDot, span } from "@/lib/utils";
-import { Btn, Dot, Field, Icon, Info, ModHead, Seg, Twinkle, useNow } from "@/ui";
+import { Btn, Dot, Field, Icon, Info, ModHead, Twinkle, useNow } from "@/ui";
 import { Md } from "@/shell/Markdown";
 
 interface Props {
@@ -261,8 +261,8 @@ const MemoryCard: React.FC<{ runId: string; notes: string[]; reviewed: { saved: 
 };
 
 /** 一条 Skill 放在哪（给人看）。 */
-function skillWhere(scope: SkillDraft["scope"], name: string): string {
-  return scope === "user" ? `Peck/skills/${name}/SKILL.md` : scope === "project-skills" ? `skills/${name}/SKILL.md` : `.claude/skills/${name}/SKILL.md`;
+function skillWhere(name: string): string {
+  return `.claude/skills/${name}/SKILL.md`;
 }
 
 /** 模型提议存一条 Skill（v0.10 C3）：不打断任务，跑着、跑完都能批。SAVE 存（任务还在跑、要写进项目的，做完再写），
@@ -286,7 +286,7 @@ const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: b
   }
   const replacing = !!skill.diff && draft.name.trim() === skill.name;
   const changed = draft.name !== skill.name || draft.description !== skill.description || draft.body !== skill.body || draft.scope !== skill.scope;
-  const where = replacing ? skill.location : skillWhere(draft.scope === "user" ? "user" : "project", draft.name.trim() || "…");
+  const where = replacing ? skill.location : skillWhere(draft.name.trim() || "…");
   const decide = async (decision: "save" | "skip") => {
     if (!runId) return;
     setSent(true);
@@ -306,7 +306,7 @@ const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: b
     <section className="pk-mod pk-mod--wait pk-ask agent-card agent-skill" aria-label="想存成 Skill">
       <Edge />
       <div className="pk-anim-reveal">
-        <ModHead label="SKILL" note={<>{replacing ? "想改已有的 Skill" : "想存成 Skill"}<Info text="模型摸出来的、以后用得上的做法。SAVE 才写进 SKILL.md：项目的放 .claude/skills/（Peck 和 Claude Code 都读得到），全局的放 Peck 数据目录的 skills/（只有 Peck 读）；任务还在跑的话做完再写，不算进这次的改动。不打断任务，什么时候批都行。项目设置 → SKILLS 里能关、能退回旧版。" /></>} />
+        <ModHead label="SKILL" note={<>{replacing ? "想改已有的 Skill" : "想存成 Skill"}<Info text="模型摸出来的、以后用得上的做法。SAVE 才写进这个项目的 .claude/skills/（Peck 和 Claude Code 都读得到），只管这个项目；任务还在跑的话做完再写，不算进这次的改动。不打断任务，什么时候批都行。项目设置 → SKILLS 里能关、能退回旧版。" /></>} />
         {editing ? (
           <div className="agent-skill-edit">
             <Field className="t-code" aria-label="Skill 的名字" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
@@ -339,12 +339,7 @@ const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: b
           {replacing ? (
             <span>替换 <code>{where}</code>（旧版存进 Peck，能退回）</span>
           ) : (
-            <>
-              <Seg sm label="放在哪" value={draft.scope === "user" ? "user" : "project"} disabled={sent}
-                items={[{ id: "project", label: "项目" }, { id: "user", label: "全局" }]}
-                onChange={(id) => setDraft({ ...draft, scope: id })} />
-              <code>{where}</code>
-            </>
+            <span>存进这个项目 <code>{where}</code></span>
           )}
         </div>
         {skill.warnings.map((w) => <p key={w} className="agent-line is-warn"><Icon name="bang" size={12} />{w}</p>)}

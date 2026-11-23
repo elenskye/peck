@@ -350,6 +350,7 @@ pub(crate) fn start_engine_run(
                 setup: setup.clone(),
             })),
             read_only: level == PermissionLevel::Plan,
+            off: crate::plugins::tools_off(&settings.plugins_off),
         };
         let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
         let token = peck_mcp.as_ref().map(|m| m.token.clone());

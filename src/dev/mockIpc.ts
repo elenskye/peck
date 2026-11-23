@@ -594,24 +594,18 @@ export const mockIpc = {
       { server: server.name, name: "delete_issue", description: "Delete an issue", readOnly: false, destructive: true },
     ];
   },
-  // ── 斜杠命令和 Skills（v0.10 C2）：演示几个命令文件和 Skill ──
+  // ── 斜杠命令和 Skills（v0.10 C2）：演示几个 Skill；插件带的命令等项目里装了插件才有（v1.1.0）──
   async slashList(workspaceId: string): Promise<SlashList> {
     const off = workspacesState.find((w) => w.id === workspaceId)?.settings?.skillsOff ?? [];
     return {
-      commands: [
-        { name: "fix-todo", description: "把 TODO 注释都处理掉", hint: "[目录]", folder: null },
-        { name: "changelog", description: "按最近的提交写 CHANGELOG", hint: null, folder: "release" },
-      ],
+      commands: [],
       skills: [
         { name: "release", description: "How to cut a release of this project", scope: "project", off: off.includes("release") },
         { name: "draw-board", description: "Draw a board with the dw MCP tools", scope: "project-skills", off: off.includes("draw-board") },
-        { name: "pdf", description: "Read and fill PDF forms", scope: "user", off: off.includes("pdf") },
       ],
     };
   },
-  async slashExpand(name: string, args: string): Promise<string> {
-    if (name === "fix-todo") return `把${args ? ` ${args} 里` : "项目里"}的 TODO 注释都处理掉：能做的做了，做不了的改成一句说明为什么。`;
-    if (name === "changelog") return `按最近的提交写一段 CHANGELOG，放在 CHANGELOG.md 最上面。${args ? `\n\n${args}` : ""}`;
+  async slashExpand(_workspaceId: string, name: string, _args: string): Promise<string> {
     throw new Error(`没有 /${name} 这个命令。`);
   },
   async harnessCompact(_sessionId: string): Promise<string> {
@@ -757,11 +751,10 @@ export const mockIpc = {
     const d: SkillDraft = draft ?? { name: proposed.name, description: proposed.description, body: proposed.body, scope: proposed.scope };
     if (decision === "save" && !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(d.name)) throw new Error(`Skill 的名字「${d.name}」不行：只能用小写字母、数字和 -，最长 64 个，比如 release-checklist。`);
     if (decision === "save" && /sk-[A-Za-z0-9_-]{16,}/.test(d.body)) throw new Error("第 1 行像 Key、令牌或密码，这种内容存不进 Skill。去掉（写成「从钥匙串、环境变量读」）再提。");
-    // 替换已有的（同名）在原处；新的照卡片上选的范围放。
-    const location = d.name === proposed.name && proposed.diff ? proposed.location : d.scope === "user" ? `~/.claude/skills/${d.name}/SKILL.md` : `.claude/skills/${d.name}/SKILL.md`;
+    // 替换已有的（同名）在原处；新的写进项目的 .claude/skills（v1.1.0：Skill 只存进项目）。
+    const location = d.name === proposed.name && proposed.diff ? proposed.location : `.claude/skills/${d.name}/SKILL.md`;
     const live = agentRuns.get(runId);
-    const project = !location.startsWith("~/");
-    const status = decision === "skip" ? "skipped" : live?.emit && project ? "queued" : "saved";
+    const status = decision === "skip" ? "skipped" : live?.emit ? "queued" : "saved";
     const body = { type: "skill.reviewed", proposalId, status, name: d.name, location, error: null } as ReplayEvent;
     const sessionId = Object.keys(runsState).find((sid) => runsState[sid].some((r) => r.id === runId));
     const workspaceId = sessionId ? workspaceOfSession(sessionId) : "";
@@ -868,9 +861,9 @@ function mockSkillRows(workspaceId: string): SkillRow[] {
   const rows = (skillRowsState[workspaceId] ??= [
     { name: "release", description: "How to cut a release of this project", scope: "project", off: false, loads: 7, lastUsed: Date.now() - 2 * day, changedAt: Date.now() - 3 * day, stale: false, versions: 2 },
     { name: "draw-board", description: "Draw a board with the dw MCP tools", scope: "project-skills", off: false, loads: 0, lastUsed: null, changedAt: Date.now() - 45 * day, stale: true, versions: 0 },
-    { name: "pdf", description: "Read and fill PDF forms", scope: "user", off: false, loads: 3, lastUsed: Date.now() - 40 * day, changedAt: Date.now() - 90 * day, stale: true, versions: 0 },
     { name: "peck-snapshots", description: "站主要撤销、反悔、回退某次任务的改动时用：列出任务快照，确认后按任务号放回去", scope: "peck", off: false, loads: 2, lastUsed: Date.now() - 1 * day, changedAt: null, stale: false, versions: 0 },
     { name: "peck-schedules", description: "站主要定时做一件事，或者要看、改、取消定时任务时用", scope: "peck", off: false, loads: 0, lastUsed: null, changedAt: null, stale: false, versions: 0 },
+    { name: "peck-skills", description: "站主要你「存成 Skill」，或者摸出了一套以后还用得上的做法时用：怎么判断值不值得存、怎么写，再用 create_skill 提议", scope: "peck", off: false, loads: 1, lastUsed: Date.now() - 6 * day, changedAt: null, stale: false, versions: 0 },
   ]);
   for (const r of rows) r.off = off.includes(r.name);
   return rows;

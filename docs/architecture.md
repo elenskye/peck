@@ -11,7 +11,7 @@
 | 后端 | Rust | 模型请求、工具、CLI 进程、快照、SQLite 都在这里，界面只经 IPC |
 | 存储 | SQLite（WAL）+ 影子 Git 仓库 | 记录和历史 Diff 分开存 |
 
-不做：常驻辅助服务、通用插件框架、开机自启。
+不做：常驻辅助服务、开机自启。
 
 ## 一个任务怎么跑
 
@@ -28,7 +28,7 @@
 
 - **直接调用的引擎**（`caps.rs` 的 `direct_only`，现在是 Antigravity）挡在 ONE SHOT、接力、审查、委派、定时任务之外。
 - **发出去前**（`src/App.tsx` 的 `send`）：存着的接力、审查、委派只认 AGENTS 里现在能选的；PLAN 不能开接力和审查，提示一句、不悄悄丢掉。
-- **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/cost`（`/undo` 是发一句「撤销任务 N 的改动」给模型），加上 Peck 命令库（数据目录的 `commands/**/*.md`，所有项目共用；项目的 `.claude/commands/` 和 `~/.claude/commands/` 都不读）。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
+- **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/cost`（不带前缀；`/undo` 是发一句「撤销任务 N 的改动」给模型），加上插件带的，一律 `/<插件名>:<命令>`（见「插件」）。没有全局命令库，项目的 `.claude/commands/` 和 `~/.claude/commands/` 都不读。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
 - **控制通道**：审批、回答、追加、打断都走 `gateway_control(runId, control)`（`gateway/runner.rs`）。`run_cancel` 先发打断，超时结束整个进程组。
 - **项目和任务**（`projects.rs`）：「移出列表」只设 `Workspace.hidden`，「归档」只设 `sessions.archived_at`（`search_tasks`、@ 引用照样读得到）；删任务真删；在跑的不能归档、不能删。
 - **文件夹不在了**（`ProjectOverview.missing`）不能发任务；`workspace_relocate` 把任务、「总是允许」和快照挪到新位置。
@@ -69,7 +69,7 @@
 | 独立工作区 | `worktrees/<项目哈希>/<任务号>/` |
 | Peck Loop 命令的 HOME | `harness-runtime/<项目>/` |
 | 落盘的输出 | `harness-output/<任务>/`（长输出、后台日志、附图、截图），14 天没动的打开 App 时删 |
-| Peck 自己的库 | `skills/<名字>/SKILL.md`（全局 Skill）、`commands/**/*.md`（斜杠命令） |
+| 插件库 | `library/plugins/<名字>/`、`library/skills/<名字>/SKILL.md`（见「插件」） |
 | 其他 | `skill-history/`（Skill 旧版）、`login-shim/`（CLI 登录时只记链接的小脚本）、`cli-probe/`（跑 Claude `/usage`） |
 | Key | 钥匙串服务 `Peck API` / `Peck API Dev`（开发包）/ `Peck API Test`（设了 `PECK_DATA_DIR`） |
 
@@ -118,7 +118,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck Loop 同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示；Antigravity 不查。
-- **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌。工具：`create_skill`（五家都给）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）、`restore_snapshot` 和定时任务那三个（五家都给，见「Peck 自己的工具」）。只对这一次进程挂上、不改 CLI 的配置；Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
+- **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌。工具：`create_skill`（五家都给）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）、`restore_snapshot` 和定时任务那三个（五家都给，见「Peck 自己的工具」）；项目里关掉的自带插件的工具不列、调了也不收（`Offer.off`）。只对这一次进程挂上、不改 CLI 的配置；Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
 - **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。
 
 ## Peck Loop（`src-tauri/src/harness/`）
@@ -166,8 +166,8 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 - **环境块** `<peck-context>` 放在这一句前面：系统和项目根、本机时间（带星期几和时区）、git、任务清单、之前几次改过的文件、在跑的后台命令。
 - **自动压缩**：到窗口 80% 时，下一次请求前依次做，降到 60% 以下就停：① 长的工具输出落盘；② 最近两轮以外的输出换成一句「做过什么」；③ 让模型写交接摘要，对话换成「摘要 + 站主最近三句」。压完还满就停下写明原因。
 - **记忆**：`memory` 工具只提议；站主 SAVE 才存 `memories`（按项目）。
-- **Skills**（`skills.rs`）：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`、Peck 的全局 Skill（数据目录的 `skills/*/SKILL.md`，只有 Peck 读），加上 Peck 自带的两个（`src-tauri/defaults/skills/`，嵌在程序里；同名的以前面的为准，项目设置里能关）；`load_skill` 按需读全文。CLI 原厂会读的自己读。
-- **自己写 Skill**（`skill_propose.rs`）：模型用 `create_skill` 提议，站主 SAVE 才写：项目的写进 `.claude/skills/`，全局的写进 Peck 数据目录的 `skills/`（暂定，站主下一轮给方向）。像 Key 的存不进去，同名的是替换那一份（旧版留着能退回）。任务还在跑、要写进项目里的排到收尾快照之后，所以不算进这次的改动、撤销也撤不掉。
+- **Skills**（`skills.rs`）：项目的 `.claude/skills/*/SKILL.md`、和 `AGENTS.md` 同级的 `skills/*/SKILL.md`，加上开着的自带插件的（嵌在程序里；同名的以项目的为准）。项目设置里能一个个关；`load_skill` 按需读全文。CLI 原厂会读的自己读。没有全局 Skill。
+- **自己写 Skill**（`skill_propose.rs`）：模型用 `create_skill` 提议，站主 SAVE 才写，**只写这个项目**的 `.claude/skills/`（传 `global` 被拒；和自带插件的 Skill 同名的也拒）。像 Key 的存不进去，同名的是替换那一份（旧版留着能退回）。任务还在跑时批的排到收尾快照之后再写，所以不算进这次的改动、撤销也撤不掉。
 - **@ 旧任务**：`[@标题](peck:task/<任务 id>)`，`history::task_refs` 把那个任务最近几次的请求、结果、改的文件放在这句前面（只认本项目），CLI 也带。`search_tasks` 让模型自己按关键词或任务号查。
 
 ### 后台命令（`background.rs`）
@@ -178,10 +178,27 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 ### Peck 自己的工具（`extras.rs`）
 
-以前在界面上点的两件事，现在在对话里让模型做。 Peck Loop 直接调，CLI 经本机 MCP 调，同一套；ONE SHOT、委派的子任务、合作里只读的两段不给。怎么用写在自带的两个 Skill（`peck-snapshots`、`peck-schedules`）和工具说明里。
+以前在界面上点的两件事，现在在对话里让模型做。 Peck Loop 直接调，CLI 经本机 MCP 调，同一套；ONE SHOT、委派的子任务、合作里只读的两段不给。各归一个自带插件（见「插件」），怎么用写在插件带的 Skill（`peck-snapshots`、`peck-schedules`）和工具说明里，项目里能关。
 
 - **`restore_snapshot`**：`list` 列这个项目最近 15 次任务的快照；`restore` 按任务号回到它开始前（撤销）或结束后（重做）。默认只动那次任务改过、现在和那时不一样的文件；`paths` 只放回其中几个；`scope: "project"` 是整个项目回到那时（之后的任务、站主自己改的一起回去）。哪一档都当高危：先算好动哪些文件，弹卡片列出来，批了才 `git restore --source=<那棵树> --worktree`（那时没有的删掉）；不碰用户仓库的 index、commit、stash，回退前再存一份快照。PLAN 不回退。整个任务回到开始前记「已撤销」，回到结束后去掉。
 - **`schedule_task` / `list_schedules` / `cancel_schedule`**：见「定时任务」。只管这个任务所在的项目。
+
+## 插件（`plugins.rs`）
+
+一包 Skill、斜杠命令、Peck 工具、Hook、MCP 服务器，写法照 Claude Code 的插件。v1.1.0 在做，Phase 见 [roadmap](./roadmap.md)；下面只写已经做了的。
+
+| 文件 | 是什么 |
+| --- | --- |
+| `.claude-plugin/plugin.json` | `name`、`version`、`description`；`peck` 一节是 Peck 多认的：`title`（界面上的名字）、`tools`（要用的 Peck 工具，`{name, description}`，说明写给站主看）、`everyProject`（库里的：默认每个项目都装） |
+| `skills/<名字>/SKILL.md` | Skill |
+| `commands/<命令>.md` | 斜杠命令，打 `/<插件名>:<命令>` |
+| `hooks/hooks.json` | `{"hooks": {"Stop": [{"hooks": [{"type": "peck", "ask": "…", "run": "…"}]}]}}`；`type: "command"`（任意脚本）只列出来、不跑 |
+| `.mcp.json` | `{"mcpServers": {…}}` |
+
+- **自带插件**：`src-tauri/defaults/plugins/`，`build.rs` 打进程序。三个：`peck-snapshots`（`restore_snapshot`）、`peck-schedules`（定时任务那三个）、`peck-skills`（`create_skill`），各带一份讲怎么用的 Skill。不写进项目，跑任务时现给；按项目关（`ProjectSettings.plugins_off`），关了它的 Skill、工具、系统提示里那一句都不给（Peck Loop 和本机 MCP 一样）。工具一个都没给的地方（ONE SHOT、子任务、只读的那两段），讲这些工具的 Skill 也不列。
+- **插件库**：数据目录 `library/plugins/<名字>/`（完整插件）、`library/skills/<名字>/SKILL.md`（单独的 Skill，版本写在开头的 `version`）。源在 `src-tauri/defaults/library/`，打进程序；打开 App 时库里没有这一项、读不了，或程序里的版本更新，就把这一项整个换掉（`plugins::seed`）。一样新或库里更新的不动；库里多出来的不动。
+- **谁能改**：系统级的（自带插件、插件库）只在开发 Peck 时改，改了升它自己的 `version`。跑着的模型只能往项目里提 Skill。
+- IPC `plugin_list`：自带的和库里的（名字、版本、说明，各自的 Skill、命令、工具、Hook、MCP）。
 
 ## 多引擎合作（`harness/team.rs`）
 
@@ -239,7 +256,7 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 | `src-tauri/src/{lib,commands,state,events}.rs` | 启动和恢复、IPC、共享状态、推给界面的事件 |
 | `src-tauri/src/{run,flow,agent,process,mode}.rs` | 在跑的登记、任务记录里的计划、找 CLI、进程组、数据目录和模拟 / 真实 |
 | `src-tauri/src/{store,migrations,workspace,snapshot,watch}.rs` | 存储和迁移、项目和校验、快照、忽略规则 |
-| `src-tauri/{defaults,integrations,tests/fixtures/gateway}/` | 模型目录、价格表、自带的 Skill；状态栏脚本；Gateway 夹具 |
+| `src-tauri/{defaults,integrations,tests/fixtures/gateway}/` | 模型目录、价格表、自带插件（`plugins/`）、插件库的源（`library/`）；状态栏脚本；Gateway 夹具 |
 | `src/App.tsx`、`src/lib/` | 编排和状态；IPC（`ipc.ts`，浏览器里转给 `?mock`）、设置、事件 → 界面（`agentView.ts`） |
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳和各页；方案里还没有的样式和身份色 |
 | `src/dev/`、`src/vendor/peck/` | `?mock` 的假数据和剧本；同步来的视觉 |

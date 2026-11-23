@@ -27,6 +27,8 @@ export interface ProjectSettings {
   mcpOff?: string[];
   /** 这个项目里不用的 Skills（v0.10 C2，按名字）。 */
   skillsOff?: string[];
+  /** 这个项目里关掉的自带插件（v1.1.0，按名字）：它的 Skill 和工具都不给。 */
+  pluginsOff?: string[];
 }
 
 export interface ProjectFolder { path: string; writable: boolean }

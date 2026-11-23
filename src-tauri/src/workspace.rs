@@ -41,6 +41,9 @@ pub struct ProjectSettings {
     /// 这个项目里不用的 Skills（v0.10 C2，按名字）。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills_off: Vec<String>,
+    /// 这个项目里关掉的自带插件（v1.1.0，按名字）：它的 Skill 和工具都不给。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub plugins_off: Vec<String>,
 }
 
 /// 项目的另一个文件夹：能改（`writable`）还是只读。
@@ -143,7 +146,7 @@ impl ProjectSettings {
         }
         self.folders = folders;
         self.env = env;
-        for list in [&mut self.mcp_off, &mut self.skills_off] {
+        for list in [&mut self.mcp_off, &mut self.skills_off, &mut self.plugins_off] {
             *list = list.iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && n.len() <= 64).collect();
             list.sort();
             list.dedup();

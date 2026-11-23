@@ -5,7 +5,7 @@
 // output 包括思考，reasoning 只是其中思考的那部分。
 
 /** Skill 放在哪（v0.10 C3）：项目的 `.claude/skills`、和 AGENTS.md 同级的 `skills/`、`~/.claude/skills`。 */
-export type SkillScope = "project" | "project-skills" | "user";
+export type SkillScope = "project" | "project-skills";
 /** 一条 Skill 提议批成什么样：存了、批了等任务做完再写、不要、没写进去。 */
 export type SkillReviewStatus = "saved" | "queued" | "skipped" | "failed";
 

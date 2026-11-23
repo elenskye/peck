@@ -1,5 +1,5 @@
-// 输入框的斜杠命令（v0.10 C2）：Peck 自己的几个，加上 Peck 命令库（数据目录的 commands/*.md，v1.0.3 起不读 .claude/commands）。
-// 命令文件选了以后把正文展开进这句话（后端 slash_expand），哪家引擎都能用；CLI 自己的交互式命令（/model、/login）不转发。
+// 输入框的斜杠命令（v0.10 C2）：Peck 自己的几个（不带前缀），加上插件带的（v1.1.0，一律 `/<插件名>:<命令>`）。
+// 插件的命令选了以后把正文展开进这句话（后端 slash_expand），哪家引擎都能用；CLI 自己的交互式命令（/model、/login）不转发。
 
 import type { RunRecord } from "@/lib/types";
 
@@ -7,10 +7,10 @@ export interface SlashItem {
   name: string;
   description: string;
   hint?: string | null;
-  /** peck：Peck 自己的；file：命令文件。 */
+  /** peck：Peck 自己的；file：插件带的。 */
   kind: "peck" | "file";
-  /** 命令文件在命令库的哪个子文件夹。 */
-  folder?: string | null;
+  /** 插件带的：哪个插件（界面上的名字）。 */
+  plugin?: string | null;
   /** 选了马上做（不用再写参数）。 */
   instant?: boolean;
 }
@@ -41,7 +41,7 @@ export function slashAt(draft: string): { query: string } | null {
 
 /** 这句话是不是一个斜杠命令：`/名字` 后面空格接参数（可以换行）。 */
 export function parseSlash(text: string): { name: string; args: string } | null {
-  const m = text.trim().match(/^\/([A-Za-z0-9_.-]{1,64})(?:\s+([\s\S]*))?$/);
+  const m = text.trim().match(/^\/([A-Za-z0-9_.:-]{1,64})(?:\s+([\s\S]*))?$/);
   return m ? { name: m[1], args: (m[2] ?? "").trim() } : null;
 }
 
