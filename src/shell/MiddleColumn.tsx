@@ -117,7 +117,7 @@ function describe(entry: ModelEntry, entries: ModelEntry[], settings: AppSetting
     main ? { ...describeOne(main), name: `主角色 · ${main.label}` } : { name: "主角色", dot: "", does: "在 AGENTS 里选一个 API 模型。" },
   ];
   const kinds = SUBAGENT_KINDS.filter((k) => !settings.subagents[k.id]?.off);
-  if (kinds.length) out.push({ name: `子代理 · ${kinds.map((k) => k.id).join("、")}`, dot: "api", does: "主角色需要时派出去，在后台跑：同一次派的一批都做完，报告一起交回来。每类的模型、强度、轮数在设置 → AGENTS（PLAN 不派 worker）。" });
+  if (kinds.length) out.push({ name: `子代理 · ${kinds.map((k) => k.id).join("、")}`, dot: "api", does: "主角色需要时派出去，在后台跑：同一次派的一批都做完，报告一起交回来。worker、member 只改划给它的文件，进度在任务板上。每类的模型、强度、轮数在设置 → AGENTS（PLAN 不派 worker、member）。" });
   return out;
 }
 

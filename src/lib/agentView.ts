@@ -5,7 +5,7 @@
 // - 没批、没答的审批和 ASK 单独拿出来做卡片；任务清单取最新的一份；
 // - 花费：这一次的进、出、缓存命中、美元（CLI 估的标「估」，不知道的写「未知」，不当 0）。
 // - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、后台命令、模型想记住的几条。
-import type { AgentEvent, ApprovalDecision, BackgroundKind, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, CriterionCheck, FileDiff, PlanStep, ResolvedBy, ReviewVerdict, SkillReviewStatus, SkillScope, StageRole, TokenUsage, ToolKind, ToolStatus, TurnEndReason } from "@/lib/agentEvents";
+import type { AgentEvent, ApprovalDecision, BackgroundKind, BoardItem, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, CriterionCheck, FileDiff, PlanStep, ResolvedBy, ReviewVerdict, SkillReviewStatus, SkillScope, StageRole, TokenUsage, ToolKind, ToolStatus, TurnEndReason } from "@/lib/agentEvents";
 
 export interface ToolView {
   callId: string;
@@ -136,6 +136,8 @@ export interface AgentView {
   /** 还没答的提问（ASK 卡片）。 */
   asks: AskView[];
   plan: PlanStep[] | null;
+  /** 任务板（v1.1.3）：主角色派出去的 worker、member，进度由 Peck 填（最新一份）。 */
+  board: BoardItem[] | null;
   /** 这一回合改了哪些文件（diff.updated 的最新一份；没有就从工具调用里收）。 */
   files: FileDiff[];
   usage: UsageLine | null;
@@ -167,7 +169,7 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], stages: [], hooks: [] };
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], stages: [], hooks: [] };
   let stageNow: StageView | null = null;
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
@@ -299,7 +301,12 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         diffFiles = e.files;
         break;
       case "plan.updated":
+        if (e.subagentId) break;
         view.plan = e.steps;
+        break;
+      case "board.updated":
+        if (e.subagentId) break;
+        view.board = e.items;
         break;
       case "approval.requested": {
         const a: ApprovalView = { requestId: e.requestId, callId: e.callId, kind: e.kind, title: e.title, detail: e.detail, highRisk: e.highRisk, options: e.options };
@@ -503,7 +510,7 @@ function activity(c: ToolView): string {
   if (n === "screenshot_app") return "shot";
   if (n === "list_directory") return "list";
   if (c.sub || /delegate_task$/.test(n) || n === "spawn_agent" || n === "task" || n === "agent") return "agent";
-  if (n === "update_plan" || /todo/.test(n)) return "plan";
+  if (n === "update_plan" || /todo/.test(n) || /^task(create|update|list|get)$/.test(n)) return "plan";
   if (/ask_user$/.test(n)) return "ask";
   if (n === "memory") return "note";
   if (n === "create_skill") return "newskill";
@@ -622,6 +629,23 @@ export function englishTitle(title: string): string {
     return out.replace(/、/g, ", ").replace(/（/g, " (").replace(/）/g, ")");
   }
   return title;
+}
+
+/** 过程里调用 id 是这个的那一步（任务板点开一项时找它的步骤，v1.1.3）：工具组里、子任务的步骤里、合作那几段里都找。 */
+export function findCall(items: ViewItem[], id: string): ToolView | null {
+  const inCalls = (calls: ToolView[]): ToolView | null => {
+    for (const c of calls) {
+      if (c.callId === id) return c;
+      const hit = c.sub ? inCalls(c.sub.calls) : null;
+      if (hit) return hit;
+    }
+    return null;
+  };
+  for (const item of items) {
+    const hit = item.kind === "tools" ? inCalls(item.calls) : item.kind === "stage" && item.info.items ? findCall(item.info.items, id) : null;
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /** 一段里读过的文件（按先后、去重）：读文件那几步的标题是「读 a.ts」，Codex 一步读几个用「、」连着；读 Skill 不算。 */

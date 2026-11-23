@@ -72,6 +72,12 @@ impl EventSink {
     }
 
     /// 子任务里的事件用这个 sink 发：自动带上 `subagent_id`，序号和主线共用。
+    /// 主线的那一个（不带子任务 id）。`subagent.started` / `completed` 自己就带子任务 id，从子代理里派的（member 派的
+    /// explorer，v1.1.3）也要走主线发，不然 JSON 里有两个 `subagentId`。
+    pub fn root(&self) -> Self {
+        Self { inner: self.inner.clone(), subagent_id: None }
+    }
+
     pub fn for_subagent(&self, subagent_id: impl Into<String>) -> Self {
         Self {
             inner: self.inner.clone(),

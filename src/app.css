@@ -435,6 +435,24 @@ body { overflow: hidden; }
 .agent-card--risk { --pk-edge: var(--color-bad-line); }
 .agent-own { margin-top: var(--space-4); }
 .checklist li.is-doing { color: var(--color-cyan-text); }
+/* 任务板（v1.1.3）：主角色派出去的 worker、member，进度 Peck 填；点一项看它的步骤。 */
+.board-list { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3) var(--space-4); }
+.board-row { display: flex; align-items: center; gap: var(--space-4); width: 100%; height: 20px; padding: 0; border: 0; background: none; text-align: left; font: inherit; font-size: var(--text-small); color: var(--color-text); cursor: pointer; }
+.board-row .pk-i { flex: none; color: var(--color-text-3); }
+.board-row:hover .board-title { color: var(--color-cyan-text); }
+.board-row:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: 1px; }
+.board-state { flex: none; width: 3.5em; color: var(--color-text-3); }
+.board-item.is-running .board-state { color: var(--color-cyan-text); }
+.board-item.is-waiting .board-state { color: var(--color-warn); }
+.board-item.is-failed .board-state { color: var(--color-bad); }
+.board-item.is-done .board-state { color: var(--color-ok); }
+.board-item.is-done .board-title, .board-item.is-stopped .board-title { color: var(--color-text-3); }
+.board-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-owner { flex: none; color: var(--color-text-3); }
+.board-time { flex: none; min-width: 3em; text-align: right; color: var(--color-text-3); font-variant-numeric: tabular-nums; }
+.board-paths, .board-empty, .board-item > .agent-calls { margin: 0 0 0 calc(12px + 3.5em + 2 * var(--space-4)); }
+.board-paths { overflow: hidden; font-size: var(--text-small); line-height: 18px; color: var(--color-text-3); text-overflow: ellipsis; white-space: nowrap; }
+.board-empty { font-size: var(--text-small); line-height: 20px; color: var(--color-text-3); }
 
 .oneshot { gap: var(--space-5); }
 .oneshot-body { display: flex; flex-direction: column; gap: var(--space-5); min-height: 0; }

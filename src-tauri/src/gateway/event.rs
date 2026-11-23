@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// 一条事件。`seq` 在一个任务里从 0 递增，由 `EventSink` 编号；`at` 是毫秒时间戳。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// 读回来手写（见下面的 `Deserialize`）：`subagent.started` / `completed` 自己的 `subagentId` 和外层的同名。
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEvent {
     pub seq: u64,
@@ -22,6 +23,22 @@ pub struct AgentEvent {
     pub subagent_id: Option<String>,
     #[serde(flatten)]
     pub body: EventBody,
+}
+
+/// 外层的 `subagentId` 和 `subagent.started` / `completed` 里的同名：派生出来的会让外层先拿走，事件那一半就缺了它，
+/// 存下的这两种事件读回来全成了 `raw`（重开任务时 LOG 里派了谁、子任务那一行的头都没了；v1.1.3 修）。
+/// 这两种的 `subagentId` 归事件本身（它们一律从主线发，外层没有）；JSON 里万一有两个，后一个算。
+impl<'de> Deserialize<'de> for AgentEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut map = serde_json::Map::<String, Value>::deserialize(d)?;
+        let seq = map.remove("seq").and_then(|v| v.as_u64()).ok_or_else(|| D::Error::missing_field("seq"))?;
+        let at = map.remove("at").and_then(|v| v.as_i64()).ok_or_else(|| D::Error::missing_field("at"))?;
+        let own = matches!(map.get("type").and_then(Value::as_str), Some("subagent.started" | "subagent.completed"));
+        let subagent_id = if own { None } else { map.remove("subagentId").and_then(|v| v.as_str().map(str::to_string)) };
+        let body = EventBody::deserialize(Value::Object(map)).map_err(D::Error::custom)?;
+        Ok(AgentEvent { seq, at, subagent_id, body })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,7 +191,7 @@ pub enum EventBody {
         /// 按段列花费按它写是谁。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
-        /// 子代理的类型（v1.1.2）：explorer / searcher / worker / auditor；以前的委派、CLI 的为空。
+        /// 子代理的类型（v1.1.2）：explorer / searcher / worker / member / auditor；以前的委派、CLI 的为空。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<String>,
     },
@@ -182,6 +199,10 @@ pub enum EventBody {
     /// 不进系统提示（换了设置不让提示缓存失效）。
     #[serde(rename = "agents.roster")]
     AgentsRoster { members: Vec<RosterMember> },
+    /// 任务板（v1.1.3，整份，后一条替掉前一条）：主角色派出去的 worker、member 各一项。进度（排队、在跑、等你批、
+    /// 做完）由 Peck 照子代理的事件填，模型不改。主角色自己那几步还是 `plan.updated`。
+    #[serde(rename = "board.updated")]
+    BoardUpdated { items: Vec<BoardItem> },
     #[serde(rename = "subagent.completed")]
     SubagentCompleted {
         subagent_id: String,
@@ -375,6 +396,7 @@ impl EventBody {
             Self::SubagentStarted { .. } => "subagent.started",
             Self::SubagentCompleted { .. } => "subagent.completed",
             Self::AgentsRoster { .. } => "agents.roster",
+            Self::BoardUpdated { .. } => "board.updated",
             Self::UsageUpdated { .. } => "usage.updated",
             Self::QuotaUpdated { .. } => "quota.updated",
             Self::ContextUpdated { .. } => "context.updated",
@@ -395,7 +417,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 35] = [
+    pub const TYPE_NAMES: [&'static str; 36] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -416,6 +438,7 @@ impl EventBody {
         "subagent.started",
         "subagent.completed",
         "agents.roster",
+        "board.updated",
         "usage.updated",
         "quota.updated",
         "context.updated",
@@ -505,6 +528,42 @@ pub enum BackgroundKind {
 pub enum BackgroundStatus {
     Running,
     Exited,
+    Stopped,
+}
+
+/// 任务板上的一项（v1.1.3）：派出去的一个 worker 或 member。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardItem {
+    /// 派它的那一步的调用 id（= 它事件里的 `subagentId`，界面点开看它的步骤）。
+    pub id: String,
+    pub title: String,
+    /// `worker` / `member`。
+    pub owner: String,
+    /// 这一类派的第几个（「worker 2」）。
+    pub number: u32,
+    /// 它能改的文件、文件夹（相对项目根）。
+    pub paths: Vec<String>,
+    pub status: BoardStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// 真开始跑（排完队）、做完的时刻（毫秒）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardStatus {
+    /// 排队：同类到了同时几个的上限，或者要改的和前面的重叠。
+    Queued,
+    Running,
+    /// 等站主批（它的审批卡片还没答）。
+    Waiting,
+    Done,
+    Failed,
     Stopped,
 }
 
@@ -805,6 +864,14 @@ mod tests {
                    "status":"ok","output":"ok","exitCode":0,"durationMs":12})
         );
         assert_eq!(serde_json::from_value::<AgentEvent>(value).unwrap(), event);
+        // 子代理开始、做完：自己的 subagentId 读回来还在（以前读回来成了 raw）；子任务里的事件外层照旧带。
+        let started = AgentEvent { seq: 4, at: 1, subagent_id: None, body: EventBody::SubagentStarted { subagent_id: "c9".into(), parent_call_id: Some("c9".into()), title: "worker · x".into(), model: None, kind: Some("worker".into()) } };
+        let text = serde_json::to_string(&started).unwrap();
+        assert_eq!(serde_json::from_str::<AgentEvent>(&text).unwrap(), started);
+        let old = r#"{"seq":1747,"at":1,"type":"subagent.completed","subagentId":"peck-sub-1","status":"failed"}"#;
+        assert!(matches!(serde_json::from_str::<AgentEvent>(old).unwrap().body, EventBody::SubagentCompleted { subagent_id, .. } if subagent_id == "peck-sub-1"));
+        let inner = AgentEvent { seq: 5, at: 1, subagent_id: Some("c9".into()), body: EventBody::Notice { level: NoticeLevel::Info, text: "x".into() } };
+        assert_eq!(serde_json::from_str::<AgentEvent>(&serde_json::to_string(&inner).unwrap()).unwrap(), inner);
     }
 
     #[test]
@@ -824,6 +891,9 @@ mod tests {
                 cost: Cost::unknown(),
                 scope: UsageScope::Turn,
                 model: None,
+            },
+            EventBody::BoardUpdated {
+                items: vec![BoardItem { id: "c1".into(), title: "改 a".into(), owner: "worker".into(), number: 1, paths: vec!["src/a.rs".into()], status: BoardStatus::Queued, model: None, started_at: None, finished_at: None }],
             },
         ];
         for body in samples {

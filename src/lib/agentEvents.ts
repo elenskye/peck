@@ -99,6 +99,21 @@ export interface RosterMember {
   parallel?: number | null;
 }
 
+/** 任务板上的一项（v1.1.3）：主角色派出去的一个 worker 或 member；进度由 Peck 填。 */
+export type BoardStatus = "queued" | "running" | "waiting" | "done" | "failed" | "stopped";
+export interface BoardItem {
+  /** 派它的那一步的调用 id（= 它事件的 subagentId）。 */
+  id: string;
+  title: string;
+  owner: string;
+  number: number;
+  paths: string[];
+  status: BoardStatus;
+  model?: string | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
+}
+
 export interface McpServer {
   name: string;
   status: string;
@@ -218,6 +233,7 @@ export type EventBody =
   | { type: "user_input.resolved"; requestId: string; answer: string }
   | { type: "subagent.started"; subagentId: string; parentCallId?: string | null; title: string; model?: string | null; kind?: string | null }
   | { type: "agents.roster"; members: RosterMember[] }
+  | { type: "board.updated"; items: BoardItem[] }
   | { type: "subagent.completed"; subagentId: string; status: ToolStatus }
   | { type: "usage.updated"; usage: TokenUsage; cost: Cost; scope: UsageScope; model?: string | null }
   | { type: "quota.updated"; provider: string; windows: QuotaWindow[] }

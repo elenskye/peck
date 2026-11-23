@@ -247,6 +247,8 @@ pub struct Spec {
     pub log_dir: PathBuf,
     /// 项目的其他文件夹（能改的放进沙箱的可写表、能当 cwd），和 `bash_run` 一样。
     pub extra: Vec<(PathBuf, bool)>,
+    /// worker、member 起的（v1.1.3）：沙箱只放开划给它的几块（绝对路径），和 `bash_run` 一样。
+    pub scope: Option<Vec<PathBuf>>,
 }
 
 pub fn start(spec: Spec, on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
@@ -292,13 +294,14 @@ pub fn start(spec: Spec, on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, Str
     }
     let p = proc_.clone();
     let sandbox = spec.sandbox;
+    let scope = spec.scope.clone();
     let timeout = if spec.kind == BackgroundKind::Server { FOREVER } else { LONGEST };
     tokio::spawn(async move {
         let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&log).ok();
         let writer = p.clone();
         let result = bash::run_command(
             &ctx,
-            Exec { command: &p.command, cwd: &cwd, timeout, sandbox, keep_bytes: 0, stream_bytes: usize::MAX },
+            Exec { command: &p.command, cwd: &cwd, timeout, sandbox, scope: scope.as_deref(), keep_bytes: 0, stream_bytes: usize::MAX },
             cancel_rx,
             move |text| {
                 if let Some(f) = file.as_mut() {
@@ -432,6 +435,7 @@ mod tests {
             runtime_dir: p.dir.with_extension("runtime"),
             log_dir: p.dir.with_extension("spill"),
             extra: vec![],
+            scope: None,
         }
     }
 

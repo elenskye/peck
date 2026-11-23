@@ -24,7 +24,7 @@ const FLOWS: Array<{ id: FlowKind; label: string; does: string; none: string }> 
 ];
 
 /** 头上的 ⓘ：子代理在哪配、强度从哪来。 */
-const EFFORT_NOTE = "PLOOP 的主角色能派四类子代理：explorer 读项目、searcher 联网调研、worker 照子任务改、auditor 审改动。每类用哪个模型、思考强度、最多几轮、同时几个在设置 → AGENTS；没单独选模型的跟主角色。";
+const EFFORT_NOTE = "PLOOP 的主角色能派五类子代理：explorer 读项目、searcher 联网调研、worker 做简单的改动、member 做复杂的活、auditor 审改动。worker、member 只改划给它的文件，不重叠的同时跑、重叠的排队，进度在对话里的任务板上。每类用哪个模型、思考强度、最多几轮、同时几个在设置 → AGENTS；没单独选模型的跟主角色。";
 
 interface Props {
   /** 模型列表（全部，含用不了的：CLI 没检测到的也列出来、变灰）。 */

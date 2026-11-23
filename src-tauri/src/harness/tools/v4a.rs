@@ -151,6 +151,21 @@ pub fn parse(text: &str) -> Result<Vec<Op>, String> {
     Ok(ops)
 }
 
+/// 补丁动到哪些文件（加、删、改、挪去的地方）：划文件时查（v1.1.3）。
+pub fn targets(input: &Value) -> Vec<String> {
+    patch_text(input)
+        .and_then(|t| parse(t).ok())
+        .map(|ops| {
+            ops.into_iter()
+                .flat_map(|o| match o {
+                    Op::Add { path, .. } | Op::Delete { path } => vec![path],
+                    Op::Update { path, move_to, .. } => std::iter::once(path).chain(move_to).collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 补丁要删哪些文件（循环里先问站主）。
 pub fn deletes(input: &Value) -> Vec<String> {
     patch_text(input)

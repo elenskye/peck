@@ -16,7 +16,7 @@ import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccoun
 import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
-import { rosterEvent, spawnRound } from "@/dev/agentsMock";
+import { boardRound, rosterEvent, spawnRound } from "@/dev/agentsMock";
 import type { ApiConfig, ApiStatus } from "@/lib/api";
 import type {
   FileChangeKind,
@@ -665,7 +665,9 @@ export const mockIpc = {
       },
     });
     // 子代理（v1.1.2）：句子里带「子代理」「派」就先派两个 explorer（同时跑，一批做完一起回来）。
-    if (/子代理|派/.test(args.prompt)) demo.rounds.splice(1, 0, ...spawnRound(runId, model, demo.edit.path));
+    // 任务板（v1.1.3）：带「任务板」「member」就派 worker、member 划文件并行做（重叠的排队）；只带「派」「子代理」是两个 explorer。
+    if (/任务板|member/i.test(args.prompt)) demo.rounds.splice(1, 0, ...boardRound(runId, model, demo.edit.path));
+    else if (/子代理|派/.test(args.prompt)) demo.rounds.splice(1, 0, ...spawnRound(runId, model, demo.edit.path));
     // 「截图」两个字在这句话里：先截一下 App 的窗口（演示图）。
     if (/截图/.test(args.prompt)) demo.rounds.splice(1, 0, screenshotRound(runId));
     const header: ReplayEvent[] = [

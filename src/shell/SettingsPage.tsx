@@ -656,11 +656,11 @@ const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries }) => {
               <div className="set-inline">
                 <ModelChip label={`${k.id} 用哪个模型`} entries={apis} value={chosen?.id ?? ""} off="跟主角色" disabled={!!s.off} onChange={(id) => patch(k.id, { model: id })} />
                 {effort(chosen ?? main)}
-                <Num post="轮"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 最多几轮`} min={5} max={400} off={!!s.off} value={s.rounds ?? 24} onCommit={(v) => patch(k.id, { rounds: v })} /></Num>
-                {k.parallel && (
+                <Num post="轮"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 最多几轮`} min={5} max={400} off={!!s.off} value={s.rounds ?? k.rounds} onCommit={(v) => patch(k.id, { rounds: v })} /></Num>
+                {k.parallel !== null && (
                   <>
                     <span className="set-word">同时</span>
-                    <Num post="个"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 同时最多几个`} min={1} max={8} off={!!s.off} value={s.parallel ?? 3} onCommit={(v) => patch(k.id, { parallel: v })} /></Num>
+                    <Num post="个"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 同时最多几个`} min={1} max={8} off={!!s.off} value={s.parallel ?? k.parallel} onCommit={(v) => patch(k.id, { parallel: v })} /></Num>
                   </>
                 )}
               </div>

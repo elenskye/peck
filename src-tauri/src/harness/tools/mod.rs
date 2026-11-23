@@ -401,7 +401,7 @@ pub fn title_of(name: &str, input: &Value) -> String {
             _ => "看后台命令".into(),
         },
         UPDATE_PLAN => "更新任务清单".into(),
-        super::agents::SPAWN_AGENT => super::agents::title(&s("type"), &s("task")),
+        super::agents::SPAWN_AGENT => super::agents::title(&s("type"), &Some(s("title")).filter(|t| !t.trim().is_empty()).unwrap_or_else(|| s("task"))),
         SCREENSHOT_APP => format!("截 {} 的窗口", s("app")),
         LOAD_SKILL => match s("file") {
             f if !f.is_empty() => format!("读 Skill {} 的 {f}", s("name")),
@@ -462,6 +462,16 @@ pub fn names_for(level: PermissionLevel, oneshot: bool) -> Vec<&'static str> {
 /// 但 Qwen 没按 V4A 训练过，照旧 `write_patch`（v1.1.2）。
 pub fn uses_v4a(model_id: &str) -> bool {
     crate::gateway::catalog::catalog().model(model_id).is_some_and(|m| m.provider == "openai")
+}
+
+/// 这一步要改哪些文件（v1.1.3，划文件用）：模型给的原样路径。
+pub fn write_targets(name: &str, input: &Value) -> Vec<String> {
+    match name {
+        WRITE_FILE => str_arg(input, "path").map(|p| vec![p.to_string()]).unwrap_or_default(),
+        WRITE_PATCH => input.get("edits").and_then(Value::as_array).map(|a| a.iter().filter_map(|e| str_arg(e, "path").map(str::to_string)).collect()).unwrap_or_default(),
+        APPLY_PATCH => v4a::targets(input),
+        _ => vec![],
+    }
 }
 
 /// 换成这个模型用的那套改文件的工具；看不了图的（或者不在 Mac 上）不给截图。

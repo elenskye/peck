@@ -2,6 +2,7 @@
 //!
 //! - 沙箱（macOS 的 `sandbox-exec`）：**默认联网**；EDIT、AUTO 只能写项目、临时目录和 Peck 给的 HOME，
 //!   `.git` 只读；PLAN 只能写临时目录。被沙箱拒了（写到项目外），循环会弹高危卡片问要不要出沙箱再跑。
+//!   worker、member（v1.1.3）只能写划给它的那几块（`scope`），加上构建、缓存目录（[`BUILD_DIRS`]、git 忽略着的文件夹）。
 //! - 环境：站主 shell 的那份（`term.rs` 读的），去掉名字像 Key、令牌、密码的变量和 `SSH_AUTH_SOCK`；stdin 接空，
 //!   设 `CI=1`、`PAGER=cat`、`NO_COLOR=1`。
 //! - 跑完（或超时、被停）就结束整个进程组，常驻进程不留。输出太长落盘（`spill.rs`）。
@@ -144,23 +145,59 @@ fn nested_git(dir: &Path) -> Option<String> {
     Some(out)
 }
 
+/// 构建、缓存目录（v1.1.3）：划了文件的 worker、member 跑构建、测试时也能写（不算改乱：都是生成的）。
+pub const BUILD_DIRS: [&str; 22] = [
+    "target", "node_modules", "dist", "build", "out", ".next", ".nuxt", ".svelte-kit", ".turbo", ".vite", ".cache", ".parcel-cache",
+    "coverage", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv", ".gradle", "DerivedData", ".tox",
+];
+
+/// 项目下面任何一层的构建、缓存目录，和 `*.tsbuildinfo`、`.eslintcache`：SBPL 的正则。路径里有引号就不写。
+fn build_dirs(root: &Path) -> Option<String> {
+    let s = root.to_string_lossy();
+    if s.contains('"') {
+        return None;
+    }
+    let names: Vec<String> = BUILD_DIRS.iter().map(|n| n.replace('.', "\\.")).collect();
+    Some(format!("(regex #\"^{}/((.+/)?({})(/|$)|(.+/)?[^/]*\\.tsbuildinfo$|(.+/)?\\.eslintcache$)\")", escape_regex(&s), names.join("|")))
+}
+
+fn escape_regex(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if "\\.^$|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// 沙箱规则（Apple 的 SBPL，后面的规则优先）。默认全放开（读、联网、起进程），只管写；
 /// 另外不让开 App（`open -a Terminal x.command`）、不让发 Apple Events（`osascript` 叫别的 App 跑），
 /// 这两条路跑起来的东西在沙箱外、也不在进程组里。
-pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, extra_writable: &[PathBuf], extra_read_only: &[PathBuf]) -> String {
+/// `scope`（v1.1.3，worker、member）：项目里只放开这几块（绝对路径）和构建、缓存目录，不是整个项目。
+pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, extra_writable: &[PathBuf], extra_read_only: &[PathBuf], scope: Option<&[PathBuf]>) -> String {
     let mut writable = vec![format!("(subpath {})", sb(temp)), "(subpath \"/dev\")".to_string()];
     let mut git = vec![format!("(subpath {})", sb(&root.join(".git")))];
     git.extend(nested_git(root));
     // 只读的其他文件夹：明着不让写（它在临时目录这类本来能写的地方时也挡住）。
     git.extend(extra_read_only.iter().map(|p| format!("(subpath {})", sb(p))));
     if sandbox == Sandbox::Project {
-        writable.push(format!("(subpath {})", sb(root)));
+        match scope {
+            Some(parts) => {
+                writable.extend(parts.iter().map(|p| format!("(subpath {})", sb(p))));
+                writable.extend(build_dirs(root));
+            }
+            None => writable.push(format!("(subpath {})", sb(root))),
+        }
         writable.push(format!("(subpath {})", sb(home)));
         writable.push("(subpath \"/private/tmp\")".into());
         writable.push("(subpath \"/private/var/folders\")".into());
-        // 项目里「能改」的其他文件夹（v0.7）：一样能写，它们的 .git 一样只读。
+        // 项目里「能改」的其他文件夹（v0.7）：一样能写，它们的 .git 一样只读（划了文件的只能写划给它的）。
         for extra in extra_writable {
-            writable.push(format!("(subpath {})", sb(extra)));
+            if scope.is_none() {
+                writable.push(format!("(subpath {})", sb(extra)));
+            }
             git.push(format!("(subpath {})", sb(&extra.join(".git"))));
             git.extend(nested_git(extra));
         }
@@ -212,13 +249,14 @@ pub async fn run(
     ctx: &ToolContext,
     input: &serde_json::Value,
     sandbox: Sandbox,
+    scope: Option<&[PathBuf]>,
     cancel: watch::Receiver<bool>,
     on_output: impl FnMut(String),
 ) -> Result<BashOutcome, String> {
     let command = str_arg(input, "command").map(str::trim).filter(|c| !c.is_empty()).ok_or("缺 command。")?.to_string();
     let cwd = ctx.resolve_path(str_arg(input, "cwd").unwrap_or("."), false)?;
     let timeout = Duration::from_secs(u64_arg(input, "timeout_sec").unwrap_or(DEFAULT_TIMEOUT).clamp(1, MAX_TIMEOUT));
-    run_command(ctx, Exec { command: &command, cwd: &cwd, timeout, sandbox, keep_bytes: KEEP_BYTES, stream_bytes: STREAM_BYTES }, cancel, on_output).await
+    run_command(ctx, Exec { command: &command, cwd: &cwd, timeout, sandbox, scope, keep_bytes: KEEP_BYTES, stream_bytes: STREAM_BYTES }, cancel, on_output).await
 }
 
 /// 一次命令怎么跑：`bash_run` 是 120 秒、收进内存；后台命令（v0.6）不限时、只往外流（Peck 自己存）。
@@ -228,6 +266,8 @@ pub struct Exec<'a> {
     pub cwd: &'a Path,
     pub timeout: Duration,
     pub sandbox: Sandbox,
+    /// 划了文件的 worker、member（v1.1.3）：沙箱只放开这几块（绝对路径），不是整个项目。
+    pub scope: Option<&'a [PathBuf]>,
     /// 内存里最多收多少（`BashOutcome::output`）。
     pub keep_bytes: usize,
     /// 经 `on_output` 往外流的最多多少。
@@ -241,7 +281,7 @@ pub async fn run_command(
     mut cancel: watch::Receiver<bool>,
     mut on_output: impl FnMut(String),
 ) -> Result<BashOutcome, String> {
-    let Exec { command, cwd, timeout, sandbox, keep_bytes, stream_bytes } = exec;
+    let Exec { command, cwd, timeout, sandbox, scope, keep_bytes, stream_bytes } = exec;
     let command = command.to_string();
     if !cwd.is_dir() {
         return Err(format!("{} 不是文件夹。", ctx.rel(cwd)));
@@ -255,7 +295,7 @@ pub async fn run_command(
     let real_home = ctx.env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| PathBuf::from(v));
     let mut cmd = if cfg!(target_os = "macos") && sandbox != Sandbox::Off {
         let mut c = tokio::process::Command::new("/usr/bin/sandbox-exec");
-        c.args(["-p", &sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra()), "/bin/sh", "-c", &command]);
+        c.args(["-p", &sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra(), scope), "/bin/sh", "-c", &command]);
         c
     } else {
         let mut c = tokio::process::Command::new("/bin/sh");
@@ -448,7 +488,7 @@ mod tests {
     #[test]
     fn profile_allows_network_and_limits_writes() {
         let root = Path::new("/Users/x/proj");
-        let p = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::Project, &[PathBuf::from("/other/lib")], &[PathBuf::from("/private/tmp/ro")]);
+        let p = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::Project, &[PathBuf::from("/other/lib")], &[PathBuf::from("/private/tmp/ro")], None);
         assert!(p.contains("(allow default)") && !p.contains("deny network"));
         assert!(p.contains("(subpath \"/Users/x/proj\")") && p.contains("(subpath \"/t/home\")"));
         assert!(p.contains("(deny file-write* (subpath \"/Users/x/proj/.git\")"));
@@ -457,7 +497,7 @@ mod tests {
         let deny = &p[p.rfind("(deny file-write*").unwrap()..];
         assert!(deny.contains("(subpath \"/private/tmp/ro\")"), "只读的其他文件夹明着不让写");
         assert!(p.contains("(subpath \"/other/lib\")"), "能改的其他文件夹也能写");
-        let ro = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::ReadOnly, &[PathBuf::from("/other/lib")], &[]);
+        let ro = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::ReadOnly, &[PathBuf::from("/other/lib")], &[], None);
         assert!(!ro.contains("(subpath \"/Users/x/proj\")") && ro.contains("/t/tmp-1"));
         assert!(!ro.contains("(subpath \"/other/lib\")"), "PLAN 里其他文件夹也不能写");
     }
@@ -468,17 +508,17 @@ mod tests {
         p.write("a.txt", "hello\n");
         let ctx = p.ctx();
         let mut seen = String::new();
-        let out = run(&ctx, &json!({"command":"cat a.txt; echo err >&2; exit 3"}), Sandbox::Project, never(), |s| seen.push_str(&s)).await.unwrap();
+        let out = run(&ctx, &json!({"command":"cat a.txt; echo err >&2; exit 3"}), Sandbox::Project, None, never(), |s| seen.push_str(&s)).await.unwrap();
         assert_eq!(out.exit_code, Some(3));
         assert!(!out.ok());
         assert!(out.output.contains("hello") && out.output.contains("err"));
         assert!(seen.contains("hello"));
-        let env = run(&ctx, &json!({"command":"echo $CI $PAGER $NO_COLOR; test -t 0 || echo nostdin"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let env = run(&ctx, &json!({"command":"echo $CI $PAGER $NO_COLOR; test -t 0 || echo nostdin"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(env.output.contains("1 cat 1") && env.output.contains("nostdin"), "{}", env.output);
-        let grep = run(&ctx, &json!({"command":"grep nothing a.txt"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let grep = run(&ctx, &json!({"command":"grep nothing a.txt"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert_eq!(grep.exit_code, Some(1));
         assert!(grep.ok());
-        assert!(run(&ctx, &json!({"command":"ls","cwd":"../"}), Sandbox::Project, never(), |_| {}).await.is_err());
+        assert!(run(&ctx, &json!({"command":"ls","cwd":"../"}), Sandbox::Project, None, never(), |_| {}).await.is_err());
     }
 
     #[tokio::test]
@@ -486,7 +526,7 @@ mod tests {
         let p = TempProject::new();
         let ctx = p.ctx();
         let started = Instant::now();
-        let out = run(&ctx, &json!({"command":"(sleep 30; echo late > late.txt) & sleep 30","timeout_sec":1}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let out = run(&ctx, &json!({"command":"(sleep 30; echo late > late.txt) & sleep 30","timeout_sec":1}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(out.timed_out && started.elapsed() < Duration::from_secs(10));
         let (tx, rx) = watch::channel(false);
         let stopper = tokio::spawn(async move {
@@ -494,14 +534,14 @@ mod tests {
             let _ = tx.send(true);
             tx
         });
-        let out = run(&ctx, &json!({"command":"sleep 30"}), Sandbox::Project, rx, |_| {}).await.unwrap();
+        let out = run(&ctx, &json!({"command":"sleep 30"}), Sandbox::Project, None, rx, |_| {}).await.unwrap();
         assert!(out.cancelled);
         drop(stopper.await);
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(!p.dir.join("late.txt").exists(), "后台子进程也结束了");
         // 进程退出后留下的后台进程不会让它一直等
         let started = Instant::now();
-        let out = run(&ctx, &json!({"command":"sleep 30 & echo started"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let out = run(&ctx, &json!({"command":"sleep 30 & echo started"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
@@ -512,7 +552,7 @@ mod tests {
         let p = TempProject::new();
         let ctx = p.ctx();
         let task = tokio::spawn(async move {
-            run(&ctx, &json!({"command":"(sleep 2; echo late > late.txt) & sleep 30"}), Sandbox::Project, never(), |_| {}).await
+            run(&ctx, &json!({"command":"(sleep 2; echo late > late.txt) & sleep 30"}), Sandbox::Project, None, never(), |_| {}).await
         });
         tokio::time::sleep(Duration::from_millis(500)).await;
         task.abort();
@@ -521,23 +561,49 @@ mod tests {
         assert!(!p.dir.join("late.txt").exists(), "后台子进程跟着结束了");
     }
 
+    /// 划了文件的 worker、member（v1.1.3）：只写得了划给它的那几块和构建、缓存目录，不是整个项目。
+    /// （测试项目在临时目录里，临时目录本来整个能写，所以「写不了别处」看规则本身。）
+    #[test]
+    fn a_scoped_profile_opens_only_its_paths_and_build_dirs() {
+        let root = Path::new("/Users/x/proj");
+        let scoped = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::Project, &[PathBuf::from("/other/lib")], &[], Some(&[root.join("src/a")]));
+        let allow = &scoped[..scoped.find("(deny file-write* (subpath").unwrap()];
+        assert!(allow.contains("(subpath \"/Users/x/proj/src/a\")") && !allow.contains("(subpath \"/Users/x/proj\")"), "{allow}");
+        assert!(allow.contains("node_modules") && allow.contains("tsbuildinfo") && !allow.contains("/other/lib"), "{allow}");
+        assert!(scoped.contains("(subpath \"/Users/x/proj/.git\")"), ".git 照样只读");
+        let whole = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::Project, &[], &[], None);
+        assert!(whole.contains("(subpath \"/Users/x/proj\")") && !whole.contains("node_modules"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_scoped_sandbox_still_runs_builds() {
+        let p = TempProject::new();
+        p.write("mine/a.txt", "x");
+        let ctx = p.ctx();
+        let scope = vec![ctx.root.join("mine")];
+        let ok = run(&ctx, &json!({"command":"echo z > mine/b.txt && mkdir -p app/node_modules/.cache && echo o > app/node_modules/.cache/x && echo t > tsconfig.tsbuildinfo"}), Sandbox::Project, Some(&scope), never(), |_| {}).await.unwrap();
+        assert!(ok.ok(), "{}", ok.output);
+        assert_eq!(p.read("mine/b.txt"), "z\n");
+    }
+
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn the_sandbox_blocks_writes_outside_but_not_the_network() {
         let p = TempProject::new();
         let ctx = p.ctx();
         let outside = std::env::var("HOME").unwrap() + "/peck-sandbox-probe.txt";
-        let out = run(&ctx, &json!({"command": format!("echo x > {outside}")}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let out = run(&ctx, &json!({"command": format!("echo x > {outside}")}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(!out.ok() && out.sandbox_denied(), "{}", out.output);
         assert!(!Path::new(&outside).exists());
-        let inside = run(&ctx, &json!({"command":"echo x > ok.txt"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let inside = run(&ctx, &json!({"command":"echo x > ok.txt"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(inside.ok());
-        let ro = run(&ctx, &json!({"command":"echo x > ro.txt"}), Sandbox::ReadOnly, never(), |_| {}).await.unwrap();
+        let ro = run(&ctx, &json!({"command":"echo x > ro.txt"}), Sandbox::ReadOnly, None, never(), |_| {}).await.unwrap();
         assert!(!ro.ok() && !p.dir.join("ro.txt").exists());
         std::fs::create_dir_all(p.dir.join(".git")).unwrap();
-        let git = run(&ctx, &json!({"command":"echo x > .git/x"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let git = run(&ctx, &json!({"command":"echo x > .git/x"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(!git.ok());
-        let net = run(&ctx, &json!({"command":"/usr/bin/curl -sS -o /dev/null -w '%{http_code}' https://example.com || true"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let net = run(&ctx, &json!({"command":"/usr/bin/curl -sS -o /dev/null -w '%{http_code}' https://example.com || true"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(!net.output.contains("Operation not permitted"), "{}", net.output);
     }
 
@@ -551,11 +617,11 @@ mod tests {
         let ctx = p.ctx().with_extra(&[(ro.clone(), false)]);
         std::fs::create_dir_all(p.dir.join("vendor/sub/.git/hooks")).unwrap();
         std::fs::create_dir_all(p.dir.join(".github")).unwrap();
-        let hook = run(&ctx, &json!({"command":"echo x > vendor/sub/.git/hooks/post-checkout"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let hook = run(&ctx, &json!({"command":"echo x > vendor/sub/.git/hooks/post-checkout"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(!hook.ok() && !p.dir.join("vendor/sub/.git/hooks/post-checkout").exists(), "{}", hook.output);
-        let gh = run(&ctx, &json!({"command":"echo x > .github/ok.yml && echo x > vendor/sub/ok.txt"}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let gh = run(&ctx, &json!({"command":"echo x > .github/ok.yml && echo x > vendor/sub/ok.txt"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(gh.ok(), "{}", gh.output);
-        let write_ro = run(&ctx, &json!({"command": format!("echo x > {}/x.txt", ro.display())}), Sandbox::Project, never(), |_| {}).await.unwrap();
+        let write_ro = run(&ctx, &json!({"command": format!("echo x > {}/x.txt", ro.display())}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(!write_ro.ok() && !ro.join("x.txt").exists(), "{}", write_ro.output);
         let _ = std::fs::remove_dir_all(&ro);
     }

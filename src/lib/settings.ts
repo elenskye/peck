@@ -3,17 +3,18 @@ import { ipc } from "@/lib/ipc";
 import type { ThemeChoice } from "@/lib/theme";
 import type { Permission } from "@/lib/types";
 
-export type SubagentKind = "explorer" | "searcher" | "worker" | "auditor";
+export type SubagentKind = "explorer" | "searcher" | "worker" | "member" | "auditor";
 
-/** 四类子代理（v1.1.2）：设置 → AGENTS 一类一行，顺序照这里。 */
-export const SUBAGENT_KINDS: Array<{ id: SubagentKind; does: string; parallel: boolean }> = [
-  { id: "explorer", does: "读、搜项目（只读）", parallel: true },
-  { id: "searcher", does: "联网检索、深度调研", parallel: true },
-  { id: "worker", does: "照子任务改东西，一个一个来", parallel: false },
-  { id: "auditor", does: "审这个任务的改动，一次一个", parallel: false },
+/** 五类子代理（v1.1.2 起，member 是 v1.1.3）：设置 → AGENTS 一类一块，顺序照这里。默认的轮数、同时几个和后端一样。 */
+export const SUBAGENT_KINDS: Array<{ id: SubagentKind; does: string; parallel: number | null; rounds: number }> = [
+  { id: "explorer", does: "读、搜项目（只读）", parallel: 3, rounds: 24 },
+  { id: "searcher", does: "联网检索、深度调研", parallel: 3, rounds: 24 },
+  { id: "worker", does: "简单的改动，只改划给它的文件", parallel: 3, rounds: 24 },
+  { id: "member", does: "复杂的活，权限和主角色一样，能再派 explorer、searcher", parallel: 2, rounds: 40 },
+  { id: "auditor", does: "审这个任务的改动，一次一个", parallel: null, rounds: 24 },
 ];
 
-/** 一类子代理（v1.1.2）：关没关、用哪个模型（空着跟主角色）、最多几轮、同时几个（explorer、searcher）。 */
+/** 一类子代理（v1.1.2）：关没关、用哪个模型（空着跟主角色）、最多几轮、同时几个（auditor 没有）。 */
 export interface SubagentSettings {
   off?: boolean;
   model?: string;

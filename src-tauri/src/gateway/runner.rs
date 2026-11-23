@@ -606,6 +606,18 @@ pub(crate) fn interrupt_subs(run_id: &str) {
     }
 }
 
+/// member 收尾时还有它派的 explorer、searcher 在跑（v1.1.3）：只叫停编号在它下面的那几个（不碰别的子代理）。
+pub(crate) fn interrupt_subs_under(run_id: &str, prefix: &str) {
+    let subs: Vec<mpsc::UnboundedSender<Control>> = sub_controls()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(run_id).map(|l| l.iter().filter(|(p, _)| p != prefix && p.starts_with(prefix)).map(|(_, tx)| tx.clone()).collect()))
+        .unwrap_or_default();
+    for tx in subs {
+        let _ = tx.send(Control::Interrupt);
+    }
+}
+
 pub(crate) fn unregister_sub_control(run_id: &str, prefix: &str) {
     if let Ok(mut c) = sub_controls().lock() {
         if let Some(list) = c.get_mut(run_id) {
@@ -626,7 +638,8 @@ pub(crate) fn route_control(run_id: &str, control: Control) -> Result<(), String
     };
     let subs: Vec<(String, mpsc::UnboundedSender<Control>)> = sub_controls().lock().ok().and_then(|c| c.get(run_id).cloned()).unwrap_or_default();
     if let Some(rid) = &request_id {
-        if let Some((_, tx)) = subs.iter().find(|(p, _)| rid.starts_with(p.as_str())) {
+        // 最长的前缀：member 派的 explorer 编号是「agent-2-agent-1-…」，不能被 member 自己的「agent-2-」截走（v1.1.3）。
+        if let Some((_, tx)) = subs.iter().filter(|(p, _)| rid.starts_with(p.as_str())).max_by_key(|(p, _)| p.len()) {
             return tx.send(control).map_err(|_| "这个子任务已经结束了。".into());
         }
     }
@@ -663,6 +676,29 @@ impl crate::store::Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// member 派的 explorer 编号在 member 的前缀下面（v1.1.3）：审批按最长的前缀转；叫停 member 下面的不碰别人。
+    #[test]
+    fn nested_subagents_get_their_own_approvals_and_interrupts() {
+        let run = "run-nested-route";
+        let (member_tx, mut member_rx) = mpsc::unbounded_channel();
+        let (explorer_tx, mut explorer_rx) = mpsc::unbounded_channel();
+        let (other_tx, mut other_rx) = mpsc::unbounded_channel();
+        register_sub_control(run, "agent-2-", member_tx);
+        register_sub_control(run, "agent-2-agent-1-", explorer_tx);
+        register_sub_control(run, "agent-3-", other_tx);
+        let approve = |id: &str| Control::Approve { request_id: id.into(), decision: super::super::event::ApprovalDecision::AllowOnce };
+        route_control(run, approve("agent-2-agent-1-approve-1")).unwrap();
+        route_control(run, approve("agent-2-approve-1")).unwrap();
+        assert!(matches!(explorer_rx.try_recv(), Ok(Control::Approve { request_id, .. }) if request_id == "agent-2-agent-1-approve-1"));
+        assert!(matches!(member_rx.try_recv(), Ok(Control::Approve { request_id, .. }) if request_id == "agent-2-approve-1"));
+        interrupt_subs_under(run, "agent-2-");
+        assert_eq!(explorer_rx.try_recv().ok(), Some(Control::Interrupt));
+        assert!(member_rx.try_recv().is_err() && other_rx.try_recv().is_err(), "只叫停它下面的");
+        for prefix in ["agent-2-", "agent-2-agent-1-", "agent-3-"] {
+            unregister_sub_control(run, prefix);
+        }
+    }
 
     #[test]
     fn permission_levels_and_controls_for_finished_runs() {

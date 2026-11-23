@@ -1,7 +1,7 @@
 // 一次任务的过程（Peck Loop 和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
-import type { AgentEvent, ApprovalDecision, Control } from "@/lib/agentEvents";
-import { COMPACT_STEP, englishTitle, foldEvents, readFiles, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
+import type { AgentEvent, ApprovalDecision, BoardItem, BoardStatus, Control, PlanStep } from "@/lib/agentEvents";
+import { COMPACT_STEP, englishTitle, findCall, foldEvents, readFiles, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
 import { cn, copyText, engineDot, span } from "@/lib/utils";
@@ -35,7 +35,9 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
   }
   return (
     <div className="agent">
-      {view.plan && view.plan.length > 0 && <Plan steps={view.plan} />}
+      {view.board && view.board.length > 0
+        ? <Board plan={view.plan} items={view.board} calls={view.items} now={now} onShowFile={onShowFile} say={say} />
+        : view.plan && view.plan.length > 0 && <Plan steps={view.plan} />}
       {view.items.map((item) => item.kind === "skill"
         ? <SkillCard key={item.id} skill={item.skill} runId={runId} running={running} onAppend={onAppend} say={say} />
         : <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} hideSteps={!!nextSteps && ((!!view.ended && item.id === lastText) || (item.kind === "text" && !!item.stage && item.done))} />)}
@@ -499,6 +501,64 @@ const Plan: React.FC<{ steps: { text: string; status: string }[] }> = ({ steps }
               <span>{s.text}</span>
             </li>
           ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+/** 任务板上每一项的状态（v1.1.3，Peck 照子代理的事件填）。 */
+const BOARD_WORD: Record<BoardStatus, string> = { queued: "排队", running: "在跑", waiting: "等你批", done: "做完", failed: "没做完", stopped: "停了" };
+
+/** 任务板（v1.1.3）：update_plan 的进阶版。上面是主角色自己那几步（它自己勾），下面是派出去的 worker、member：
+ *  状态、做什么、谁（WORKER 2）、用时，下一行它能改的文件。点一项看那个子代理自己的步骤。 */
+const Board: React.FC<{ plan: PlanStep[] | null; items: BoardItem[]; calls: ViewItem[]; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ plan, items, calls, now, onShowFile, say }) => {
+  const [open, setOpen] = useState(true);
+  const [picked, setPicked] = useState<string | null>(null);
+  const steps = plan ?? [];
+  const done = items.filter((i) => i.status === "done").length + steps.filter((s) => s.status === "completed").length;
+  const waiting = items.filter((i) => i.status === "waiting").length;
+  const running = items.filter((i) => i.status === "running").length;
+  const brief = waiting ? `${waiting} 个等你批` : running ? `${running} 个在跑` : "";
+  return (
+    <div className="fold board">
+      <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name={open ? "triD" : "triR"} size={12} />
+        <span>任务板{!open && brief ? ` · ${brief}` : ""}</span>
+        <em className="t-label">{done}/{items.length + steps.length}</em>
+      </button>
+      {open && steps.length > 0 && (
+        <ul className="checklist sel">
+          {steps.map((s, i) => (
+            <li key={i} className={cn(s.status === "completed" && "is-done", s.status === "in_progress" && "is-doing")}>
+              <span className={cn("pk-check", s.status === "completed" && "is-on")}><Icon name="check" size={12} /></span>
+              <span>{s.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && (
+        <ul className="board-list">
+          {items.map((it) => {
+            const shown = picked === it.id;
+            const sub = shown ? findCall(calls, it.id)?.sub?.calls ?? [] : [];
+            const time = it.startedAt ? span((it.finishedAt ?? now) - it.startedAt) : "";
+            return (
+              <li key={it.id} className={cn("board-item", `is-${it.status}`)}>
+                <button type="button" className="board-row" aria-expanded={shown} onClick={() => setPicked(shown ? null : it.id)}>
+                  <Icon name={shown ? "triD" : "triR"} size={12} />
+                  <span className="board-state">{BOARD_WORD[it.status]}</span>
+                  <span className="board-title" title={it.title}>{it.title}</span>
+                  <span className="t-label board-owner">{it.owner.toUpperCase()} {it.number}</span>
+                  <span className="board-time">{time}</span>
+                </button>
+                <p className="board-paths t-code" title={it.paths.join("\n")}>{it.paths.join("  ")}</p>
+                {shown && (sub.length > 0
+                  ? <ol className="agent-calls">{sub.map((c) => <ToolRow key={c.callId} call={c} now={now} onShowFile={onShowFile} say={say} />)}</ol>
+                  : <p className="board-empty">{it.status === "queued" ? "还在排队，没开始。" : "还没有步骤。"}</p>)}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

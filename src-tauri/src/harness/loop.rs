@@ -23,8 +23,8 @@ use super::tools::{self, bash, ToolContext};
 use crate::gateway::caps::AgentCaps;
 use crate::gateway::catalog::{self, Thinking};
 use crate::gateway::event::{
-    ApprovalDecision, BackgroundKind, CompactStep, EventBody, NoticeLevel, PermissionLevel, PlanStatus, PlanStep, ResolvedBy,
-    ToolKind, ToolStatus, TurnEndReason, UsageScope,
+    ApprovalDecision, BackgroundKind, BoardItem, BoardStatus, CompactStep, EventBody, NoticeLevel, PermissionLevel, PlanStatus, PlanStep,
+    ResolvedBy, ToolKind, ToolStatus, TurnEndReason, UsageScope,
 };
 use crate::gateway::log::EventSink;
 use crate::gateway::search;
@@ -327,6 +327,16 @@ struct Run {
     repeats: std::collections::HashMap<u64, u32>,
     /// 第 5 次以后要它收尾：下一次回答再要工具就不跑、停下。
     spin: bool,
+    /// 划出去的文件（v1.1.3）：主角色和它派的子代理共用一份。
+    locks: Arc<agents::Locks>,
+    /// 划给这个子代理的几块（worker、member）：文件工具只能改这里（相对项目根）；主角色是 `None`。
+    scope: Option<Vec<String>>,
+    /// 同上，给命令的沙箱：这几块的绝对路径，加上 git 忽略着的文件夹。
+    sandbox_scope: Option<Vec<PathBuf>>,
+    /// 任务板（v1.1.3，主角色有）：派出去的 worker、member。
+    board: Option<agents::Board>,
+    /// 子代理自己在任务板上是哪一项（等站主批时 Peck 把它标成「等你批」）。
+    board_item: Option<(agents::Board, String)>,
 }
 
 /// 一回合怎么结束的。
@@ -406,7 +416,8 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
         },
         // 子代理（v1.1.2）：只说怎么用，不写哪个模型（名单在 LOG 里；换了设置提示不变，缓存照样命中）。
         delegate = match &config.team {
-            Some(t) if !t.is_empty() && !oneshot && config.subtask.is_none() => "\n- You lead a small team: spawn_agent runs sub-agents in the background (its description lists the kinds you can use). Send explorers and searchers to read and research in parallel instead of doing all the reading yourself, a worker for well-specified mechanical changes, and an auditor to review your changes before you finish non-trivial work. Their reports arrive together when a batch finishes; keep working meanwhile, or end your reply to wait.".to_string(),
+            Some(t) if !t.is_empty() && !oneshot && config.subtask.is_none() && level == PermissionLevel::Plan => "\n- You lead a small team: spawn_agent runs sub-agents in the background (its description lists the kinds you can use). Send explorers and searchers to read and research in parallel instead of doing all the reading yourself. Their reports arrive together when a batch finishes; keep working meanwhile, or end your reply to wait.".to_string(),
+            Some(t) if !t.is_empty() && !oneshot && config.subtask.is_none() => "\n- You lead a small team: spawn_agent runs sub-agents in the background (its description lists the kinds you can use). Send explorers and searchers to read and research in parallel instead of doing all the reading yourself. Hand simple, well-specified changes to workers and complex, multi-step work to members, each with the files and folders it may change (`paths`); dispatch independent parts together, and keep the design decisions and the final check yourself. Use an auditor to review the changes before you finish non-trivial work. Peck shows the user a task board of the workers and members and keeps their progress up to date, so don't track them in update_plan. Their reports arrive together when a batch finishes; keep working meanwhile, or end your reply to wait.".to_string(),
             _ => String::new(),
         },
         brief = config.brief.as_deref().map(|b| format!("\n\n{b}")).unwrap_or_default(),
@@ -470,6 +481,11 @@ impl Run {
             stop_blocks: 0,
             repeats: Default::default(),
             spin: false,
+            locks: Arc::default(),
+            scope: None,
+            sandbox_scope: None,
+            board: None,
+            board_item: None,
         }
     }
 
@@ -547,6 +563,10 @@ impl Run {
         self.kinds = self.offered_kinds();
         if !self.kinds.is_empty() {
             names.push(agents::SPAWN_AGENT);
+        }
+        // 任务板（v1.1.3）：能派 worker、member 的才有。
+        if self.kinds.iter().any(|k| k.writes()) {
+            self.board = Some(agents::Board::new(self.sink.clone()));
         }
         let turn_id = format!("turn-{}", self.task.run_id);
         // 外部 MCP 服务器：起来、列工具；起不来的写一行，照常干活。合作里几段共用一组（第一段用到时起）。
@@ -1447,15 +1467,18 @@ impl Run {
         (join(blocks), join(contexts))
     }
 
-    /// 这个任务能派的几类（开头定一次）：worker 在 PLAN 不派，searcher 的模型要能联网搜索；ONE SHOT、子代理自己不派。
+    /// 这个任务能派的几类（开头定一次）：worker、member 在 PLAN 不派，searcher 的模型要能联网搜索；ONE SHOT 不派。
+    /// 子代理里只有 member 有 `team`（v1.1.3），它只派 explorer、searcher。
     fn offered_kinds(&self) -> Vec<Kind> {
-        let Some(team) = self.config.team.as_ref().filter(|_| !self.config.oneshot && self.config.subtask.is_none()) else { return vec![] };
+        let Some(team) = self.config.team.as_ref().filter(|_| !self.config.oneshot) else { return vec![] };
+        let sub = self.config.subtask.is_some();
         team.members
             .iter()
             .filter(|m| match m.kind {
-                Kind::Worker => self.level != PermissionLevel::Plan,
+                Kind::Worker | Kind::Member => !sub && self.level != PermissionLevel::Plan,
+                Kind::Auditor => !sub,
                 Kind::Searcher => !matches!(self.config.search.route(catalog::catalog().model(&m.model_id)), search::Route::Off),
-                _ => true,
+                Kind::Explorer => true,
             })
             .map(|m| m.kind)
             .collect()
@@ -1473,6 +1496,27 @@ impl Run {
         Some(members)
     }
 
+    /// 划文件（v1.1.3）：子代理用文件工具只能改划给它的几块；主角色不能改正被 worker、member 占着的地方。
+    fn write_blocked(&self, name: &str, input: &Value) -> Option<String> {
+        for raw in tools::write_targets(name, input) {
+            // 路径本身不对的让工具自己报。
+            let Ok(abs) = self.ctx.resolve_path(&raw, true) else { continue };
+            let rel = self.ctx.rel(&abs);
+            match &self.scope {
+                Some(scope) if !scope.iter().any(|p| agents::covers(p, &rel)) => {
+                    return Some(format!("{rel} 不在划给你的范围里（{}），Peck 不让改：别的子代理可能正在改它。不要绕过去；真要改就在报告里写明，让主角色来。", scope.join("、")));
+                }
+                Some(_) => {}
+                None => {
+                    if let Some(who) = self.locks.holder(&rel) {
+                        return Some(format!("{rel} 现在划给了 {who}（它在改或排着队），你先别动：先做别的，或者结束这一段回答，等报告回来再改。"));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// 交齐了的子代理报告放进对话（一批一段），花费算进这个任务。
     fn deliver_reports(&mut self) {
         for reports in self.pool.take_ready() {
@@ -1483,6 +1527,9 @@ impl Run {
     }
 
     async fn run_tool(&mut self, call_id: &str, name: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
+        if let Some(why) = self.write_blocked(name, input) {
+            return (ToolStatus::Denied, why, None, vec![]);
+        }
         match name {
             tools::UPDATE_PLAN => match parse_plan(input) {
                 Ok((steps, explanation)) => {
@@ -1751,6 +1798,7 @@ impl Run {
                     runtime_dir: self.ctx.runtime_dir.clone(),
                     log_dir: self.ctx.spill_dir.clone(),
                     extra: self.ctx.extra.iter().map(|e| (e.path.clone(), e.writable)).collect(),
+                    scope: self.sandbox_scope.clone(),
                 };
                 // 留着的 dev server 活得比这个任务久：只记起来的这一下，后来的变化不往这个任务的日志里写。
                 let started = if keep {
@@ -1812,9 +1860,10 @@ impl Run {
     }
 
     /// `spawn_agent`（v1.1.2）：派一个子代理在后台跑，马上回「已派出」。它用设置里这一类的模型、思考强度和轮数，
-    /// 同一个项目（独立工作区里就是那个工作区）、同一组 MCP；只读的三类跑在 PLAN，worker 照任务的档位。审批照样弹给站主
+    /// 同一个项目（独立工作区里就是那个工作区）、同一组 MCP；只读的三类跑在 PLAN，worker、member 照任务的档位。审批照样弹给站主
     /// （编号带前缀、自己的控制通道）；它的事件带 `subagentId`（= 这次调用的 id），挂在这一步下面；做完了这一步才算完，
     /// 报告交进它那一批，一批交齐才放进对话。
+    /// worker、member（v1.1.3）：先划文件（`paths`），排上队（和前面的重叠就等），上任务板；轮到了、有空位才开始跑。
     async fn spawn_agent(&mut self, call_id: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
         let (batch, index) = match self.batch.as_mut() {
             Some((b, next)) => {
@@ -1831,12 +1880,20 @@ impl Run {
         let kind_word = input.get("type").and_then(Value::as_str).unwrap_or("").trim().to_string();
         let Some(kind) = agents::Kind::parse(&kind_word).filter(|k| self.kinds.contains(k)) else {
             let offered: Vec<&str> = self.kinds.iter().map(|k| k.id()).collect();
-            return fail(&self.pool, format!("这个任务不能派 {kind_word}；能派的：{}。", offered.join("、")));
+            return fail(&self.pool, format!("这里不能派 {kind_word}；能派的：{}。", offered.join("、")));
         };
         let task = input.get("task").and_then(Value::as_str).unwrap_or("").trim().to_string();
         if task.is_empty() {
             return fail(&self.pool, "缺 task：写清楚要它做什么。".into());
         }
+        let scope = if kind.writes() {
+            match agents::scope_of(&self.ctx, input) {
+                Ok(s) => Some(s),
+                Err(e) => return fail(&self.pool, e),
+            }
+        } else {
+            None
+        };
         let Some(member) = self.config.team.as_ref().and_then(|t| t.get(kind)).cloned() else {
             return fail(&self.pool, format!("这个任务不能派 {kind_word}。"));
         };
@@ -1845,10 +1902,11 @@ impl Run {
         };
         let files: Vec<String> = input.get("files").and_then(Value::as_array).map(|a| a.iter().filter_map(|f| f.as_str().map(str::to_string)).collect()).unwrap_or_default();
         let level = kind.level(self.level);
-        let prefix = format!("agent-{n}-");
+        let prefix = format!("{}agent-{n}-", self.config.subtask.as_deref().unwrap_or(""));
         let mut config = self.config.clone();
         config.model_id = member.model_id.clone();
-        config.team = None;
+        // member（v1.1.3）还能派 explorer、searcher（和主角色共用同时几个的名额）；别的不派。
+        config.team = (kind == Kind::Member).then(|| self.config.team.as_ref().map(|t| Arc::new(agents::Team { members: t.members.iter().filter(|m| matches!(m.kind, Kind::Explorer | Kind::Searcher)).cloned().collect() }))).flatten();
         config.max_rounds = member.rounds;
         config.session_ref = None;
         config.oneshot = false;
@@ -1865,13 +1923,26 @@ impl Run {
         let mut child = Run::new(member.provider.clone(), config, task_spec, level, self.ctx.clone(), self.sink.for_subagent(call_id), Ctl::new(rx), vec![], self.hook.clone());
         child.mcp = self.mcp.clone();
         child.hook_ok = self.hook_ok.clone();
-        // 给它的第一句：环境、（auditor）原话和到现在的改动、要它做的、从哪几个文件看起。
+        child.locks = self.locks.clone();
+        if let Some(scope) = &scope {
+            // 命令的沙箱：这几块，加上 git 忽略着的文件夹（构建产物、缓存），和 BUILD_DIRS 一起放开写。
+            let (root, env) = (self.ctx.root.clone(), self.ctx.env.clone());
+            let ignored = tokio::task::spawn_blocking(move || agents::ignored_dirs(&root, &env)).await.unwrap_or_default();
+            let mut abs: Vec<PathBuf> = scope.iter().map(|p| if p == "." { self.ctx.root.clone() } else if p.starts_with('/') { PathBuf::from(p) } else { self.ctx.root.join(p) }).collect();
+            abs.extend(ignored);
+            child.scope = Some(scope.clone());
+            child.sandbox_scope = Some(abs);
+        }
+        // 给它的第一句：环境、（auditor）原话和到现在的改动、（worker、member）划给它的范围、要它做的、从哪几个文件看起。
         let mut first = Vec::new();
         if child.config.context.environment {
             first.push(Part::Text { text: self.environment_block().await });
         }
         if kind == Kind::Auditor {
             first.push(Part::Text { text: format!("<peck-request>\n{}\n</peck-request>\n<peck-diff>\n{}\n</peck-diff>", self.task.prompt, agents::audit_diff(&self.ctx.diff_summary())) });
+        }
+        if let Some(scope) = &scope {
+            first.push(Part::Text { text: format!("<your-paths>\n{}\n</your-paths>", scope.join("\n")) });
         }
         let mut brief = task.clone();
         if !files.is_empty() {
@@ -1880,22 +1951,63 @@ impl Run {
         first.push(Part::Text { text: brief });
         child.push_user(first);
         let mut names: Vec<&'static str> = tools::for_model(kind.tools(), &member.model_id);
+        if kind == Kind::Member && !child.config.context.project.skills.is_empty() {
+            names.push(tools::LOAD_SKILL);
+        }
         names.retain(|n| !self.config.context.project.tools_off.iter().any(|t| t == n));
-        if kind == Kind::Searcher {
+        if matches!(kind, Kind::Searcher | Kind::Member) {
+            if kind == Kind::Member {
+                names.push(tools::WEB_SEARCH);
+            }
             child.pick_search(&mut names);
         }
+        if kind == Kind::Member {
+            child.kinds = child.offered_kinds();
+            if !child.kinds.is_empty() {
+                names.push(agents::SPAWN_AGENT);
+            }
+        }
+        // 任务板（v1.1.3）：主角色派的 worker、member 一项一个，先排着。
+        let label = match (&scope, &self.board) {
+            (Some(paths), Some(board)) => {
+                let number = board.next_number(kind.id());
+                let title = input.get("title").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or_else(|| task.lines().next().unwrap_or("").trim().chars().take(60).collect());
+                board.add(BoardItem { id: call_id.to_string(), title, owner: kind.id().into(), number, paths: paths.clone(), status: BoardStatus::Queued, model: Some(member.model_id.clone()), started_at: None, finished_at: None });
+                child.board_item = Some((board.clone(), call_id.to_string()));
+                format!("{} {number}", kind.id())
+            }
+            _ => kind.id().to_string(),
+        };
+        // 排上队（按派的顺序）：和前面划出去的重叠就等它们做完。
+        let ticket = scope.clone().map(|paths| self.locks.enqueue(call_id, &label, paths));
         // 挂在「派 explorer：…」那一步下面的一行：类型和模型（要做什么在那一步的标题里）。
         let title = format!("{} · {}", kind.id(), super::run::model_label(&member.model_id));
-        self.emit(EventBody::SubagentStarted { subagent_id: call_id.to_string(), parent_call_id: Some(call_id.to_string()), title, model: Some(member.model_id.clone()), kind: Some(kind.id().into()) });
+        // 走主线发：它自己带着子代理 id（member 派的也一样，不然 JSON 里有两个 subagentId）。
+        self.sink.root().emit(EventBody::SubagentStarted { subagent_id: call_id.to_string(), parent_call_id: Some(call_id.to_string()), title, model: Some(member.model_id.clone()), kind: Some(kind.id().into()) });
         let before: HashSet<String> = self.ctx.diff_summary().into_iter().map(|f| f.path).collect();
         let (pool, sink, ctx, run_id, call) = (self.pool.clone(), self.sink.clone(), self.ctx.clone(), self.task.run_id.clone(), call_id.to_string());
         let slots = member.slots.clone();
         tokio::spawn(async move {
             let started = Instant::now();
-            // worker、auditor 一个一个来；explorer、searcher 最多同时设置里那几个。排着队的时候被叫停，轮到了也马上收尾。
+            // 先等划的文件轮到（前面重叠的做完），再等同类的空位（同时几个）。排着队的时候被叫停，轮到了也马上收尾。
+            if let Some(t) = &ticket {
+                t.ready().await;
+            }
             let permit = slots.acquire_owned().await.ok();
+            if let Some((board, id)) = &child.board_item {
+                board.set(id, BoardStatus::Running);
+            }
             let end = child_rounds(&mut child, &names).await;
+            // member 收尾时它派的还没回来（停下、出错、到上限）：只叫停它下面的，等它们收好尾。
+            if child.pool.busy() {
+                crate::gateway::runner::interrupt_subs_under(&run_id, &prefix);
+                while child.pool.busy() {
+                    child.pool.wait().await;
+                    child.pool.take_ready();
+                }
+            }
             drop(permit);
+            drop(ticket);
             crate::gateway::runner::unregister_sub_control(&run_id, &prefix);
             let text = child
                 .messages
@@ -1909,9 +2021,20 @@ impl Run {
                 TurnEndReason::Interrupted => ToolStatus::Cancelled,
                 _ => ToolStatus::Failed,
             };
-            let changed: Vec<String> = ctx.diff_summary().into_iter().map(|f| f.path).filter(|p| !before.contains(p)).collect();
+            if let Some((board, id)) = &child.board_item {
+                board.set(id, match status {
+                    ToolStatus::Ok => BoardStatus::Done,
+                    ToolStatus::Cancelled => BoardStatus::Stopped,
+                    _ => BoardStatus::Failed,
+                });
+            }
+            // 它改了哪些（之前没改过的）：同时跑的别人改的不算进来（只看划给它的那几块）。
+            let mut changed: Vec<String> = ctx.diff_summary().into_iter().map(|f| f.path).filter(|p| !before.contains(p)).collect();
+            if let Some(scope) = &child.scope {
+                changed.retain(|p| scope.iter().any(|s| agents::covers(s, p)));
+            }
             let verdict = (kind == Kind::Auditor).then(|| agents::verdict_of(&text)).flatten();
-            sink.emit(EventBody::SubagentCompleted { subagent_id: call.clone(), status });
+            sink.root().emit(EventBody::SubagentCompleted { subagent_id: call.clone(), status });
             if !changed.is_empty() {
                 sink.emit(EventBody::DiffUpdated { files: ctx.diff_summary() });
             }
@@ -1930,7 +2053,8 @@ impl Run {
             pool.finish(&batch, index, agents::Report { call_id: call, kind, status, text, changed, verdict, cost_usd: child.cost_usd });
         });
         let wait = if self.batch.as_ref().is_some_and(|(_, next)| *next > 1) { "这一批" } else { "它" };
-        (ToolStatus::Ok, format!("已派出 {} {call_id}，在后台跑。{wait}做完以后报告会一起放进对话，不用查；接着做别的，没别的可做就结束这一段回答等着。", kind.id()), None, vec![])
+        let queued = self.locks.waiting_behind(call_id).map(|who| format!("（划的文件和 {who} 重叠，排在它后面）")).unwrap_or_default();
+        (ToolStatus::Ok, format!("已派出 {label} {call_id}{queued}，在后台跑。{wait}做完以后报告会一起放进对话，不用查；接着做别的，没别的可做就结束这一段回答等着。"), None, vec![])
     }
 
     /// 给模型的 MCP 工具（PLAN 只给标了只读的）。
@@ -2048,11 +2172,18 @@ impl Run {
             high_risk,
             options: options.clone(),
         });
+        // 任务板（v1.1.3）：这个子代理在等站主批。
+        if let Some((board, id)) = &self.board_item {
+            board.set(id, BoardStatus::Waiting);
+        }
         let decision = match self.ctl.wait_for(&request_id).await {
             Some(Control::Approve { decision, .. }) if options.contains(&decision) => decision,
             Some(Control::Approve { decision, .. }) if decision.allows() => ApprovalDecision::AllowOnce,
             _ => ApprovalDecision::DenyOnce,
         };
+        if let Some((board, id)) = &self.board_item {
+            board.set(id, BoardStatus::Running);
+        }
         if !self.ctl.interrupted {
             self.emit(EventBody::ApprovalResolved { request_id, decision, by: ResolvedBy::User });
         }
@@ -2095,9 +2226,11 @@ impl Run {
             Err(e) => return (ToolStatus::Failed, e, None, vec![]),
         };
         if outcome.sandbox_denied() && self.level != PermissionLevel::Plan {
-            let decision = self
-                .approve(call_id, "高危：写到项目外（沙箱拦下了），出沙箱再跑一次？".into(), command.clone(), true)
-                .await;
+            let title = match &self.scope {
+                Some(scope) => format!("高危：要写到划给它的范围（{}）以外，沙箱拦下了。出沙箱再跑一次？", scope.join("、")),
+                None => "高危：写到项目外（沙箱拦下了），出沙箱再跑一次？".into(),
+            };
+            let decision = self.approve(call_id, title, command.clone(), true).await;
             if decision.allows() {
                 match self.exec(call_id, input, bash::Sandbox::Off).await {
                     Ok(o) => outcome = o,
@@ -2109,7 +2242,7 @@ impl Run {
         let (shown, _) = spill::shape(&self.ctx, "bash", &outcome.output, failed);
         let mut text = outcome.status_line();
         if outcome.sandbox != bash::Sandbox::Off && outcome.sandbox_denied() {
-            text.push_str("\n（沙箱没让它写到项目外，站主没批出沙箱。）");
+            text.push_str(if self.scope.is_some() { "\n（沙箱只让你写划给你的范围和构建、缓存目录，站主没批出沙箱。别绕过去；真要改别处就在报告里写明。）" } else { "\n（沙箱没让它写到项目外，站主没批出沙箱。）" });
         }
         if !shown.trim().is_empty() {
             text.push('\n');
@@ -2129,7 +2262,8 @@ impl Run {
         let sink = self.sink.clone();
         let id = call_id.to_string();
         let ctx = self.ctx.clone();
-        let fut = bash::run(&ctx, input, sandbox, self.cancel_rx.clone(), move |text| {
+        let scope = self.sandbox_scope.clone().filter(|_| sandbox == bash::Sandbox::Project);
+        let fut = bash::run(&ctx, input, sandbox, scope.as_deref(), self.cancel_rx.clone(), move |text| {
             sink.emit(EventBody::ToolCallOutputDelta { call_id: id.clone(), text });
         });
         tokio::pin!(fut);
@@ -2925,7 +3059,7 @@ mod tests {
         let main = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
             vec![
-                turn("", vec![("spawn_agent", json!({"type": "worker", "task": "把 a.txt 改成「二」"}))]),
+                turn("", vec![("spawn_agent", json!({"type": "worker", "task": "把 a.txt 改成「二」", "paths": ["a.txt"]}))]),
                 turn("", vec![]),
                 turn("", vec![("spawn_agent", json!({"type": "auditor", "task": "看看 a.txt 改对没有"}))]),
                 turn("", vec![]),
@@ -2952,6 +3086,142 @@ mod tests {
         let last = texts(&sent, sent.len() - 1);
         assert!(last.contains("verdict=\\\"pass\\\"") && last.contains("changed: a.txt"), "{last}");
         assert!(types(&events).contains(&"diff.updated"));
+    }
+
+    /// 照请求干活的假 worker（v1.1.3）：第一轮读划给它的那一块，第二轮把它写成任务里「写成 X」的 X（任务里带「顺手改 b.txt」
+    /// 的再去改 b.txt，该被拒），第三轮交报告。每次请求慢一点，看得出谁和谁同时跑。
+    struct PathWorker;
+
+    impl ModelProvider for PathWorker {
+        fn complete(&self, request: ModelRequest, _events: mpsc::UnboundedSender<ModelEvent>, _cancel: watch::Receiver<bool>) -> BoxFuture<Result<crate::gateway::ModelResponse, GatewayError>> {
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let first: String = request.messages[0].parts.iter().filter_map(|p| if let Part::Text { text } = p { Some(text.clone()) } else { None }).collect::<Vec<_>>().join("\n");
+                let path = first.split("<your-paths>\n").nth(1).and_then(|r| r.lines().next()).unwrap_or("").to_string();
+                let content = first.split("写成 ").nth(1).and_then(|r| r.lines().next()).unwrap_or("").to_string();
+                let round = request.messages.iter().filter(|m| m.role == Role::Assistant).count();
+                let call = |path: &str, content: &str| Part::ToolCall { call_id: format!("w-{}", uuid::Uuid::new_v4().simple()), name: "write_file".into(), input: json!({"path": path, "content": format!("{content}\n")}), signature: None };
+                let (parts, stop) = if round == 0 {
+                    (vec![Part::ToolCall { call_id: format!("r-{}", uuid::Uuid::new_v4().simple()), name: "read_file".into(), input: json!({"path": path}), signature: None }], StopReason::ToolUse)
+                } else if round == 1 {
+                    let mut parts = vec![call(&path, &content)];
+                    if first.contains("顺手改 b.txt") {
+                        parts.push(call("b.txt", "乱"));
+                    }
+                    (parts, StopReason::ToolUse)
+                } else {
+                    (vec![Part::Text { text: format!("{path} 写成 {content} 了。") }], StopReason::EndTurn)
+                };
+                Ok(crate::gateway::ModelResponse { message: Message { role: Role::Assistant, parts }, stop, usage: usage(1000, 100), cost: Cost::unknown(), response_model: None })
+            })
+        }
+    }
+
+    fn team_of(members: Vec<(Kind, Arc<dyn ModelProvider>)>) -> Arc<agents::Team> {
+        let none = std::collections::HashMap::new();
+        Arc::new(agents::Team { members: members.into_iter().map(|(k, p)| agents::member(k, "deepseek/deepseek-flash".into(), p, &agents::KindSettings::default(), &none)).collect() })
+    }
+
+    #[tokio::test]
+    async fn workers_on_separate_files_run_together_overlaps_queue_and_the_board_follows() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n").write("b.txt", "二\n");
+        let spawn = |task: &str, path: &str| ("spawn_agent", json!({"type": "worker", "task": task, "paths": [path]}));
+        let main = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![spawn("把 a.txt 写成 甲\n顺手改 b.txt", "a.txt"), spawn("写成 乙", "b.txt"), spawn("写成 丙", "a.txt"), ("write_file", json!({"path": "a.txt", "content": "主\n"}))]),
+                turn("派出去了，等报告。", vec![]),
+                turn("都做完了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let main_requests = main.requests.clone();
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.team = Some(team_of(vec![(Kind::Worker, Arc::new(PathWorker) as Arc<dyn ModelProvider>)]));
+        let backend = PeckBackend::new(main, cfg, vec![]);
+        let (outcome, events) = drive(&backend, AgentTask { run_id: "run-board".into(), ..task(&p, PermissionLevel::Auto, "改 a 和 b") }, |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        // 重叠的那个排在后面，最后是它写的；不重叠的同时跑；划给别人的改不了（主角色、worker 都一样）。
+        assert_eq!(p.read("a.txt"), "丙\n");
+        assert_eq!(p.read("b.txt"), "乙\n");
+        let second = texts(&main_requests.lock().unwrap(), 1);
+        assert!(second.contains("a.txt 现在划给了 worker 1"), "主角色改不了划出去的：{second}");
+        assert!(second.contains("排在它后面"), "{second}");
+        assert!(
+            events.iter().any(|e| e.subagent_id.is_some() && matches!(&e.body, EventBody::ToolCallCompleted { status: ToolStatus::Denied, output: Some(o), .. } if o.contains("b.txt 不在划给你的范围里"))),
+            "worker 1 改不了 b.txt"
+        );
+        let boards: Vec<Vec<BoardItem>> = events.iter().filter_map(|e| match &e.body { EventBody::BoardUpdated { items } => Some(items.clone()), _ => None }).collect();
+        let last = boards.last().unwrap();
+        assert_eq!(last.iter().map(|i| (i.owner.as_str(), i.number, i.status)).collect::<Vec<_>>(), [("worker", 1, BoardStatus::Done), ("worker", 2, BoardStatus::Done), ("worker", 3, BoardStatus::Done)]);
+        assert_eq!(last[0].paths, ["a.txt"]);
+        let (w1, w2, w3) = (&last[0], &last[1], &last[2]);
+        assert!(w2.started_at.unwrap() < w1.finished_at.unwrap(), "worker 1、2 同时跑");
+        assert!(w3.started_at.unwrap() >= w1.finished_at.unwrap(), "worker 3 等 worker 1 做完");
+        assert!(boards.iter().any(|b| b.len() == 3 && b[0].status == BoardStatus::Running && b[2].status == BoardStatus::Queued), "看得到排队");
+        let woke = texts(&main_requests.lock().unwrap(), 2);
+        assert_eq!(woke.matches("<agent-reports>").count(), 1);
+        assert!(woke.contains("changed: b.txt") && !woke.contains("changed: a.txt, b.txt"), "同时跑的别人改的不算进来：{woke}");
+    }
+
+    #[tokio::test]
+    async fn a_member_works_in_its_paths_and_can_send_its_own_explorers() {
+        let p = TempProject::new();
+        p.write("src/readme.txt", "x\n");
+        let main = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![("spawn_agent", json!({"type": "member", "task": "在 src 里加 m.txt", "paths": ["src"], "title": "加 m"}))]),
+                turn("等 member。", vec![]),
+                turn("member 做完了，收尾。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let member = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![("spawn_agent", json!({"type": "explorer", "task": "src 里有什么"}))]),
+                turn("等 explorer。", vec![]),
+                turn("", vec![("write_file", json!({"path": "src/m.txt", "content": "成\n"})), ("write_file", json!({"path": "top.txt", "content": "越界\n"}))]),
+                turn("加好了 src/m.txt。", vec![]),
+            ],
+            Duration::from_millis(20),
+        ));
+        let explorer = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("src 里只有 readme.txt", vec![])], Duration::from_millis(100)));
+        let (main_requests, member_requests) = (main.requests.clone(), member.requests.clone());
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.team = Some(team(vec![(Kind::Explorer, explorer), (Kind::Member, member)]));
+        let backend = PeckBackend::new(main, cfg, vec![]);
+        let (outcome, events) = drive(&backend, AgentTask { run_id: "run-member".into(), ..task(&p, PermissionLevel::Auto, "加个 m") }, |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        assert_eq!(p.read("src/m.txt"), "成\n");
+        assert!(!p.dir.join("top.txt").exists(), "划给它的范围外改不了");
+        // member 的工具和主角色差不多，只能再派 explorer（searcher 这里没配）；不问站主、不写清单。
+        let sent = member_requests.lock().unwrap().clone();
+        let tools: Vec<String> = sent[0].tools.iter().map(|t| t.name.clone()).collect();
+        assert!(tools.contains(&"write_file".into()) && tools.contains(&"bash_run".into()) && !tools.iter().any(|t| t == "ask_user" || t == "update_plan"), "{tools:?}");
+        let spawn = sent[0].tools.iter().find(|t| t.name == agents::SPAWN_AGENT).unwrap();
+        assert_eq!(spawn.input_schema["properties"]["type"]["enum"], json!(["explorer"]));
+        assert!(texts(&sent, 0).contains("<your-paths>\\nsrc\\n</your-paths>"), "{}", texts(&sent, 0));
+        assert!(texts(&sent, 2).contains("src 里只有 readme.txt"), "explorer 的报告交给 member");
+        // explorer 的事件挂在 member 派的那一步下面（subagentId 是那一步的 id）。
+        let member_spawn = events.iter().find_map(|e| match &e.body {
+            EventBody::ToolCallStarted { call_id, name, .. } if name == "spawn_agent" && e.subagent_id.is_some() => Some(call_id.clone()),
+            _ => None,
+        });
+        let member_spawn = member_spawn.expect("member 派了 explorer");
+        assert!(events.iter().any(|e| e.subagent_id.as_deref() == Some(member_spawn.as_str()) && matches!(e.body, EventBody::MessageCompleted { .. })));
+        // 每条事件都能原样存、原样读回来（member 派的 explorer 的 subagent.started 不能有两个 subagentId）。
+        for e in &events {
+            let text = serde_json::to_string(e).unwrap();
+            assert_eq!(&serde_json::from_str::<AgentEvent>(&text).unwrap(), e, "{text}");
+        }
+        // 任务板上一项 member，做完；主角色收到报告。
+        let last = events.iter().rev().find_map(|e| match &e.body { EventBody::BoardUpdated { items } => Some(items.clone()), _ => None }).unwrap();
+        assert_eq!(last.iter().map(|i| (i.owner.as_str(), i.title.as_str(), i.status)).collect::<Vec<_>>(), [("member", "加 m", BoardStatus::Done)]);
+        let woke = texts(&main_requests.lock().unwrap(), 2);
+        assert!(woke.contains("type=\\\"member\\\"") && woke.contains("changed: src/m.txt"), "{woke}");
     }
 
     /// 子代理真跑（花钱，手动跑）：主角色派两个 explorer 各读一个文件，一批做完再合起来答。
@@ -2996,6 +3266,57 @@ mod tests {
         }
         assert_eq!(outcome.reason, TurnEndReason::Done);
         assert_eq!(events.iter().filter(|e| matches!(e.body, EventBody::SubagentStarted { .. })).count(), 2);
+    }
+
+    /// 划文件真跑（花钱，手动跑，v1.1.3）：主角色派两个 worker 各建一个文件（各划一块），任务板上两项做完。
+    /// 主角色最多 5 轮（可能分两次派，再等报告、收尾）、每个 worker 最多 2 轮（建文件、交报告），每家不超过现行授权的 5 次。
+    /// `PECK_LIVE_KEYS=<Key 目录> PECK_LIVE_MODEL=openai/gpt-6-luna PECK_LIVE_SUB_MODEL=deepseek/deepseek-flash
+    ///  cargo test --lib live_ploop_workers_split_files -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_ploop_workers_split_files() {
+        use crate::gateway::config::GatewayConfig;
+        use crate::gateway::providers::{Credential, HttpProvider};
+        let keys = std::path::PathBuf::from(std::env::var("PECK_LIVE_KEYS").expect("PECK_LIVE_KEYS"));
+        let provider = |id: &str| -> Arc<dyn ModelProvider> {
+            let spec = catalog::catalog().model(id).unwrap();
+            let file = if spec.provider == "google" { "gemini" } else { spec.provider.as_str() };
+            let key = zeroize::Zeroizing::new(std::fs::read_to_string(keys.join(file)).unwrap().trim().to_string());
+            Arc::new(HttpProvider::new(id, Credential::Key(key), &GatewayConfig::default(), None).unwrap())
+        };
+        let main_id = std::env::var("PECK_LIVE_MODEL").expect("PECK_LIVE_MODEL");
+        let sub_id = std::env::var("PECK_LIVE_SUB_MODEL").expect("PECK_LIVE_SUB_MODEL");
+        let p = TempProject::new();
+        p.write("README.md", "# demo\n");
+        let worker = agents::Member { kind: Kind::Worker, model_id: sub_id.clone(), provider: provider(&sub_id), effort: None, rounds: 2, parallel: 2, slots: Arc::new(tokio::sync::Semaphore::new(2)) };
+        let mut cfg = config(&p, &main_id);
+        cfg.max_rounds = 5;
+        cfg.team = Some(Arc::new(agents::Team { members: vec![worker] }));
+        let backend = PeckBackend::new(provider(&main_id), cfg, vec![]);
+        let mut t = AgentTask {
+            run_id: "run-live-split".into(),
+            ..task(&p, PermissionLevel::Auto, "用 spawn_agent 在同一次回答里派两个 worker 同时做：一个只负责新建 notes/a.md，内容是一行「甲」；另一个只负责新建 notes/b.md，内容是一行「乙」。每个 worker 只划它自己那个文件，直接用 write_file 新建，不用先读。你自己不要改文件，等两份报告回来后用一句话告诉我结果。")
+        };
+        t.effort = Some("low".into());
+        let (outcome, events) = drive(&backend, t, |_| None).await;
+        for e in &events {
+            let who = e.subagent_id.as_deref().unwrap_or("main");
+            match &e.body {
+                EventBody::ToolCallStarted { title, input, .. } => println!("{who} start {title} {}", if title.starts_with("派") { input["paths"].to_string() } else { String::new() }),
+                EventBody::ToolCallCompleted { status, output, .. } => println!("{who} done {status:?} {}", output.as_deref().unwrap_or("").lines().next().unwrap_or("")),
+                EventBody::MessageCompleted { text, .. } => println!("{who} says {}", text.replace('\n', " ")),
+                EventBody::UsageUpdated { cost, .. } => println!("{who} cost {:?}", cost.usd),
+                EventBody::BoardUpdated { items } => println!("board {}", items.iter().map(|i| format!("{}{}:{:?}", i.owner, i.number, i.status)).collect::<Vec<_>>().join(" ")),
+                EventBody::TurnCompleted { reason, error, .. } => println!("end {reason:?} {error:?}"),
+                _ => {}
+            }
+        }
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        assert_eq!(p.read("notes/a.md").trim(), "甲");
+        assert_eq!(p.read("notes/b.md").trim(), "乙");
+        let last = events.iter().rev().find_map(|e| match &e.body { EventBody::BoardUpdated { items } => Some(items.clone()), _ => None }).unwrap();
+        assert_eq!(last.len(), 2);
+        assert!(last.iter().all(|i| i.status == BoardStatus::Done && i.paths.len() == 1));
     }
 
     #[tokio::test]
