@@ -149,6 +149,8 @@ export interface AgentView {
   background: BackgroundView[];
   /** 接力、审查的几段（v0.8；一个引擎干的任务为空）。 */
   stages: StageView[];
+  /** 插件的收尾 Hook 跑完的结果（v1.1.0，写在 recap 里）：提交了哪一笔、或者为什么没提交。 */
+  hooks: Array<{ ok: boolean; text: string }>;
 }
 
 const LIVE_TAIL = 8 * 1024;
@@ -163,7 +165,7 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], stages: [] };
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], stages: [], hooks: [] };
   let stageNow: StageView | null = null;
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
@@ -355,6 +357,9 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         view.items.push({ kind: "skill", id: `s-${e.proposalId}`, skill });
         break;
       }
+      case "hook.ran":
+        view.hooks.push({ ok: e.ok, text: e.text });
+        break;
       case "skill.reviewed": {
         const skill = skills.get(e.proposalId);
         if (skill) skill.reviewed = { status: e.status, name: e.name, location: e.location, error: e.error ?? null };

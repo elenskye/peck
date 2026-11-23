@@ -628,6 +628,8 @@ const Recap: React.FC<{
         <div><b className="t-name">{done ? "做完了" : state === "cancelled" ? "停了" : "停下了"}</b><span>{facts.join(" · ")}</span></div>
         {run.files.length > 0 && <p className="summary-n"><span className="pk-add">+{adds}</span><span className="pk-del">−{dels}</span></p>}
       </div>
+      {/* 插件的收尾 Hook（v1.1.0）：Git Plan 提交了哪一笔，或者为什么没提交。 */}
+      {view?.hooks.map((h, i) => <p key={i} className={cn("agent-line recap-hook", !h.ok && "is-warn")}><Icon name={h.ok ? "check" : "bang"} size={12} />{h.text}</p>)}
       {/* 事件日志没读到（或者没记下）时，回答只在任务记录里：照写出来。停下、失败的原因上面红条已经写了，不再重复。 */}
       {!last && run.summary && done && <p className="summary-text">{run.summary}</p>}
       {rows.length > 0 && <CostTable rows={rows} ms={(run.finishedAt ?? run.startedAt) - run.startedAt} />}

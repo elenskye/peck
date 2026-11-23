@@ -270,6 +270,10 @@ pub enum EventBody {
         error: Option<String>,
     },
 
+    /// 插件的收尾 Hook 跑完了（v1.1.0，见 `harness/hooks.rs`）：Git Plan 提交了、或者为什么没提交。`text` 是给人看的一句。
+    #[serde(rename = "hook.ran")]
+    HookRan { plugin: String, action: String, ok: bool, text: String },
+
     // ── 后台（v0.6）──
     /// 后台命令（模型起的；标了留着的 dev server）的状态变了。
     #[serde(rename = "background.updated")]
@@ -363,6 +367,7 @@ impl EventBody {
             Self::MemoryReviewed { .. } => "memory.reviewed",
             Self::SkillProposed { .. } => "skill.proposed",
             Self::SkillReviewed { .. } => "skill.reviewed",
+            Self::HookRan { .. } => "hook.ran",
             Self::BackgroundUpdated { .. } => "background.updated",
             Self::StageStarted { .. } => "stage.started",
             Self::StageCompleted { .. } => "stage.completed",
@@ -374,7 +379,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 33] = [
+    pub const TYPE_NAMES: [&'static str; 34] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -402,6 +407,7 @@ impl EventBody {
         "memory.reviewed",
         "skill.proposed",
         "skill.reviewed",
+        "hook.ran",
         "background.updated",
         "stage.started",
         "stage.completed",

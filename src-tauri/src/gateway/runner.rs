@@ -417,9 +417,35 @@ pub(crate) fn start_engine_run(
                 changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
+        let round_files: Vec<String> = changeset.files.iter().map(|f| f.path.clone()).collect();
         crate::harness::run::finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
+        // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，续上这个 CLI 的会话问一行提交说明，Peck 自己提交。
+        let stop_hook = crate::project_plugins::stop_hook(&workspace);
+        let ask_task = AgentTask {
+            run_id: id.clone(),
+            prompt: String::new(),
+            cwd: cwd.clone(),
+            permission: PermissionLevel::Plan,
+            model: model.clone(),
+            effort: effort.clone(),
+            resume: outcome.as_ref().ok().and_then(|o| o.session_ref.clone()),
+            peck_mcp: None,
+            env: project_env.clone(),
+            folders: vec![],
+        };
+        let (asker, ask, usage_to, asked_engine) = (backend.clone(), stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default(), sink.clone(), engine.clone());
+        let hooked = crate::harness::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
+            crate::harness::hooks::ask_cli(asker.as_ref(), &asked_engine, ask_task, &ask, move |body| {
+                usage_to.emit(body);
+            })
+            .await
+        })
+        .await;
+        if let Some(body) = hooked {
+            sink.emit(body);
+        }
         run_sink.emit(RunEvent::StepFinished {
             run_id: id.clone(),
             step_id: step_id.clone(),
@@ -475,7 +501,7 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
     // （子任务里每一步照 Peck 的档位问）。`create_skill` 只是提议、不写盘，PLAN 也批。
     let peck_tool = *kind == ToolKind::Mcp && title.contains("MCP peck · ");
     // 定时任务那三个不碰项目文件，PLAN 也批；`restore_snapshot` 在 PLAN 下给站主（它自己也会拒掉回退）。
-    if peck_tool && ["create_skill", "schedule_task", "list_schedules", "cancel_schedule"].iter().any(|t| title.contains(t)) {
+    if peck_tool && ["create_skill", "load_skill", "schedule_task", "list_schedules", "cancel_schedule"].iter().any(|t| title.contains(t)) {
         return Some(request_id.clone());
     }
     if level == PermissionLevel::Plan {

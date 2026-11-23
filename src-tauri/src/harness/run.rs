@@ -528,6 +528,9 @@ pub(crate) fn start_peck_run(
         super::mcp_client::for_project(&db, &ws)
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
+    // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有；循环收尾时问一句，快照拍完以后提交。
+    let stop_hook = crate::project_plugins::stop_hook(&workspace);
+    let stop_ask = super::hooks::StopAsk::of(&stop_hook);
     // 快照回退、定时任务（v1.0.2）：这个任务是谁在干，设定时任务时默认照它。
     let extras = Arc::new(super::extras::Extras {
         store: store.clone(),
@@ -551,6 +554,7 @@ pub(crate) fn start_peck_run(
         delegate,
         brief: None,
         extras: Some(extras),
+        stop_ask: stop_ask.clone(),
         task_level: None,
         mcp: mcp_list,
         mcp_slot: None,
@@ -665,9 +669,16 @@ pub(crate) fn start_peck_run(
                 changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
+        let round_files: Vec<String> = changeset.files.iter().map(|f| f.path.clone()).collect();
         finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
+        // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，用模型收尾时答的那一行提交。
+        let answered = stop_ask.clone();
+        let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move { answered.and_then(|a| a.take()) }).await;
+        if let Some(body) = hooked {
+            sink.emit(body);
+        }
         run_sink.emit(RunEvent::StepFinished {
             run_id: id.clone(),
             step_id: step_id.clone(),
@@ -736,6 +747,7 @@ pub async fn harness_oneshot(
             delegate: None,
             brief: None,
             extras: None,
+            stop_ask: None,
             task_level: None,
             mcp: vec![],
             mcp_slot: None,

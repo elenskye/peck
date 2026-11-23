@@ -7,6 +7,8 @@
 //! - `restore_snapshot`、`schedule_task`、`list_schedules`、`cancel_schedule`（v1.0.2，见 `harness/extras.rs`）：
 //!   快照回退和定时任务，和 Peck Loop 同一套；回退先弹高危卡片，站主批了才动。
 //!
+//! - `load_skill`（v1.1.0）：读自带插件的 Skill 全文（怎么用上面这几样工具）。自带插件不写进项目，CLI 自己读不到，
+//!   所以这一次给了哪个自带插件的工具，就能读它的 Skill。只读。
 //! - `git_commit`（v1.1.0，见 `harness/git.rs`）：项目里装着要它的插件（Git Plan）、这一段不是只读的才给。EDIT 档
 //!   先弹一张卡片（能「总是允许」），AUTO 不问。
 //!
@@ -72,6 +74,15 @@ impl Offer {
     /// 给 `git_commit`。
     fn git(&self) -> Option<(&GitOffer, &Arc<crate::harness::extras::Extras>)> {
         self.git.as_ref().zip(self.extras.as_ref()).filter(|_| !self.read_only)
+    }
+
+    /// 这一次能读的自带 Skill：给了哪个自带插件的工具，就带上它的 Skill。
+    fn builtin_skills(&self) -> Vec<&'static crate::plugins::SkillText> {
+        let mut offered = self.extra_names();
+        if self.skill().is_some() {
+            offered.push("create_skill");
+        }
+        crate::plugins::builtin().iter().filter(|p| p.info.tools.iter().any(|t| offered.contains(&t.name.as_str()))).flat_map(|p| p.skills.iter()).collect()
     }
 
     /// 给 `create_skill`。
@@ -284,6 +295,12 @@ impl McpHub {
                 if extra.contains(&crate::harness::extras::SCHEDULE_TASK) {
                     lines.push("schedule_task, list_schedules and cancel_schedule manage scheduled tasks in this project; use them when the user asks for something to happen at a time or on a schedule, and restate the schedule and get the user's yes first.");
                 }
+                let skills = offer.builtin_skills();
+                let mut lines: Vec<String> = lines.into_iter().map(str::to_string).collect();
+                if !skills.is_empty() {
+                    let names = skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ");
+                    lines.push(format!("Before using these tools, read how with load_skill (name: {names}) and follow it."));
+                }
                 ok(json!({
                     "protocolVersion": m["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
                     "capabilities": {"tools": {}},
@@ -336,6 +353,17 @@ impl McpHub {
                         "annotations": {"readOnlyHint": true}
                     }));
                 }
+                let skills = offer.builtin_skills();
+                if !skills.is_empty() {
+                    let list = skills.iter().map(|s| format!("{}: {}", s.name, s.description)).collect::<Vec<_>>().join("\n");
+                    tools.push(json!({
+                        "name": "load_skill",
+                        "title": "Read a Peck skill",
+                        "description": format!("Read the full instructions of one of Peck's built-in skills (how to use Peck's own tools). Call it before using the tool the skill covers.\n{list}"),
+                        "inputSchema": {"type": "object", "properties": {"name": {"type": "string", "enum": skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()}}, "required": ["name"]},
+                        "annotations": {"readOnlyHint": true}
+                    }));
+                }
                 if offer.git().is_some() {
                     use crate::harness::git as g;
                     tools.push(json!({"name": g::GIT_COMMIT, "title": "Commit changes", "description": g::DESCRIPTION, "inputSchema": g::schema(), "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
@@ -364,6 +392,13 @@ impl McpHub {
                 match said {
                     Ok(text) => ok(json!({"content": [{"type": "text", "text": text}]})),
                     Err(why) => ok(json!({"content": [{"type": "text", "text": why}], "isError": true})),
+                }
+            }
+            "tools/call" if m["params"]["name"] == "load_skill" => {
+                let name = m["params"]["arguments"]["name"].as_str().unwrap_or("");
+                match offer.builtin_skills().into_iter().find(|s| s.name == name) {
+                    Some(skill) => ok(json!({"content": [{"type": "text", "text": skill.text}]})),
+                    None => ok(json!({"content": [{"type": "text", "text": format!("no built-in skill named {name}")}], "isError": true})),
                 }
             }
             "tools/call" if m["params"]["name"] == crate::harness::git::GIT_COMMIT => {
@@ -665,7 +700,7 @@ mod tests {
         let mcp = hub.register_offer(sink, Offer { extras: Some(Arc::new(x::extras(&w, "run-mcp-x"))), ..Default::default() });
         let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
         let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, crate::harness::extras::NAMES);
+        assert_eq!(names, [&["load_skill"][..], &crate::harness::extras::NAMES[..]].concat());
         let call = |id: u64, name: &str, args: Value| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": name, "arguments": args}});
         let (_, r) = post(&mcp.url, &mcp.token, call(2, "schedule_task", json!({"prompt": "看一下 CI", "repeat": "interval", "every_hours": 2}))).await;
         assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("每隔 2 小时"), "{r}");
@@ -717,7 +752,13 @@ mod tests {
         assert!(init["result"]["instructions"].as_str().unwrap().contains("create_skill"));
         let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
         let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, vec!["create_skill"]);
+        assert_eq!(names, vec!["create_skill", "load_skill"]);
+        // 自带的 Skill 不在项目里，CLI 经这里读全文（v1.1.0）：给了哪个插件的工具，就能读它的。
+        assert!(init["result"]["instructions"].as_str().unwrap().contains("load_skill (name: peck-skills)"));
+        let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {"name": "load_skill", "arguments": {"name": "peck-skills"}}})).await;
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("# 写一条 Skill"), "{r}");
+        let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 21, "method": "tools/call", "params": {"name": "load_skill", "arguments": {"name": "peck-snapshots"}}})).await;
+        assert_eq!(r["result"]["isError"], true, "没给快照的工具，它的 Skill 也不给");
         let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": "create_skill", "arguments": {"name": "peck-c3-mcp", "description": "d", "body": "1. x"}}})).await;
         assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("站主批了才写进去"), "{r}");
@@ -828,7 +869,10 @@ mod tests {
         assert!(said.contains("restore_snapshot") && !said.contains("schedule_task") && !said.contains("create_skill"), "{said}");
         let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
         let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, vec!["restore_snapshot"]);
+        assert_eq!(names, vec!["load_skill", "restore_snapshot"]);
+        assert!(said.contains("load_skill (name: peck-snapshots)"), "{said}");
+        let list = tools["result"]["tools"][0]["description"].as_str().unwrap();
+        assert!(list.contains("peck-snapshots:") && !list.contains("peck-schedules:") && !list.contains("peck-skills:"), "{list}");
         // 硬调也不收。
         for (name, args) in [("schedule_task", json!({"prompt": "x", "repeat": "daily", "time": "09:00"})), ("list_schedules", json!({})), ("create_skill", json!({"name": "peck-off", "description": "d", "body": "x"}))] {
             let (_, r) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": args}})).await;

@@ -9,6 +9,7 @@ pub mod delegate;
 pub mod extras;
 pub mod git;
 pub mod history;
+pub mod hooks;
 pub mod mcp_client;
 pub mod permission;
 pub mod risk;

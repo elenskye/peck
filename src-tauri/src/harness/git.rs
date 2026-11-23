@@ -208,6 +208,10 @@ pub mod testing {
         std::fs::write(at.join("hooks/hooks.json"), r#"{"hooks": {"Stop": [{"hooks": [{"type": "peck", "ask": "一行提交说明", "run": "git_commit"}]}]}}"#).unwrap();
     }
 
+    pub fn commit_all(dir: &Path, message: &str) {
+        commit(dir, message, &[]).unwrap();
+    }
+
     pub fn log(dir: &Path, format: &str) -> Vec<String> {
         let mut c = git(dir);
         c.args(["log", &format!("--format={format}")]);

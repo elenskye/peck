@@ -207,6 +207,8 @@ struct PeckBase {
     extras: Arc<super::extras::Extras>,
     /// 整个任务的档位：只读的那两段（写规范、审查）的系统提示里写明它，免得把自己的只读当成任务的权限。
     level: PermissionLevel,
+    /// 插件的收尾 Hook（v1.1.0）：实施、按审查改那两段做完时问一句提交说明（后问的盖掉先问的）。
+    stop_ask: Option<super::hooks::StopAsk>,
 }
 
 impl PeckBase {
@@ -236,6 +238,7 @@ impl PeckBase {
             delegate: if read_only { None } else { delegate },
             brief,
             extras: (!read_only).then(|| self.extras.clone()),
+            stop_ask: if read_only { None } else { self.stop_ask.clone() },
             task_level: read_only.then_some(self.level),
             mcp: self.mcp.clone(),
             mcp_slot: Some(self.mcp_slot.clone()),
@@ -686,6 +689,9 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         setup: crate::schedule::Setup { who: lead.who, model: lead.model, effort: lead.effort, plan_by: spec.as_ref().map(pick_of), review_by: review.as_ref().map(pick_of), delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) },
     });
     let tools_off = crate::plugins::tools_off(&settings.plugins_off);
+    // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有。
+    let stop_hook = crate::project_plugins::stop_hook(&workspace);
+    let stop_ask = super::hooks::StopAsk::of(&stop_hook);
     let peck_base = PeckBase {
         store: store.clone(),
         workspace_id: workspace_id.clone(),
@@ -705,6 +711,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         delegations_used: store.lock().ok().and_then(|db| db.delegations_in_session(&session_id).ok()).unwrap_or(0),
         extras: peck_tools.clone(),
         level,
+        stop_ask: stop_ask.clone(),
     };
     // 引擎看到的请求：换引擎带过来的经过、@ 进来的旧任务、站主的原话。
     let mut lead: Vec<String> = Vec::new();
@@ -915,6 +922,9 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                         format!("{request}\n\n{}", fix_prompt(&r.text, &reviewer.label, &failed))
                     };
                     let f = stager.run(&implement, StageRole::Fix, text, impl_backend.as_ref(), resume, &[], None).await;
+                    if f.session_ref.is_some() {
+                        impl_ref = f.session_ref.clone();
+                    }
                     if !f.text.trim().is_empty() {
                         final_text = f.text;
                     }
@@ -949,9 +959,41 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                 changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
+        let round_files: Vec<String> = changeset.files.iter().map(|f| f.path.clone()).collect();
         finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
+        // 收尾 Hook（v1.1.0）：问实施的那一个要一行提交说明——Peck Loop 收尾时已经答了；CLI 续上它的会话问。
+        let asked = stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default();
+        let (answered, usage_to, hook_id, hook_cwd) = (stop_ask.clone(), base.clone(), id.clone(), cwd.clone());
+        let implementer = &implement;
+        let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
+            match &implementer.engine {
+                Engine::Peck { .. } => answered.and_then(|a| a.take()),
+                Engine::Cli { engine, backend, .. } => {
+                    let task = AgentTask {
+                        run_id: hook_id,
+                        prompt: String::new(),
+                        cwd: hook_cwd,
+                        permission: PermissionLevel::Plan,
+                        model: implementer.model(),
+                        effort: implementer.effort.clone(),
+                        resume: impl_ref,
+                        peck_mcp: None,
+                        env: vec![],
+                        folders: vec![],
+                    };
+                    super::hooks::ask_cli(backend.as_ref(), engine, task, &asked, move |body| {
+                        usage_to.emit(body);
+                    })
+                    .await
+                }
+            }
+        })
+        .await;
+        if let Some(body) = hooked {
+            base.emit(body);
+        }
         run_sink.emit(RunEvent::StepFinished {
             run_id: id.clone(),
             step_id: step_id.clone(),

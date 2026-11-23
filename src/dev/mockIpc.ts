@@ -1052,6 +1052,11 @@ async function replayAgent(
   if (!ended || run.stopped) send({ type: "turn.completed", turnId: `turn-${runId}`, reason, error: limit });
   // 收尾：跑着时批的 Skill 这时写进去（真的 Peck 是拍完收尾快照以后）。
   for (const f of run.atEnd) f();
+  // 收尾 Hook（v1.1.0）：项目里装着 Git Plan、做完了、改了文件，就演示一笔自动提交。
+  const hookSession = Object.keys(runsState).find((sid) => runsState[sid].some((r) => r.id === runId));
+  if (reason === "done" && diffs.size > 0 && hookSession && mockPluginCommands(workspaceOfSession(hookSession)).length > 0) {
+    send({ type: "hook.ran", plugin: "Git Plan", action: "git_commit", ok: true, text: `Git Plan 提交了 3f9c2ab：v1.1.0: minor improvement（${diffs.size} 个文件，没有 push）` });
+  }
   if (opts.countSpend) mockMonthSpend += spent;
   agentRuns.delete(runId);
   return { reason, error: limit, text, diffs: [...diffs.values()] };

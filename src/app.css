@@ -676,6 +676,7 @@ body { overflow: hidden; }
 .inbox-row--failed .task-si .pk-i { color: var(--color-bad); }
 .recap { margin-top: var(--space-3); }
 .recap--stopped .summary-top > .pk-i { color: var(--color-warn); }
+.recap-hook { margin-top: var(--space-3); }
 .recap-next { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
 .recap-next .pk-btn { font-family: var(--font-body); font-weight: 400; letter-spacing: 0; text-transform: none; }
 

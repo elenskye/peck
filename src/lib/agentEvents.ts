@@ -217,6 +217,8 @@ export type EventBody =
   // ── 自己写 Skill（v0.10 C3）──
   | { type: "skill.proposed"; proposalId: string; name: string; description: string; body: string; scope: SkillScope; location: string; diff?: string | null; warnings?: string[]; similar?: string[] }
   | { type: "skill.reviewed"; proposalId: string; status: SkillReviewStatus; name: string; location: string; error?: string | null }
+  /** 插件的收尾 Hook 跑完了（v1.1.0）：Git Plan 提交了、或者为什么没提交。text 是给人看的一句。 */
+  | { type: "hook.ran"; plugin: string; action: string; ok: boolean; text: string }
   // ── 后台命令（v0.6）──
   | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
   // ── 合作（v0.8）──

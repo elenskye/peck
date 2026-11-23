@@ -101,6 +101,8 @@ pub struct LoopConfig {
     pub brief: Option<String>,
     /// Peck 自己的几样工具（v1.0.2：`restore_snapshot`、定时任务那三个）；ONE SHOT、子任务、合作里只读的那两段不给。
     pub extras: Option<Arc<super::extras::Extras>>,
+    /// 插件的收尾 Hook（v1.1.0，见 `hooks.rs`）：做完时项目里有没提交的改动，就在原对话末尾多问这一句，答案留给任务收尾。
+    pub stop_ask: Option<super::hooks::StopAsk>,
     /// 合作里只读的那一段（写规范、审查）：整个任务是哪一档。系统提示里写明「只读的是你这一段，不是任务」，
     /// 不然它会把自己的 PLAN 当成任务的权限写进规范（站主 2026-11-22 真跑遇到）。
     pub task_level: Option<PermissionLevel>,
@@ -779,6 +781,47 @@ impl Run {
         Ok(Some(text.trim().to_string()))
     }
 
+    /// 插件的收尾 Hook（v1.1.0）：做完了、项目里有没提交的改动，就照 `summarize` 的办法多问一轮（同样的系统提示、工具和
+    /// 对话，走缓存；不显示成回答、不进存下的对话），答案放进 `stop_ask.answer`。PLAN、ONE SHOT、子任务不问；
+    /// 被打断、出错就当没答。
+    async fn ask_stop_hook(&mut self, base: &ModelRequest) {
+        let Some(hook) = self.config.stop_ask.clone() else { return };
+        if self.level == PermissionLevel::Plan || self.config.oneshot || self.config.subtask.is_some() || self.ctl.interrupted {
+            return;
+        }
+        let cwd = self.task.cwd.clone();
+        if !tokio::task::spawn_blocking(move || super::hooks::wants_ask(&cwd)).await.unwrap_or(false) {
+            return;
+        }
+        let mut messages = self.messages.clone();
+        messages.push(Message { role: Role::User, parts: vec![Part::Text { text: super::hooks::question(&hook.ask) }] });
+        let request = ModelRequest { messages, max_output_tokens: base.max_output_tokens.min(4_000), ..base.clone() };
+        let (tx, _rx) = mpsc::unbounded_channel::<ModelEvent>();
+        let mut fut = self.provider.complete(request, tx, self.cancel_rx.clone());
+        let result = loop {
+            tokio::select! {
+                biased;
+                r = &mut fut => break r,
+                _ = self.ctl.until_interrupt(), if !self.ctl.interrupted => {
+                    let _ = self.cancel_tx.send(true);
+                }
+            }
+        };
+        let Ok(response) = result else { return };
+        self.emit(EventBody::UsageUpdated { usage: response.usage.clone(), cost: response.cost.clone(), scope: UsageScope::Turn, model: Some(self.config.model_id.clone()) });
+        if let Some(usd) = response.cost.usd {
+            self.cost_usd += usd;
+        }
+        let text: String = response.message.parts.iter().filter_map(|p| match p {
+            Part::Text { text } => Some(text.as_str()),
+            _ => None,
+        }).collect::<Vec<_>>().join("\n");
+        let answer = (!text.trim().is_empty()).then(|| text.trim().to_string());
+        if let Ok(mut slot) = hook.answer.lock() {
+            *slot = answer;
+        };
+    }
+
     async fn rounds(&mut self, names: &[&'static str]) -> End {
         let mut specs = tools::specs_for(names);
         specs.extend(self.mcp_specs());
@@ -852,7 +895,7 @@ impl Run {
             let (_, raw) = self.report_context(names, window);
             self.last_sent = raw;
             round += 1;
-            let request = ModelRequest { messages: self.messages.clone(), ..base_request };
+            let request = ModelRequest { messages: self.messages.clone(), ..base_request.clone() };
             let response = match self.ask_model(request, round).await {
                 Ok(r) => r,
                 Err(e) if e.kind == ErrorKind::Cancelled || self.ctl.interrupted => return End::interrupted(),
@@ -916,6 +959,7 @@ impl Run {
                     self.push_user(steer);
                     continue;
                 }
+                self.ask_stop_hook(&base_request).await;
                 return End::done();
             }
             if !usage_known {
@@ -1774,6 +1818,7 @@ mod tests {
             delegate: None,
             brief: None,
             extras: None,
+            stop_ask: None,
             task_level: None,
             mcp: vec![],
             mcp_slot: None,
@@ -2070,6 +2115,61 @@ mod tests {
         let _ = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Plan, "提交"), |_| None).await;
         assert!(!requests.lock().unwrap()[0].tools.iter().any(|t| t.name == "git_commit"));
         assert_eq!(g::log(&p.dir, "%s").len(), 4);
+    }
+
+    #[tokio::test]
+    async fn the_stop_hook_asks_one_quiet_question_when_there_is_something_to_commit() {
+        use crate::harness::git::testing as g;
+        use crate::harness::hooks::StopAsk;
+        let p = TempProject::new();
+        g::init(&p.dir);
+        let script = || vec![turn("", vec![("write_file", json!({"path": "a.txt", "content": "a\n"}))]), turn("写好了。", vec![]), turn("v1.0.1: fix some problems", vec![])];
+        let hook = || StopAsk { ask: "只回一行提交说明".into(), answer: Default::default() };
+
+        // EDIT、做完了、项目里有没提交的改动：原对话末尾多问一轮，答案留给收尾；这一轮不显示成回答、不进存下的对话。
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", script(), Duration::ZERO));
+        let requests = model.requests.clone();
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        let asked = hook();
+        cfg.stop_ask = Some(asked.clone());
+        let backend = PeckBackend::new(model, cfg, vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Edit, "写 a.txt"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        assert_eq!(asked.take().as_deref(), Some("v1.0.1: fix some problems"));
+        let sent = requests.lock().unwrap().clone();
+        assert_eq!(sent.len(), 3);
+        let last = sent[2].messages.last().unwrap();
+        assert!(last.role == Role::User && matches!(&last.parts[0], Part::Text { text } if text.contains("<peck-hook>") && text.contains("只回一行提交说明")));
+        assert_eq!(sent[2].system.len(), sent[1].system.len(), "同样的系统提示，走缓存");
+        let texts: Vec<&str> = events.iter().filter_map(|e| match &e.body {
+            EventBody::MessageCompleted { text, .. } => Some(text.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(texts, vec!["写好了。"], "问的那一轮不显示");
+        assert_eq!(events.iter().filter(|e| matches!(e.body, EventBody::UsageUpdated { .. })).count(), 3, "那一轮的用量照记");
+        assert!(matches!(events.last().unwrap().body, EventBody::TurnCompleted { reason: TurnEndReason::Done, .. }));
+        let kept = backend.conversation.lock().unwrap().clone();
+        assert!(!kept.iter().any(|m| m.parts.iter().any(|part| matches!(part, Part::Text { text } if text.contains("peck-hook") || text.contains("v1.0.1")))));
+
+        // PLAN、没有没提交的改动、没装带 Hook 的插件：不多问。
+        g::commit_all(&p.dir, "v1.0.1: fix some problems");
+        for (level, with_hook) in [(PermissionLevel::Plan, true), (PermissionLevel::Edit, true), (PermissionLevel::Edit, false)] {
+            if level == PermissionLevel::Plan {
+                p.write("b.txt", "b\n");
+            } else if with_hook {
+                g::commit_all(&p.dir, "v1.0.2: add b");
+            } else {
+                p.write("c.txt", "c\n");
+            }
+            let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("好。", vec![]), turn("v9.9.9: should not be asked", vec![])], Duration::ZERO));
+            let requests = model.requests.clone();
+            let mut cfg = config(&p, "deepseek/deepseek-flash");
+            let asked = hook();
+            cfg.stop_ask = with_hook.then(|| asked.clone());
+            let _ = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, level, "看看"), |_| None).await;
+            assert_eq!(requests.lock().unwrap().len(), 1, "{level:?} {with_hook}");
+            assert_eq!(asked.take(), None);
+        }
     }
 
     #[tokio::test]

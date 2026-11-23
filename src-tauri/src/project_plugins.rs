@@ -277,6 +277,14 @@ pub fn tools_on(root: &Path) -> Vec<String> {
     out
 }
 
+/// 项目里装着的插件带的收尾 Hook（`Stop`、`type: peck`、跑 `git_commit` 的；只认第一条）。
+pub fn stop_hook(root: &Path) -> Option<crate::harness::hooks::StopHook> {
+    installed(root).into_iter().find_map(|(p, _)| {
+        let hook = p.info.hooks.iter().find(|h| h.event == "Stop" && h.kind == "peck" && h.run.as_deref() == Some(crate::harness::git::GIT_COMMIT))?;
+        Some(crate::harness::hooks::StopHook { plugin: p.info.title.clone(), ask: hook.ask.clone().filter(|a| !a.trim().is_empty())? })
+    })
+}
+
 /// 项目里某个 Skill 是哪个装着的插件带来的。
 pub fn owner_of(have: &[(Plugin, PathBuf)], skill: &str) -> Option<String> {
     have.iter().find(|(p, _)| p.split_skills.iter().any(|s| s == skill)).map(|(p, _)| p.info.name.clone())

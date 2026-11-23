@@ -78,6 +78,7 @@ pub(crate) fn prepare(
         delegate: None,
         brief: Some(SUB_BRIEF.into()),
         extras: None,
+        stop_ask: None,
         task_level: None,
         mcp: vec![],
         mcp_slot: None,
