@@ -792,6 +792,7 @@ mod tests {
         let p = HttpProvider::new(&model_id, Credential::Key(key), &GatewayConfig::default(), None).unwrap();
         let mut request = live_request(&model_id, std::env::var("PECK_LIVE_EFFORT").ok().filter(|e| !e.is_empty()));
         request.web_search = true;
+        request.system = vec![crate::gateway::SystemBlock { text: "You are a helpful assistant. Answer briefly in Chinese. Use the file tool only if the user asks about local files.".into(), cache: false }];
         request.messages = vec![Message {
             role: Role::User,
             parts: vec![Part::Text { text: "上网查一下：Tauri 现在最新的稳定版是哪个版本？只搜一次，一句话回答并给出处。".into() }],
@@ -812,7 +813,18 @@ mod tests {
         println!("req1: {:?} {kinds:?} usage={:?} cost={:?}", first.stop, first.usage, first.cost);
         assert!(first.message.parts.iter().any(|p| matches!(p, Part::ServerTool { .. })), "没搜");
         request.messages.push(first.message.clone());
-        request.messages.push(Message { role: Role::User, parts: vec![Part::Text { text: "谢谢。用五个字以内再说一遍版本号，不用再搜。".into() }] });
+        // 它顺手调了 Peck 的工具也得有结果，对话才接得上。
+        let mut follow: Vec<Part> = first
+            .message
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::ToolCall { call_id, .. } => Some(Part::ToolResult { call_id: call_id.clone(), output: "（测试里没有这个文件）".into(), is_error: true }),
+                _ => None,
+            })
+            .collect();
+        follow.push(Part::Text { text: "谢谢。用五个字以内再说一遍版本号，不用再搜。".into() });
+        request.messages.push(Message { role: Role::User, parts: follow });
         let (tx, _rx) = mpsc::unbounded_channel();
         let (_c, cancel) = watch::channel(false);
         match p.complete(request, tx, cancel).await {

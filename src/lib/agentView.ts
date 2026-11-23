@@ -580,6 +580,7 @@ const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^搜网页 (.*)$/s, "Search the web: $1"],
   [/^搜网页$/, "Search the web"],
   [/^供应商那边跑 (.*)$/s, "Run $1 on the provider"],
+  [/^筛搜索结果$/, "Filter search results"],
   [/^取网页 (.*)$/s, "Fetch $1"],
   [/^取 (.*)$/s, "Fetch $1"],
   [/^搜「(.*)」$/s, "Search “$1”"],

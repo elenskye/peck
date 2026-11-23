@@ -354,8 +354,8 @@ struct Run {
     native_search: bool,
     /// Peck 的 `web_search` 背后按顺序是谁（空的就没给这个工具）。
     web: Vec<search::Backend>,
-    /// 供应商那边正在跑的工具：调用 id → 什么时候开始的（`tool_call.completed` 的用时）。
-    server_calls: std::collections::HashMap<String, Instant>,
+    /// 供应商那边正在跑的工具：调用 id → 什么时候开始的（`tool_call.completed` 的用时）、是不是搜索。
+    server_calls: std::collections::HashMap<String, (Instant, bool)>,
 }
 
 /// 一回合怎么结束的。
@@ -1056,12 +1056,12 @@ impl Run {
             self.forward(e, &reasoning_id, &message_id);
         }
         // 供应商那边开了头、没报完的（断了、停了、没给来源）：收个尾，界面上不留一直在转的一步。
-        for (call_id, started) in std::mem::take(&mut self.server_calls) {
+        for (call_id, (started, searching)) in std::mem::take(&mut self.server_calls) {
             let failed = result.is_err();
             self.emit(EventBody::ToolCallCompleted {
                 call_id,
                 status: if failed { ToolStatus::Failed } else { ToolStatus::Ok },
-                output: Some(if failed { "没搜完。" } else { "搜完了。" }.into()),
+                output: Some(match (failed, searching) { (true, _) => "没跑完。", (false, true) => "搜完了。", (false, false) => "跑完了。" }.into()),
                 exit_code: None,
                 diff: vec![],
                 duration_ms: Some(started.elapsed().as_millis() as u64),
@@ -1102,20 +1102,25 @@ impl Run {
                 if call_id.is_empty() || self.server_calls.contains_key(&call_id) {
                     return;
                 }
-                self.server_calls.insert(call_id.clone(), Instant::now());
-                let (kind, title) = if name == tools::WEB_SEARCH {
+                let searching = name == tools::WEB_SEARCH;
+                self.server_calls.insert(call_id.clone(), (Instant::now(), searching));
+                // Anthropic 新版搜索（动态过滤）会在它那边跑代码筛搜到的结果：`code_execution` 这几步写成「筛搜索结果」。
+                let (kind, title) = if searching {
                     (ToolKind::Fetch, query.as_deref().map(|q| format!("搜网页 {q}")).unwrap_or_else(|| "搜网页".into()))
+                } else if name.contains("code_execution") {
+                    (ToolKind::Fetch, "筛搜索结果".into())
                 } else {
                     (ToolKind::Other, format!("供应商那边跑 {name}"))
                 };
                 self.emit(EventBody::ToolCallStarted { call_id, name, kind, title, input: serde_json::json!({ "query": query }) });
             }
             ModelEvent::ServerToolDone { call_id, query, sources, error } => {
-                let Some(started) = self.server_calls.remove(&call_id) else {
+                let Some((started, searching)) = self.server_calls.remove(&call_id) else {
                     return;
                 };
                 let output = match &error {
                     Some(why) => why.clone(),
+                    None if !searching => "跑完了。".into(),
                     None if sources.is_empty() => query.map(|q| format!("搜了「{q}」。")).unwrap_or_else(|| "搜完了。".into()),
                     None => {
                         let list: Vec<String> = sources.iter().take(12).map(|s| format!("{} — {}", s.title, s.url)).collect();
