@@ -2,6 +2,7 @@
 //! 带自己的工具箱，产出和 CLI 引擎同一套统一事件（实现 `AgentBackend`，引擎 id `peck`）。
 //! v0.6：上下文（`context`、`compact`、`history`）、后台命令（`background`）。
 
+pub mod agents;
 pub mod background;
 pub mod compact;
 pub mod context;
@@ -12,8 +13,8 @@ pub mod hooks;
 pub mod mcp_client;
 pub mod permission;
 pub mod risk;
+pub mod script_hooks;
 pub mod spill;
-pub mod team;
 pub mod tools;
 pub mod r#loop;
 pub mod run;

@@ -14,15 +14,6 @@ type Out = Box<dyn Fn(&AgentEvent) + Send + Sync>;
 pub struct EventSink {
     inner: Arc<Inner>,
     subagent_id: Option<String>,
-    /// 接力、审查的一段（v0.8）：这一段的引擎（事件日志的 `engine` 列按它记，花费上限才认得出 Peck Loop）；
-    /// 引擎自己收尾的 `turn.completed` 不发，记在这里，由发任务的那一层发 `stage.completed`。
-    stage: Option<Arc<StageSlot>>,
-}
-
-/// 一段的引擎和它怎么收尾的。
-pub struct StageSlot {
-    pub engine: String,
-    pub ended: Mutex<Option<(super::event::TurnEndReason, Option<String>)>>,
 }
 
 struct Inner {
@@ -64,7 +55,6 @@ impl EventSink {
                 quota_sync: std::sync::atomic::AtomicBool::new(true),
             }),
             subagent_id: None,
-            stage: None,
         }
     }
 
@@ -86,23 +76,7 @@ impl EventSink {
         Self {
             inner: self.inner.clone(),
             subagent_id: Some(subagent_id.into()),
-            stage: self.stage.clone(),
         }
-    }
-
-    /// 接力、审查的一段用这个 sink 发：序号和整个任务共用，日志里记这一段的引擎；
-    /// 引擎自己收尾的 `turn.completed` 换成 `stage.completed`（整个任务的收尾由发任务的那一层发）。
-    pub fn for_stage(&self, engine: impl Into<String>) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            subagent_id: self.subagent_id.clone(),
-            stage: Some(Arc::new(StageSlot { engine: engine.into(), ended: Mutex::new(None) })),
-        }
-    }
-
-    /// 这一段的引擎收尾时报的（原因、错误）；没报过为空。
-    pub fn stage_end(&self) -> Option<(super::event::TurnEndReason, Option<String>)> {
-        self.stage.as_ref().and_then(|s| s.ended.lock().ok().and_then(|e| e.clone()))
     }
 
     pub fn run_id(&self) -> &str {
@@ -110,7 +84,7 @@ impl EventSink {
     }
 
     pub fn engine(&self) -> &str {
-        self.stage.as_ref().map(|s| s.engine.as_str()).unwrap_or(&self.inner.engine)
+        &self.inner.engine
     }
 
     /// 这次用的不是 CLI 的默认账号：引擎报的额度不写进顶栏 QUOTA 的卡片（卡片只认默认账号）。
@@ -125,13 +99,6 @@ impl EventSink {
 
     /// 带原件发：原件只进日志，不发给界面。
     pub fn emit_raw(&self, body: EventBody, raw: Option<Value>) -> AgentEvent {
-        if let (EventBody::TurnCompleted { reason, error, .. }, Some(slot), None) = (&body, &self.stage, &self.subagent_id) {
-            if let Ok(mut e) = slot.ended.lock() {
-                *e = Some((*reason, error.clone()));
-            }
-            // 不编号、不进日志、不发给界面：只是还给调用方一条（没人用）。
-            return AgentEvent { seq: 0, at: now_ms(), subagent_id: None, body };
-        }
         let event = AgentEvent {
             seq: self.inner.seq.fetch_add(1, Ordering::SeqCst),
             at: now_ms(),

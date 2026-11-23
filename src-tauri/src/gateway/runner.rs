@@ -209,7 +209,7 @@ pub(crate) fn start_engine_run(
     // 独立工作区：先建好；建不了这个任务就算失败。
     let cwd = crate::harness::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
     // 这个任务是谁在干（对话里设定时任务时默认照它）。
-    let setup = crate::schedule::Setup { who: who.clone(), model: model.clone(), effort: effort.clone(), plan_by: None, review_by: None, delegate: None };
+    let setup = crate::schedule::Setup { who: who.clone(), model: model.clone(), effort: effort.clone() };
 
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     if let Ok(mut c) = controls().lock() {

@@ -13,10 +13,10 @@ import {
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
 import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs } from "@/lib/ipc";
+import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
-import { delegateRound, fixRounds, reviewRounds, specRounds, stage, type Member } from "@/dev/teamMock";
+import { rosterEvent, spawnRound } from "@/dev/agentsMock";
 import type { ApiConfig, ApiStatus } from "@/lib/api";
 import type {
   FileChangeKind,
@@ -472,48 +472,6 @@ export const mockIpc = {
     void replayAgent(runId, [replay], forkNotice(args.sessionId, runId, `cli:${engine}`, label), onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
     return runId;
   },
-  // ── PLOOP（v1.1.1）：写规范 → 实施、审查（要改就修一次），都是 API 模型。一个任务、一条事件流 ──
-  async teamRunStart(args: TeamRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
-    if (!args.prompt.trim()) throw new Error("先写一句话。");
-    if (!args.planBy && !args.reviewBy) throw new Error("PLOOP 的写规范和审查至少开一样。");
-    if ((args.permission ?? "edit") === "plan") throw new Error("PLAN 只读：PLOOP 的写规范、审查要动手，选 EDIT 或 AUTO。");
-    const member = (who: string): Member => {
-      if (!who.startsWith("api:")) throw new Error("PLOOP 只用 API 模型：CLI 之间交接换引擎接着发一句，或者用 /review。");
-      const e = MOCK_MODEL_ENTRIES.find((x) => x.id === who);
-      return { who, label: `Peck · ${e?.label ?? who.slice(4)}` };
-    };
-    const builder = member(args.who);
-    const writer = args.planBy ? member(args.planBy.who) : null;
-    const reviewer = args.reviewBy ? member(args.reviewBy.who) : null;
-    const title = [writer && `${writer.label} 写规范`, `${builder.label} 实施`, reviewer && `${reviewer.label} 审查`].filter(Boolean).join(" → ");
-    const who = `team:${args.planBy?.who ?? ""}|${args.who}|${args.reviewBy?.who ?? ""}`;
-    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, who, args.permission ?? "edit", title);
-    if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
-    const files = (filesState[workspaceId] ??= {});
-    const demo = peckDemo(runId, files, "", { window: 1_000_000, project: false });
-    const editPath = demo.edit.path;
-    const sub = args.delegate ? MOCK_MODEL_ENTRIES.find((e) => e.id === args.delegate) : undefined;
-    // 实施：主线剧本（委派的话插一段子任务）。
-    const buildRounds: Round[] = [...demo.rounds.slice(0, 1), ...(sub ? [delegateRound(runId, { who: sub.id, label: sub.label }, editPath)] : []), ...demo.rounds.slice(1)];
-    const pass = /通过/.test(args.prompt);
-    const rounds: Round[] = [
-      ...(writer ? specRounds(runId, writer, builder, editPath) : []),
-      ...stage("implement", builder, buildRounds),
-      ...(reviewer ? reviewRounds(runId, reviewer, editPath, pass, !!writer) : []),
-      ...(reviewer && !pass ? fixRounds(runId, builder, editPath) : []),
-    ];
-    const header: ReplayEvent[] = [...forkNotice(args.sessionId, runId, "team", title), { type: "turn.started", turnId: `turn-${runId}` }];
-    void replayAgent(runId, rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
-      if (end.diffs.some((d) => d.path === editPath)) {
-        const after = reviewer && !pass ? demo.edit.after.replace("// 待办", "// 已改") : demo.edit.after;
-        if (args.worktree) worktreeState[runId] = { files: { [editPath]: after }, conflicts: [] };
-        else files[editPath] = after;
-        undoState[runId] = { workspaceId, restore: { [editPath]: demo.edit.before }, remove: [] };
-      }
-      finishAgentRecord(record, end, title);
-    });
-    return runId;
-  },
   // ── 定时任务：只在内存；演示里不会到点自己跑。设是「定时」那个剧本演的，这里只列、取消、点错过的卡片 ──
   async scheduleList(): Promise<Schedule[]> {
     return structuredClone(schedulesState);
@@ -706,15 +664,15 @@ export const mockIpc = {
         (serverState[workspaceId] ??= {}).dev = { id: "srv-dev-demo", name: "dev", command: "pnpm dev", kind: "server", status: "running", exitCode: null, ready: true, startedAt: Date.now(), endedAt: null, owner: null, log: "/mock/harness-output/servers/dev.log", url: "http://localhost:5173/" };
       },
     });
-    // 委派（v0.8）：主模型先把一个查找的子任务交给便宜的模型。
-    const sub = args.delegate ? MOCK_MODEL_ENTRIES.find((e) => e.id === args.delegate) : undefined;
-    if (sub) demo.rounds.splice(1, 0, delegateRound(runId, { who: sub.id, label: sub.label }, demo.edit.path));
+    // 子代理（v1.1.2）：句子里带「子代理」「派」就先派两个 explorer（同时跑，一批做完一起回来）。
+    if (/子代理|派/.test(args.prompt)) demo.rounds.splice(1, 0, ...spawnRound(runId, model, demo.edit.path));
     // 「截图」两个字在这句话里：先截一下 App 的窗口（演示图）。
     if (/截图/.test(args.prompt)) demo.rounds.splice(1, 0, screenshotRound(runId));
     const header: ReplayEvent[] = [
       ...forkNotice(args.sessionId, runId, "peck", label),
       ...(args.images?.length ? [{ type: "notice", level: "info", text: `这一句带了 ${args.images.length} 张图。` } as ReplayEvent] : []),
-      { type: "session.started", engine: "peck", model, caps: PECK_CAPS, tools: ["list_directory", "read_file", "search_text", "find_files", "write_file", "write_patch", "bash_run", "update_plan", "ask_user", ...(sub ? ["delegate_task"] : [])], mcp: mcpState.filter((m) => m.enabled).map((m) => ({ name: m.name, status: "connected" })), sessionRef: `peck-${args.sessionId}`, version: null },
+      { type: "session.started", engine: "peck", model, caps: PECK_CAPS, tools: ["list_directory", "read_file", "search_text", "find_files", "write_file", "write_patch", "bash_run", "update_plan", "ask_user", "spawn_agent"], mcp: mcpState.filter((m) => m.enabled).map((m) => ({ name: m.name, status: "connected" })), sessionRef: `peck-${args.sessionId}`, version: null },
+      rosterEvent(model),
       { type: "turn.started", turnId: `turn-${runId}` },
     ];
     void replayAgent(runId, demo.rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
@@ -915,7 +873,7 @@ function nextMonday(h: number, m: number): number {
 let schedulesState: Schedule[] = [
   { id: "sched-demo", workspaceId: "ws-peck", title: "每天看一眼 TODO", prompt: "列出项目里还没做完的 TODO 和 FIXME，按文件分组，别改文件", who: "api:deepseek/deepseek-flash", permission: "plan", when: { kind: "daily", time: "09:30", weekdays: true }, offsetMin: 480, enabled: true, nextAt: Date.now() + 5 * 3_600_000, lastRunAt: Date.now() - 19 * 3_600_000, lastSession: null, lastNote: "发出去了", createdAt: Date.now() - 7 * 86_400_000 },
   { id: "sched-deps", workspaceId: "ws-notebook", title: "依赖更新", prompt: "检查这个项目的依赖有没有可以更新的版本，列出能升的和升级风险，先不要改文件", who: "cli:codex", permission: "auto", when: { kind: "daily", time: "09:00", days: [1] }, offsetMin: 480, enabled: true, nextAt: nextMonday(9, 0), lastRunAt: Date.now() - 8 * 86_400_000, lastSession: null, lastNote: "App 关着，错过了", missedAt: Date.now() - 3 * 3_600_000, createdAt: Date.now() - 20 * 86_400_000 },
-  { id: "sched-ci", workspaceId: "ws-notebook", title: "看一下 CI", prompt: "看一下 main 分支最近一次 CI 过了没有，没过就说是哪一步", who: "api:deepseek/deepseek-flash", planBy: null, reviewBy: { who: "cli:codex" }, permission: "auto", when: { kind: "interval", hours: 6 }, offsetMin: 480, enabled: true, nextAt: Date.now() + 2 * 3_600_000, lastRunAt: Date.now() - 10 * 3_600_000, lastSession: "task-11", lastNote: "项目一直有任务在跑，错过了", session: "task-11", missedAt: Date.now() - 4 * 3_600_000, createdAt: Date.now() - 3 * 86_400_000 },
+  { id: "sched-ci", workspaceId: "ws-notebook", title: "看一下 CI", prompt: "看一下 main 分支最近一次 CI 过了没有，没过就说是哪一步", who: "api:deepseek/deepseek-flash", permission: "auto", when: { kind: "interval", hours: 6 }, offsetMin: 480, enabled: true, nextAt: Date.now() + 2 * 3_600_000, lastRunAt: Date.now() - 10 * 3_600_000, lastSession: "task-11", lastNote: "项目一直有任务在跑，错过了", session: "task-11", missedAt: Date.now() - 4 * 3_600_000, createdAt: Date.now() - 3 * 86_400_000 },
 ];
 const scheduleListeners: { fired: ((f: ScheduleFired) => void) | null; event: ((e: ScheduleEvent) => void) | null; changed: (() => void) | null } = { fired: null, event: null, changed: null };
 

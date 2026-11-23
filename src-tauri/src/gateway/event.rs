@@ -170,11 +170,18 @@ pub enum EventBody {
         #[serde(default)]
         parent_call_id: Option<String>,
         title: String,
-        /// Peck 委派出去的子任务（v0.9）：交给的那个 API 模型。CLI 自己的子代理（Claude Code 的 Task）为空。
-        /// 委派次数按它数（一个任务最多 6 次），按段列花费按它写是谁。
+        /// Peck 派出去的子代理（v0.9 起）：用的那个 API 模型。CLI 自己的子代理（Claude Code 的 Task）为空。
+        /// 按段列花费按它写是谁。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// 子代理的类型（v1.1.2）：explorer / searcher / worker / auditor；以前的委派、CLI 的为空。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
     },
+    /// 这个任务的成员名单（v1.1.2，PLOOP 开头发一次）：主角色和能派的几类子代理各用哪个模型。界面放在 LOG 里，
+    /// 不进系统提示（换了设置不让提示缓存失效）。
+    #[serde(rename = "agents.roster")]
+    AgentsRoster { members: Vec<RosterMember> },
     #[serde(rename = "subagent.completed")]
     SubagentCompleted {
         subagent_id: String,
@@ -272,7 +279,15 @@ pub enum EventBody {
 
     /// 插件的收尾 Hook 跑完了（v1.1.0，见 `harness/hooks.rs`）：Git Plan 提交了、或者为什么没提交。`text` 是给人看的一句。
     #[serde(rename = "hook.ran")]
-    HookRan { plugin: String, action: String, ok: bool, text: String },
+    HookRan {
+        plugin: String,
+        action: String,
+        ok: bool,
+        text: String,
+        /// 脚本 Hook（v1.1.2）是哪个时刻的（`PreToolUse` …）：界面写在过程里当时那一处。收尾提交的为空，写在 recap 里。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event: Option<String>,
+    },
 
     // ── 后台（v0.6）──
     /// 后台命令（模型起的；标了留着的 dev server）的状态变了。
@@ -359,6 +374,7 @@ impl EventBody {
             Self::UserInputResolved { .. } => "user_input.resolved",
             Self::SubagentStarted { .. } => "subagent.started",
             Self::SubagentCompleted { .. } => "subagent.completed",
+            Self::AgentsRoster { .. } => "agents.roster",
             Self::UsageUpdated { .. } => "usage.updated",
             Self::QuotaUpdated { .. } => "quota.updated",
             Self::ContextUpdated { .. } => "context.updated",
@@ -379,7 +395,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 34] = [
+    pub const TYPE_NAMES: [&'static str; 35] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -399,6 +415,7 @@ impl EventBody {
         "user_input.resolved",
         "subagent.started",
         "subagent.completed",
+        "agents.roster",
         "usage.updated",
         "quota.updated",
         "context.updated",
@@ -451,17 +468,6 @@ pub enum StageRole {
     Fix,
 }
 
-impl StageRole {
-    pub fn word(self) -> &'static str {
-        match self {
-            Self::Spec => "写规范",
-            Self::Implement => "实施",
-            Self::Review => "审查",
-            Self::Fix => "按审查改",
-        }
-    }
-}
-
 /// 审查的结论。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -500,6 +506,21 @@ pub enum BackgroundStatus {
     Running,
     Exited,
     Stopped,
+}
+
+/// 名单上的一个：`main` 是主角色，别的是子代理的类型。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RosterMember {
+    pub role: String,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rounds: Option<u32>,
+    /// 同时能跑几个（explorer、searcher）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

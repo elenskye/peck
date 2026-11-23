@@ -20,6 +20,8 @@ export type RightTab = "log" | "oneshot" | "files" | "preview" | "term";
 interface Props {
   project: ProjectOverview | null;
   run: RunRecord | null;
+  /** 这次任务的事件日志（LOG 里的成员名单、子代理）。 */
+  events: AgentEvent[];
   tab: RightTab;
   onTab: (tab: RightTab) => void;
   wide: boolean;
@@ -89,7 +91,7 @@ export const RightColumn: React.FC<Props> = (props) => {
           </button>
         ))}
       </div>
-      {tab === "log" && <TaskLog run={props.run} />}
+      {tab === "log" && <TaskLog run={props.run} events={props.events} entries={props.entries} />}
       {/* ONE SHOT 一直挂着，只是藏起来：切去别的页签再回来，问到一半的、答完的都还在，STOP 也还能点。 */}
       <OneShot key={props.project?.workspace.id ?? "none"} {...props} shown={tab === "oneshot"} />
       {tab === "files" && <Files {...props} />}
@@ -253,9 +255,24 @@ function mockPreviewPage(url: string): string {
 
 // ---------- LOG ----------
 
-/** 这个任务的记录：存快照、每一步、做完、撤销（原来在左栏，站主 2026-11-13 挪到右栏）。 */
-const TaskLog: React.FC<{ run: RunRecord | null }> = ({ run }) => {
+/** 这个任务的记录：存快照、每一步、做完、撤销（原来在左栏，站主 2026-11-13 挪到右栏）。
+ *  PLOOP 的任务（v1.1.2）上面多一块成员名单（主角色和能派的几类子代理各用哪个模型），时间线里有派出去的子代理。 */
+const TaskLog: React.FC<{ run: RunRecord | null; events: AgentEvent[]; entries: ModelEntry[] }> = ({ run, events, entries }) => {
   const items: Array<{ t: number; title: string; note: string }> = [];
+  const label = (model: string) => entries.find((e) => e.id === `api:${model}`)?.label ?? model.replace(/^[a-z-]+\//, "");
+  const roster = events.find((e): e is Extract<AgentEvent, { type: "agents.roster" }> => e.type === "agents.roster")?.members ?? [];
+  for (const e of events) {
+    if (e.type === "subagent.started" && e.kind) {
+      // 要做什么写在派的那一步的标题里（「派 explorer：…」）。
+      const step = events.find((x) => x.type === "tool_call.started" && x.callId === e.parentCallId);
+      const task = step?.type === "tool_call.started" ? step.title.replace(/^派 \w+[：:]\s*/, "") : "";
+      items.push({ t: e.at, title: `派了 ${e.kind}`, note: [e.model ? label(e.model) : "", task].filter(Boolean).join(" · ") });
+    }
+    if (e.type === "subagent.completed") {
+      const started = events.find((x) => x.type === "subagent.started" && x.subagentId === e.subagentId && x.kind);
+      if (started?.type === "subagent.started") items.push({ t: e.at, title: `${started.kind} ${e.status === "ok" ? "做完了" : e.status === "cancelled" ? "被停下了" : "没做完"}`, note: `用了 ${span(e.at - started.at)}` });
+    }
+  }
   if (run) {
     items.push({ t: run.startedAt, title: "存了任务前快照", note: "" });
     for (const step of run.steps) {
@@ -270,6 +287,19 @@ const TaskLog: React.FC<{ run: RunRecord | null }> = ({ run }) => {
   return (
     <div className="pk-mod col-grow">
       <ModHead label="LOG" note={run ? `任务 ${run.number}` : "这个任务"} />
+      {roster.length > 0 && (
+        <ul className="log log-roster" aria-label="成员名单">
+          {roster.map((m) => (
+            <li key={m.role}>
+              <span className="log-t">{m.role.toUpperCase()}</span>
+              <span>
+                <b className="t-name">{label(m.model)}</b>
+                <span className="log-n">{[m.effort && `思考 ${m.effort.toUpperCase()}`, m.rounds && `${m.rounds} 轮`, m.parallel && `同时 ${m.parallel} 个`].filter(Boolean).join(" · ")}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {items.length === 0 ? (
         <p className="empty-line">还没有记录</p>
       ) : (

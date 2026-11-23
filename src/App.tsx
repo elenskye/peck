@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type ApiStatus } from "@/lib/api";
-import { ipc, isMockMode, type ImageInput, type Schedule, type TeamPick } from "@/lib/ipc";
+import { ipc, isMockMode, type ImageInput, type Schedule } from "@/lib/ipc";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from "@/lib/settings";
 import { involvedIds, quotaHint, swapPatch } from "@/lib/quota";
@@ -19,7 +19,7 @@ import { ProjectPage } from "@/shell/ProjectPage";
 import type { InboxItem, LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
 import { AgentsPanel } from "@/shell/AgentsPanel";
-import { PLOOP_ID, cliModelOf, ploopable, sendEffort } from "@/shell/ModelPicker";
+import { PLOOP_ID, cliModelOf, ploopMain, sendEffort } from "@/shell/ModelPicker";
 import { Icon } from "@/ui";
 
 export interface TermEntry {
@@ -373,21 +373,11 @@ const App: React.FC = () => {
       model = cliModelOf(e, s);
       effort = sendEffort(e, s);
     }
-    // PLOOP（v1.1.1）：实施的是 ploop.build，写规范的 ploop.spec、审查的 review、委派的 delegate 各自能不开；几格都只认 API 模型。
-    // 存着的可能已经用不了（Key 删了）：只认 AGENTS 里现在能选的，和界面上显示的一样。API、CLI 单干的没有审查、委派。
-    const team = ploopable(entries);
-    const usable = (id?: string) => (id && team.some((e) => e.id === id) ? id : undefined);
-    const pickOf = (id: string): TeamPick => {
-      const e = entries.find((x) => x.id === id) ?? null;
-      return { who: id, effort: sendEffort(e, s) };
-    };
-    const ploop = who === PLOOP_ID;
-    const spec = ploop ? usable(s.ploop.spec) : undefined;
-    const builder = ploop ? usable(s.ploop.build) : who;
-    if (!builder) { say("PLOOP 还没选实施的那一个（或选的那个现在用不了）"); return false; }
-    if (spec && permission === "plan") { say("PLAN 只读：PLOOP 写了规范要动手，选 EDIT 或 AUTO"); return false; }
-    const reviewId = ploop && permission !== "plan" ? usable(s.review) : undefined;
-    const delegate = ploop ? usable(s.delegate) : undefined;
+    // PLOOP（v1.1.2）：主角色是 ploop.main（现在用不了就是第一个能用的 API 模型），子代理后端照设置 → AGENTS 准备。
+    // 以前存的 API 单干（api:…）也当 PLOOP 的主角色发。
+    const ploop = who === PLOOP_ID || who.startsWith("api:");
+    const main = ploop ? (who.startsWith("api:") ? entries.find((e) => e.id === who) ?? null : ploopMain(entries, s)) : null;
+    if (ploop && !main) { say("PLOOP 还没有能用的主角色：先在设置里配一家的 Key"); return false; }
     try {
       let target = taskId;
       if (!target) {
@@ -396,16 +386,12 @@ const App: React.FC = () => {
       }
       const ctx = { projectId: project.workspace.id, taskId: target, prompt };
       let runId: string;
-      const builderPick = ploop ? pickOf(builder) : { who, model, effort };
-      const reviewBy = reviewId ? pickOf(reviewId) : undefined;
       // 事件可能比任务号先到：先攒着，拿到任务号再一起放进去。
       let id: string | null = null;
       const early: AgentEvent[] = [];
       const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
-      if (spec || reviewBy) {
-        id = await ipc.teamRunStart({ sessionId: target, prompt, who: builderPick.who, effort: builderPick.effort, permission, costCap: s.costCap, worktree, delegate, planBy: spec ? pickOf(spec) : undefined, reviewBy, images }, onEvent);
-      } else if (builderPick.who.startsWith("api:")) {
-        id = await ipc.harnessRunStart({ sessionId: target, prompt, who: builderPick.who, permission, effort: builderPick.effort, costCap: s.costCap, worktree, delegate, images }, onEvent);
+      if (main) {
+        id = await ipc.harnessRunStart({ sessionId: target, prompt, who: main.id, permission, effort: sendEffort(main, s), costCap: s.costCap, worktree, images }, onEvent);
       } else {
         id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images }, onEvent);
       }
@@ -513,8 +499,10 @@ const App: React.FC = () => {
   const applyProjectDefaults = (id: string | null) => {
     const ws = projects.find((p) => p.workspace.id === id)?.workspace;
     const patch: Partial<AppSettings> = {};
-    // 以前存的「接力」是现在的 PLOOP（v1.1.1）；项目的默认预设去掉了，存着的不看。
-    const who = ws?.settings?.who === "relay" ? PLOOP_ID : ws?.settings?.who;
+    // 以前存的「接力」、API 单干（api:…）是现在的 PLOOP（v1.1.2，单干的那个当主角色）；项目的默认预设去掉了，存着的不看。
+    const saved = ws?.settings?.who;
+    const who = saved === "relay" || saved?.startsWith("api:") ? PLOOP_ID : saved;
+    if (saved?.startsWith("api:") && saved !== settingsRef.current.ploop.main) patch.ploop = { ...settingsRef.current.ploop, main: saved };
     if (who && who !== settingsRef.current.pick) patch.pick = who;
     if (ws?.settings?.permission && ws.settings.permission !== settingsRef.current.permission) patch.permission = ws.settings.permission as Permission;
     if (Object.keys(patch).length) updateSettings(patch);
@@ -757,6 +745,7 @@ const App: React.FC = () => {
             <RightColumn
               project={project}
               run={run}
+              events={run ? agentEvents[run.id] ?? [] : []}
               tab={tab}
               onTab={selectTab}
               wide={wide}

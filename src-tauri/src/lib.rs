@@ -126,7 +126,6 @@ pub fn run() {
             gateway::runner::gateway_control,
             harness::run::harness_run_start,
             harness::run::harness_oneshot,
-            harness::team::team_run_start,
             harness::mcp_client::mcp_servers_get,
             harness::mcp_client::mcp_servers_set,
             harness::mcp_client::mcp_server_test,

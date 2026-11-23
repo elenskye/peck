@@ -8,7 +8,7 @@
 //! 不锁终端、不存快照；事件照样进事件日志（花费算进这个月）。Antigravity 只做直接调用，不进 ONE SHOT。
 
 use super::context::ProjectLayer;
-use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS, DEFAULT_ONESHOT_ROUNDS, DEFAULT_SUB_ROUNDS};
+use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS, DEFAULT_ONESHOT_ROUNDS};
 use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
@@ -134,17 +134,6 @@ impl Store {
         Ok(())
     }
 
-    /// 这个任务（会话）里已经委派过几次（v0.9：上限按整个任务算）。只数 Peck 委派出去的（带模型 id 的
-    /// `subagent.started`），CLI 自己的子代理不算。
-    pub fn delegations_in_session(&self, session_id: &str) -> StoreResult<u32> {
-        Ok(self.conn.query_row(
-            "SELECT COUNT(*) FROM agent_events e JOIN runs r ON r.id = e.run_id
-             WHERE r.session_id = ?1 AND e.type = 'subagent.started' AND json_extract(e.event, '$.model') IS NOT NULL",
-            [session_id],
-            |r| r.get::<_, u32>(0),
-        )?)
-    }
-
     /// 从 `since`（毫秒）起 Peck Loop（API）花了多少美元。算不出花费的请求不计。
     pub fn harness_spend_since(&self, since: i64) -> StoreResult<f64> {
         Ok(self.conn.query_row(
@@ -205,8 +194,6 @@ pub async fn harness_run_start(
     cost_cap: Option<f64>,
     // 独立工作区（v0.7）：在项目的一个 git worktree 里做，做完再搬回。
     worktree: Option<bool>,
-    // 委派（v0.8）：子任务交给这个 API 模型（`api:…` 或目录里的 id）。
-    delegate: Option<String>,
     // 这一句附的图（v0.8，站主贴进来的）。
     images: Option<Vec<crate::gateway::ImageInput>>,
     channel: Channel<AgentEvent>,
@@ -218,7 +205,8 @@ pub async fn harness_run_start(
     let level = permission_of(permission.as_deref())?;
     let model_id = model_id_of(&who)?;
     let provider = providers::for_model(&state, &model_id).await.map_err(|e| e.message)?;
-    let delegate = delegate_of(&state, delegate.as_deref()).await?;
+    // 子代理（v1.1.2）：照设置 → AGENTS 准备好这个任务能派的几类。
+    let (team, team_notes) = super::agents::prepare(&state, &model_id).await;
     let images = checked_images(images)?;
     start_peck_run(
         PeckRun {
@@ -234,7 +222,8 @@ pub async fn harness_run_start(
             cost_cap,
             env: super::tools::bash::shell_env(),
             worktree: worktree.unwrap_or(false),
-            delegate,
+            team: Some(Arc::new(team)),
+            team_notes,
             images,
             search: crate::gateway::search::Keys::from_state(&state),
         },
@@ -281,15 +270,6 @@ pub(crate) fn attachment_note(paths: &[PathBuf]) -> String {
     format!("\n\n（站主附了 {} 张图，存在这些本机文件里，需要就读：\n{}）", paths.len(), list.join("\n"))
 }
 
-/// 「委派给」选的模型：只认 API 模型（Peck Loop 跑子任务）。空着就不委派。
-pub(crate) async fn delegate_of(state: &AppState, pick: Option<&str>) -> Result<Option<super::r#loop::Delegate>, String> {
-    let Some(raw) = pick.map(str::trim).filter(|p| !p.is_empty()) else { return Ok(None) };
-    let id = raw.strip_prefix("api:").unwrap_or(raw);
-    catalog::catalog().model(id).ok_or_else(|| format!("委派的模型不在目录里：{id}。"))?;
-    let provider = providers::for_model(state, id).await.map_err(|e| e.message)?;
-    Ok(Some(super::r#loop::Delegate { model_id: id.to_string(), provider, rounds: sub_rounds(&state.store) }))
-}
-
 /// 一个任务最多几轮（设置 → GENERAL，默认 40）：手动发的、合作的、定时任务的 Peck Loop 都按它。
 pub(crate) fn max_rounds(store: &Arc<Mutex<Store>>) -> u32 {
     rounds_setting(store, "maxRounds", DEFAULT_MAX_ROUNDS)
@@ -298,11 +278,6 @@ pub(crate) fn max_rounds(store: &Arc<Mutex<Store>>) -> u32 {
 /// ONE SHOT 最多几轮（v1.0.3 起设置 → GENERAL 能调，默认 12）。
 fn oneshot_rounds(store: &Arc<Mutex<Store>>) -> u32 {
     rounds_setting(store, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS)
-}
-
-/// 委派的子任务最多几轮（v1.0.3 起设置 → GENERAL 能调，默认 24）：Peck Loop 和 CLI 委派的都按它。
-fn sub_rounds(store: &Arc<Mutex<Store>>) -> u32 {
-    rounds_setting(store, "subRounds", DEFAULT_SUB_ROUNDS)
 }
 
 /// 读界面设置里存的轮数，5–400 之间；没存、存坏了用默认的。
@@ -333,8 +308,9 @@ pub(crate) struct PeckRun {
     pub env: Vec<(String, String)>,
     /// 在独立工作区（git worktree）里做。
     pub worktree: bool,
-    /// 委派给谁（v0.8）。
-    pub delegate: Option<super::r#loop::Delegate>,
+    /// 子代理（v1.1.2）：这个任务能派的几类；`team_notes` 是哪类这次派不了（开头写给站主看）。
+    pub team: Option<Arc<super::agents::Team>>,
+    pub team_notes: Vec<String>,
     /// 这一句附的图（v0.8）。
     pub images: Vec<crate::gateway::ImageInput>,
     /// 联网搜索手上有什么（v1.1.1）。
@@ -426,7 +402,7 @@ pub(crate) fn start_peck_run(
     provider: Arc<dyn ModelProvider>,
     out: impl Fn(&AgentEvent) + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, delegate, images, search } = run;
+    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, team, team_notes, images, search } = run;
     let label = model_label(&model_id);
     if worktree && level == PermissionLevel::Plan {
         return Err("PLAN 只读，不用独立工作区。".into());
@@ -531,6 +507,7 @@ pub(crate) fn start_peck_run(
         super::mcp_client::for_project(&db, &ws)
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
+    mcp_notes.extend(team_notes);
     // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有；循环收尾时问一句，快照拍完以后提交。
     let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
     let stop_ask = super::hooks::StopAsk::of(&stop_hook);
@@ -540,7 +517,7 @@ pub(crate) fn start_peck_run(
         workspace_id: workspace_id.clone(),
         session_id: session_id.clone(),
         run_id: run_id.clone(),
-        setup: crate::schedule::Setup { who: who.clone(), model: None, effort: effort.clone(), plan_by: None, review_by: None, delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) },
+        setup: crate::schedule::Setup { who: who.clone(), model: None, effort: effort.clone() },
     });
     let config = LoopConfig {
         model_id: model_id.clone(),
@@ -554,7 +531,7 @@ pub(crate) fn start_peck_run(
         env: env.clone(),
         session_ref: Some(format!("peck-{session_id}")),
         context,
-        delegate,
+        team,
         brief: None,
         extras: Some(extras),
         stop_ask: stop_ask.clone(),
@@ -562,9 +539,9 @@ pub(crate) fn start_peck_run(
         mcp: mcp_list,
         mcp_slot: None,
         mcp_seen: Some(super::mcp_client::seen_hook(store.clone(), workspace_id.clone())),
-        delegations_used: store.lock().ok().and_then(|db| db.delegations_in_session(&session_id).ok()).unwrap_or(0),
         subtask: None,
         search,
+        hooks: Some(Arc::new(super::script_hooks::HookSet::load(&cwd))),
     };
     let hook_store = store.clone();
     let hook_ws = workspace_id.clone();
@@ -748,7 +725,7 @@ pub async fn harness_oneshot(
                 folders: settings.live_folders(),
                 ..Default::default()
             },
-            delegate: None,
+            team: None,
             brief: None,
             extras: None,
             stop_ask: None,
@@ -756,9 +733,9 @@ pub async fn harness_oneshot(
             mcp: vec![],
             mcp_slot: None,
             mcp_seen: None,
-            delegations_used: 0,
             subtask: None,
             search: crate::gateway::search::Keys::from_state(&state),
+            hooks: None,
         };
         (Arc::new(PeckBackend::new(provider, config, vec![])), "peck".into())
     } else if let Some(engine) = who.strip_prefix("cli:") {
@@ -957,8 +934,6 @@ mod tests {
         // ONE SHOT、子任务各读各的，没存用各自的默认（v1.0.3）。
         let saved = Some(r#"{"maxRounds":80,"oneshotRounds":30}"#);
         assert_eq!(rounds_from(saved, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS), 30);
-        assert_eq!(rounds_from(saved, "subRounds", DEFAULT_SUB_ROUNDS), DEFAULT_SUB_ROUNDS);
-        assert_eq!(rounds_from(Some(r#"{"subRounds":2}"#), "subRounds", DEFAULT_SUB_ROUNDS), 5);
     }
 
     use super::*;
@@ -1102,7 +1077,8 @@ mod tests {
                 cost_cap: None,
                 env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
                 worktree: false,
-                delegate: None,
+                team: None,
+                team_notes: vec![],
                 images: vec![],
                 search: Default::default(),
             },
@@ -1183,7 +1159,8 @@ mod tests {
                 cost_cap: None,
                 env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
                 worktree: true,
-                delegate: None,
+                team: None,
+                team_notes: vec![],
                 images: vec![],
                 search: Default::default(),
             },
@@ -1243,7 +1220,8 @@ mod tests {
             cost_cap: Some(100.0),
             env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
             worktree: false,
-            delegate: None,
+            team: None,
+            team_notes: vec![],
             images: vec![],
             search: Default::default(),
         };

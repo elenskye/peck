@@ -347,9 +347,6 @@ impl Extras {
                 who: setup.who,
                 model: setup.model,
                 effort: setup.effort,
-                plan_by: setup.plan_by,
-                review_by: setup.review_by,
-                delegate: setup.delegate,
                 permission: s("permission").map(str::to_string).or(old.as_ref().map(|o| o.permission.clone())).unwrap_or_else(|| "auto".into()),
                 when,
                 offset_min: 0,
@@ -443,13 +440,7 @@ fn norm(s: &str) -> String {
 /// 给模型看的一个定时任务。
 fn describe(s: &Schedule) -> String {
     let label = |who: &str| super::history::who_label(Some(who));
-    let mut who = label(&s.who);
-    if let Some(p) = &s.plan_by {
-        who = format!("接力 {} → {who}", label(&p.who));
-    }
-    if let Some(r) = &s.review_by {
-        who.push_str(&format!("，{} 审查", label(&r.who)));
-    }
+    let who = label(&s.who);
     let mut lines = vec![
         format!("id {} ·「{}」", s.id, s.title),
         format!("什么时候：{}；下一次 {}", s.when_text(), s.next_at.map(schedule::local_text).unwrap_or_else(|| "没有了".into())),

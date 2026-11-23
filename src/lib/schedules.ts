@@ -29,11 +29,8 @@ export function dayClock(at: number): string {
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${hm}`;
 }
 
-/** 谁来干：接力、审查也写上。 */
+/** 谁来干：API 模型是 PLOOP 的主角色。 */
 export function scheduleWho(s: Schedule, entries: ModelEntry[]): string {
   const name = (id: string) => entries.find((e) => e.id === id)?.label ?? id.replace(/^(api|cli):/, "").replace(/^[a-z-]+\//, "");
-  let who = name(s.who);
-  if (s.planBy) who = `接力 ${name(s.planBy.who)} → ${who}`;
-  if (s.reviewBy) who += ` · ${name(s.reviewBy.who)} 审查`;
-  return who;
+  return s.who.startsWith("api:") ? `PLOOP · ${name(s.who)}` : name(s.who);
 }

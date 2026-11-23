@@ -199,15 +199,6 @@ pub fn fork_context(store: &Store, session_id: &str, family: &str, current_run: 
     Some(carry(since, lead))
 }
 
-/// 合作（接力、审查）每一段都是新开的会话：这个任务前面几次（不管谁做的，最多 6 次）的经过都带上。
-pub fn earlier_context(store: &Store, session_id: &str, current_run: &str) -> Option<Fork> {
-    let runs: Vec<RunRecord> = store.runs(session_id).ok()?.into_iter().filter(|r| r.id != current_run).collect();
-    if runs.is_empty() {
-        return None;
-    }
-    Some(carry(&runs, "Earlier turns in this task (each stage of this run starts a fresh session, so this is the history; files on disk already reflect it):"))
-}
-
 fn carry(since: &[RunRecord], lead: &str) -> Fork {
     let skip = since.len().saturating_sub(6);
     let mut from: Vec<String> = Vec::new();

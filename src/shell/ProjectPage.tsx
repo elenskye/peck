@@ -94,7 +94,7 @@ export const ProjectPage: React.FC<{
               </div>
             </div>
             <Row name="默认谁来干" desc={settings.who ? undefined : "跟全局"} info="打开这个项目时，左栏 AGENTS 换成它；空着就用上一次选的那个。">
-              <WhoPicker entries={options} value={who} up={false} onChange={(id) => void save({ settings: { ...settings, who: id } }, "这个项目默认用它了")} />
+              <WhoPicker entries={options} value={who} up={false} flows={["cli", "ploop"]} onChange={(id) => void save({ settings: { ...settings, who: id } }, "这个项目默认用它了")} />
               {settings.who && <Btn sm v="ghost" onClick={() => void save({ settings: { ...settings, who: null } }, "改回跟全局")}>CLEAR</Btn>}
             </Row>
             <Row name="默认权限" info="GLOBAL 跟设置 → 权限里的默认档。">

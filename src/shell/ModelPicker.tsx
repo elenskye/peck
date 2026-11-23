@@ -1,7 +1,6 @@
-// 「谁来干」（站主 2026-11-13 定；v0.8 改；v1.1.1 接力换成 PLOOP）。
-//   FLOW：怎么干——API（Peck Loop 配一个 API 模型单干）、CLI（一个 CLI 整包干，Peck 只当外壳）、
-//         PLOOP（Peck Loop 深度参与的工作流：写规范 → 实施 → 审查，外加委派，几格都只选 API 模型）。
-//   这里的 WhoPicker 是 ONE SHOT 和项目设置用的小号：只有 API、CLI。
+// 「谁来干」（站主 2026-11-13 定；v0.8 改；v1.1.1 接力换成 PLOOP；v1.1.2 去掉 API 单干）。
+//   FLOW：怎么干——CLI（一个 CLI 整包干，Peck 只当外壳）、PLOOP（Peck Loop：一个 API 模型当主角色，能派四类子代理）。
+//   这里的 WhoPicker 是小号：ONE SHOT 用 API、CLI（只读问一句），项目设置用 CLI、PLOOP。
 // 支持思考强度的模型、CLI 旁边再出一个强度选择。
 import React from "react";
 import type { ModelEntry } from "@/lib/agentEvents";
@@ -12,7 +11,7 @@ import type { AppSettings } from "@/lib/settings";
 /** 每百万 token 的价格：国内的模型是人民币。 */
 export const money = (v: number, sym = "$") => `${sym}${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(2).replace(/\.?0+$/, "") : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}`;
 
-/** PLOOP（v1.1.1）：「谁来干」里的一项，几格选谁在设置的 `ploop`、`review`、`delegate` 里。 */
+/** PLOOP（v1.1.1）：「谁来干」里的一项，主角色在设置的 `ploop.main`，子代理在 `subagents`。 */
 export const PLOOP_ID = "ploop";
 
 export const PLOOP_ENTRY: ModelEntry = {
@@ -48,6 +47,7 @@ export type FlowKind = "api" | "cli" | "ploop";
 const FLOWS: Array<{ id: FlowKind; label: string; note: string; none: string }> = [
   { id: "api", label: "API", note: "Peck Loop · 一个 API 模型", none: "先在设置里配 Key" },
   { id: "cli", label: "CLI", note: "一个 CLI 整包干", none: "没检测到 CLI" },
+  { id: "ploop", label: "PLOOP", note: "Peck Loop · 主角色 + 子代理", none: "先在设置里配 Key" },
 ];
 
 /** 这一项属于哪种干法。 */
@@ -94,24 +94,27 @@ interface WhoProps {
   up?: boolean;
   /** 跟在 CLI / API 后面的东西（思考强度）。 */
   children?: React.ReactNode;
+  /** 能选哪几种干法（默认 API、CLI：ONE SHOT 用；项目设置是 CLI、PLOOP）。 */
+  flows?: FlowKind[];
 }
 
 /** FLOW、CLI、API 三个按钮；FLOW 决定后两个出不出。 */
-export const WhoPicker: React.FC<WhoProps> = ({ entries, value, onChange, remembered, disabled, up = true, children }) => {
+export const WhoPicker: React.FC<WhoProps> = ({ entries, value, onChange, remembered, disabled, up = true, children, flows = ["api", "cli"] }) => {
   const flow = value ? flowOf(value) : null;
-  const current = FLOWS.find((f) => f.id === flow);
+  const shown = FLOWS.filter((f) => flows.includes(f.id));
+  const current = shown.find((f) => f.id === flow);
   return (
     <>
       <MenuChip sm up={up} disabled={disabled} ariaLabel="FLOW：怎么干" title={current ? `FLOW：${current.label}` : "FLOW"} label={<ChipText k="FLOW" v={current ? current.label.toUpperCase() : "选一种"} />}>
         {(close) => (
           <>
             <p className="pk-menu-group">FLOW</p>
-            {FLOWS.map((f) => {
+            {shown.map((f) => {
               const first = firstOf(entries, f.id, remembered);
               return (
                 <button key={f.id} type="button" role="menuitem" aria-disabled={!first} className={flow === f.id ? "pk-menu-item is-on" : "pk-menu-item"}
                   onClick={() => { if (!first) return; if (flow !== f.id) onChange(first.id); close(); }}>
-                  <Dot kind={f.id === "api" ? "api" : first ? entryDot(first.id) : ""} />
+                  <Dot kind={f.id === "api" || f.id === "ploop" ? "api" : first ? entryDot(first.id) : ""} />
                   <b>{f.label.toUpperCase()}</b>
                   <span>{first ? f.note : f.none}</span>
                 </button>
@@ -249,37 +252,39 @@ export function sendEffort(e: ModelEntry | null, settings: { efforts: Record<str
   return effortFor(e, settings.efforts);
 }
 
-/** 一项的短名字（PLOOP 那几行用）。 */
+/** 一项的短名字。 */
 export function shortName(entries: ModelEntry[], id: string | undefined): string {
   const e = id ? entries.find((x) => x.id === id) : undefined;
   return e ? e.label.toUpperCase() : "没选";
 }
 
-/** 短的一行（输入框下、AGENTS 收起时）：PLOOP 写「PLOOP」，一个的写它的名字。
- *  `flags` 时 PLOOP 开了写规范、审查、委派各多几个字（不写是谁，全的在 [`whoText`]）。 */
-export function whoShort(e: ModelEntry | null, settings: AppSettings, _entries: ModelEntry[], flags = true): string {
-  if (!e) return flags ? "还没选谁来干" : "还没选";
-  if (flowOf(e) !== "ploop") return labelOf(e);
-  const parts = ["PLOOP"];
-  if (flags && settings.ploop.spec) parts.push("写规范");
-  if (flags && settings.review) parts.push("审查");
-  if (flags && settings.delegate) parts.push("委派");
-  return parts.join(" · ");
+/** PLOOP 的主角色（选的那个现在用不了就是列表里第一个 API 模型）。 */
+export function ploopMain(entries: ModelEntry[], settings: { ploop?: { main?: string } }): ModelEntry | null {
+  const list = ploopable(entries);
+  return list.find((e) => e.id === settings.ploop?.main) ?? list[0] ?? null;
 }
 
-/** 全的一行（悬停看）：PLOOP 写各格是谁。 */
+/** 短的一行（输入框下、AGENTS 收起时）：PLOOP 写「PLOOP · 主角色」，CLI 写它的名字。 */
+export function whoShort(e: ModelEntry | null, settings: AppSettings, entries: ModelEntry[], _flags = true): string {
+  if (!e) return "还没选谁来干";
+  if (flowOf(e) !== "ploop") return labelOf(e);
+  const main = ploopMain(entries, settings);
+  return main ? `PLOOP · ${labelOf(main)}` : "PLOOP";
+}
+
+/** 全的一行（悬停看）：PLOOP 写主角色和它的思考强度；CLI 写模型和强度。 */
 export function whoText(
   e: ModelEntry | null,
-  settings: { cliModels: Record<string, string>; cliModelNames?: Record<string, string>; efforts: Record<string, string>; ploop?: { spec?: string; build?: string }; review?: string; delegate?: string },
+  settings: { cliModels: Record<string, string>; cliModelNames?: Record<string, string>; efforts: Record<string, string>; ploop?: { main?: string } },
   entries: ModelEntry[] = [],
 ): string {
   if (!e) return "还没选谁来干";
   const flow = flowOf(e);
   if (flow === "ploop") {
-    const spec = settings.ploop?.spec;
-    const head = spec ? `${shortName(entries, spec)} 写规范 → ${shortName(entries, settings.ploop?.build)} 实施` : `${shortName(entries, settings.ploop?.build)} 实施`;
-    const extra = [settings.review && `审查 ${shortName(entries, settings.review)}`, settings.delegate && `委派 ${shortName(entries, settings.delegate)}`].filter(Boolean);
-    return ["PLOOP", head, ...extra].join(" · ");
+    const main = ploopMain(entries, settings);
+    if (!main) return "PLOOP · 还没有能用的 API 模型";
+    const v = main.efforts.length > 0 && main.thinking !== "never" ? settings.efforts[main.id] ?? defaultEffort(main) : null;
+    return ["PLOOP", `主角色 ${labelOf(main)}`, v ? (v === "off" ? "不思考" : `思考 ${v.toUpperCase()}`) : null, "子代理在设置 → AGENTS"].filter(Boolean).join(" · ");
   }
   const parts = [labelOf(e)];
   if (flow === "cli") {

@@ -180,6 +180,7 @@ impl ClaudeCodeConverter {
                             parent_call_id: Some(id),
                             title,
                             model: None,
+                            kind: None,
                         }
                     } else {
                         EventBody::ToolCallStarted {

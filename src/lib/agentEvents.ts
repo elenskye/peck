@@ -90,6 +90,15 @@ export interface QuotaWindow {
 
 export type NoticeLevel = "info" | "warn";
 
+/** 成员名单上的一个（v1.1.2，LOG 里列）：`main` 是主角色，别的是子代理的类型。 */
+export interface RosterMember {
+  role: string;
+  model: string;
+  effort?: string | null;
+  rounds?: number | null;
+  parallel?: number | null;
+}
+
 export interface McpServer {
   name: string;
   status: string;
@@ -207,7 +216,8 @@ export type EventBody =
       freeText: boolean;
     }
   | { type: "user_input.resolved"; requestId: string; answer: string }
-  | { type: "subagent.started"; subagentId: string; parentCallId?: string | null; title: string; model?: string | null }
+  | { type: "subagent.started"; subagentId: string; parentCallId?: string | null; title: string; model?: string | null; kind?: string | null }
+  | { type: "agents.roster"; members: RosterMember[] }
   | { type: "subagent.completed"; subagentId: string; status: ToolStatus }
   | { type: "usage.updated"; usage: TokenUsage; cost: Cost; scope: UsageScope; model?: string | null }
   | { type: "quota.updated"; provider: string; windows: QuotaWindow[] }
@@ -220,7 +230,7 @@ export type EventBody =
   | { type: "skill.proposed"; proposalId: string; name: string; description: string; body: string; scope: SkillScope; location: string; diff?: string | null; warnings?: string[]; similar?: string[] }
   | { type: "skill.reviewed"; proposalId: string; status: SkillReviewStatus; name: string; location: string; error?: string | null }
   /** 插件的收尾 Hook 跑完了（v1.1.0）：Git Plan 提交了、或者为什么没提交。text 是给人看的一句。 */
-  | { type: "hook.ran"; plugin: string; action: string; ok: boolean; text: string }
+  | { type: "hook.ran"; plugin: string; action: string; ok: boolean; text: string; event?: string | null }
   // ── 后台命令（v0.6）──
   | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
   // ── 合作（v0.8）──

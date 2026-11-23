@@ -3,18 +3,34 @@ import { ipc } from "@/lib/ipc";
 import type { ThemeChoice } from "@/lib/theme";
 import type { Permission } from "@/lib/types";
 
+export type SubagentKind = "explorer" | "searcher" | "worker" | "auditor";
+
+/** 四类子代理（v1.1.2）：设置 → AGENTS 一类一行，顺序照这里。 */
+export const SUBAGENT_KINDS: Array<{ id: SubagentKind; does: string; parallel: boolean }> = [
+  { id: "explorer", does: "读、搜项目（只读）", parallel: true },
+  { id: "searcher", does: "联网检索、深度调研", parallel: true },
+  { id: "worker", does: "照子任务改东西，一个一个来", parallel: false },
+  { id: "auditor", does: "审这个任务的改动，一次一个", parallel: false },
+];
+
+/** 一类子代理（v1.1.2）：关没关、用哪个模型（空着跟主角色）、最多几轮、同时几个（explorer、searcher）。 */
+export interface SubagentSettings {
+  off?: boolean;
+  model?: string;
+  rounds?: number;
+  parallel?: number;
+}
+
 export interface AppSettings {
   theme: ThemeChoice;
-  /** 「谁来干」：模型列表里的 id（api:…、cli:…），或者 `ploop`（PLOOP，几个 API 模型见 `ploop`）。空着用列表里第一个能用的。 */
+  /** 「谁来干」：`ploop`（PLOOP，主角色见 `ploop.main`）或者一个 CLI（cli:…）。v1.1.2 起没有 API 单干。 */
   pick: string;
-  /** 每种干法（FLOW：api、cli、ploop）上次选的哪个；换 FLOW 时回到它。 */
+  /** 每种干法（FLOW：cli、ploop）上次选的哪个；换 FLOW 时回到它。 */
   picks: Partial<Record<string, string>>;
-  /** PLOOP（v1.1.1，以前的接力）：谁写规范（空着不写）、谁实施。都只能是 API 模型。 */
-  ploop: { spec?: string; build?: string };
-  /** PLOOP 的审查：做完以后哪个 API 模型来看这次的改动（空着不审查）。 */
-  review: string;
-  /** PLOOP 的委派：子任务交给哪个 API 模型（空着不委派）。 */
-  delegate: string;
+  /** PLOOP 的主角色（v1.1.2）：一个 API 模型（api:…）。 */
+  ploop: { main?: string };
+  /** PLOOP 的四类子代理（v1.1.2，设置 → AGENTS）：模型空着跟主角色；后端发任务时从这里读。 */
+  subagents: Partial<Record<SubagentKind, SubagentSettings>>;
   /** 额度提醒（v0.9 B3）：要用到的 CLI 订阅窗口用到这么多（百分比）就提醒换一家；null 是关了。 */
   quotaWarn: number | null;
   /** 每家 CLI 用哪个模型（引擎 id → CLI 里的模型名；空着用 CLI 自己的默认）。 */
@@ -37,8 +53,6 @@ export interface AppSettings {
   maxRounds: number;
   /** ONE SHOT 最多几轮（v1.0.3，5–400，默认 12）。 */
   oneshotRounds: number;
-  /** 委派的子任务最多几轮（v1.0.3，5–400，默认 24）。 */
-  subRounds: number;
   /** Dock 里的 App 图标。 */
   appIcon: "j2" | "a3";
   /** 用哪个编辑器打开文件（v0.8，App 的名字，比如 Visual Studio Code；空着用系统默认的 App）。 */
@@ -53,8 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pick: "",
   picks: {},
   ploop: {},
-  review: "",
-  delegate: "",
+  subagents: {},
   quotaWarn: 85,
   cliModels: {},
   cliModelNames: {},
@@ -66,7 +79,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   costCap: 20,
   maxRounds: 40,
   oneshotRounds: 12,
-  subRounds: 24,
   appIcon: "j2",
   editorApp: "",
   seen: {},
@@ -81,20 +93,25 @@ export async function loadSettings(): Promise<AppSettings> {
       void saveSettings(fresh).catch(() => {});
       return fresh;
     }
-    // 旧版本存的 `mode`、`who`（v0.8 以前的「谁来干」）、`presets`、`preset`（v1.1.1 去掉的预设）不要了：读的时候丢掉，下次存就没了。
-    // 接力（`relay`）换成了 PLOOP：只留 API 模型那几格。
-    const { mode: _mode, who: _who, presets: _presets, preset: _preset, relay, ...saved } = JSON.parse(raw) as Partial<AppSettings> & { mode?: unknown; who?: unknown; presets?: unknown; preset?: unknown; relay?: { spec?: string; build?: string } };
+    // 旧版本存的 `mode`、`who`（v0.8 以前的「谁来干」）、`presets`、`preset`（v1.1.1 去掉的预设）、`subRounds` 不要了：读的时候丢掉。
+    // 接力（`relay`）、API 单干（v1.1.2 去掉）换成 PLOOP：实施的 / 单干的那个当主角色；委派、审查的模型挪给 worker、auditor。
+    type Old = { mode?: unknown; who?: unknown; presets?: unknown; preset?: unknown; subRounds?: unknown; relay?: { build?: string }; review?: string; delegate?: string; ploop?: { main?: string; build?: string } };
+    const { mode: _mode, who: _who, presets: _presets, preset: _preset, subRounds: _sub, relay, review, delegate, ...saved } = JSON.parse(raw) as Partial<AppSettings> & Old;
     const api = (id?: string) => (id?.startsWith("api:") ? id : undefined);
-    const old = saved.ploop ?? relay ?? {};
+    const oldPloop = (saved.ploop ?? {}) as { main?: string; build?: string };
+    const single = api(saved.pick);
+    const main = api(oldPloop.main) ?? api(oldPloop.build) ?? api(relay?.build) ?? single ?? api(saved.picks?.api);
+    const subagents: AppSettings["subagents"] = { ...saved.subagents };
+    if (!saved.subagents && api(delegate)) subagents.worker = { model: delegate };
+    if (!saved.subagents && api(review)) subagents.auditor = { model: review };
     const settings: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...saved,
-      pick: saved.pick === "relay" ? "ploop" : saved.pick ?? "",
-      ploop: { spec: api(old.spec), build: api(old.build) },
-      review: api(saved.review) ?? "",
-      delegate: api(saved.delegate) ?? "",
+      pick: saved.pick === "relay" || single ? "ploop" : saved.pick ?? "",
+      ploop: { main },
+      subagents,
       quotaWarn: saved.quotaWarn === null ? null : typeof saved.quotaWarn === "number" ? Math.min(100, Math.max(50, saved.quotaWarn)) : 85,
-      picks: Object.fromEntries(Object.entries({ ...saved.picks }).map(([k, v]) => (k === "relay" ? ["ploop", "ploop"] : [k, v])).filter(([k]) => k === "api" || k === "cli" || k === "ploop")),
+      picks: Object.fromEntries(Object.entries({ ...saved.picks }).map(([k, v]) => (k === "relay" ? ["ploop", "ploop"] : [k, v])).filter(([k]) => k === "cli" || k === "ploop")),
       cliModels: { ...saved.cliModels },
       cliModelNames: { ...saved.cliModelNames },
       fold: { ...saved.fold },

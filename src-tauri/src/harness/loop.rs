@@ -12,6 +12,8 @@
 //! - 联网搜索（v1.1.1，`gateway/search.rs`）：有原生搜索的模型请求里开 `web_search`，供应商那边搜的每一次也显示成
 //!   一步（`ServerTool*` → `tool_call.*`）；别的模型给 Peck 的 `web_search` 工具（DeepSeek、Tavily），按次记花费。
 
+use super::agents::{self, Kind};
+use super::script_hooks::Event;
 use super::background;
 use super::compact;
 use super::context::{self, EnvInput, ProjectLayer};
@@ -37,10 +39,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 
-/// 轮数上限的默认值（设置 → GENERAL 能调，见 `run::max_rounds`）：一个任务、ONE SHOT、委派的子任务。
+/// 轮数上限的默认值（设置 → GENERAL 能调，见 `run::max_rounds`）：一个任务、ONE SHOT。子代理的在设置 → AGENTS。
 pub const DEFAULT_MAX_ROUNDS: u32 = 40;
 pub const DEFAULT_ONESHOT_ROUNDS: u32 = 12;
-pub const DEFAULT_SUB_ROUNDS: u32 = 24;
 
 /// 花费上限：这个月已经花了多少，上限多少（美元）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,9 +99,9 @@ pub struct LoopConfig {
     /// 续接用的会话号（放进 `session.started`）。
     pub session_ref: Option<String>,
     pub context: ContextConfig,
-    /// 委派（v0.8）：`delegate_task` 把子任务交给这个（便宜的）模型，工具和权限一样。
-    pub delegate: Option<Delegate>,
-    /// 系统提示末尾再加的一段（接力、审查的那一段做什么；委派的子任务）。
+    /// 子代理（v1.1.2）：PLOOP 的主角色能派的几类（ONE SHOT、子代理自己没有）。
+    pub team: Option<Arc<agents::Team>>,
+    /// 系统提示末尾再加的一段（子代理是哪一类、做什么）。
     pub brief: Option<String>,
     /// Peck 自己的几样工具（v1.0.2：`restore_snapshot`、定时任务那三个）；ONE SHOT、子任务、合作里只读的那两段不给。
     pub extras: Option<Arc<super::extras::Extras>>,
@@ -116,26 +117,14 @@ pub struct LoopConfig {
     pub mcp_slot: Option<super::mcp_client::McpSlot>,
     /// 服务器起来以后（v0.10）：记下工具标注，Grok、Antigravity 的审批照它批。
     pub mcp_seen: Option<super::mcp_client::McpSeen>,
-    /// 这个任务前几次已经委派了几次（v0.9：一个任务最多委派 6 次，按整个任务算，不按每一句）。
-    pub delegations_used: u32,
-    /// 作为委派出去的子任务跑：不给 ask_user、update_plan、memory、delegate_task；审批、提问的编号带这个前缀，
+    /// 作为子代理跑：不给 ask_user、update_plan、memory、spawn_agent；审批、提问的编号带这个前缀，
     /// 控制通道按前缀把站主的回答转过来。
     pub subtask: Option<String>,
-    /// 联网搜索手上有什么（v1.1.1）：DeepSeek、Tavily 的 Key、模拟模式。怎么搜按模型现挑（`Keys::route`），委派的子任务换了模型也一样。
+    /// 联网搜索手上有什么（v1.1.1）：DeepSeek、Tavily 的 Key、模拟模式。怎么搜按模型现挑（`Keys::route`），子代理换了模型也一样。
     pub search: search::Keys,
+    /// 项目里挂的脚本 Hook（v1.1.2，见 `script_hooks.rs`）：ONE SHOT 没有。子代理调工具前后也跑。
+    pub hooks: Option<Arc<super::script_hooks::HookSet>>,
 }
-
-/// 委派给谁。
-#[derive(Clone)]
-pub struct Delegate {
-    pub model_id: String,
-    pub provider: Arc<dyn ModelProvider>,
-    /// 子任务最多几轮（设置 → GENERAL）。
-    pub rounds: u32,
-}
-
-/// 一个任务里最多委派几次。
-pub const MAX_DELEGATIONS: u32 = 6;
 
 type AllowHook = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -186,43 +175,13 @@ impl AgentBackend for PeckBackend {
         let conversation = self.conversation.clone();
         let hook = self.on_allow_always.clone();
         let images = self.images.lock().map(|mut i| std::mem::take(&mut *i)).unwrap_or_default();
-        let used = self.config.delegations_used;
         Box::pin(async move {
             let level = if config.oneshot { PermissionLevel::Plan } else { task.permission };
             let ctx = ToolContext::new(&task.cwd, config.spill_dir.clone(), config.runtime_dir.clone(), config.env.clone())
                 .map_err(|e| GatewayError::new(ErrorKind::Internal, e))?
                 .with_extra(&config.context.folders);
-            let (cancel_tx, cancel_rx) = watch::channel(false);
             let history = conversation.lock().map(|c| c.clone()).unwrap_or_default();
-            let mut run = Run {
-                provider,
-                allowed: config.allowed.clone(),
-                config,
-                task,
-                level,
-                ctx: Arc::new(ctx),
-                sink,
-                ctl: Ctl::new(control),
-                cancel_tx,
-                cancel_rx,
-                messages: history,
-                hook,
-                approvals: 0,
-                cost_usd: 0.0,
-                warned_unpriced: false,
-                stop_baseline: None,
-                scale: 1.0,
-                last_sent: 0,
-                compacted_at_round: None,
-                spill_counter: Default::default(),
-                delegations: used,
-                mcp: None,
-                shots: vec![],
-                attached: vec![],
-                native_search: false,
-                web: vec![],
-                server_calls: Default::default(),
-            };
+            let mut run = Run::new(provider, config, task, level, Arc::new(ctx), sink, Ctl::new(control), history, hook);
             run.attached = images;
             let outcome = run.drive().await;
             if let Ok(mut c) = conversation.lock() {
@@ -342,8 +301,6 @@ struct Run {
     /// 上一次做交接摘要是第几轮（压过了又满就停，不来回压）。
     compacted_at_round: Option<u32>,
     spill_counter: std::sync::atomic::AtomicU32,
-    /// 委派了几次（v0.8）。
-    delegations: u32,
     /// 这个任务起来的外部 MCP 服务器（v0.8）。
     mcp: Option<Arc<super::mcp_client::McpHub>>,
     /// 这一轮工具截的图（v0.8）：跟在这一轮的工具结果后面交给模型。
@@ -356,6 +313,20 @@ struct Run {
     web: Vec<search::Backend>,
     /// 供应商那边正在跑的工具：调用 id → 什么时候开始的（`tool_call.completed` 的用时）、是不是搜索。
     server_calls: std::collections::HashMap<String, (Instant, bool)>,
+    /// 这一回合派出去的子代理（v1.1.2）。
+    pool: agents::Pool,
+    /// 这个任务能派的几类（开头定好，一回合里不变）。
+    kinds: Vec<Kind>,
+    /// 正在处理的这一次回答里派的那一批，和下一个的序号。
+    batch: Option<(Arc<Mutex<agents::Batch>>, usize)>,
+    /// 脚本 Hook 这一回合批没批（规则名 → 批了）：拒了的不再问、不跑；子代理和主角色共用。
+    hook_ok: Arc<Mutex<std::collections::HashMap<String, bool>>>,
+    /// 收尾 Hook 这一回合拦了几次。
+    stop_blocks: u32,
+    /// 原地打转（v1.1.2）：同一个工具、同样的参数、同样的结果出现了几次。
+    repeats: std::collections::HashMap<u64, u32>,
+    /// 第 5 次以后要它收尾：下一次回答再要工具就不跑、停下。
+    spin: bool,
 }
 
 /// 一回合怎么结束的。
@@ -433,11 +404,9 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
         } else {
             String::new()
         },
-        delegate = match &config.delegate {
-            Some(d) if !oneshot => format!(
-                "\n- delegate_task hands a self-contained subtask to a cheaper model ({}) with the same tools and permission. Use it for mechanical work you can specify completely (updating call sites, writing tests you describe, tracing where something is used); keep design decisions and the final check yourself, and review what it changed.",
-                catalog::catalog().model(&d.model_id).map(|m| m.label.clone()).unwrap_or_else(|| d.model_id.clone())
-            ),
+        // 子代理（v1.1.2）：只说怎么用，不写哪个模型（名单在 LOG 里；换了设置提示不变，缓存照样命中）。
+        delegate = match &config.team {
+            Some(t) if !t.is_empty() && !oneshot && config.subtask.is_none() => "\n- You lead a small team: spawn_agent runs sub-agents in the background (its description lists the kinds you can use). Send explorers and searchers to read and research in parallel instead of doing all the reading yourself, a worker for well-specified mechanical changes, and an auditor to review your changes before you finish non-trivial work. Their reports arrive together when a batch finishes; keep working meanwhile, or end your reply to wait.".to_string(),
             _ => String::new(),
         },
         brief = config.brief.as_deref().map(|b| format!("\n\n{b}")).unwrap_or_default(),
@@ -454,6 +423,56 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
 }
 
 impl Run {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        provider: Arc<dyn ModelProvider>,
+        config: LoopConfig,
+        task: AgentTask,
+        level: PermissionLevel,
+        ctx: Arc<ToolContext>,
+        sink: EventSink,
+        ctl: Ctl,
+        messages: Vec<Message>,
+        hook: Option<AllowHook>,
+    ) -> Self {
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        Run {
+            provider,
+            allowed: config.allowed.clone(),
+            config,
+            task,
+            level,
+            ctx,
+            sink,
+            ctl,
+            cancel_tx,
+            cancel_rx,
+            messages,
+            hook,
+            approvals: 0,
+            cost_usd: 0.0,
+            warned_unpriced: false,
+            stop_baseline: None,
+            scale: 1.0,
+            last_sent: 0,
+            compacted_at_round: None,
+            spill_counter: Default::default(),
+            mcp: None,
+            shots: vec![],
+            attached: vec![],
+            native_search: false,
+            web: vec![],
+            server_calls: Default::default(),
+            pool: agents::Pool::default(),
+            kinds: vec![],
+            batch: None,
+            hook_ok: Arc::default(),
+            stop_blocks: 0,
+            repeats: Default::default(),
+            spin: false,
+        }
+    }
+
     fn emit(&self, body: EventBody) {
         self.sink.emit(body);
     }
@@ -496,9 +515,7 @@ impl Run {
     async fn drive(&mut self) -> RunOutcome {
         let mut names = tools::for_model(tools::names_for(self.level, self.config.oneshot), &self.config.model_id);
         if self.config.subtask.is_some() {
-            names.retain(|n| !matches!(*n, tools::ASK_USER | tools::UPDATE_PLAN | tools::MEMORY | tools::DELEGATE_TASK));
-        } else if self.config.delegate.is_some() && !self.config.oneshot {
-            names.push(tools::DELEGATE_TASK);
+            names.retain(|n| !matches!(*n, tools::ASK_USER | tools::UPDATE_PLAN | tools::MEMORY));
         }
         // 快照回退、定时任务（v1.0.2）：以前在界面上点，现在在对话里做。ONE SHOT、子任务、合作里只读的那两段没有，
         // 讲这几样工具的自带 Skills 也就不列。
@@ -526,6 +543,11 @@ impl Run {
             names.push(tools::LOAD_SKILL);
         }
         self.pick_search(&mut names);
+        // 子代理（v1.1.2）：这个任务能派的几类，开头定好。
+        self.kinds = self.offered_kinds();
+        if !self.kinds.is_empty() {
+            names.push(agents::SPAWN_AGENT);
+        }
         let turn_id = format!("turn-{}", self.task.run_id);
         // 外部 MCP 服务器：起来、列工具；起不来的写一行，照常干活。合作里几段共用一组（第一段用到时起）。
         let mut shared_mcp = false;
@@ -561,6 +583,9 @@ impl Run {
             session_ref: self.config.session_ref.clone(),
             version: None,
         });
+        if let Some(members) = self.roster() {
+            self.emit(EventBody::AgentsRoster { members });
+        }
         self.emit(EventBody::TurnStarted { turn_id: turn_id.clone() });
         let mut first = Vec::new();
         if self.config.context.environment {
@@ -568,6 +593,16 @@ impl Run {
             first.push(Part::Text { text: block });
         }
         first.extend(self.config.context.refs.iter().map(|r| Part::Text { text: r.clone() }));
+        // 脚本 Hook（v1.1.2）：发话时。拦下就不发这句话；stdout 当补充上下文放在这句前面。
+        let (blocked, context) = if self.config.subtask.is_none() {
+            let prompt = self.task.prompt.clone();
+            self.run_hooks(Event::UserPromptSubmit, "hook-prompt", None, serde_json::json!({"prompt": prompt})).await
+        } else {
+            (None, None)
+        };
+        if let Some(c) = context {
+            first.push(Part::Text { text: format!("<hook-context event=\"UserPromptSubmit\">\n{c}\n</hook-context>") });
+        }
         first.push(Part::Text { text: self.task.prompt.clone() });
         let attached = std::mem::take(&mut self.attached);
         if !attached.is_empty() {
@@ -580,7 +615,18 @@ impl Run {
             }
         }
         self.push_user(first);
-        let end = self.rounds(&names).await;
+        let end = match blocked {
+            Some(why) => End::limit(format!("项目的 Hook 拦下了这句话：{why}")),
+            None => self.rounds(&names).await,
+        };
+        // 停下、出错、到上限时还有子代理在跑：叫停，等它们收好尾（报告不要了），事件日志才完整。
+        if self.pool.busy() {
+            crate::gateway::runner::interrupt_subs(&self.task.run_id);
+            while self.pool.busy() {
+                self.pool.wait().await;
+                self.pool.take_ready();
+            }
+        }
         background::stop_owned(&self.task.run_id);
         if let Some(hub) = self.mcp.take() {
             if !shared_mcp {
@@ -701,6 +747,8 @@ impl Run {
 
     /// 到了压缩线：按顺序做三步，降到目标线以下就停。返回压完的大小；压不下去返回 `Err(停下的原因)`。
     async fn compact(&mut self, names: &[&'static str], window: u64, round: u32, request_base: &ModelRequest) -> Result<(), End> {
+        // 脚本 Hook（v1.1.2）：压缩前（拦不住，只是让脚本知道、存一份什么的）。
+        self.run_hooks(Event::PreCompact, "hook-compact", None, serde_json::json!({"trigger": "auto", "custom_instructions": null})).await;
         let target = (window as f64 * compact::TARGET) as u64;
         let (mut used, _) = self.estimate(names);
         // 1. 落盘
@@ -866,6 +914,9 @@ impl Run {
             self.stop_baseline = tokio::task::spawn_blocking(move || super::hooks::baseline(&cwd)).await.ok().flatten();
         }
         let mut specs = tools::specs_for(names);
+        if names.contains(&agents::SPAWN_AGENT) {
+            specs.push(agents::spawn_spec(&self.kinds));
+        }
         specs.extend(self.mcp_specs());
         let system = self.system_blocks();
         let spec = self.model_spec();
@@ -883,6 +934,8 @@ impl Run {
             if self.ctl.interrupted {
                 return End::interrupted();
             }
+            // 交齐了的子代理报告：放进对话，叫醒主角色（一批一次）。
+            self.deliver_reports();
             if round >= self.config.max_rounds {
                 return End::limit(format!("到了 {} 轮的上限，先停下。文件和过程都留着，接着说一句就能继续。", self.config.max_rounds));
             }
@@ -999,10 +1052,34 @@ impl Run {
                 _ => {}
             }
             if calls.is_empty() {
+                // 还有子代理没交齐：等这一批，交齐了接着干（不算轮数，等的时候能停）。
+                if self.pool.busy() || self.pool.has_ready() {
+                    if !self.pool.has_ready() {
+                        let pool = self.pool.clone();
+                        tokio::select! {
+                            _ = pool.wait() => {}
+                            _ = self.ctl.until_interrupt() => {}
+                        }
+                    }
+                    if self.ctl.interrupted {
+                        return End::interrupted();
+                    }
+                    continue;
+                }
                 let steer = self.take_steer();
                 if !steer.is_empty() {
                     self.push_user(steer);
                     continue;
+                }
+                // 脚本 Hook（v1.1.2）：收尾时。拦下就把原因交给它接着干（一回合最多拦 3 次）。
+                if self.config.subtask.is_none() && self.stop_blocks < super::script_hooks::MAX_STOP_BLOCKS {
+                    let active = self.stop_blocks > 0;
+                    let (blocked, _) = self.run_hooks(Event::Stop, "hook-stop", None, serde_json::json!({"stop_hook_active": active})).await;
+                    if let Some(why) = blocked {
+                        self.stop_blocks += 1;
+                        self.push_user(vec![Part::Text { text: format!("<hook-feedback event=\"Stop\">\n{why}\n</hook-feedback>\nA project hook asked you to keep going before you finish. Deal with it, then finish.") }]);
+                        continue;
+                    }
                 }
                 self.ask_stop_hook(&base_request).await;
                 // 问的那一轮里站主又追加了话：接着干，刚才的答案作废（做完再问）。
@@ -1015,6 +1092,12 @@ impl Run {
                     continue;
                 }
                 return End::done();
+            }
+            // 原地打转（v1.1.2）：上一轮已经要它收尾了，还要工具就不跑、停下。
+            if self.spin {
+                let skipped = calls.iter().map(|(call_id, _, _)| Part::ToolResult { call_id: call_id.clone(), output: "已经要求收尾，这一步没跑。".into(), is_error: true }).collect();
+                self.push_user(skipped);
+                return End::limit("原地打转：同一个工具、同样的参数、同样的结果出现了 5 次，要它收尾以后还在调工具，先停下。文件和过程都留着，换个说法接着说一句就能继续。");
             }
             if !usage_known {
                 // 先把工具跑完（模型已经要了），下一次请求前再停。
@@ -1141,76 +1224,262 @@ impl Run {
 
     /// Peck 的 `web_search`：按顺序试 DeepSeek、Tavily，搜成了按次记花费（算进这个任务和花费上限）。
     async fn web_search(&mut self, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
-        let query = match search::Query::from_input(input) {
-            Ok(q) => q,
-            Err(e) => return (ToolStatus::Failed, e, None, vec![]),
-        };
-        if self.web.is_empty() {
-            return (ToolStatus::Denied, "这个任务没有能用的联网搜索。".into(), None, vec![]);
-        }
-        let backends = self.web.clone();
-        let mut cancel = self.cancel_rx.clone();
-        let found = tokio::select! {
-            r = search::search(&backends, &query) => r,
-            _ = cancel.wait_for(|c| *c) => return (ToolStatus::Failed, "已停止。".into(), None, vec![]),
-        };
-        match found {
-            Ok(found) => {
-                if let Some(fee) = search::fee(found.via) {
-                    self.cost_usd += fee;
-                    let usage = crate::gateway::event::TokenUsage { web_searches: Some(1), ..Default::default() };
-                    let cost = crate::gateway::event::Cost { usd: Some(fee), source: crate::gateway::event::CostSource::Priced };
-                    self.emit(EventBody::UsageUpdated { usage, cost, scope: UsageScope::Turn, model: Some(self.config.model_id.clone()) });
-                }
-                (ToolStatus::Ok, found.text(), None, vec![])
-            }
-            Err(e) => (ToolStatus::Failed, format!("没搜成：{e}"), None, vec![]),
-        }
+        let (status, text, fee) = web_search_job(self.web.clone(), input.clone(), self.cancel_rx.clone()).await;
+        self.charge_search(fee);
+        (status, text, None, vec![])
     }
 
-    /// 一批工具调用，按顺序跑；每个都有结果（被打断的写「没跑」），对话才接得上。
+    /// 搜成了一次：按次的费用算进这个任务，发一条只有次数和花费的用量。
+    fn charge_search(&mut self, fee: Option<f64>) {
+        let Some(fee) = fee else { return };
+        self.cost_usd += fee;
+        let usage = crate::gateway::event::TokenUsage { web_searches: Some(1), ..Default::default() };
+        let cost = crate::gateway::event::Cost { usd: Some(fee), source: crate::gateway::event::CostSource::Priced };
+        self.emit(EventBody::UsageUpdated { usage, cost, scope: UsageScope::Turn, model: Some(self.config.model_id.clone()) });
+    }
+
+    /// 一批工具调用（v1.1.2）：全是只读的（看目录、读、搜、读 Skill、查旧任务、联网搜索；派子代理也算，它马上回）就同时跑，
+    /// 混进改文件、跑命令的就按顺序一个一个来。每个都有结果（被打断的写「没跑」），对话才接得上。
     async fn run_tools(&mut self, calls: &[(String, String, Value)], names: &[&'static str]) -> Vec<Part> {
-        let mut results = Vec::new();
-        for (call_id, name, input) in calls {
-            if self.ctl.interrupted {
-                results.push(Part::ToolResult { call_id: call_id.clone(), output: "已停止，这一步没跑。".into(), is_error: true });
-                continue;
+        let spawns = calls.iter().filter(|(_, n, _)| n == agents::SPAWN_AGENT).count();
+        self.batch = (spawns > 0).then(|| (self.pool.open_batch(spawns), 0));
+        let together = calls.len() > 1 && calls.iter().all(|(_, n, _)| tools::PARALLEL_SAFE.contains(&n.as_str()) || n == agents::SPAWN_AGENT);
+        let mut results = if together {
+            self.run_together(calls, names).await
+        } else {
+            let mut out = Vec::new();
+            for (call_id, name, input) in calls {
+                out.push(self.run_one(call_id, name, input, names).await);
             }
-            let started = Instant::now();
-            self.emit(EventBody::ToolCallStarted {
-                call_id: call_id.clone(),
-                name: name.clone(),
-                kind: tools::kind_of(name),
-                title: tools::title_of(name, input),
-                input: input.clone(),
-            });
-            let (status, output, exit_code, diff) = if !names.contains(&name.as_str()) && !self.mcp_offered(name) {
-                let why = if tools::ALL.contains(&name.as_str()) {
-                    format!("这一档（{}）不能用 {name}。", level_label(self.level))
-                } else {
-                    format!("没有叫 {name} 的工具。")
-                };
-                (ToolStatus::Denied, why, None, vec![])
-            } else {
-                self.run_tool(call_id, name, input).await
-            };
-            let is_error = status != ToolStatus::Ok;
-            self.emit(EventBody::ToolCallCompleted {
-                call_id: call_id.clone(),
-                status,
-                output: Some(output.clone()),
-                exit_code,
-                diff: diff.clone(),
-                duration_ms: Some(started.elapsed().as_millis() as u64),
-            });
-            if !diff.is_empty() {
-                self.emit(EventBody::DiffUpdated { files: self.ctx.diff_summary() });
+            out
+        };
+        // 这一批里没派出去的（被打断了）：不等它们。
+        if let Some((batch, next)) = self.batch.take() {
+            for i in next..spawns {
+                self.pool.skip(&batch, i);
             }
-            results.push(Part::ToolResult { call_id: call_id.clone(), output, is_error });
         }
         // 截的图跟在这一轮的工具结果后面（各家都要工具结果在前）。
         results.extend(std::mem::take(&mut self.shots).into_iter().map(|i| Part::Image { media_type: i.media_type, data: i.data }));
         results
+    }
+
+    /// 按顺序跑一个：调工具前的 Hook → 跑 → 调工具后的 Hook → 看是不是在原地打转。
+    async fn run_one(&mut self, call_id: &str, name: &str, input: &Value, names: &[&'static str]) -> Part {
+        if self.ctl.interrupted {
+            return Part::ToolResult { call_id: call_id.to_string(), output: "已停止，这一步没跑。".into(), is_error: true };
+        }
+        let started = Instant::now();
+        self.emit(EventBody::ToolCallStarted { call_id: call_id.to_string(), name: name.to_string(), kind: tools::kind_of(name), title: tools::title_of(name, input), input: input.clone() });
+        let (pre_block, _) = self.run_hooks(Event::PreToolUse, call_id, Some(name), serde_json::json!({"tool_name": name, "tool_input": input})).await;
+        let (status, output, exit_code, diff) = if let Some(why) = pre_block {
+            if name == agents::SPAWN_AGENT {
+                self.skip_spawn();
+            }
+            (ToolStatus::Denied, format!("项目的 Hook 拦下了这一步：{why}"), None, vec![])
+        } else if !names.contains(&name) && !self.mcp_offered(name) {
+            if name == agents::SPAWN_AGENT {
+                self.skip_spawn();
+            }
+            let why = if tools::ALL.contains(&name) || name == agents::SPAWN_AGENT { format!("这一档（{}）不能用 {name}。", level_label(self.level)) } else { format!("没有叫 {name} 的工具。") };
+            (ToolStatus::Denied, why, None, vec![])
+        } else {
+            self.run_tool(call_id, name, input).await
+        };
+        // 派出去的子代理：这一步等它做完才算完（后台发 `tool_call.completed`）。
+        if !(name == agents::SPAWN_AGENT && status == ToolStatus::Ok) {
+            self.emit(EventBody::ToolCallCompleted { call_id: call_id.to_string(), status, output: Some(output.clone()), exit_code, diff: diff.clone(), duration_ms: Some(started.elapsed().as_millis() as u64) });
+        }
+        if !diff.is_empty() {
+            self.emit(EventBody::DiffUpdated { files: self.ctx.diff_summary() });
+        }
+        let output = self.after_tool(call_id, name, input, status, output).await;
+        Part::ToolResult { call_id: call_id.to_string(), output, is_error: status != ToolStatus::Ok }
+    }
+
+    /// 一批只读的同时跑（v1.1.2）：先全部报开始、过调工具前的 Hook、派子代理（马上回），再把读的一起跑，谁先完先报。
+    async fn run_together(&mut self, calls: &[(String, String, Value)], names: &[&'static str]) -> Vec<Part> {
+        let mut done: Vec<Option<(ToolStatus, String)>> = vec![None; calls.len()];
+        let mut jobs = tokio::task::JoinSet::new();
+        let kit = ReadKit { ctx: self.ctx.clone(), skills: self.config.context.project.skills.clone(), history: self.config.context.history.clone(), web: self.web.clone(), cancel: self.cancel_rx.clone() };
+        let started = Instant::now();
+        for (i, (call_id, name, input)) in calls.iter().enumerate() {
+            if self.ctl.interrupted {
+                done[i] = Some((ToolStatus::Cancelled, "已停止，这一步没跑。".into()));
+                continue;
+            }
+            self.emit(EventBody::ToolCallStarted { call_id: call_id.clone(), name: name.clone(), kind: tools::kind_of(name), title: tools::title_of(name, input), input: input.clone() });
+            let (pre_block, _) = self.run_hooks(Event::PreToolUse, call_id, Some(name), serde_json::json!({"tool_name": name, "tool_input": input})).await;
+            let refused = match pre_block {
+                Some(why) => Some(format!("项目的 Hook 拦下了这一步：{why}")),
+                None if !names.contains(&name.as_str()) => Some(format!("这一档（{}）不能用 {name}。", level_label(self.level))),
+                None => None,
+            };
+            if let Some(why) = refused {
+                if name == agents::SPAWN_AGENT {
+                    self.skip_spawn();
+                }
+                self.emit(EventBody::ToolCallCompleted { call_id: call_id.clone(), status: ToolStatus::Denied, output: Some(why.clone()), exit_code: None, diff: vec![], duration_ms: Some(0) });
+                done[i] = Some((ToolStatus::Denied, why));
+                continue;
+            }
+            if name == agents::SPAWN_AGENT {
+                let (status, output, _, _) = self.run_tool(call_id, name, input).await;
+                if status != ToolStatus::Ok {
+                    self.emit(EventBody::ToolCallCompleted { call_id: call_id.clone(), status, output: Some(output.clone()), exit_code: None, diff: vec![], duration_ms: Some(0) });
+                }
+                done[i] = Some((status, output));
+                continue;
+            }
+            let (kit, name, input) = (kit.clone(), name.clone(), input.clone());
+            jobs.spawn(async move { (i, read_job(kit, name, input).await) });
+        }
+        while let Some(joined) = jobs.join_next().await {
+            let Ok((i, (status, output, fee))) = joined else { continue };
+            self.charge_search(fee);
+            self.emit(EventBody::ToolCallCompleted { call_id: calls[i].0.clone(), status, output: Some(output.clone()), exit_code: None, diff: vec![], duration_ms: Some(started.elapsed().as_millis() as u64) });
+            done[i] = Some((status, output));
+        }
+        let mut out = Vec::new();
+        for (i, (call_id, name, input)) in calls.iter().enumerate() {
+            let (status, output) = done[i].take().unwrap_or((ToolStatus::Failed, "工具出错了。".into()));
+            let output = if status == ToolStatus::Denied || status == ToolStatus::Cancelled { output } else { self.after_tool(call_id, name, input, status, output).await };
+            out.push(Part::ToolResult { call_id: call_id.clone(), output, is_error: status != ToolStatus::Ok });
+        }
+        out
+    }
+
+    /// 跑完一个工具以后：调工具后的 Hook（拦下、补充的话接在结果后面给模型），再看是不是原地打转。
+    async fn after_tool(&mut self, call_id: &str, name: &str, input: &Value, status: ToolStatus, output: String) -> String {
+        let raw = output.clone();
+        let mut output = output;
+        let response = serde_json::json!({"output": super::tools::clip_bytes(&raw, 20_000), "status": status});
+        let (block, context) = self.run_hooks(Event::PostToolUse, call_id, Some(name), serde_json::json!({"tool_name": name, "tool_input": input, "tool_response": response})).await;
+        for text in [block, context].into_iter().flatten() {
+            output.push_str(&format!("\n\n<hook-feedback event=\"PostToolUse\">\n{text}\n</hook-feedback>"));
+        }
+        if let Some(note) = self.note_repeat(name, input, &raw) {
+            output.push_str(&note);
+        }
+        output
+    }
+
+    /// 原地打转（v1.1.2）：同一个工具、同样的参数、同样的结果，第 3 次提醒，第 5 次要它收尾（下一次回答再要工具就停）。
+    fn note_repeat(&mut self, name: &str, input: &Value, output: &str) -> Option<String> {
+        if matches!(name, tools::ASK_USER | agents::SPAWN_AGENT | tools::UPDATE_PLAN) {
+            return None;
+        }
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (name, input.to_string(), output).hash(&mut h);
+        let n = self.repeats.entry(h.finish()).or_insert(0);
+        *n += 1;
+        match *n {
+            3 => {
+                self.emit(EventBody::Notice { level: NoticeLevel::Warn, text: format!("{name} 同样的参数、同样的结果已经第 3 次了，提醒它换个办法。") });
+                Some("\n\n<peck-note>This is the 3rd time this exact call returned this exact result. You are going in circles: change your approach, or stop and explain what is blocking you.</peck-note>".into())
+            }
+            n if n >= 5 => {
+                self.spin = true;
+                self.emit(EventBody::Notice { level: NoticeLevel::Warn, text: format!("{name} 同样的参数、同样的结果第 {n} 次了：要它收尾，再调工具就停下。") });
+                Some("\n\n<peck-note>This exact call returned this exact result 5 times. Stop now: do not call any more tools. Write your final answer: what you did, where you are stuck, and what you suggest next.</peck-note>".into())
+            }
+            _ => None,
+        }
+    }
+
+    /// 这一批里没派出去的那一个（被拦了、这一档不能派）：记成已了结，这一批不等它。
+    fn skip_spawn(&mut self) {
+        if let Some((batch, next)) = self.batch.as_mut() {
+            self.pool.skip(batch, *next);
+            *next += 1;
+        }
+    }
+
+    /// 跑这个时刻挂的脚本 Hook（v1.1.2）。每条命令第一次跑之前问站主；拒了的这一回合不再问、不跑。
+    /// 返回拦下的原因、补充的话（几条的合在一起）。ONE SHOT 不跑。
+    async fn run_hooks(&mut self, event: Event, call_id: &str, tool: Option<&str>, extra: Value) -> (Option<String>, Option<String>) {
+        let Some(set) = self.config.hooks.clone().filter(|_| !self.config.oneshot) else { return (None, None) };
+        let hooks = set.for_event(event, tool);
+        if hooks.is_empty() {
+            return (None, None);
+        }
+        let session = self.config.session_ref.clone().unwrap_or_else(|| self.task.run_id.clone());
+        let input = super::script_hooks::input(event, &session, &self.task.cwd, self.level, extra);
+        let (mut blocks, mut contexts) = (Vec::new(), Vec::new());
+        for hook in hooks {
+            let rule = hook.rule();
+            let known = self.hook_ok.lock().ok().and_then(|m| m.get(&rule).copied());
+            let ok = match known {
+                Some(ok) => ok,
+                None if self.allowed.contains(&rule) => true,
+                None => {
+                    let decision = self.approve_as(ToolKind::Run, call_id, format!("跑项目的 Hook：{}", hook.title()), format!("来自 {}\n{}", hook.source, hook.command), false).await;
+                    if decision == ApprovalDecision::AllowAlways {
+                        self.allowed.insert(rule.clone());
+                        if let Some(remember) = &self.hook {
+                            remember(&rule);
+                        }
+                    }
+                    decision.allows()
+                }
+            };
+            if let Ok(mut m) = self.hook_ok.lock() {
+                m.insert(rule, ok);
+            }
+            if !ok || self.ctl.interrupted {
+                continue;
+            }
+            let ran = super::script_hooks::run(&hook, &input, &self.task.cwd, &self.config.env).await;
+            let v = super::script_hooks::verdict(event, &ran);
+            if v.block.is_some() || v.error.is_some() || !v.shown.is_empty() {
+                let text = match (&v.block, &v.error) {
+                    (Some(why), _) => format!("拦下了：{why}"),
+                    (_, Some(e)) => format!("出错了：{e}"),
+                    _ => v.shown.clone(),
+                };
+                self.emit(EventBody::HookRan { plugin: hook.source.clone(), action: hook.title(), ok: v.error.is_none() && v.block.is_none(), text, event: Some(event.key().into()) });
+            }
+            blocks.extend(v.block);
+            contexts.extend(v.context);
+        }
+        let join = |v: Vec<String>| (!v.is_empty()).then(|| v.join("\n\n"));
+        (join(blocks), join(contexts))
+    }
+
+    /// 这个任务能派的几类（开头定一次）：worker 在 PLAN 不派，searcher 的模型要能联网搜索；ONE SHOT、子代理自己不派。
+    fn offered_kinds(&self) -> Vec<Kind> {
+        let Some(team) = self.config.team.as_ref().filter(|_| !self.config.oneshot && self.config.subtask.is_none()) else { return vec![] };
+        team.members
+            .iter()
+            .filter(|m| match m.kind {
+                Kind::Worker => self.level != PermissionLevel::Plan,
+                Kind::Searcher => !matches!(self.config.search.route(catalog::catalog().model(&m.model_id)), search::Route::Off),
+                _ => true,
+            })
+            .map(|m| m.kind)
+            .collect()
+    }
+
+    /// 成员名单（放在 LOG 里）：主角色和这个任务能派的几类。
+    fn roster(&self) -> Option<Vec<crate::gateway::event::RosterMember>> {
+        let team = self.config.team.as_ref().filter(|_| !self.config.oneshot && self.config.subtask.is_none())?;
+        let mut members = vec![crate::gateway::event::RosterMember { role: "main".into(), model: self.config.model_id.clone(), effort: self.task.effort.clone(), rounds: Some(self.config.max_rounds), parallel: None }];
+        for kind in &self.kinds {
+            if let Some(m) = team.get(*kind) {
+                members.push(crate::gateway::event::RosterMember { role: kind.id().into(), model: m.model_id.clone(), effort: m.effort.clone(), rounds: Some(m.rounds), parallel: (m.parallel > 1).then_some(m.parallel) });
+            }
+        }
+        Some(members)
+    }
+
+    /// 交齐了的子代理报告放进对话（一批一段），花费算进这个任务。
+    fn deliver_reports(&mut self) {
+        for reports in self.pool.take_ready() {
+            self.cost_usd += reports.iter().map(|r| r.cost_usd).sum::<f64>();
+            let text = agents::batch_text(&reports);
+            self.push_user(vec![Part::Text { text }]);
+        }
     }
 
     async fn run_tool(&mut self, call_id: &str, name: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
@@ -1225,7 +1494,7 @@ impl Run {
             },
             tools::ASK_USER => self.ask_user(input).await,
             tools::WEB_SEARCH => self.web_search(input).await,
-            tools::DELEGATE_TASK => self.delegate(call_id, input).await,
+            agents::SPAWN_AGENT => self.spawn_agent(call_id, input).await,
             n if n.starts_with("mcp__") => self.mcp_call(call_id, n, input).await,
             tools::SCREENSHOT_APP => {
                 let ctx = self.ctx.clone();
@@ -1542,104 +1811,126 @@ impl Run {
         }
     }
 
-    /// `delegate_task`（v0.8）：子任务交给便宜的模型。同一个项目、同样的工具和权限（不能再委派、不问站主、
-    /// 不写清单和记忆），审批照样弹给站主（同一个控制通道）；它的事件带 `subagentId`（= 这次调用的 id），
-    /// 用量照算进这个任务和花费上限。回给主模型：子任务的报告和它改了哪些文件。
-    async fn delegate(&mut self, call_id: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
-        let Some(d) = self.config.delegate.clone() else {
-            return (ToolStatus::Failed, "这个任务没开委派。".into(), None, vec![]);
+    /// `spawn_agent`（v1.1.2）：派一个子代理在后台跑，马上回「已派出」。它用设置里这一类的模型、思考强度和轮数，
+    /// 同一个项目（独立工作区里就是那个工作区）、同一组 MCP；只读的三类跑在 PLAN，worker 照任务的档位。审批照样弹给站主
+    /// （编号带前缀、自己的控制通道）；它的事件带 `subagentId`（= 这次调用的 id），挂在这一步下面；做完了这一步才算完，
+    /// 报告交进它那一批，一批交齐才放进对话。
+    async fn spawn_agent(&mut self, call_id: &str, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
+        let (batch, index) = match self.batch.as_mut() {
+            Some((b, next)) => {
+                let i = *next;
+                *next += 1;
+                (b.clone(), i)
+            }
+            None => (self.pool.open_batch(1), 0),
         };
-        let brief = input.get("task").and_then(Value::as_str).unwrap_or("").trim().to_string();
-        if brief.is_empty() {
-            return (ToolStatus::Failed, "缺 task：写清楚要它做什么。".into(), None, vec![]);
+        let fail = |pool: &agents::Pool, why: String| {
+            pool.skip(&batch, index);
+            (ToolStatus::Failed, why, None, vec![])
+        };
+        let kind_word = input.get("type").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let Some(kind) = agents::Kind::parse(&kind_word).filter(|k| self.kinds.contains(k)) else {
+            let offered: Vec<&str> = self.kinds.iter().map(|k| k.id()).collect();
+            return fail(&self.pool, format!("这个任务不能派 {kind_word}；能派的：{}。", offered.join("、")));
+        };
+        let task = input.get("task").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        if task.is_empty() {
+            return fail(&self.pool, "缺 task：写清楚要它做什么。".into());
         }
-        if self.delegations >= MAX_DELEGATIONS {
-            return (ToolStatus::Failed, format!("一个任务最多委派 {MAX_DELEGATIONS} 次，剩下的自己做。"), None, vec![]);
-        }
-        self.delegations += 1;
-        let label = catalog::catalog().model(&d.model_id).map(|m| m.label.clone()).unwrap_or_else(|| d.model_id.clone());
-        let first_line: String = brief.lines().next().unwrap_or("").chars().take(60).collect();
-        self.emit(EventBody::SubagentStarted { subagent_id: call_id.to_string(), parent_call_id: Some(call_id.to_string()), title: format!("{label}：{first_line}"), model: Some(d.model_id.clone()) });
-        let before: std::collections::HashSet<String> = self.ctx.diff_summary().into_iter().map(|f| f.path).collect();
+        let Some(member) = self.config.team.as_ref().and_then(|t| t.get(kind)).cloned() else {
+            return fail(&self.pool, format!("这个任务不能派 {kind_word}。"));
+        };
+        let Some(n) = self.pool.count() else {
+            return fail(&self.pool, format!("一句话里最多派 {} 个子代理，剩下的自己做。", agents::MAX_PER_TURN));
+        };
+        let files: Vec<String> = input.get("files").and_then(Value::as_array).map(|a| a.iter().filter_map(|f| f.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let level = kind.level(self.level);
+        let prefix = format!("agent-{n}-");
         let mut config = self.config.clone();
-        config.model_id = d.model_id.clone();
-        config.delegate = None;
-        config.max_rounds = d.rounds;
+        config.model_id = member.model_id.clone();
+        config.team = None;
+        config.max_rounds = member.rounds;
         config.session_ref = None;
-        // 子任务不提 Skill（v0.10 C3）、不碰快照和定时任务：那是主线的事。
+        config.oneshot = false;
+        // 子代理不提 Skill、不碰快照和定时任务、不问提交说明：那是主角色的事。
         config.context.project.skill_root = None;
         config.extras = None;
-        config.brief = Some(
-            "You are a sub-agent: the main agent handed you one subtask (below). Do exactly that, then report briefly what you did, what you changed and anything you could not do. Don't ask the user questions and don't widen the scope.".into(),
-        );
-        let (_tx, dummy) = mpsc::unbounded_channel();
-        let ctl = std::mem::replace(&mut self.ctl, Ctl::new(dummy));
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let mut child = Run {
-            provider: d.provider.clone(),
-            config,
-            // 思考强度不跟主线的：委派的模型用它自己的默认（能关思考的就不思考，和 CLI 委派过来的一样）。
-            task: AgentTask { prompt: brief.clone(), model: Some(d.model_id.clone()), effort: None, ..self.task.clone() },
-            level: self.level,
-            ctx: self.ctx.clone(),
-            sink: self.sink.for_subagent(call_id),
-            ctl,
-            cancel_tx,
-            cancel_rx,
-            messages: vec![],
-            allowed: self.allowed.clone(),
-            hook: self.hook.clone(),
-            approvals: self.approvals,
-            cost_usd: 0.0,
-            warned_unpriced: self.warned_unpriced,
-            stop_baseline: None,
-            scale: 1.0,
-            last_sent: 0,
-            compacted_at_round: None,
-            spill_counter: Default::default(),
-            delegations: MAX_DELEGATIONS,
-            mcp: self.mcp.clone(),
-            shots: vec![],
-            attached: vec![],
-            native_search: false,
-            web: vec![],
-            server_calls: Default::default(),
-        };
+        config.stop_ask = None;
+        config.brief = Some(kind.brief().into());
+        config.subtask = Some(prefix.clone());
+        config.task_level = kind.read_only().then_some(self.level);
+        let (tx, rx) = mpsc::unbounded_channel();
+        crate::gateway::runner::register_sub_control(&self.task.run_id, &prefix, tx);
+        let task_spec = AgentTask { prompt: task.clone(), model: Some(member.model_id.clone()), effort: member.effort.clone(), permission: level, ..self.task.clone() };
+        let mut child = Run::new(member.provider.clone(), config, task_spec, level, self.ctx.clone(), self.sink.for_subagent(call_id), Ctl::new(rx), vec![], self.hook.clone());
+        child.mcp = self.mcp.clone();
+        child.hook_ok = self.hook_ok.clone();
+        // 给它的第一句：环境、（auditor）原话和到现在的改动、要它做的、从哪几个文件看起。
         let mut first = Vec::new();
         if child.config.context.environment {
             first.push(Part::Text { text: self.environment_block().await });
         }
+        if kind == Kind::Auditor {
+            first.push(Part::Text { text: format!("<peck-request>\n{}\n</peck-request>\n<peck-diff>\n{}\n</peck-diff>", self.task.prompt, agents::audit_diff(&self.ctx.diff_summary())) });
+        }
+        let mut brief = task.clone();
+        if !files.is_empty() {
+            brief.push_str(&format!("\n\nStart with these files: {}", files.join(", ")));
+        }
         first.push(Part::Text { text: brief });
         child.push_user(first);
-        let mut names: Vec<&'static str> = tools::for_model(tools::names_for(self.level, false), &d.model_id)
-            .into_iter()
-            .filter(|n| !matches!(*n, tools::ASK_USER | tools::UPDATE_PLAN | tools::MEMORY | tools::DELEGATE_TASK))
-            .collect();
-        child.pick_search(&mut names);
-        let end = child_rounds(&mut child, &names).await;
-        // 控制通道、审批编号、「总是允许」、花费都还给主线。
-        self.ctl = std::mem::replace(&mut child.ctl, Ctl::new(mpsc::unbounded_channel().1));
-        self.approvals = child.approvals;
-        self.allowed = child.allowed.clone();
-        self.cost_usd += child.cost_usd;
-        self.warned_unpriced |= child.warned_unpriced;
-        let report = child
-            .messages
-            .iter()
-            .rev()
-            .find(|m| m.role == Role::Assistant && m.parts.iter().any(|p| matches!(p, Part::Text { text } if !text.trim().is_empty())))
-            .map(|m| m.parts.iter().filter_map(|p| if let Part::Text { text } = p { Some(text.as_str()) } else { None }).collect::<Vec<_>>().join("\n"))
-            .unwrap_or_default();
-        let changed: Vec<String> = self.ctx.diff_summary().into_iter().filter(|f| !before.contains(&f.path)).map(|f| f.path).collect();
-        let (status, word) = match end.reason {
-            TurnEndReason::Done => (ToolStatus::Ok, "做完了".to_string()),
-            TurnEndReason::Interrupted => (ToolStatus::Cancelled, "被停下了".to_string()),
-            _ => (ToolStatus::Failed, format!("没做完（{}）", end.error.clone().unwrap_or_else(|| "出错了".into()))),
-        };
-        self.emit(EventBody::SubagentCompleted { subagent_id: call_id.to_string(), status });
-        let files = if changed.is_empty() { "没改新的文件".to_string() } else { format!("改了：{}", changed.join("、")) };
-        let report = if report.trim().is_empty() { "（没写报告）".to_string() } else { super::tools::clip_bytes(report.trim(), 12_000).to_string() };
-        (status, format!("子任务（{label}）{word}；{files}。\n它的报告：\n{report}"), None, vec![])
+        let mut names: Vec<&'static str> = tools::for_model(kind.tools(), &member.model_id);
+        names.retain(|n| !self.config.context.project.tools_off.iter().any(|t| t == n));
+        if kind == Kind::Searcher {
+            child.pick_search(&mut names);
+        }
+        // 挂在「派 explorer：…」那一步下面的一行：类型和模型（要做什么在那一步的标题里）。
+        let title = format!("{} · {}", kind.id(), super::run::model_label(&member.model_id));
+        self.emit(EventBody::SubagentStarted { subagent_id: call_id.to_string(), parent_call_id: Some(call_id.to_string()), title, model: Some(member.model_id.clone()), kind: Some(kind.id().into()) });
+        let before: HashSet<String> = self.ctx.diff_summary().into_iter().map(|f| f.path).collect();
+        let (pool, sink, ctx, run_id, call) = (self.pool.clone(), self.sink.clone(), self.ctx.clone(), self.task.run_id.clone(), call_id.to_string());
+        let slots = member.slots.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            // worker、auditor 一个一个来；explorer、searcher 最多同时设置里那几个。排着队的时候被叫停，轮到了也马上收尾。
+            let permit = slots.acquire_owned().await.ok();
+            let end = child_rounds(&mut child, &names).await;
+            drop(permit);
+            crate::gateway::runner::unregister_sub_control(&run_id, &prefix);
+            let text = child
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == Role::Assistant && m.parts.iter().any(|p| matches!(p, Part::Text { text } if !text.trim().is_empty())))
+                .map(|m| m.parts.iter().filter_map(|p| if let Part::Text { text } = p { Some(text.as_str()) } else { None }).collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default();
+            let status = match end.reason {
+                TurnEndReason::Done => ToolStatus::Ok,
+                TurnEndReason::Interrupted => ToolStatus::Cancelled,
+                _ => ToolStatus::Failed,
+            };
+            let changed: Vec<String> = ctx.diff_summary().into_iter().map(|f| f.path).filter(|p| !before.contains(p)).collect();
+            let verdict = (kind == Kind::Auditor).then(|| agents::verdict_of(&text)).flatten();
+            sink.emit(EventBody::SubagentCompleted { subagent_id: call.clone(), status });
+            if !changed.is_empty() {
+                sink.emit(EventBody::DiffUpdated { files: ctx.diff_summary() });
+            }
+            let summary = match (status, &end.error) {
+                (ToolStatus::Ok, _) => text.lines().find(|l| !l.trim().is_empty()).map(|l| l.chars().take(200).collect::<String>()).unwrap_or_else(|| "做完了。".into()),
+                (ToolStatus::Cancelled, _) => "被停下了。".into(),
+                (_, Some(e)) => format!("没做完：{e}"),
+                _ => "没做完。".into(),
+            };
+            sink.emit(EventBody::ToolCallCompleted { call_id: call.clone(), status, output: Some(summary), exit_code: None, diff: vec![], duration_ms: Some(started.elapsed().as_millis() as u64) });
+            let text = match (status, &end.error) {
+                (ToolStatus::Ok, _) => text,
+                (_, Some(e)) => format!("{text}\n(stopped: {e})"),
+                _ => text,
+            };
+            pool.finish(&batch, index, agents::Report { call_id: call, kind, status, text, changed, verdict, cost_usd: child.cost_usd });
+        });
+        let wait = if self.batch.as_ref().is_some_and(|(_, next)| *next > 1) { "这一批" } else { "它" };
+        (ToolStatus::Ok, format!("已派出 {} {call_id}，在后台跑。{wait}做完以后报告会一起放进对话，不用查；接着做别的，没别的可做就结束这一段回答等着。", kind.id()), None, vec![])
     }
 
     /// 给模型的 MCP 工具（PLAN 只给标了只读的）。
@@ -1855,6 +2146,64 @@ impl Run {
 }
 
 /// 存对话前把图换成一句话（图很大，下一句也不用再看一遍）。
+/// 能和别的只读工具同时跑的一个要的东西（v1.1.2）：都带着，不碰 `Run`。
+#[derive(Clone)]
+struct ReadKit {
+    ctx: Arc<ToolContext>,
+    skills: Vec<crate::skills::SkillInfo>,
+    history: Option<HistoryProbe>,
+    web: Vec<search::Backend>,
+    cancel: watch::Receiver<bool>,
+}
+
+/// 跑一个只读工具（同时跑的那一批用）：结果和联网搜索的费用（主线记账）。
+async fn read_job(kit: ReadKit, name: String, input: Value) -> (ToolStatus, String, Option<f64>) {
+    match name.as_str() {
+        tools::WEB_SEARCH => web_search_job(kit.web, input, kit.cancel).await,
+        tools::LOAD_SKILL => {
+            let skill = input.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            let file = input.get("file").and_then(Value::as_str).map(str::to_string);
+            match crate::skills::load(&kit.skills, &skill, file.as_deref()) {
+                Ok(text) => (ToolStatus::Ok, text, None),
+                Err(e) => (ToolStatus::Failed, e, None),
+            }
+        }
+        tools::SEARCH_TASKS => {
+            let Some(probe) = kit.history else { return (ToolStatus::Failed, "这里读不到任务记录。".into(), None) };
+            let query = input.get("query").and_then(Value::as_str).map(str::to_string).filter(|q| !q.trim().is_empty());
+            let number = tools::u64_arg(&input, "number");
+            match tokio::task::spawn_blocking(move || probe(query, number)).await {
+                Ok(Ok(text)) => (ToolStatus::Ok, text, None),
+                Ok(Err(e)) => (ToolStatus::Failed, e, None),
+                Err(_) => (ToolStatus::Failed, "读任务记录出错了。".into(), None),
+            }
+        }
+        _ => {
+            let r = tokio::task::spawn_blocking(move || tools::run_sync(&kit.ctx, &name, &input)).await.unwrap_or_else(|_| tools::ToolResult::err("工具出错了。"));
+            (if r.ok { ToolStatus::Ok } else { ToolStatus::Failed }, r.text, None)
+        }
+    }
+}
+
+/// Peck 的 `web_search` 搜一次：按顺序试，搜成了带上这一次的费用。
+async fn web_search_job(backends: Vec<search::Backend>, input: Value, mut cancel: watch::Receiver<bool>) -> (ToolStatus, String, Option<f64>) {
+    let query = match search::Query::from_input(&input) {
+        Ok(q) => q,
+        Err(e) => return (ToolStatus::Failed, e, None),
+    };
+    if backends.is_empty() {
+        return (ToolStatus::Denied, "这个任务没有能用的联网搜索。".into(), None);
+    }
+    let found = tokio::select! {
+        r = search::search(&backends, &query) => r,
+        _ = cancel.wait_for(|c| *c) => return (ToolStatus::Failed, "已停止。".into(), None),
+    };
+    match found {
+        Ok(found) => (ToolStatus::Ok, found.text(), search::fee(found.via)),
+        Err(e) => (ToolStatus::Failed, format!("没搜成：{e}"), None),
+    }
+}
+
 pub fn without_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
@@ -1955,7 +2304,7 @@ mod tests {
             env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
             session_ref: Some("peck-s1".into()),
             context: ContextConfig::default(),
-            delegate: None,
+            team: None,
             brief: None,
             extras: None,
             stop_ask: None,
@@ -1963,9 +2312,9 @@ mod tests {
             mcp: vec![],
             mcp_slot: None,
             mcp_seen: None,
-            delegations_used: 0,
             subtask: None,
             search: Default::default(),
+            hooks: None,
         }
     }
 
@@ -2509,68 +2858,196 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn delegation_limit_counts_the_whole_task_not_each_sentence() {
-        let p = TempProject::new();
-        let parent = Arc::new(ScriptedModel::new(
-            "deepseek/deepseek-flash",
-            vec![turn("", vec![("delegate_task", json!({"task": "随便做点什么"}))]), turn("那我自己做。", vec![])],
-            Duration::ZERO,
-        ));
-        let child = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![], Duration::ZERO));
-        let child_requests = child.requests.clone();
-        let mut cfg = config(&p, "deepseek/deepseek-flash");
-        cfg.delegate = Some(Delegate { model_id: "deepseek/deepseek-flash".into(), provider: child, rounds: DEFAULT_SUB_ROUNDS });
-        // 这个任务前几句已经委派了 6 次：这一句一次都不能再委派。
-        cfg.delegations_used = MAX_DELEGATIONS;
-        let backend = PeckBackend::new(parent, cfg, vec![]);
-        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "再分一个出去"), |_| None).await;
-        assert_eq!(outcome.reason, TurnEndReason::Done);
-        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { status: ToolStatus::Failed, output: Some(o), .. } if o.contains("最多委派"))));
-        assert!(child_requests.lock().unwrap().is_empty(), "子任务没起");
+    /// 一个任务的子代理名单（测试用）：每类一个假模型。
+    fn team(members: Vec<(Kind, Arc<ScriptedModel>)>) -> Arc<agents::Team> {
+        let none = std::collections::HashMap::new();
+        Arc::new(agents::Team { members: members.into_iter().map(|(k, p)| agents::member(k, "deepseek/deepseek-flash".into(), p, &agents::KindSettings::default(), &none)).collect() })
+    }
+
+    fn texts(requests: &[ModelRequest], i: usize) -> String {
+        serde_json::to_string(&requests[i].messages).unwrap()
     }
 
     #[tokio::test]
-    async fn delegated_subtasks_run_on_the_cheaper_model_and_report_back() {
+    async fn subagents_run_in_the_background_and_a_batch_wakes_the_main_once() {
         let p = TempProject::new();
         p.write("a.txt", "一\n");
-        let parent = Arc::new(ScriptedModel::new(
+        let main = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
             vec![
-                turn("", vec![("delegate_task", json!({"task": "把 a.txt 改成「二」"}))]),
-                turn("子任务做完了。", vec![]),
+                turn("", vec![("spawn_agent", json!({"type": "explorer", "task": "a.txt 里写了什么"})), ("spawn_agent", json!({"type": "explorer", "task": "有没有 b.txt"}))]),
+                turn("派出去了，等报告。", vec![]),
+                turn("两份报告都看到了。", vec![]),
             ],
             Duration::ZERO,
         ));
-        let child = Arc::new(ScriptedModel::new(
-            "deepseek/deepseek-flash",
-            vec![
-                turn("", vec![("read_file", json!({"path": "a.txt"}))]),
-                turn("", vec![("write_file", json!({"path": "a.txt", "content": "二\n"}))]),
-                turn("改成二了。", vec![]),
-            ],
-            Duration::ZERO,
-        ));
-        let child_requests = child.requests.clone();
-        let parent_requests = parent.requests.clone();
+        // 子代理慢一点：主角色先说完，Peck 等这一批交齐再叫醒它。
+        let explorer = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("发现甲", vec![]), turn("发现乙", vec![])], Duration::from_millis(300)));
+        let (main_requests, sub_requests) = (main.requests.clone(), explorer.requests.clone());
         let mut cfg = config(&p, "deepseek/deepseek-flash");
-        cfg.delegate = Some(Delegate { model_id: "deepseek/deepseek-flash".into(), provider: child, rounds: DEFAULT_SUB_ROUNDS });
-        let backend = PeckBackend::new(parent, cfg, vec![]);
+        cfg.team = Some(team(vec![(Kind::Explorer, explorer), (Kind::Worker, Arc::new(ScriptedModel::new("x", vec![], Duration::ZERO)))]));
+        let backend = PeckBackend::new(main, cfg, vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Plan, "看看项目"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        let sent = main_requests.lock().unwrap().clone();
+        assert_eq!(sent.len(), 3, "派、先说完、被报告叫醒一次");
+        assert!(!texts(&sent, 1).contains("agent-reports"), "第二次请求时还没交齐");
+        let woke = texts(&sent, 2);
+        assert_eq!(woke.matches("<agent-reports>").count(), 1, "一批只叫醒一次");
+        assert!(woke.contains("发现甲") && woke.contains("发现乙"), "{woke}");
+        // 名单在 LOG（事件），PLAN 不给 worker；工具说明里不写是哪个模型。
+        let roster = events.iter().find_map(|e| match &e.body {
+            EventBody::AgentsRoster { members } => Some(members.iter().map(|m| m.role.clone()).collect::<Vec<_>>()),
+            _ => None,
+        });
+        assert_eq!(roster.unwrap(), ["main", "explorer"]);
+        let spawn = sent[0].tools.iter().find(|t| t.name == agents::SPAWN_AGENT).unwrap();
+        assert_eq!(spawn.input_schema["properties"]["type"]["enum"], json!(["explorer"]));
+        assert!(!spawn.description.contains("deepseek") && !sent[0].system[0].text.contains("deepseek"));
+        // 子代理：只读的工具，不能再派、不问站主；事件带 subagentId 和类型；派的那一步等它做完才算完。
+        let sub_tools: Vec<String> = sub_requests.lock().unwrap()[0].tools.iter().map(|t| t.name.clone()).collect();
+        assert!(sub_tools.contains(&"read_file".into()) && !sub_tools.iter().any(|t| t == "write_file" || t == "spawn_agent" || t == "ask_user"), "{sub_tools:?}");
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::SubagentStarted { kind: Some(k), .. } if k == "explorer")));
+        let spawn_call = match &events.iter().find(|e| matches!(&e.body, EventBody::ToolCallStarted { name, .. } if name == "spawn_agent")).unwrap().body {
+            EventBody::ToolCallStarted { call_id, .. } => call_id.clone(),
+            _ => unreachable!(),
+        };
+        let done_at = events.iter().position(|e| matches!(&e.body, EventBody::ToolCallCompleted { call_id, .. } if *call_id == spawn_call)).unwrap();
+        let sub_done = events.iter().position(|e| matches!(&e.body, EventBody::SubagentCompleted { subagent_id, .. } if *subagent_id == spawn_call)).unwrap();
+        assert!(sub_done < done_at);
+        assert_eq!(types(&events).iter().filter(|t| **t == "turn.completed").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_worker_changes_files_and_an_auditor_reviews_the_diff() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n");
+        let main = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![("spawn_agent", json!({"type": "worker", "task": "把 a.txt 改成「二」"}))]),
+                turn("", vec![]),
+                turn("", vec![("spawn_agent", json!({"type": "auditor", "task": "看看 a.txt 改对没有"}))]),
+                turn("", vec![]),
+                turn("改好也审过了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let worker = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![turn("", vec![("read_file", json!({"path": "a.txt"}))]), turn("", vec![("write_file", json!({"path": "a.txt", "content": "二\n"}))]), turn("改成二了。", vec![])],
+            Duration::from_millis(50),
+        ));
+        let auditor = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("看过了，没问题。\nVERDICT: PASS", vec![])], Duration::from_millis(50)));
+        let (main_requests, audit_requests) = (main.requests.clone(), auditor.requests.clone());
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.team = Some(team(vec![(Kind::Worker, worker), (Kind::Auditor, auditor)]));
+        let backend = PeckBackend::new(main, cfg, vec![]);
         let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "改 a"), |_| None).await;
         assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
         assert_eq!(p.read("a.txt"), "二\n");
-        // 子任务的事件带 subagentId，回合只收一次尾。
-        let sub: Vec<&AgentEvent> = events.iter().filter(|e| e.subagent_id.is_some()).collect();
-        assert!(sub.iter().any(|e| matches!(e.body, EventBody::ToolCallStarted { .. })));
-        assert!(!sub.iter().any(|e| matches!(e.body, EventBody::TurnCompleted { .. } | EventBody::SessionStarted { .. })));
-        assert!(types(&events).contains(&"subagent.started") && types(&events).contains(&"subagent.completed"));
-        assert_eq!(types(&events).iter().filter(|t| **t == "turn.completed").count(), 1);
-        // 子任务看不到 delegate_task、ask_user；主模型拿到子任务的报告和改了哪些文件。
-        let child_tools: Vec<String> = child_requests.lock().unwrap()[0].tools.iter().map(|t| t.name.clone()).collect();
-        assert!(!child_tools.contains(&"delegate_task".to_string()) && !child_tools.contains(&"ask_user".to_string()));
-        let back = serde_json::to_string(&parent_requests.lock().unwrap()[1].messages).unwrap();
-        assert!(back.contains("改成二了") && back.contains("a.txt"), "{back}");
-        assert!(parent_requests.lock().unwrap()[0].tools.iter().any(|t| t.name == "delegate_task"));
+        let audit = serde_json::to_string(&audit_requests.lock().unwrap()[0].messages).unwrap();
+        assert!(audit.contains("<peck-diff>") && audit.contains("+二"), "auditor 看得到改动：{audit}");
+        let sent = main_requests.lock().unwrap().clone();
+        let last = texts(&sent, sent.len() - 1);
+        assert!(last.contains("verdict=\\\"pass\\\"") && last.contains("changed: a.txt"), "{last}");
+        assert!(types(&events).contains(&"diff.updated"));
+    }
+
+    #[tokio::test]
+    async fn reads_in_one_reply_run_together_and_mixed_ones_in_order() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n").write("b.txt", "二\n").write("c.txt", "三\n");
+        let model = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![("read_file", json!({"path": "a.txt"})), ("read_file", json!({"path": "b.txt"})), ("search_text", json!({"pattern": "三"}))]),
+                turn("", vec![("read_file", json!({"path": "a.txt"})), ("write_file", json!({"path": "a.txt", "content": "四\n"}))]),
+                turn("好了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let requests = model.requests.clone();
+        let backend = PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "读三个"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        let seq: Vec<&str> = events.iter().filter_map(|e| match &e.body {
+            EventBody::ToolCallStarted { .. } => Some("start"),
+            EventBody::ToolCallCompleted { .. } => Some("done"),
+            _ => None,
+        }).collect();
+        assert_eq!(&seq[..6], ["start", "start", "start", "done", "done", "done"], "只读的一起开始");
+        assert_eq!(&seq[6..], ["start", "done", "start", "done"], "混进写文件的就按顺序");
+        // 结果按调用的顺序放回对话。
+        let back = serde_json::to_string(&requests.lock().unwrap()[1].messages).unwrap();
+        assert!(back.find("一").unwrap() < back.find("二").unwrap());
+        assert_eq!(p.read("a.txt"), "四\n");
+    }
+
+    #[tokio::test]
+    async fn the_same_call_with_the_same_result_is_flagged_then_wrapped_up() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n");
+        let again = || turn("", vec![("read_file", json!({"path": "a.txt"}))]);
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![again(), again(), again(), again(), again(), again()], Duration::ZERO));
+        let requests = model.requests.clone();
+        let backend = PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "读"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Limit);
+        let warns = events.iter().filter(|e| matches!(&e.body, EventBody::Notice { level: NoticeLevel::Warn, .. })).count();
+        assert_eq!(warns, 2, "第 3 次提醒、第 5 次要它收尾");
+        let sent = requests.lock().unwrap().clone();
+        assert_eq!(sent.len(), 6, "第 6 次回答还要工具：不跑、停下");
+        assert!(texts(&sent, 3).contains("3rd time") && texts(&sent, 5).contains("Stop now"));
+        assert!(matches!(&events.iter().rev().find(|e| matches!(e.body, EventBody::TurnCompleted { .. })).unwrap().body, EventBody::TurnCompleted { error: Some(e), .. } if e.contains("原地打转")));
+    }
+
+    #[tokio::test]
+    async fn project_hooks_run_at_each_moment_after_one_approval() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n");
+        let flag = p.dir.join(".stop-once");
+        p.write(
+            ".claude/settings.json",
+            &json!({"hooks": {
+                "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo 今天周一"}]}],
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo 不许跑命令 >&2; exit 2"}]}],
+                "PostToolUse": [{"matcher": "Read", "hooks": [{"type": "command", "command": "echo '{\"hookSpecificOutput\":{\"additionalContext\":\"读过了要记住\"}}'"}]}],
+                "Stop": [{"hooks": [{"type": "command", "command": format!("if [ -f {f} ]; then exit 0; fi; touch {f}; echo 还没写总结 >&2; exit 2", f = flag.display())}]}]
+            }})
+            .to_string(),
+        );
+        let model = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn("", vec![("bash_run", json!({"command": "ls"})), ("read_file", json!({"path": "a.txt"}))]),
+                turn("做完了。", vec![]),
+                turn("总结：读了 a.txt。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let requests = model.requests.clone();
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.hooks = Some(Arc::new(super::super::script_hooks::HookSet::load(&p.dir)));
+        let backend = PeckBackend::new(model, cfg, vec![]);
+        let mut asked = 0;
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "看看"), |e| match e {
+            EventBody::ApprovalRequested { request_id, title, .. } if title.contains("Hook") => {
+                asked += 1;
+                Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::AllowOnce })
+            }
+            _ => None,
+        })
+        .await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        assert_eq!(asked, 4, "每条命令问一次（收尾那条拦了一次、第二次不再问）");
+        let sent = requests.lock().unwrap().clone();
+        assert!(texts(&sent, 0).contains("今天周一"), "发话时的 stdout 当补充上下文");
+        let second = texts(&sent, 1);
+        assert!(second.contains("Hook 拦下了这一步") && second.contains("不许跑命令"), "{second}");
+        assert!(second.contains("读过了要记住"), "调工具后的补充接在结果后面");
+        assert!(texts(&sent, 2).contains("还没写总结"), "收尾时拦下：原因交给它接着干");
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::HookRan { text, .. } if text.contains("拦下了"))));
     }
 
     #[tokio::test]

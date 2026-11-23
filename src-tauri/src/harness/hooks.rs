@@ -87,7 +87,7 @@ pub fn commit(hook: &StopHook, cwd: &Path, files: &[String], answer: Option<&str
         Ok(done) => (true, format!("{} 提交了 {}：{}（{} 个文件，没有 push）", hook.plugin, done.hash, done.message, done.files)),
         Err(why) => (false, format!("{} 没提交：{why}", hook.plugin)),
     };
-    EventBody::HookRan { plugin: hook.plugin.clone(), action: git::GIT_COMMIT.into(), ok, text }
+    EventBody::HookRan { plugin: hook.plugin.clone(), action: git::GIT_COMMIT.into(), ok, text, event: None }
 }
 
 /// 任务收尾（快照拍完以后）：这一轮该提交，就去拿提交说明（`answer`，只在要提交时才叫）、提交。给回要发的 `hook.ran`。
@@ -147,7 +147,7 @@ mod tests {
 
     fn said(body: EventBody) -> (bool, String) {
         match body {
-            EventBody::HookRan { ok, text, plugin, action } if plugin == "Git Plan" && action == "git_commit" => (ok, text),
+            EventBody::HookRan { ok, text, plugin, action, .. } if plugin == "Git Plan" && action == "git_commit" => (ok, text),
             other => panic!("{other:?}"),
         }
     }

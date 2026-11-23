@@ -283,13 +283,6 @@ export const ipc = {
     channel.onmessage = onEvent;
     return invoke<string>("harness_run_start", { ...args, channel });
   },
-  /** PLOOP（v1.1.1，以前的接力）：写规范（planBy）和 / 或审查（reviewBy），who 是实施的那一个；都是 API 模型。一个任务、一条事件流。 */
-  async teamRunStart(args: TeamRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
-    if (isMockMode()) return mockIpc.teamRunStart(args, onEvent);
-    const channel = new Channel<AgentEvent>();
-    channel.onmessage = onEvent;
-    return invoke<string>("team_run_start", { ...args, channel });
-  },
   /** 外部 MCP 服务器（v0.8，设置里配）。 */
   async mcpServersGet(): Promise<McpServerConfig[]> {
     if (isMockMode()) return mockIpc.mcpServersGet();
@@ -494,8 +487,6 @@ export interface HarnessRunArgs {
   costCap?: number | null;
   /** 在独立工作区（git worktree）里做（v0.7）。 */
   worktree?: boolean;
-  /** 委派（v0.8）：子任务交给这个 API 模型（api:…）。 */
-  delegate?: string;
   /** 这一句附的图（v0.8）。 */
   images?: ImageInput[];
 }
@@ -515,10 +506,6 @@ export interface Schedule {
   who: string;
   model?: string | null;
   effort?: string | null;
-  /** 设的时候 AGENTS 里选了接力、审查、委派才有。 */
-  planBy?: TeamPick | null;
-  reviewBy?: TeamPick | null;
-  delegate?: string | null;
   permission: Permission;
   when: ScheduleWhen;
   offsetMin: number;
@@ -541,27 +528,6 @@ export interface ScheduleEvent { runId: string; workspaceId: string; sessionId: 
 export interface ImageInput {
   mediaType: string;
   data: string;
-}
-
-/** PLOOP 里的一个人：一个 API 模型和它的思考强度。 */
-export interface TeamPick {
-  who: string;
-  effort?: string;
-}
-
-export interface TeamRunArgs {
-  sessionId: string;
-  prompt: string;
-  /** 实施的那一个（api:…）。 */
-  who: string;
-  permission?: Permission;
-  effort?: string;
-  costCap?: number | null;
-  worktree?: boolean;
-  delegate?: string;
-  planBy?: TeamPick;
-  reviewBy?: TeamPick;
-  images?: ImageInput[];
 }
 
 export interface McpServerConfig {

@@ -360,7 +360,9 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         break;
       }
       case "hook.ran":
-        view.hooks.push({ ok: e.ok, text: e.text });
+        // 脚本 Hook（v1.1.2）写在过程里当时那一处；收尾提交的写在 recap 里。
+        if (e.event) view.items.push({ kind: "notice", id: `h-${e.seq}`, level: e.ok ? "info" : "warn", text: `Hook ${e.action}（${e.plugin}）：${e.text}` });
+        else view.hooks.push({ ok: e.ok, text: e.text });
         break;
       case "skill.reviewed": {
         const skill = skills.get(e.proposalId);
@@ -500,7 +502,7 @@ function activity(c: ToolView): string {
   if (n === "load_skill") return "skill";
   if (n === "screenshot_app") return "shot";
   if (n === "list_directory") return "list";
-  if (c.sub || /delegate_task$/.test(n) || n === "task" || n === "agent") return "agent";
+  if (c.sub || /delegate_task$/.test(n) || n === "spawn_agent" || n === "task" || n === "agent") return "agent";
   if (n === "update_plan" || /todo/.test(n)) return "plan";
   if (/ask_user$/.test(n)) return "ask";
   if (n === "memory") return "note";
@@ -597,6 +599,7 @@ const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^截 (.*) 的窗口$/s, "Screenshot $1"],
   [/^更新任务清单$/, "Update plan"],
   [/^交给子任务[：:]\s*(.*)$/s, "Delegate: $1"],
+  [/^派 (\w+)[：:]\s*(.*)$/s, "Spawn $1: $2"],
   [/^交给子任务$/, "Delegate"],
   [/^子任务 (.*)$/s, "Subagent: $1"],
   [/^子任务$/, "Subagent"],

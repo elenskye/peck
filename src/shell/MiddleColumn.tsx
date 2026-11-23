@@ -3,7 +3,7 @@ import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
-import type { AppSettings } from "@/lib/settings";
+import { SUBAGENT_KINDS, type AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
 import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath, type DotKind } from "@/lib/utils";
@@ -13,7 +13,7 @@ import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { dayClock, scheduleWhen } from "@/lib/schedules";
-import { PLOOP_ID, cliModelOf, pickable, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
+import { PLOOP_ID, cliModelOf, pickable, ploopMain, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
 
 interface Props {
   project: ProjectOverview;
@@ -89,10 +89,10 @@ const QuotaLine: React.FC<{ quota: QuotaBar }> = ({ quota: { hint, swapped, onOn
   </div>
 );
 
-/** 选中的「谁来干」：记住的那个还能用就用它，不然列表里第一个。 */
+/** 选中的「谁来干」：记住的那个（CLI 或 PLOOP）还能用就用它，不然 PLOOP，再不然列表里第一个。v1.1.2 起没有 API 单干。 */
 export function chosenEntry(entries: ModelEntry[], settings: AppSettings): ModelEntry | null {
   const list = pickable(entries);
-  return list.find((e) => e.id === settings.pick) ?? list.find((e) => e.group === "peck") ?? list[0] ?? null;
+  return list.find((e) => e.id === settings.pick && e.group !== "peck") ?? list.find((e) => e.id === PLOOP_ID) ?? list.find((e) => e.group === "cli") ?? null;
 }
 
 /** 一项怎么干（NEW TASK 上的一行）。 */
@@ -109,19 +109,15 @@ function describeOne(entry: ModelEntry): { name: string; dot: DotKind; does: str
   };
 }
 
-/** 选了谁，NEW TASK 上写它怎么干：PLOOP 一格一行（写规范、实施、审查、委派，开了的才写）。 */
+/** 选了谁，NEW TASK 上写它怎么干：PLOOP 一行主角色、一行子代理（开着的几类）。 */
 function describe(entry: ModelEntry, entries: ModelEntry[], settings: AppSettings): Array<{ name: string; dot: DotKind; does: string; model?: string }> {
-  const find = (id?: string) => (id ? entries.find((e) => e.id === id) : undefined);
-  const out: Array<{ name: string; dot: DotKind; does: string; model?: string }> = [];
   if (entry.id !== PLOOP_ID) return [describeOne(entry)];
-  const spec = find(settings.ploop.spec);
-  const builder = find(settings.ploop.build);
-  if (spec) out.push({ ...describeOne(spec), does: "先只读地看项目，写一份实施规范（带验收标准）交给实施的那一个。" });
-  out.push(builder ? { ...describeOne(builder), does: spec ? `照规范动手改。${describeOne(builder).does}` : describeOne(builder).does } : { name: "实施的", dot: "", does: "在 AGENTS 里选一个。" });
-  const reviewer = find(settings.review);
-  if (reviewer) out.push({ ...describeOne(reviewer), does: "做完以后只读地看这次的 Diff；说要改就交回实施的那一个修一次（PLAN 不审查）。" });
-  const sub = find(settings.delegate);
-  if (sub) out.push({ name: `委派 · ${sub.label}`, dot: "api", does: "写得清楚的子任务交给它（同样的工具和权限），一个任务最多 6 次。" });
+  const main = ploopMain(entries, settings);
+  const out: Array<{ name: string; dot: DotKind; does: string; model?: string }> = [
+    main ? { ...describeOne(main), name: `主角色 · ${main.label}` } : { name: "主角色", dot: "", does: "在 AGENTS 里选一个 API 模型。" },
+  ];
+  const kinds = SUBAGENT_KINDS.filter((k) => !settings.subagents[k.id]?.off);
+  if (kinds.length) out.push({ name: `子代理 · ${kinds.map((k) => k.id).join("、")}`, dot: "api", does: "主角色需要时派出去，在后台跑：同一次派的一批都做完，报告一起交回来。每类的模型、强度、轮数在设置 → AGENTS（PLAN 不派 worker）。" });
   return out;
 }
 
@@ -434,9 +430,8 @@ const Composer: React.FC<Props & {
       case "review": {
         const last = lastChanged(runs);
         if (!last) { say("这个任务还没有改过文件（或者都撤销了），没什么可审的"); return; }
-        // 用现在这个审（换个引擎再 /review 就是别家来审）；PLOOP 用它的审查，没开审查用实施的那一个。
-        const ploopPick = (id: string) => entries.find((e) => e.id === id && e.group === "peck" && e.available !== false) ?? null;
-        const pick = who?.id === PLOOP_ID ? ploopPick(settings.review) ?? ploopPick(settings.ploop.build ?? "") : who;
+        // 用现在这个审（换个引擎再 /review 就是别家来审）；PLOOP 用主角色（它还能派 auditor）。
+        const pick = who?.id === PLOOP_ID ? ploopMain(entries, settings) : who;
         if (!pick) return;
         const ok = await onSend(reviewPrompt(last.run, last.index), pick.id, "plan", sendEffort(pick, settings), cliModelOf(pick, settings));
         if (ok) say(`${pick.label} 在审（PLAN，只读）`);

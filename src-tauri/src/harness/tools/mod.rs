@@ -31,8 +31,6 @@ pub const ASK_USER: &str = "ask_user";
 pub const MEMORY: &str = "memory";
 pub const SEARCH_TASKS: &str = "search_tasks";
 pub const BASH_BACKGROUND: &str = "bash_background";
-/// 委派（v0.8）：只在发任务时选了「委派给」才给。
-pub const DELEGATE_TASK: &str = "delegate_task";
 /// V4A 补丁（v0.8）：GPT（OpenAI 的线协议）用它代替 `write_patch`。
 pub const APPLY_PATCH: &str = "apply_patch";
 /// 截一个 App 的窗口（v0.8，只在 Mac 上、只给能看图的模型）。
@@ -45,7 +43,10 @@ pub const CREATE_SKILL: &str = "create_skill";
 /// 两样都没配的不给。只读，哪一档、ONE SHOT 都有。
 pub const WEB_SEARCH: &str = "web_search";
 
-pub const ALL: [&str; 16] = [
+/// 一次回答里要的工具全是这些（加上派子代理）就同时跑（v1.1.2）：都只读、不弹卡片。混进别的就按顺序。
+pub const PARALLEL_SAFE: [&str; 7] = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, LOAD_SKILL, SEARCH_TASKS, WEB_SEARCH];
+
+pub const ALL: [&str; 15] = [
     LIST_DIRECTORY,
     READ_FILE,
     SEARCH_TEXT,
@@ -58,7 +59,6 @@ pub const ALL: [&str; 16] = [
     ASK_USER,
     MEMORY,
     SEARCH_TASKS,
-    DELEGATE_TASK,
     APPLY_PATCH,
     SCREENSHOT_APP,
     WEB_SEARCH,
@@ -348,6 +348,7 @@ pub fn kind_of(name: &str) -> ToolKind {
         WRITE_FILE | WRITE_PATCH | APPLY_PATCH => ToolKind::Edit,
         BASH_RUN | BASH_BACKGROUND => ToolKind::Run,
         WEB_SEARCH => ToolKind::Fetch,
+        super::agents::SPAWN_AGENT => ToolKind::Other,
         n if n.starts_with("mcp__") => ToolKind::Mcp,
         _ => ToolKind::Other,
     }
@@ -400,7 +401,7 @@ pub fn title_of(name: &str, input: &Value) -> String {
             _ => "看后台命令".into(),
         },
         UPDATE_PLAN => "更新任务清单".into(),
-        DELEGATE_TASK => format!("交给子任务：{}", short(s("task"))),
+        super::agents::SPAWN_AGENT => super::agents::title(&s("type"), &s("task")),
         SCREENSHOT_APP => format!("截 {} 的窗口", s("app")),
         LOAD_SKILL => match s("file") {
             f if !f.is_empty() => format!("读 Skill {} 的 {f}", s("name")),
@@ -453,7 +454,7 @@ pub fn names_for(level: PermissionLevel, oneshot: bool) -> Vec<&'static str> {
             v.extend([BASH_BACKGROUND, UPDATE_PLAN, ASK_USER, MEMORY, SCREENSHOT_APP]);
             v
         }
-        PermissionLevel::Edit | PermissionLevel::Auto => ALL.iter().copied().filter(|n| *n != DELEGATE_TASK && *n != APPLY_PATCH).collect(),
+        PermissionLevel::Edit | PermissionLevel::Auto => ALL.iter().copied().filter(|n| *n != APPLY_PATCH).collect(),
     }
 }
 
@@ -615,12 +616,6 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "app":{"type":"string"},
                 "window":{"type":"string"}
             },"required":["app"]}),
-        ),
-        DELEGATE_TASK => (
-            "Hand one self-contained subtask to a cheaper sub-agent model with the same tools and permission, and wait for its report. Give a complete instruction: the goal, the files involved, constraints, and how to check the result. It returns the sub-agent's report and the files it changed; review them before relying on them. At most 6 per task.",
-            json!({"type":"object","properties":{
-                "task":{"type":"string","description":"The full instruction for the sub-agent."}
-            },"required":["task"]}),
         ),
         ASK_USER => (
             "Ask the user a question and wait for the answer. Use only when you cannot proceed without their decision.",

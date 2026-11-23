@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { api, type ApiConfig, type ApiMode, type ApiStatus } from "@/lib/api";
 import { ipc, isMockMode, type AllowRule, type McpServerConfig, type McpToolInfo, type PriceBook, type PriceRow, type PriceView } from "@/lib/ipc";
-import type { AppSettings } from "@/lib/settings";
+import { SUBAGENT_KINDS, type AppSettings, type SubagentKind, type SubagentSettings } from "@/lib/settings";
 import type { ThemeChoice } from "@/lib/theme";
 import type { CliAccount, CliAccountStatus, CliLoginState, EngineAccounts, GatewayConfig, ModelEntry } from "@/lib/agentEvents";
 import type { Permission, ProjectOverview } from "@/lib/types";
 import { PERMISSIONS, ago, cn, copyText, engineDot, plainLine, ruleWord, shortenHomePath, versionNumber } from "@/lib/utils";
 import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
 import { ModelChip } from "@/shell/AgentsPanel";
-import { PLOOP_ID, ploopable } from "@/shell/ModelPicker";
+import { EffortPicker, defaultEffort, ploopMain, ploopable } from "@/shell/ModelPicker";
 import { PluginsSettings } from "@/shell/Plugins";
 
 /** 设置的分组（v0.10 Refine：只写英文；DEV、NOTIFY、LIMIT 并成 GENERAL，新加 AGENTS、QUOTA）。 */
@@ -232,9 +232,6 @@ const General: React.FC<Props> = ({ settings, onSettings, apiStatus, onRefreshAp
       </Row>
       <Row name="ONE SHOT 最多几轮">
         <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="ONE SHOT 最多几轮" min={5} max={400} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} /></Num>
-      </Row>
-      <Row name="子任务最多几轮">
-        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="委派的子任务最多几轮" min={5} max={400} value={settings.subRounds ?? 24} onCommit={(v) => onSettings({ subRounds: v })} /></Num>
       </Row>
       <Row name="额度提醒" off={settings.quotaWarn == null}>
         <Switch label="额度提醒" on={settings.quotaWarn != null} onChange={(on) => onSettings({ quotaWarn: on ? 85 : null })} />
@@ -629,16 +626,49 @@ const Keys: React.FC = () => (
   </div>
 );
 
-// ---------- AGENTS：PLOOP 的委派（站主 11-17：从左栏挪过来；v1.1.1 预设去掉了） ----------
+// ---------- AGENTS：PLOOP 的主角色和四类子代理（v1.1.2；每个模型的思考强度也在这里调） ----------
 
 const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries }) => {
   const apis = ploopable(entries);
+  const main = ploopMain(entries, settings);
+  const effort = (e: ModelEntry | null) => (
+    <EffortPicker entry={e} value={e ? settings.efforts[e.id] ?? defaultEffort(e) : ""} up={false} onChange={(v) => e && onSettings({ efforts: { ...settings.efforts, [e.id]: v } })} />
+  );
+  const patch = (kind: SubagentKind, next: Partial<SubagentSettings>) => onSettings({ subagents: { ...settings.subagents, [kind]: { ...settings.subagents[kind], ...next } } });
   return (
-    <div className="set-rows">
-      <Row name="委派" off={!settings.delegate} desc={settings.delegate && settings.pick !== PLOOP_ID ? "只在 PLOOP 里委派" : undefined}>
-        <ModelChip label="委派给谁" entries={apis} value={apis.some((e) => e.id === settings.delegate) ? settings.delegate : ""} off="OFF" onChange={(delegate) => onSettings({ delegate })} />
-      </Row>
-    </div>
+    <>
+      <div className="set-rows">
+        <Row name="主角色">
+          <ModelChip label="PLOOP 的主角色" entries={apis} value={main?.id ?? ""} onChange={(id) => onSettings({ ploop: { ...settings.ploop, main: id } })} />
+          {effort(main)}
+        </Row>
+      </div>
+      <p className="lbl">SUBAGENTS</p>
+      <div className="set-rows">
+        {SUBAGENT_KINDS.map((k) => {
+          const s = settings.subagents[k.id] ?? {};
+          const chosen = apis.find((e) => e.id === s.model) ?? null;
+          return (
+            <div key={k.id} className="set-block">
+              <Row name={k.id} off={!!s.off} desc={k.does}>
+                <Switch label={`${k.id} 开着`} on={!s.off} onChange={(on) => patch(k.id, { off: !on })} />
+              </Row>
+              <div className="set-inline">
+                <ModelChip label={`${k.id} 用哪个模型`} entries={apis} value={chosen?.id ?? ""} off="跟主角色" disabled={!!s.off} onChange={(id) => patch(k.id, { model: id })} />
+                {effort(chosen ?? main)}
+                <Num post="轮"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 最多几轮`} min={5} max={400} off={!!s.off} value={s.rounds ?? 24} onCommit={(v) => patch(k.id, { rounds: v })} /></Num>
+                {k.parallel && (
+                  <>
+                    <span className="set-word">同时</span>
+                    <Num post="个"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 同时最多几个`} min={1} max={8} off={!!s.off} value={s.parallel ?? 3} onCommit={(v) => patch(k.id, { parallel: v })} /></Num>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 };
 

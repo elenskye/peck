@@ -325,26 +325,6 @@ impl ShadowRepo {
     }
 
     /// Read the content of `file_path` at `tree_id` from the bare repo, falling back to the worktree file.
-    /// 两棵树之间的整份 Diff（统一格式；审查用）。超过 `limit` 字节截掉，写明截了。
-    pub fn diff_text(&self, tree_before: &str, tree_after: &str, limit: usize) -> String {
-        let out = self
-            .git_cmd()
-            .args(["diff", "--no-color", "--no-ext-diff", "--no-renames", tree_before, tree_after])
-            .output();
-        let text = match out {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-            _ => return String::new(),
-        };
-        if text.len() <= limit {
-            return text;
-        }
-        let mut end = limit;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}\n…（Diff 太长，后面 {} 字节没放进来；要看就读文件）", &text[..end], text.len() - end)
-    }
-
     pub fn read_file_at_tree(&self, tree_id: &str, file_path: &str) -> Option<String> {
         if !tree_id.is_empty() && !file_path.is_empty() {
             let spec = format!("{tree_id}:{file_path}");

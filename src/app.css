@@ -147,7 +147,7 @@ body { overflow: hidden; }
 .agents-row .pk-seg > button { flex: 1 1 auto; min-width: 0; padding: 0 var(--space-3); }
 .agents-list { display: flex; flex-direction: column; gap: 2px; }
 .agents-list .pk-menu-item b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.agents-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: var(--space-4); }
+.agents-row { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: var(--space-4); }
 .agents-k { font-family: var(--font-name); font-size: var(--text-name); line-height: 18px; color: var(--color-text-3); }
 .agents-row .menu-anchor { display: block; min-width: 0; }
 .agents-row .pk-chip { width: 100%; }
@@ -167,6 +167,9 @@ body { overflow: hidden; }
 .log-t { font-family: var(--font-dots); font-weight: 900; font-size: var(--text-label); line-height: var(--leading-name); color: var(--color-text-3); }
 .log b { display: block; }
 .log-n { display: block; font-size: var(--text-small); color: var(--color-text-2); }
+/* PLOOP 的成员名单（v1.1.2）：在 LOG 时间线上面，名字列宽一点（EXPLORER 这类）。 */
+.log-roster { margin-bottom: var(--space-5); padding-bottom: var(--space-4); border-bottom: 1px dotted var(--color-line-strong); }
+.log-roster li { grid-template-columns: 72px minmax(0, 1fr); }
 
 /* ---------- 中栏：新任务、对话、输入位 ---------- */
 .home { gap: var(--space-6); }
@@ -316,6 +319,7 @@ body { overflow: hidden; }
 .set-num { display: inline-flex; align-items: center; gap: var(--space-3); }
 .set-unit { flex: none; width: 16px; font-size: var(--text-small); color: var(--color-text-3); }
 .set-unit:first-child { text-align: right; }
+.set-inline .set-word { font-size: var(--text-small); color: var(--color-text-3); }
 .set-meter { flex: 0 1 240px; min-width: 60px; height: 10px; margin-right: calc(16px + var(--space-3)); order: 2; }
 /* 「这个月花了」那一行：名字短，进度条那边让出来能缩（设置页放大后窗口窄时不撑出横向滚动）。 */
 .set-row:has(.set-meter) { grid-template-columns: auto minmax(0, 1fr); }

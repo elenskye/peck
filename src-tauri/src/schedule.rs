@@ -11,7 +11,6 @@
 //!   弹一张卡片（RUN NOW / SKIP）。重复的任务错过多次也只记最近的那一次。只跑一次的任务跑完、跳过就删掉。
 
 use crate::gateway::event::AgentEvent;
-use crate::harness::team::TeamPick;
 use crate::state::AppState;
 use crate::store::{now_ms, Store, StoreResult};
 use rusqlite::params;
@@ -43,7 +42,8 @@ pub enum When {
     Interval { hours: u32 },
 }
 
-/// 谁来干的那一套：实施的（`api:…` / `cli:…`）、CLI 里的模型、思考强度，加上接力、审查、委派。
+/// 谁来干的那一套：`api:…`（PLOOP 的主角色，子代理照设置 → AGENTS）或 `cli:…`、CLI 里的模型、思考强度。
+/// 以前记的接力、审查、委派（v1.1.2 前）读的时候丢掉。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Setup {
@@ -52,12 +52,6 @@ pub struct Setup {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
-    #[serde(default)]
-    pub plan_by: Option<TeamPick>,
-    #[serde(default)]
-    pub review_by: Option<TeamPick>,
-    #[serde(default)]
-    pub delegate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -74,13 +68,6 @@ pub struct Schedule {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
-    /// 接力里写规范的、审查的、委派给谁（设的时候 AGENTS 里选了才有）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan_by: Option<TeamPick>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_by: Option<TeamPick>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delegate: Option<String>,
     /// `plan` / `edit` / `auto`。
     pub permission: String,
     pub when: When,
@@ -193,27 +180,16 @@ impl Schedule {
         if self.title.is_empty() {
             self.title = self.prompt.chars().take(30).collect();
         }
-        // PLOOP（v1.1.1）只用 API 模型：写规范、审查的只能是 API 模型。
-        for who in [self.plan_by.as_ref().map(|p| &p.who), self.review_by.as_ref().map(|p| &p.who)].into_iter().flatten() {
-            if !who.starts_with("api:") {
-                return Err("PLOOP 只用 API 模型：写规范、审查的选 API 模型。".into());
-            }
+        if !self.who.starts_with("api:") && !self.who.starts_with("cli:") {
+            return Err("定时任务选 PLOOP 的一个 API 模型或一个 CLI。".into());
         }
-        for who in [Some(&self.who), self.plan_by.as_ref().map(|p| &p.who), self.review_by.as_ref().map(|p| &p.who)].into_iter().flatten() {
-            if !who.starts_with("api:") && !who.starts_with("cli:") {
-                return Err("定时任务选一个 API 模型或一个 CLI。".into());
-            }
-            if let Some(engine) = who.strip_prefix("cli:") {
-                if crate::gateway::caps::AgentCaps::for_engine(engine).direct_only {
-                    return Err("Antigravity 只做直接调用，不进定时任务。".into());
-                }
+        if let Some(engine) = self.who.strip_prefix("cli:") {
+            if crate::gateway::caps::AgentCaps::for_engine(engine).direct_only {
+                return Err("Antigravity 只做直接调用，不进定时任务。".into());
             }
         }
         if !matches!(self.permission.as_str(), "plan" | "edit" | "auto") {
             return Err("权限只有 PLAN、EDIT、AUTO 三档。".into());
-        }
-        if self.permission == "plan" && (self.plan_by.is_some() || self.review_by.is_some()) {
-            return Err("PLAN 只读：PLOOP 的写规范、审查要动手，权限选 EDIT 或 AUTO。".into());
         }
         let bad_time = |t: &str| parse_time(t).is_none().then(|| format!("时间写成 09:30 这样：{t}"));
         match &mut self.when {
@@ -257,7 +233,7 @@ impl Schedule {
 
     /// 谁来干的那一套。
     pub fn setup(&self) -> Setup {
-        Setup { who: self.who.clone(), model: self.model.clone(), effort: self.effort.clone(), plan_by: self.plan_by.clone(), review_by: self.review_by.clone(), delegate: self.delegate.clone() }
+        Setup { who: self.who.clone(), model: self.model.clone(), effort: self.effort.clone() }
     }
 
     /// `now` 之后的下一次（毫秒）；只跑一次的过了点就没有下一次。时区用 `offset_min`（调用前先 [`Schedule::retime`]）。
@@ -536,45 +512,14 @@ pub async fn fire(app: &tauri::AppHandle, schedule: &Schedule) -> Result<Fired, 
     Ok(fired)
 }
 
-/// 照这个定时任务记着的那一套起一个任务：有写规范或审查走 PLOOP，不然一个 API 模型或一个 CLI（CLI 不委派）。
+/// 照这个定时任务记着的起一个任务：`api:` 是 PLOOP（主角色 + 设置 → AGENTS 里的子代理），`cli:` 是一个 CLI。
+/// 以前记的接力、审查（v1.1.2 前）读的时候已经丢了，只跑记着的那一个。
 async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resume: Option<String>, out: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Result<String, String> {
-    use crate::harness::{run, team};
+    use crate::harness::run;
     let level = run::permission_of(Some(&schedule.permission))?;
-    // 委派的模型现在用不了（Key 删了）：不委派，照常跑。
-    let delegate = run::delegate_of(state, schedule.delegate.as_deref()).await.unwrap_or(None);
-    if schedule.plan_by.is_some() || schedule.review_by.is_some() {
-        let implement = team::member_of(state, &TeamPick { who: schedule.who.clone(), model: schedule.model.clone(), effort: schedule.effort.clone() }).await?;
-        let spec = match &schedule.plan_by {
-            Some(p) => Some(team::member_of(state, p).await?),
-            None => None,
-        };
-        let review = match &schedule.review_by {
-            Some(p) => Some(team::member_of(state, p).await?),
-            None => None,
-        };
-        return team::start_team_run(
-            team::TeamRun {
-                store: state.store.clone(),
-                active_runs: state.active_runs.clone(),
-                session_id: session_id.to_string(),
-                prompt: schedule.prompt.clone(),
-                permission: Some(schedule.permission.clone()),
-                level,
-                cost_cap: cost_cap(state),
-                env: crate::harness::tools::bash::shell_env(),
-                worktree: false,
-                spec,
-                implement,
-                review,
-                delegate,
-                images: vec![],
-                search: crate::gateway::search::Keys::from_state(state),
-            },
-            out,
-        );
-    }
     if let Some(model) = schedule.who.strip_prefix("api:") {
         let provider = crate::gateway::providers::for_model(state, model).await.map_err(|e| e.message)?;
+        let (team, team_notes) = crate::harness::agents::prepare(state, model).await;
         return run::start_peck_run(
             run::PeckRun {
                 store: state.store.clone(),
@@ -589,7 +534,8 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
                 cost_cap: cost_cap(state),
                 env: crate::harness::tools::bash::shell_env(),
                 worktree: false,
-                delegate,
+                team: Some(std::sync::Arc::new(team)),
+                team_notes,
                 images: vec![],
                 search: crate::gateway::search::Keys::from_state(state),
             },
@@ -788,9 +734,6 @@ mod tests {
             who: "api:deepseek/deepseek-flash".into(),
             model: None,
             effort: None,
-            plan_by: None,
-            review_by: None,
-            delegate: None,
             permission: "auto".into(),
             when: When::Daily { time: time.into(), weekdays, days: vec![] },
             offset_min,
@@ -892,11 +835,8 @@ mod tests {
         s.when = When::Once { date: "2026-02-30".into(), time: "09:00".into() };
         assert!(s.checked().is_err());
         let mut s = daily("09:00", false, 480);
-        s.permission = "plan".into();
-        s.review_by = Some(TeamPick { who: "cli:codex".into(), model: None, effort: None });
-        assert!(s.clone().checked().unwrap_err().contains("PLOOP 只用 API"), "PLOOP 里 CLI 不能审查");
-        s.review_by = Some(TeamPick { who: "api:deepseek/deepseek-flash".into(), model: None, effort: None });
-        assert!(s.checked().unwrap_err().contains("PLAN"));
+        s.who = "cli:antigravity".into();
+        assert!(s.checked().unwrap_err().contains("Antigravity"));
         // 旧记录（没有 days、session、missedAt）照样读得出来。
         let old = r#"{"id":"a","workspaceId":"w","title":"t","prompt":"p","who":"cli:codex","permission":"edit","when":{"kind":"daily","time":"09:00","weekdays":true},"offsetMin":480,"enabled":true}"#;
         let s: Schedule = serde_json::from_str(old).unwrap();
