@@ -4,12 +4,14 @@
 //!   `control_request`（`can_use_tool`），Peck 用 [`ClaudeCodeConverter::approval_reply`] 回答。
 //! - 子任务（Task 工具）里的消息带 `parent_tool_use_id`，转出来的事件带上子任务 id。
 //! - `result` 里的花费是 Claude Code 自己估的、续接以后是累计值：`estimated` + `cumulative`。
+//! - 任务清单（v1.1.3）：旧的 `TodoWrite` 每次给整份；2.1 起默认的 `TaskCreate` / `TaskUpdate` 一次一项（编号在
+//!   `TaskCreate` 的结果里），Peck 记着拼成整份，都转成 `plan.updated`。子任务里的清单不转（不盖掉主线的）。
 
 use super::{relative, short, Emitted, LineConverter};
 use crate::gateway::caps::AgentCaps;
 use crate::gateway::event::{
     ApprovalDecision, Cost, CostSource, EventBody, FileChange, FileDiff, McpServer, NoticeLevel,
-    QuotaWindow, TokenUsage, ToolKind, ToolStatus, TurnEndReason, UsageScope,
+    PlanStatus, PlanStep, QuotaWindow, TokenUsage, ToolKind, ToolStatus, TurnEndReason, UsageScope,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -26,6 +28,8 @@ pub struct ClaudeCodeConverter {
     /// 增量那边的 item id 是「消息 id:第几块」，完成的那条照这个编号，界面才认得是同一段，不会显示两遍。
     streamed_blocks: HashMap<String, usize>,
     last_quota: Option<Value>,
+    /// `TaskCreate` / `TaskUpdate` 拼出来的清单：（编号, 一项）。
+    tasks: Vec<(String, PlanStep)>,
 }
 
 impl ClaudeCodeConverter {
@@ -38,6 +42,7 @@ impl ClaudeCodeConverter {
             streaming_message: None,
             streamed_blocks: HashMap::new(),
             last_quota: None,
+            tasks: Vec::new(),
         }
     }
 
@@ -123,6 +128,7 @@ impl ClaudeCodeConverter {
                 ToolKind::Other,
                 format!("子任务 {}", short(input["description"].as_str().unwrap_or(""), 60)),
             ),
+            "TodoWrite" | "TaskCreate" | "TaskUpdate" => (ToolKind::Other, "更新任务清单".into()),
             // Peck 自己的本机 MCP（v0.9）：和 Peck Loop 一样写。
             "mcp__peck__delegate_task" => (ToolKind::Other, format!("交给子任务：{}", short(input["task"].as_str().unwrap_or(""), 60))),
             "mcp__peck__ask_user" => (ToolKind::Mcp, "问站主".into()),
@@ -164,6 +170,9 @@ impl ClaudeCodeConverter {
                     let input = block["input"].clone();
                     let (kind, title) = self.tool_kind_and_title(&name, &input);
                     self.calls.insert(id.clone(), (name.clone(), input.clone()));
+                    if name == "TodoWrite" && sub.is_none() {
+                        out.push(Emitted { subagent_id: None, body: EventBody::PlanUpdated { steps: todo_steps(&input), explanation: None } });
+                    }
                     if name == "Task" || name == "Agent" {
                         out.push(Emitted {
                             subagent_id: sub.clone(),
@@ -235,8 +244,12 @@ impl ClaudeCodeConverter {
             } else {
                 ToolStatus::Ok
             };
-            let (name, _) = self.calls.remove(&call_id).unwrap_or_default();
+            let (name, input) = self.calls.remove(&call_id).unwrap_or_default();
             let diff = self.file_diff(&name, &raw["tool_use_result"]);
+            if sub.is_none() && status == ToolStatus::Ok && self.task_list(&name, &input, &output) {
+                let steps = self.tasks.iter().map(|(_, s)| s.clone()).collect();
+                out.push(Emitted { subagent_id: None, body: EventBody::PlanUpdated { steps, explanation: None } });
+            }
             out.push(Emitted {
                 subagent_id: sub.clone(),
                 body: EventBody::ToolCallCompleted {
@@ -261,6 +274,40 @@ impl ClaudeCodeConverter {
     }
 
     /// Edit / Write 的结果里有 `structuredPatch`，拼成 unified diff。
+    /// `TaskCreate` / `TaskUpdate` 成功了：改记着的清单。改了返回真。
+    fn task_list(&mut self, name: &str, input: &Value, output: &str) -> bool {
+        match name {
+            "TaskCreate" => {
+                // 结果是「Task #3 created successfully: …」。
+                let Some(id) = output.split_once("Task #").and_then(|(_, rest)| rest.split_whitespace().next()) else { return false };
+                let text = input["subject"].as_str().unwrap_or("").trim().to_string();
+                self.tasks.push((id.to_string(), PlanStep { text, status: PlanStatus::Pending }));
+                true
+            }
+            "TaskUpdate" => {
+                let id = match &input["taskId"] {
+                    Value::String(s) => s.trim().trim_start_matches('#').to_string(),
+                    Value::Number(n) => n.to_string(),
+                    _ => return false,
+                };
+                let Some(i) = self.tasks.iter().position(|(t, _)| *t == id) else { return false };
+                if input["status"] == "deleted" {
+                    self.tasks.remove(i);
+                    return true;
+                }
+                let step = &mut self.tasks[i].1;
+                if let Some(subject) = input["subject"].as_str().filter(|s| !s.trim().is_empty()) {
+                    step.text = subject.trim().to_string();
+                }
+                if let Some(status) = input["status"].as_str() {
+                    step.status = plan_status(status);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn file_diff(&self, tool: &str, result: &Value) -> Vec<FileDiff> {
         if !matches!(tool, "Edit" | "MultiEdit" | "Write") {
             return vec![];
@@ -594,6 +641,26 @@ impl LineConverter for ClaudeCodeConverter {
     }
 }
 
+/// Claude Code 清单里的状态。
+fn plan_status(s: &str) -> PlanStatus {
+    match s {
+        "completed" => PlanStatus::Completed,
+        "in_progress" => PlanStatus::InProgress,
+        _ => PlanStatus::Pending,
+    }
+}
+
+/// `TodoWrite` 的整份清单（`todos[].content`、`status`）。
+fn todo_steps(input: &Value) -> Vec<PlanStep> {
+    input["todos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|t| PlanStep { text: t["content"].as_str().unwrap_or("").trim().to_string(), status: plan_status(t["status"].as_str().unwrap_or("")) })
+        .filter(|s| !s.text.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{convert_jsonl, fixtures};
@@ -686,5 +753,34 @@ mod tests {
             {"type": "tool_result", "tool_use_id": "task1", "content": [{"type": "text", "text": "好了"}]}]}}));
         assert!(done.iter().any(|e| matches!(&e.body, EventBody::SubagentCompleted { status: ToolStatus::Ok, .. })));
         assert_eq!(c.finish().len(), 1, "没有 result 就结束要补一条出错的回合结束");
+    }
+
+    #[test]
+    fn todo_write_and_task_tools_become_the_plan() {
+        let mut c = ClaudeCodeConverter::new(Some("/ws".into()));
+        let plan = |out: &[Emitted]| {
+            out.iter().find_map(|e| match &e.body {
+                EventBody::PlanUpdated { steps, .. } => Some(steps.iter().map(|s| format!("{}:{:?}", s.text, s.status)).collect::<Vec<_>>()),
+                _ => None,
+            })
+        };
+        let use_tool = |id: &str, name: &str, input: Value, parent: Value| json!({"type": "assistant", "uuid": format!("u-{id}"), "parent_tool_use_id": parent, "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}});
+        let result = |id: &str, text: &str| json!({"type": "user", "uuid": format!("r-{id}"), "parent_tool_use_id": null, "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": text}]}});
+        // 旧的 TodoWrite：每次整份。
+        let out = c.feed(&use_tool("w1", "TodoWrite", json!({"todos": [{"content": "读代码", "status": "completed", "activeForm": "读代码中"}, {"content": "改", "status": "in_progress"}]}), Value::Null));
+        assert_eq!(plan(&out), Some(vec!["读代码:Completed".to_string(), "改:InProgress".into()]));
+        assert!(out.iter().any(|e| matches!(&e.body, EventBody::ToolCallStarted { title, .. } if title == "更新任务清单")));
+        // 2.1 起的 TaskCreate / TaskUpdate：编号在结果里，Peck 拼成整份。
+        c.feed(&use_tool("c1", "TaskCreate", json!({"subject": "加测试", "description": "…"}), Value::Null));
+        assert_eq!(plan(&c.feed(&result("c1", "Task #1 created successfully: 加测试"))), Some(vec!["加测试:Pending".to_string()]));
+        c.feed(&use_tool("c2", "TaskCreate", json!({"subject": "跑一遍"}), Value::Null));
+        c.feed(&result("c2", "Task #2 created successfully: 跑一遍"));
+        c.feed(&use_tool("u1", "TaskUpdate", json!({"taskId": "1", "status": "completed"}), Value::Null));
+        assert_eq!(plan(&c.feed(&result("u1", "Updated task #1 status"))), Some(vec!["加测试:Completed".to_string(), "跑一遍:Pending".into()]));
+        c.feed(&use_tool("u2", "TaskUpdate", json!({"taskId": "2", "status": "deleted"}), Value::Null));
+        assert_eq!(plan(&c.feed(&result("u2", "Updated task #2 deleted"))), Some(vec!["加测试:Completed".to_string()]));
+        // 子任务里的清单不盖掉主线的。
+        let inner = c.feed(&use_tool("w2", "TodoWrite", json!({"todos": [{"content": "子任务自己的", "status": "pending"}]}), json!("task1")));
+        assert_eq!(plan(&inner), None);
     }
 }
