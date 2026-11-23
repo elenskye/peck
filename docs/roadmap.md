@@ -2,14 +2,14 @@
 
 ## 现在
 
-**v1.1.0**（2026-11-23）：插件。Peck 有插件库，项目设置里 INSTALL 把插件或 Skill 拷进项目、跟着项目的 git 走，库里有新版出 UPDATE；自带的（撤销、定时任务、写 Skill）按项目开关；点开项目时补齐 `CLAUDE.md` / `AGENTS.md` 和 Skill 文件夹的软链接；库里第一个插件 Git Plan 默认每个项目都装，每一轮做完自动提交（不 push）。设计见 [architecture「插件」](./architecture.md)。没有分 Phase 的版本在做。
+**v1.1.1**（2026-11-23）：接下来几轮逐步优化 Peck Loop，这是第一轮。AGENTS 的接力换成 PLOOP（只选 API 模型），审查、委派只在 PLOOP 里，工作流预设去掉；CLI 引擎只当外壳，CLI 之间交接靠换引擎 + 一句话或 `/review`。Peck Loop 有了联网搜索：有原生搜索的模型接各家自己的协议，DeepSeek 用它的 Search API，别的用 Tavily。设计见 [architecture「PLOOP」「联网搜索」](./architecture.md)。新的工作流方案和设计等站主给。
 
 ## 定位
 
 Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包在模型外面的那一层——把各家模型和 CLI 接进来（Model Gateway）、给模型手脚（工具箱）、管它看到什么和记住什么（上下文）、每个任务前后存快照、把这一切摆给站主看（界面）。能在对话里说清楚的事不做成界面：反悔、定时任务、起 dev server、改完跑什么测试都交给模型。不考虑多用户、跨平台、团队，放开用 macOS 本机的能力。不跑本地模型、不做云同步。
 
-- **干活的是 Peck Loop**：通过 Gateway 调任何 API 模型，带自己的工具箱和上下文管理。
-- **CLI 是可换的引擎**：Claude Code、Codex、Muse、Grok 当整包引擎也能选，Peck 用它们的结构化接口显示每一步、替它们审批、记花费。
+- **Peck Loop：Peck 深度参与**。通过 Gateway 调任何 API 模型，带自己的工具箱、上下文管理和联网搜索；PLOOP 是它的工作流（几个 API 模型分段做）。优化的重点在这里。
+- **CLI 引擎：Peck 只当外壳**。Claude Code、Codex、Muse、Grok、Antigravity 整包干，Peck 用它们官方的原生接口显示每一步、替它们审批、记花费，不把它们放进工作流；CLI 之间交接靠换引擎接着发一句或 `/review`。
 - **视觉**照 `src/vendor/peck/`；新图标、新组件先在方案里画，同步办法见 architecture「视觉、打包和签名」。
 
 ## Phase
@@ -24,6 +24,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 候选，没排期，要做时站主定进哪个版本：
 
+- **PLOOP 的新工作流方案和设计**（站主给方向）：替掉现在沿用的写规范 → 实施 → 审查。
 - 用 Peck 开发 Peck 一整轮；Peck 接手站主的其他项目。
 - 多家 CLI 和 Peck Loop 的 Benchmark（Atelier MCP 那一轮没跑满的一起补）。
 - xAI 直连、GitHub Copilot CLI、Amp、Qwen Code。
@@ -31,6 +32,14 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - 快照回退、定时任务在真 CLI 上各走一遍（现在只有假模型和假 MCP 客户端的测试）。
 - 插件：带自己的 MCP 服务器（现在只列出来）；联网的插件市场、在界面里编辑库、任意脚本的 Hook、子代理（`agents/`）都没做，要做再定。
 - 收尾提交在 Claude Code、Muse、Grok 上各真跑一遍（现在只有 Codex 真跑过）；定时任务在从没点开过的老项目里跑之前先认结构。
+
+## 不做
+
+站主定了不要的，不再当候选提：
+
+- GitHub PR 和 CI 回路；同一个项目里并行跑几个任务。
+- 通用的 ACP 接入层：每家 CLI 用它官方的原生接口（Grok、Antigravity 官方给的就是 ACP，照它们的来）。
+- CLI 进工作流（接力、CLI 审查、CLI 委派）：v1.1.1 删了。
 
 ## 现行授权
 
@@ -49,4 +58,8 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.0 | Codex | gpt-6-luna（low） | 1 个小任务（两轮） | 收尾 Hook：Codex 改一个文件，续上会话问到一行 `v0.1.0: add hook smoke note`，Peck 提交了（`projects/git-plan-smoke`，引擎一层的 `live_stop_hook_commits_the_round`） |
+| v1.1.1 | Anthropic | claude-haiku-5-5、claude-sonnet-5-5（low） | 5 次尝试 | 原生搜索（`live_web_search`）：第一次 Key 目录里的旧 Key 被拒；站主给了新 Key 后 Haiku（基础版）、Sonnet（动态过滤）各两次都过，带搜索原件回放被接受 |
+| v1.1.1 | OpenAI | gpt-6-luna（low） | 4 次尝试 | 原生搜索：第一回测试没给工具结果、第二次失败（测试的问题，已改）；改完两次都过，`web_search_call` 不带 id 回放被接受 |
+| v1.1.1 | Gemini | gemini-3.5-flash-lite、gemini-3.8-flash | 2 次尝试 | 都是 429：Key 目录里这把 Key 额度用完了，没验到 |
+| v1.1.1 | DeepSeek Search API | — | 1 次搜索 | `live_deepseek` 搜到 3 条 |
+| v1.1.1 | Tavily | basic | 1 次搜索（1 个额度） | `live_tavily` 搜到 3 条（Key 站主经剪贴板给的） |

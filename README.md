@@ -1,6 +1,6 @@
 # Peck
 
-只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok、Antigravity）接进来；Peck Loop 带工具箱和上下文管理去改代码。每个任务前后都有快照，说一声就能回到任何一次之前；定时任务也是说一声就设好。
+只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok、Antigravity，各用官方原生接口）接进来。两种干法分开：CLI 引擎整包干，Peck 只当外壳；Peck Loop 是 Peck 自己的循环，带工具箱、上下文管理和联网搜索去改代码，PLOOP 是它的工作流。每个任务前后都有快照，说一声就能回到任何一次之前；定时任务也是说一声就设好。
 
 Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](docs/roadmap.md)，规则和文档分工见 [CLAUDE.md](CLAUDE.md)。
 
@@ -9,8 +9,9 @@ Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](doc
 | 模块 | 用途 |
 |---|---|
 | 项目和任务 | 没选项目时中间是全部项目页，左栏一整块是 AGENTS；选了项目，左栏是 NOW（跨项目的待你处理、在跑）和 PROJECTS（这个项目的任务）；不同项目的任务能同时跑；任务能归档（设置 → ARCHIVE） |
-| 发任务 | 一句话（↵ 发送，`@` 引用旧任务，`/` 斜杠命令）+ 权限（PLAN / EDIT / AUTO）+ 独立工作区（WORKTREE，做完在对话里 APPLY / DISCARD）；谁来干在左栏 AGENTS 里选（API、CLI、接力；思考强度），输入框下一行短的写现在是谁；贴图、拖图进输入框 |
-| 多引擎合作 | 接力（前一个只读写规范，后一个实施）、交叉审查（要改就交回修一次）、委派（子任务交给便宜的模型）；合作预设一键切换；收尾一张按段花费表；中途换引擎带上前面的经过；Peck Loop 接外部 MCP 服务器（设置里的和项目 `.mcp.json` 里的） |
+| 发任务 | 一句话（↵ 发送，`@` 引用旧任务，`/` 斜杠命令）+ 权限（PLAN / EDIT / AUTO）+ 独立工作区（WORKTREE，做完在对话里 APPLY / DISCARD）；谁来干在左栏 AGENTS 里选（API、CLI、PLOOP；思考强度），输入框下一行短的写现在是谁；贴图、拖图进输入框 |
+| PLOOP 和换引擎 | PLOOP 是 Peck Loop 的工作流，几格都只选 API 模型：写规范（只读）→ 实施 → 审查（要改就交回修一次），外加委派（子任务交给便宜的模型）；收尾一张按段花费表。CLI 之间交接：换引擎接着发一句（带上前面的经过）或 `/review`。Peck Loop 接外部 MCP 服务器（设置里的和项目 `.mcp.json` 里的） |
+| 联网搜索 | Peck Loop 的模型要查网上的东西时用：Anthropic、OpenAI、Gemini 用它们自己的搜索；DeepSeek 用它家的 Search API；别的用 Tavily（设置 → PROVIDERS → SEARCH 填 Key）。按次记花费 |
 | 看任务 | 回答按 Markdown 显示，连着的工具调用折成一行英文（像 Claude Code），在想时一行 Thinking；要批的事、要问的事弹卡片，下面一行花费；压缩上下文、「想记住这几条」；每轮末尾一块 recap，带下一步按钮；进任务停在最新一轮、回来回到上次的位置 |
 | 上下文 | 项目说明（AGENTS.md / CLAUDE.md，改完跑什么测试也写在这里，模型自己跑）和记忆、Skills（按需读全文；模型能提议存成 Skill，批了才写进这个项目）、每次带上的环境和 git；输入框旁的小环看用了多少，到压缩线自动压缩 |
 | 插件 | 一包 Skill、斜杠命令、工具、Hook。自带的（撤销、定时任务、写 Skill）按项目开关；插件库里的在项目设置里 INSTALL，拷进项目、跟着项目的 git 走，库里有新版出 UPDATE、点了才覆盖。库里第一个是 **Git Plan**（默认每个项目都装）：版本和提交的规矩、`/git-plan:plan` 这几个命令，每一轮做完 Peck 问模型要一行提交说明、自己提交这一轮改过的文件，不 push。点开项目时 Peck 补齐 CLAUDE.md / AGENTS.md 和 Skill 文件夹的软链接，哪家 CLI 都读得到同一份 |

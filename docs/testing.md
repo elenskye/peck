@@ -21,7 +21,7 @@
 
 - `pnpm dev`（固定端口 1430），开 `http://localhost:1430/?mock`；内置浏览器里是 `personal-cli-studio/.claude/launch.json` 的 `peck-mock`。`&empty` 看没有项目的空状态。
 - 浏览器里 `src/lib/ipc.ts` 把调用转给 `src/dev/mockIpc.ts`（数据在 `mockData.ts`，只在内存，刷新重置）；原生窗口永远走 Rust。
-- 假数据有 3 个项目（notebook、peck、edge-gateway）加一个文件夹不在了的，开局的任务都带事件日志（`mockData.ts` 的 `MOCK_EVENTS`）：notebook 有一个一直在跑的任务（那个项目的 AGENTS 锁着）、Grok 和 DeepSeek 各做完一个；peck 有一个接力做完（Opus 写规范 → DeepSeek 实施）、一个 Grok 没登录失败；edge-gateway 有一个接力（Muse → Grok）和一个归档的。**试新东西用 peck 项目**。
+- 假数据有 3 个项目（notebook、peck、edge-gateway）加一个文件夹不在了的，开局的任务都带事件日志（`mockData.ts` 的 `MOCK_EVENTS`）：notebook 有一个一直在跑的任务（那个项目的 AGENTS 锁着）、Grok 和 DeepSeek 各做完一个；peck 有一个 PLOOP 做完（Opus 写规范 → DeepSeek 实施）、一个 Grok 没登录失败；edge-gateway 有一个以前的接力（Muse → Grok，旧记录照样显示）和一个归档的。**试新东西用 peck 项目**。
 - 打开是全部项目页（中栏列项目，左栏只有 AGENTS）；点一个项目进去，PROJECTS 头上的放大图标回来。
 - 发任务：选项目 → NEW TASK → 左栏 AGENTS 选谁来干 → 一句话 → ↵。模型列表全部当能用。按这句话里的字挑场景：
 
@@ -35,9 +35,10 @@
 | 留着的 dev server | 「dev server」 | 过程里一行「留着在跑」；右栏 PREVIEW 头上一个 DEV 小片，点一下停 |
 | 花费上限 | 设置里上限设得比 0.42 低 | 发出去就停、写明原因 |
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
-| 接力 + 审查 + 委派（`teamMock.ts`） | FLOW 选接力，写规范选 CLI、实施选 API、审查另选一个、委派选 FLASH | SPEC 一行（在跑时下面露 Thinking、Read …；做完「写好了规范」，点开是规范全文和读过的 2 个文件）→ BUILD（中间「交给子任务」）→ REVIEW 逐条清单「1 条没过 · 交回去修」→ FIX → recap 和按段花费表；句子带「通过」就都过、没有 FIX |
-| 预设、额度提醒 | AGENTS 最上面「预设」选「稳妥」；QUOTA 卡片里 Claude Code 每周 90% | 输入框下那行写预设名；输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
-| 换引擎接着发 | 合作做完的任务里换成 CLI、关审查再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
+| PLOOP（`teamMock.ts`） | FLOW 选 PLOOP，写规范、实施、审查各选一个 API 模型（下拉里没有 CLI），设置 → AGENTS 委派选 FLASH | SPEC 一行（在跑时下面露 Thinking、Read …；做完「写好了规范」，点开是规范全文和读过的 2 个文件）→ BUILD（中间「交给子任务」）→ REVIEW 逐条清单「1 条没过 · 交回去修」→ FIX → recap 和按段花费表；句子带「通过」就都过、没有 FIX |
+| 联网搜索 | 句子带「搜一下」「上网」「最新版」 | 「Searched the web 2 times」一组，点开两步「Search the web: …」带来源；回答写出处；花费行「搜 2 次」 |
+| 额度提醒 | 选一个 CLI；QUOTA 卡片里 Claude Code 每周 90% | 输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
+| 换引擎接着发 | PLOOP 做完的任务里换成 CLI 再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
 | 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |
 | 截图、贴图 | 带「截图」；输入框粘贴或拖进图 | 演示图；小图，发出去一行「这一句带了 1 张图」 |
 | 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
@@ -107,6 +108,8 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 - 规矩和次数见 roadmap「现行授权」；项目用仓库外的 `personal-cli-studio/projects/gateway-smoke`（要 git 仓库的用 `projects/git-plan-smoke`）。
 - 入口是各模块 `#[ignore]` 的 `live_*` 测试，按环境变量拿参数（Key 从 Key 目录的文件读，不打印；列 Key 目录会被权限检查拦，真 API 要站主给路径或自己跑）：
   - API：`gateway::providers` 的 `live_two_requests`。`PECK_LIVE_MODEL`、`PECK_LIVE_KEYS`（Key 目录）、可选 `PECK_LIVE_REGION`、`PECK_LIVE_EFFORT`。
+  - 原生联网搜索：同一个模块的 `live_web_search`（参数同上，只认有原生搜索的模型）：一次带着 Peck 的工具让它搜，一次把带搜索原件的回答放回去再问一句（验回放）。
+  - Peck 的 `web_search`：`gateway::search` 的 `live_tavily`（`PECK_TAVILY_KEY`）、`live_deepseek`（`PECK_DEEPSEEK_KEY`），各搜一次。
   - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`。审批一律批准一次，提问答「好」。
   - 收尾 Hook（Codex，花一个小任务、两轮）：`gateway::engines::codex` 的 `live_stop_hook_commits_the_round`，`PECK_LIVE_CODEX`、`PECK_LIVE_CWD=<一个 git 仓库>`（用仓库外的 `projects/git-plan-smoke`）。
   - CLI 的模型列表（不花额度）：`PECK_LIVE_CLI_DIR=<cli/bin> PECK_LIVE_ENGINE=codex cargo test --manifest-path src-tauri/Cargo.toml live_list_models -- --ignored --nocapture`。
