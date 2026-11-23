@@ -203,9 +203,9 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | **插件库**：完整插件、单独的 Skill（版本写在 `SKILL.md` 开头的 `version`） | 数据目录 `library/plugins/<名字>/`、`library/skills/<名字>/`。源在 `src-tauri/defaults/library/`，打进程序；打开 App 时库里没有这一项、读不了，或程序里的版本更新，就整个换掉（`plugins::seed`），不降级，库里多出来的不动 | 只在开发 Peck 时（改了升它自己的 `version`） | 项目设置里 INSTALL；标了「每个项目都装」的点开项目时自动装（设置里能改这个开关，存 `app_settings` 的 `plugins`） |
 | **项目里的**：装进来的、模型提的、站主自己写的 | 项目里，跟着项目的 git 走 | 模型（`create_skill`，站主 SAVE 才写）、站主 | — |
 
-- **认项目结构**（`ensure_structure`，一个项目只做一次，记在 `ProjectSettings.prepared`）：说明文件 `CLAUDE.md` / `AGENTS.md`、Skill 文件夹 `.claude/skills` / `.agents/skills` 各判各的——两边都没有就建 Claude 那一边、另一边软链接过去；只有一边就补另一边的软链接；两边都有不动。哪家 CLI 都读得到同一份。
-- **点开项目**（IPC `project_prepare`，界面每次换项目时调）：第一次认结构；每次把库里「每个项目都装」的、这个项目里没有也没移除过的装上。做了什么界面说一句。文件夹不在了、项目有任务在跑时不做。
-- **装进项目后在哪**：Skill 进 Skill 文件夹的真身那一边（`skills_home`，默认 `.claude/skills/<名字>/`）；其余的（`plugin.json`、命令、Hook、MCP）进它旁边的 `plugins/<插件名>/`。和项目里已有、不是这个插件带来的 Skill 撞名就不装。
+- **认项目结构**（`ensure_structure`，一个项目只做一次，记在 `ProjectSettings.prepared`）：说明文件 `CLAUDE.md` / `AGENTS.md`、Skill 文件夹 `.claude/skills` / `.agents/skills` 各判各的——两边都没有就建 Claude 那一边、另一边软链接过去；只有一边就补另一边的软链接；两边都有不动。只有一边、而且是指不到东西的软链接（克隆来的仓库里空的 Skill 文件夹没跟来）：把另一边建成真的，不套成环。哪家 CLI 都读得到同一份。
+- **点开项目**（IPC `project_prepare`，界面每次换到一个列着的项目时调）：第一次认结构；每次把库里「每个项目都装」的、这个项目里没有也没移除过的装上。做了什么界面说一句、开着的项目设置重读。文件夹不在了、移出了列表、项目有任务在跑时不做。
+- **装进项目后在哪**：Skill 进 Skill 文件夹的真身那一边（`skills_home`，默认 `.claude/skills/<名字>/`）；其余的（`plugin.json`、命令、Hook、MCP）进它旁边的 `plugins/<插件名>/`。和项目里已有、不是这个插件带来的 Skill 撞名就不装。Skill 文件夹指到项目外面（软链接）时不装、不删。会变成文件夹名的名字（`peck.skills`、Skill 名）只认合规的，带 `..`、`/` 的读进来就丢掉。
 - **UPDATE**：库里的版本比项目里的新才出；点了才整份覆盖（被盖掉的 `SKILL.md` 存一份旧版，能退回）。Peck 不自己改项目里装好的文件。
 - **REMOVE**：删项目里那一份（连它带来的 Skill；只删项目里面的真文件夹），记进 `ProjectSettings.plugins_removed`，以后不再自动装；再 INSTALL 就去掉这个记号。`prepared`、`plugins_removed` 是 Peck 自己记的，界面存项目设置盖不掉。
 - **运行时**：`SKILL.md` 各家 CLI 自己读、Peck Loop 列进系统提示；命令由 Peck 展开成一句话再发；工具 Peck Loop 直接调、CLI 走本机 MCP；Hook 由 Peck 自己跑。插件要的 Peck 工具（`peck.tools`）只在装着它的项目里给。
@@ -216,9 +216,9 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 库里的第一个插件，默认每个项目都装：一份 Skill（版本号怎么升、什么时候分 Phase、提交说明 `v<版本>: <description>`、不署名、不 push、开工前先问程度）、三个命令（`/git-plan:plan` 写 Phase 计划、`/git-plan:release` 改版本号、`/git-plan:commits` 汇报还没推的提交）、工具 `git_commit`、一条收尾 Hook。
 
-- **`git_commit`**（`harness/git.rs`）：只会提交——`git add` 点名的文件、`git commit --only`（不点名就是全部没提交的改动；被忽略的不进去；站主先前 `git add` 过、这次没点名的不带上）。碰不到 push、amend、改历史，不改 git 配置，不署名。说明必须是一行 `v<x.y.z>: <description>`，带署名行的拒绝。不是 git 项目、不在任何分支上（独立工作区）不提交。PLAN 不给；EDIT 问一次（能「这个项目总是允许」，规则 `git-commit`）；AUTO 不问。Peck Loop 直接调，CLI 经本机 MCP 调（EDIT 的卡片走子通道，和回退同一条路）。
+- **`git_commit`**（`harness/git.rs`）：只会提交——`git add` 点名的文件、`git commit --only`（不点名就是全部没提交的改动；被忽略的不进去；站主先前 `git add` 过、这次没点名的不带上）。碰不到 push、amend、改历史，不改 git 配置，不署名。说明必须是一行 `v<x.y.z>: <description>`，带署名行的拒绝。不是 git 项目、不在任何分支上（独立工作区）、合并 / cherry-pick / revert 到一半不提交，而且在 `git add` 之前就拦下。路径按字面算；用站主 shell 的 PATH（仓库自己的 pre-commit 钩子找得到工具）；一条 git 最多等 3 分钟。PLAN 不给；EDIT 问一次（能「这个项目总是允许」，规则 `git-commit`）；AUTO 不问。Peck Loop 直接调，CLI 经本机 MCP 调（EDIT 的卡片走子通道，和回退同一条路）。
 - **收尾 Hook**（`harness/hooks.rs`）：任务做完了（失败、打断、到上限的不跑）、不是 PLAN、不是独立工作区、项目是 git 仓库、这一轮改过的文件里还有没提交的，就问刚干完的那个模型要一行提交说明，Peck 校验后只提交这一轮改过的文件。不弹卡片、不 push。
-  - **怎么问**：Peck Loop 在原对话末尾多问一轮（同样的系统提示、工具和对话，走缓存；不显示成回答、不进存下的对话，用量照记）。CLI 续上它刚才的会话、只读地问（事件不进这个任务的记录，用量照记；它要审批就打断，最多等 3 分钟）；续不了的、直接调用的引擎（Antigravity）不问。接力、审查的任务问实施的那一个。
+  - **怎么问**：Peck Loop 在原对话末尾多问一轮（同样的系统提示、工具和对话，走缓存；不显示成回答、不进存下的对话，用量照记）；只在这一次确实动了东西时问（没提交的改动和任务开头不一样了，或者自己的工具改过文件），问的那一轮里站主又追加了话就接着干、做完再问。CLI 续上它刚才的会话、只读地问（事件不进这个任务的记录，用量照记；它要审批就打断，最多等 3 分钟）；续不了的、直接调用的引擎（Antigravity）不问。接力、审查的任务问实施的那一个。
   - **结果**：一条 `hook.ran` 事件（提交了哪一笔，或者为什么没提交：没答、格式不对、git 报错），界面写在这一轮的 recap 里。
 
 ## 多引擎合作（`harness/team.rs`）
