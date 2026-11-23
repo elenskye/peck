@@ -263,7 +263,8 @@ pub fn parse_plugin(tree: &Tree, source: &'static str) -> Result<Plugin, String>
     let split_skills = peck
         .get("skills")
         .and_then(serde_json::Value::as_array)
-        .map(|list| list.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
+        // 这些名字会变成项目里的文件夹名（装、更新、移除时），只认合规的 Skill 名：`..`、带 `/` 的、空的都丢掉。
+        .map(|list| list.iter().filter_map(serde_json::Value::as_str).filter(|n| crate::skill_propose::valid_skill_name(n)).map(str::to_string).collect())
         .unwrap_or_default();
     Ok(Plugin { info, skills, commands, split_skills })
 }
@@ -462,19 +463,33 @@ pub fn seed(dir: &Path, files: &[(&str, &[u8])]) -> Vec<String> {
     written
 }
 
-/// 把一个文件夹换成这些文件。
+/// 把一个文件夹换成这些文件：先在旁边写好一份，再换过去（别人读到的要么是旧的、要么是整份新的）。
+/// 树里的路径只认往下走的相对路径。
 pub(crate) fn write_tree(target: &Path, tree: &Tree) -> std::io::Result<()> {
-    if target.exists() {
-        std::fs::remove_dir_all(target)?;
+    let bad = |rel: &str| Path::new(rel).is_absolute() || rel.split(['/', '\\']).any(|part| part.is_empty() || part == "." || part == "..");
+    if let Some(rel) = tree.keys().find(|rel| bad(rel)) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("不认这个路径：{rel}")));
     }
-    for (rel, bytes) in tree {
-        let path = target.join(rel);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let staging = target.with_file_name(format!(".{name}.peck-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging);
+    let written = (|| {
+        for (rel, bytes) in tree {
+            let path = staging.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, bytes)?;
         }
-        std::fs::write(path, bytes)?;
+        if std::fs::symlink_metadata(target).is_ok() {
+            std::fs::remove_dir_all(target)?;
+        }
+        std::fs::rename(&staging, target)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
     }
-    Ok(())
+    written
 }
 
 /// 打开 App 时：把程序里带的库写进数据目录。

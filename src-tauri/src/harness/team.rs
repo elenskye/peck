@@ -690,7 +690,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
     });
     let tools_off = crate::plugins::tools_off(&settings.plugins_off);
     // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有。
-    let stop_hook = crate::project_plugins::stop_hook(&workspace);
+    let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
     let stop_ask = super::hooks::StopAsk::of(&stop_hook);
     let peck_base = PeckBase {
         store: store.clone(),
@@ -965,7 +965,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         crate::skill_propose::flush(&id);
         // 收尾 Hook（v1.1.0）：问实施的那一个要一行提交说明——Peck Loop 收尾时已经答了；CLI 续上它的会话问。
         let asked = stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default();
-        let (answered, usage_to, hook_id, hook_cwd) = (stop_ask.clone(), base.clone(), id.clone(), cwd.clone());
+        let (answered, usage_to, hook_id, hook_cwd, hook_env) = (stop_ask.clone(), base.clone(), id.clone(), cwd.clone(), project_env.clone());
         let implementer = &implement;
         let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
             match &implementer.engine {
@@ -980,7 +980,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
                         effort: implementer.effort.clone(),
                         resume: impl_ref,
                         peck_mcp: None,
-                        env: vec![],
+                        env: hook_env,
                         folders: vec![],
                     };
                     super::hooks::ask_cli(backend.as_ref(), engine, task, &asked, move |body| {

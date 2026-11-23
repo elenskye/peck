@@ -51,14 +51,25 @@ pub fn question(ask: &str) -> String {
     format!("<peck-hook>\nThis is Peck (the harness), not the user. The task is finished; do not continue it and do not call tools. Answer only what is asked below, in plain text.\n\n{ask}\n</peck-hook>")
 }
 
-/// 这个文件夹现在值不值得问：是 git 仓库、有没提交的改动。（Peck Loop 在收尾前用；问了以后提不提交还要看这一轮改了什么。）
-pub fn wants_ask(cwd: &Path) -> bool {
-    git::is_repo(cwd) && git::changed(cwd).is_ok_and(|files| !files.is_empty())
+/// 任务开头记一下（Peck Loop 用）：能提交的话，这时候工作区里已经有哪些没提交的改动。不能提交（不是 git 仓库、不在分支上、
+/// 合并到一半）就是 `None`，收尾时不问。
+pub fn baseline(cwd: &Path) -> Option<Vec<String>> {
+    git::committable(cwd).ok()?;
+    git::changed(cwd).ok()
+}
+
+/// Peck Loop 收尾前：这一次值不值得问。任务开头能提交，而且这一次确实动了东西——没提交的改动和开头不一样了，
+/// 或者自己的工具改过文件（`touched`；改的是开头就没提交的文件时前一条看不出来）。光是工作区本来就不干净不算，
+/// 不然只问不改的任务每次都白问一轮。
+pub fn wants_ask(cwd: &Path, baseline: Option<&[String]>, touched: bool) -> bool {
+    let Some(before) = baseline else { return false };
+    let Ok(now) = git::changed(cwd) else { return false };
+    !now.is_empty() && (touched || now != before)
 }
 
 /// 这一轮要不要提交：要的话给回要提交的文件（这一轮改过、现在还没提交的）。
 pub fn pending(cwd: &Path, level: PermissionLevel, succeeded: bool, worktree: bool, round_files: &[String]) -> Option<Vec<String>> {
-    if !succeeded || worktree || level == PermissionLevel::Plan || round_files.is_empty() || !git::is_repo(cwd) {
+    if !succeeded || worktree || level == PermissionLevel::Plan || round_files.is_empty() || git::committable(cwd).is_err() {
         return None;
     }
     let uncommitted = git::changed(cwd).ok()?;
@@ -218,7 +229,12 @@ mod tests {
         std::fs::write(dir.join("a.txt"), "a\n").unwrap();
         std::fs::write(dir.join("mine.txt"), "站主自己改的\n").unwrap();
         let round = vec!["a.txt".to_string(), "gone.txt".to_string()];
-        assert!(wants_ask(&dir));
+        // Peck Loop 值不值得问：开头就这样、这一次没动过的不问；动了才问。
+        let before = baseline(&dir).unwrap();
+        assert!(!wants_ask(&dir, Some(&before), false));
+        assert!(wants_ask(&dir, Some(&before), true));
+        assert!(wants_ask(&dir, Some(&[]), false));
+        assert!(!wants_ask(&dir, None, true));
         // 这一轮改过、现在还没提交的才算。
         assert_eq!(pending(&dir, PermissionLevel::Edit, true, false, &round), Some(vec!["a.txt".to_string()]));
         // 没做完、PLAN、独立工作区、这一轮没改文件：都不提交。
@@ -262,7 +278,7 @@ mod tests {
         let plain = std::env::temp_dir().join(format!("peck-hook-plain-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&plain).unwrap();
         std::fs::write(plain.join("a.txt"), "a").unwrap();
-        assert!(!wants_ask(&plain));
+        assert!(baseline(&plain).is_none());
         assert_eq!(pending(&plain, PermissionLevel::Auto, true, false, &["a.txt".to_string()]), None);
         for d in [dir, plain] {
             let _ = std::fs::remove_dir_all(d);

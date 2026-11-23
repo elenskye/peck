@@ -205,6 +205,7 @@ impl AgentBackend for PeckBackend {
                 approvals: 0,
                 cost_usd: 0.0,
                 warned_unpriced: false,
+                stop_baseline: None,
                 scale: 1.0,
                 last_sent: 0,
                 compacted_at_round: None,
@@ -324,6 +325,8 @@ struct Run {
     approvals: u32,
     cost_usd: f64,
     warned_unpriced: bool,
+    /// 收尾 Hook 用（v1.1.0）：任务开头工作区里已经有的没提交的改动；不能提交的项目是 `None`（收尾不问）。
+    stop_baseline: Option<Vec<String>>,
     /// 估的 tokens → 实报的 tokens 的校准系数（上一次请求算的）。
     scale: f64,
     /// 上一次请求发出去时估的大小（还没校准）。
@@ -789,8 +792,8 @@ impl Run {
         if self.level == PermissionLevel::Plan || self.config.oneshot || self.config.subtask.is_some() || self.ctl.interrupted {
             return;
         }
-        let cwd = self.task.cwd.clone();
-        if !tokio::task::spawn_blocking(move || super::hooks::wants_ask(&cwd)).await.unwrap_or(false) {
+        let (cwd, before, touched) = (self.task.cwd.clone(), self.stop_baseline.clone(), !self.ctx.diff_summary().is_empty());
+        if !tokio::task::spawn_blocking(move || super::hooks::wants_ask(&cwd, before.as_deref(), touched)).await.unwrap_or(false) {
             return;
         }
         let mut messages = self.messages.clone();
@@ -823,6 +826,11 @@ impl Run {
     }
 
     async fn rounds(&mut self, names: &[&'static str]) -> End {
+        // 收尾 Hook（v1.1.0）：开头记下工作区里已经有的没提交的改动，收尾时看这一次动没动东西。
+        if self.config.stop_ask.is_some() && self.level != PermissionLevel::Plan && !self.config.oneshot && self.config.subtask.is_none() {
+            let cwd = self.task.cwd.clone();
+            self.stop_baseline = tokio::task::spawn_blocking(move || super::hooks::baseline(&cwd)).await.ok().flatten();
+        }
         let mut specs = tools::specs_for(names);
         specs.extend(self.mcp_specs());
         let system = self.system_blocks();
@@ -960,6 +968,15 @@ impl Run {
                     continue;
                 }
                 self.ask_stop_hook(&base_request).await;
+                // 问的那一轮里站主又追加了话：接着干，刚才的答案作废（做完再问）。
+                let steer = self.take_steer();
+                if !steer.is_empty() {
+                    if let Some(slot) = self.config.stop_ask.as_ref().and_then(|h| h.answer.lock().ok()).as_mut() {
+                        **slot = None;
+                    }
+                    self.push_user(steer);
+                    continue;
+                }
                 return End::done();
             }
             if !usage_known {
@@ -1457,6 +1474,7 @@ impl Run {
             approvals: self.approvals,
             cost_usd: 0.0,
             warned_unpriced: self.warned_unpriced,
+            stop_baseline: None,
             scale: 1.0,
             last_sent: 0,
             compacted_at_round: None,

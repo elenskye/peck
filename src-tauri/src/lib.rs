@@ -68,8 +68,9 @@ pub fn run() {
             term::warm_env();
             // 「CLI 目录」没设：在后台从站主 shell 的 PATH 里找一个存上，引擎才检测得到。
             std::thread::spawn(move || gateway::config::fill_cli_dir(&gateway_store));
-            // 插件库（v1.1.0）：程序里带的比数据目录里的新，就写进去。
-            std::thread::spawn(plugins::seed_library);
+            // 插件库（v1.1.0）：程序里带的比数据目录里的新，就写进去。几个小文件，窗口出来之前写完，
+            // 免得界面那边读到写了一半的。
+            plugins::seed_library();
             // 落盘的长输出：14 天没动过的任务文件夹删掉。
             std::thread::spawn(|| harness::run::prune_spills(&harness::run::spill_root(), std::time::Duration::from_secs(14 * 86_400)));
             // 定时任务：关着时错过的记一笔，然后每 30 秒看一眼到点的。

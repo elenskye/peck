@@ -41,7 +41,7 @@
 | 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |
 | 截图、贴图 | 带「截图」；输入框粘贴或拖进图 | 演示图；小图，发出去一行「这一句带了 1 张图」 |
 | 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
-| 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页三块，点名字展开清单、EVERY PROJECT 开关；项目里三种状态：notebook 装着旧版（青色版本标签 + UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后下面 SKILLS 多一行 |
+| 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页三块，点名字展开清单、EVERY PROJECT 开关；项目里三种状态：notebook 装着旧版（青色版本标签 + UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后下面 SKILLS 多一行。在装着 Git Plan 的 peck 项目里发一个任务，做完后 recap 里多一行「Git Plan 提交了 …」 |
 
 - 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、PLUGINS、SKILLS、MCP、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
@@ -68,6 +68,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 - 日常只跑改到的模块：末尾加过滤，如 `-- snapshot::`。收尾才全跑。
 - **每次用新的临时目录**，不碰正式数据（模拟授权次数记在数据目录里，重复用会失败）。
 - **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样（现在用了 700105、700106、700201–700205、905001、910_001、920_001、930_001、930_002、940_001、950_001），新测试另挑一个。
+- 要 git 仓库的测试（`git_commit`、收尾 Hook）用 `harness::git::testing` 起临时仓库（自己配 `user.name`，不碰站主的 git 配置）。
 - Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环，外部 MCP 用 sh 写的假服务器，预览代理起一个假 dev server（一段一段出的 SSE、分块的 HTML、POST）。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境，慢几秒。夹具通过不等于真实账号通过。
@@ -103,10 +104,11 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 
 ## 真 CLI、真 API
 
-- 规矩和次数见 roadmap「现行授权」；项目用仓库外的 `personal-cli-studio/projects/gateway-smoke`。
+- 规矩和次数见 roadmap「现行授权」；项目用仓库外的 `personal-cli-studio/projects/gateway-smoke`（要 git 仓库的用 `projects/git-plan-smoke`）。
 - 入口是各模块 `#[ignore]` 的 `live_*` 测试，按环境变量拿参数（Key 从 Key 目录的文件读，不打印；列 Key 目录会被权限检查拦，真 API 要站主给路径或自己跑）：
   - API：`gateway::providers` 的 `live_two_requests`。`PECK_LIVE_MODEL`、`PECK_LIVE_KEYS`（Key 目录）、可选 `PECK_LIVE_REGION`、`PECK_LIVE_EFFORT`。
   - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`。审批一律批准一次，提问答「好」。
+  - 收尾 Hook（Codex，花一个小任务、两轮）：`gateway::engines::codex` 的 `live_stop_hook_commits_the_round`，`PECK_LIVE_CODEX`、`PECK_LIVE_CWD=<一个 git 仓库>`（用仓库外的 `projects/git-plan-smoke`）。
   - CLI 的模型列表（不花额度）：`PECK_LIVE_CLI_DIR=<cli/bin> PECK_LIVE_ENGINE=codex cargo test --manifest-path src-tauri/Cargo.toml live_list_models -- --ignored --nocapture`。
   - 跑法：`cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture <测试路径>`，`PECK_DATA_DIR` 照样指到新的临时目录。
 

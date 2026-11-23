@@ -38,8 +38,8 @@ export const PluginDetail: React.FC<{ info: PluginInfo }> = ({ info }) => {
         <React.Fragment key={label}>
           <dt className="t-label">{label}</dt>
           <dd>
-            {items.map((item) => (
-              <p key={item.name} className={cn(item.warn && "is-warn")}><code className="t-code">{item.name}</code><span>{item.text}</span></p>
+            {items.map((item, i) => (
+              <p key={`${label}-${i}`} className={cn(item.warn && "is-warn")}><code className="t-code">{item.name}</code><span>{item.text}</span></p>
             ))}
           </dd>
         </React.Fragment>

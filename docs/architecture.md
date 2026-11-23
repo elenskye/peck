@@ -83,7 +83,7 @@
 
 各家 API 和 CLI 转成同一套事件。契约：`mod.rs`（`ModelProvider` 裸模型、`AgentBackend` 整包引擎、控制通道）、`event.rs`、`caps.rs`、`catalog.rs`；TS 对照 `src/lib/agentEvents.ts`。
 
-- **事件**：`AgentEvent` = `seq` + `at` + 可选 `subagentId` + 本体（`session.*`、`turn.*`、`message.*`、`tool_call.*`、`approval.*`、`stage.*`、`background.updated`、`usage.updated` 等，全的在 `event.rs`）。`EventSink`（`log.rs`）编号、存 `agent_events`、交给界面；`gateway_events(runId)` 读。读不懂的行（旧版本的 `verify.*`、以后版本的）当 `raw`，界面不显示。
+- **事件**：`AgentEvent` = `seq` + `at` + 可选 `subagentId` + 本体（`session.*`、`turn.*`、`message.*`、`tool_call.*`、`approval.*`、`stage.*`、`background.updated`、`usage.updated`、`hook.ran` 等，全的在 `event.rs`）。`EventSink`（`log.rs`）编号、存 `agent_events`、交给界面；`gateway_events(runId)` 读。读不懂的行（旧版本的 `verify.*`、以后版本的）当 `raw`，界面不显示。
 - **用量**：`input` 不含缓存，`cacheRead`、`cacheWrite` 另算；`output` 含思考。花费分按价格表算 / CLI 估 / 未知，没有就 `usd: null`，不填 0。
 - **模型目录**：`src-tauri/defaults/models.json`，`node scripts/models-snapshot.mjs` 从 models.dev 重取。
 - **价格表**（`prices.rs`）：花费都按「用量 × 价格表」算。内置 `src-tauri/defaults/prices.json`（美元价取 models.dev，DeepSeek、Aliyun 是官网人民币价），站主改的、刷新来的、汇率存 `app_settings`，盖在内置的上面。`prices_refresh` 只更新美元价，站主改过的行不动。
@@ -118,7 +118,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck Loop 同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示；Antigravity 不查。
-- **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌，只对这一次进程挂上、不改 CLI 的配置。工具：`create_skill`、`restore_snapshot`、定时任务那三个（五家都给；项目里关掉的自带插件的不列、调了也不收）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）。Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
+- **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌，只对这一次进程挂上、不改 CLI 的配置。工具：`create_skill`、`restore_snapshot`、定时任务那三个（五家都给；项目里关掉的自带插件的不列、调了也不收）、`load_skill`（读自带插件的 Skill 全文：给了哪个自带插件的工具就能读它的）、`git_commit`（项目里装着 Git Plan、这一段不是只读的才给）、`ask_user`（Grok、Antigravity）、`delegate_task`（选了委派才给）。Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
 - **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。
 
 ## Peck Loop（`src-tauri/src/harness/`）
@@ -140,7 +140,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | `update_plan`、`ask_user` | 任务清单；停下来问站主 |
 | `screenshot_app`（`shot.rs`） | Mac、能看图的模型，PLAN 也有：截这个 App 最前面的窗口 |
 
-其余（`bash_run`、`bash_background`、`memory`、`search_tasks`、`delegate_task`、`load_skill`、`create_skill`、`restore_snapshot`、`schedule_task` 等、`mcp__*`）见下面各节。**附图**最多 6 张：Peck Loop 放进这一句（看不了图的模型不发、写一句），CLI 引擎存成文件、在句末写路径。
+其余（`bash_run`、`bash_background`、`memory`、`search_tasks`、`delegate_task`、`load_skill`、`create_skill`、`restore_snapshot`、`schedule_task` 等、`git_commit`、`mcp__*`）见下面各节。**附图**最多 6 张：Peck Loop 放进这一句（看不了图的模型不发、写一句），CLI 引擎存成文件、在句末写路径。
 
 ### 命令（`tools/bash.rs`）
 
@@ -192,7 +192,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | `.claude-plugin/plugin.json` | `name`、`version`、`description`；`peck` 一节是 Peck 多认的：`title`（界面上的名字）、`tools`（要用的 Peck 工具，`{name, description}`，说明写给站主看）、`everyProject`（库里的：默认每个项目都装）、`skills`（装进项目时 Peck 写的：拆出去的 Skill 叫什么） |
 | `skills/<名字>/SKILL.md` | Skill |
 | `commands/<命令>.md` | 斜杠命令，打 `/<插件名>:<命令>` |
-| `hooks/hooks.json` | `{"hooks": {"Stop": [{"hooks": [{"type": "peck", "ask": "…", "run": "…"}]}]}}`：问刚干完的模型一句，再由 Peck 跑一个自己的动作（Phase 5 才跑）；`type: "command"`（任意脚本）只列出来、不跑 |
+| `hooks/hooks.json` | `{"hooks": {"Stop": [{"hooks": [{"type": "peck", "ask": "…", "run": "git_commit"}]}]}}`：一轮做完，问刚干完的模型一句，再由 Peck 跑一个自己的动作（现在只有 `git_commit`）；`type: "command"`（任意脚本）只列出来、不跑 |
 | `.mcp.json` | `{"mcpServers": {…}}`（现在只列出来） |
 
 三种来源：
@@ -208,9 +208,18 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 - **装进项目后在哪**：Skill 进 Skill 文件夹的真身那一边（`skills_home`，默认 `.claude/skills/<名字>/`）；其余的（`plugin.json`、命令、Hook、MCP）进它旁边的 `plugins/<插件名>/`。和项目里已有、不是这个插件带来的 Skill 撞名就不装。
 - **UPDATE**：库里的版本比项目里的新才出；点了才整份覆盖（被盖掉的 `SKILL.md` 存一份旧版，能退回）。Peck 不自己改项目里装好的文件。
 - **REMOVE**：删项目里那一份（连它带来的 Skill；只删项目里面的真文件夹），记进 `ProjectSettings.plugins_removed`，以后不再自动装；再 INSTALL 就去掉这个记号。`prepared`、`plugins_removed` 是 Peck 自己记的，界面存项目设置盖不掉。
-- **运行时**：`SKILL.md` 各家 CLI 自己读、Peck Loop 列进系统提示；命令由 Peck 展开成一句话再发；工具 Peck Loop 直接调、CLI 走本机 MCP；Hook 由 Peck 自己跑（Phase 5）。
+- **运行时**：`SKILL.md` 各家 CLI 自己读、Peck Loop 列进系统提示；命令由 Peck 展开成一句话再发；工具 Peck Loop 直接调、CLI 走本机 MCP；Hook 由 Peck 自己跑。插件要的 Peck 工具（`peck.tools`）只在装着它的项目里给。
 - 项目有任务在跑时 INSTALL、UPDATE、REMOVE 都拒绝。
 - IPC：`plugin_list`、`plugin_every_project`（设置页）；`project_prepare`、`project_plugins`、`plugin_install`、`plugin_remove`（项目）。
+
+### Git Plan（`src-tauri/defaults/library/plugins/git-plan/`）
+
+库里的第一个插件，默认每个项目都装：一份 Skill（版本号怎么升、什么时候分 Phase、提交说明 `v<版本>: <description>`、不署名、不 push、开工前先问程度）、三个命令（`/git-plan:plan` 写 Phase 计划、`/git-plan:release` 改版本号、`/git-plan:commits` 汇报还没推的提交）、工具 `git_commit`、一条收尾 Hook。
+
+- **`git_commit`**（`harness/git.rs`）：只会提交——`git add` 点名的文件、`git commit --only`（不点名就是全部没提交的改动；被忽略的不进去；站主先前 `git add` 过、这次没点名的不带上）。碰不到 push、amend、改历史，不改 git 配置，不署名。说明必须是一行 `v<x.y.z>: <description>`，带署名行的拒绝。不是 git 项目、不在任何分支上（独立工作区）不提交。PLAN 不给；EDIT 问一次（能「这个项目总是允许」，规则 `git-commit`）；AUTO 不问。Peck Loop 直接调，CLI 经本机 MCP 调（EDIT 的卡片走子通道，和回退同一条路）。
+- **收尾 Hook**（`harness/hooks.rs`）：任务做完了（失败、打断、到上限的不跑）、不是 PLAN、不是独立工作区、项目是 git 仓库、这一轮改过的文件里还有没提交的，就问刚干完的那个模型要一行提交说明，Peck 校验后只提交这一轮改过的文件。不弹卡片、不 push。
+  - **怎么问**：Peck Loop 在原对话末尾多问一轮（同样的系统提示、工具和对话，走缓存；不显示成回答、不进存下的对话，用量照记）。CLI 续上它刚才的会话、只读地问（事件不进这个任务的记录，用量照记；它要审批就打断，最多等 3 分钟）；续不了的、直接调用的引擎（Antigravity）不问。接力、审查的任务问实施的那一个。
+  - **结果**：一条 `hook.ran` 事件（提交了哪一笔，或者为什么没提交：没答、格式不对、git 报错），界面写在这一轮的 recap 里。
 
 ## 多引擎合作（`harness/team.rs`）
 

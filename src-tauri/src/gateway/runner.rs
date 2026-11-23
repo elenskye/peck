@@ -422,7 +422,7 @@ pub(crate) fn start_engine_run(
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
         // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，续上这个 CLI 的会话问一行提交说明，Peck 自己提交。
-        let stop_hook = crate::project_plugins::stop_hook(&workspace);
+        let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
         let ask_task = AgentTask {
             run_id: id.clone(),
             prompt: String::new(),

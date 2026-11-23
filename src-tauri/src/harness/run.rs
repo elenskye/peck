@@ -529,7 +529,7 @@ pub(crate) fn start_peck_run(
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
     // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有；循环收尾时问一句，快照拍完以后提交。
-    let stop_hook = crate::project_plugins::stop_hook(&workspace);
+    let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
     let stop_ask = super::hooks::StopAsk::of(&stop_hook);
     // 快照回退、定时任务（v1.0.2）：这个任务是谁在干，设定时任务时默认照它。
     let extras = Arc::new(super::extras::Extras {

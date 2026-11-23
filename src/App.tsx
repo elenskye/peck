@@ -459,13 +459,19 @@ const App: React.FC = () => {
 
   // ---------- 终端 ----------
   // 点开一个项目（v1.1.0）：第一次认项目结构（说明文件、Skill 文件夹的软链接），每次补上「每个项目都装」的插件；做了什么说一句。
+  // 只认左栏里列着的项目：从归档里只读地看一个移出了列表的项目的任务，不往它的文件夹里写。
+  // 做了事就让开着的项目设置重读一遍（它先于这一步读过插件和 Skill 了）。
+  const [prepRev, setPrepRev] = useState(0);
+  const prepId = listed?.workspace.id ?? null;
   useEffect(() => {
-    if (!projectId) return;
-    void ipc.projectPrepare(projectId).then((done) => {
+    if (!prepId) return;
+    void ipc.projectPrepare(prepId).then((done) => {
       const parts = [done.created.length ? `补了 ${done.created.join("、")}` : "", done.installed.length ? `装了 ${done.installed.join("、")}` : ""].filter(Boolean);
-      if (parts.length) say(`这个项目里${parts.join("；")}`);
+      if (!parts.length) return;
+      say(`这个项目里${parts.join("；")}`);
+      setPrepRev((n) => n + 1);
     }).catch(say);
-  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [prepId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const term = (projectId && terms[projectId]) || EMPTY_TERM;
   useEffect(() => {
@@ -676,7 +682,7 @@ const App: React.FC = () => {
         />
         {page === "project" && project ? (
           <ProjectPage
-            key={project.workspace.id}
+            key={`${project.workspace.id}:${prepRev}`}
             project={project}
             entries={entries}
             native={native}

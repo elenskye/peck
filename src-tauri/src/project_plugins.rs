@@ -3,6 +3,7 @@
 //! - **认项目结构**（[`ensure_structure`]）：第一次点开一个项目时做一次。说明文件 `CLAUDE.md` / `AGENTS.md`、
 //!   Skill 文件夹 `.claude/skills` / `.agents/skills` 各判各的：两边都没有就建 Claude 那一边、另一边软链接过去；
 //!   只有一边就补另一边的软链接；两边都有（不管是文件还是软链接）不动。这样哪家 CLI 都读得到同一份。
+//!   只有一边、而且那一边是指不到东西的软链接（克隆下来的仓库里空的 Skill 文件夹没跟着来）：把另一边建成真的，不再套一层链接。
 //! - **装**（[`install`]）：库里的插件拷进项目——Skill 进项目的 Skill 文件夹（[`skills_home`]，真身在哪边就放哪边），
 //!   其余的（`plugin.json`、命令、Hook、MCP）进它旁边的 `plugins/<插件名>/`；拷进去的 `plugin.json` 里多记一行
 //!   `peck.skills`（拆出去的 Skill 叫什么）。库里单独的 Skill 就是拷进 Skill 文件夹。之后是项目自己的文件，跟着项目的 git 走。
@@ -32,6 +33,11 @@ fn real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
+/// 在，但是是一个指不到东西的软链接。
+fn dangling(path: &Path) -> bool {
+    exists(path) && !path.exists()
+}
+
 fn link(target: &str, at: &Path) -> Result<(), String> {
     std::os::unix::fs::symlink(target, at).map_err(|e| format!("建不了软链接 {}：{e}", at.display()))
 }
@@ -49,13 +55,15 @@ pub fn ensure_structure(root: &Path, name: &str) -> Result<Vec<String>, String> 
             made.push(claude.to_string());
             made.push(format!("{agents} → {claude}"));
         }
-        (true, false) => {
-            link(claude, &root.join(agents))?;
-            made.push(format!("{agents} → {claude}"));
-        }
-        (false, true) => {
-            link(agents, &root.join(claude))?;
-            made.push(format!("{claude} → {agents}"));
+        (have_claude, _) => {
+            let (have, other) = if have_claude { (claude, agents) } else { (agents, claude) };
+            if dangling(&root.join(have)) {
+                std::fs::write(root.join(other), format!("# {name}\n")).map_err(|e| format!("建不了 {other}：{e}"))?;
+                made.push(other.to_string());
+            } else {
+                link(have, &root.join(other))?;
+                made.push(format!("{other} → {have}"));
+            }
         }
     }
     // Skill 文件夹：在 `.claude/`、`.agents/` 里面，软链接往上一层再过去。
@@ -68,12 +76,18 @@ pub fn ensure_structure(root: &Path, name: &str) -> Result<Vec<String>, String> 
             made.push(format!("{real}/"));
         }
         let at = root.join(other);
-        if let Some(parent) = at.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("建不了 {}：{e}", parent.display()))?;
+        if dangling(&root.join(real)) {
+            // 在的那一边是指不到东西的软链接（多半就指着缺的这一边）：把缺的这一边建成真的文件夹，不再链回去套成环。
+            std::fs::create_dir_all(&at).map_err(|e| format!("建不了 {other}/：{e}"))?;
+            made.push(format!("{other}/"));
+        } else {
+            if let Some(parent) = at.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("建不了 {}：{e}", parent.display()))?;
+            }
+            let target = format!("../{real}");
+            link(&target, &at)?;
+            made.push(format!("{other} → {target}"));
         }
-        let target = format!("../{real}");
-        link(&target, &at)?;
-        made.push(format!("{other} → {target}"));
     }
     Ok(made)
 }
@@ -154,9 +168,37 @@ fn remove_dir(root: &Path, dir: &Path) -> Result<(), String> {
     std::fs::remove_dir_all(dir).map_err(|e| format!("删不了 {}：{e}", dir.display()))
 }
 
+/// Skill 文件夹要在项目里面（`.claude/skills` 是一个指到项目外面的软链接时，Peck 不顺着它往外写、往外删）。
+fn home_inside(root: &Path) -> Result<PathBuf, String> {
+    let home = skills_home(root);
+    // 还没有这个文件夹：看它最近的、已经在的上一层。
+    let mut probe = home.as_path();
+    while !probe.exists() {
+        match probe.parent() {
+            Some(up) => probe = up,
+            None => break,
+        }
+    }
+    match (probe.canonicalize(), root.canonicalize()) {
+        (Ok(p), Ok(r)) if p.starts_with(&r) => Ok(home),
+        _ => Err(format!("这个项目的 Skill 文件夹（{}）指到项目外面去了，Peck 不往外面写。", relative(root, &home))),
+    }
+}
+
+/// 删项目里的一个 Skill：名字要合规，只删 Skill 文件夹下面那一层的。
+fn remove_skill(root: &Path, name: &str) -> Result<(), String> {
+    if !crate::skill_propose::valid_skill_name(name) {
+        return Err(format!("{name} 不是合规的 Skill 名，没动。"));
+    }
+    remove_dir(root, &home_inside(root)?.join(name))
+}
+
 /// 把一个 Skill 的文件写进项目的 Skill 文件夹（整个文件夹换掉）。原来的 `SKILL.md` 不一样就先存一份旧版。
 fn write_skill(root: &Path, name: &str, files: &Tree, history_key: &str) -> Result<(), String> {
-    let dir = skills_home(root).join(name);
+    if !crate::skill_propose::valid_skill_name(name) {
+        return Err(format!("{name} 不是合规的 Skill 名，没装。"));
+    }
+    let dir = home_inside(root)?.join(name);
     if let Ok(old) = std::fs::read_to_string(dir.join("SKILL.md")) {
         if files.get("SKILL.md").is_some_and(|new| new.as_slice() != old.as_bytes()) {
             crate::skill_propose::backup(history_key, &dir, &old)?;
@@ -195,7 +237,7 @@ pub fn install(root: &Path, item: &Plugin, tree: &Tree, history_key: &str) -> Re
             }
         }
     }
-    let home = skills_home(root);
+    let home = home_inside(root)?;
     if let Some((clash, _)) = skills.iter().find(|(name, _)| !mine.contains(name) && exists(&home.join(name))) {
         return Err(format!("这个项目里已经有叫 {clash} 的 Skill，没装 {}。先把那个 Skill 改名或删掉。", item.info.title));
     }
@@ -204,7 +246,7 @@ pub fn install(root: &Path, item: &Plugin, tree: &Tree, history_key: &str) -> Re
     }
     // 上一版带来、这一版没有了的 Skill 删掉。
     for gone in mine.iter().filter(|old| !skills.iter().any(|(name, _)| name == *old)) {
-        remove_dir(root, &home.join(gone))?;
+        remove_skill(root, gone)?;
     }
     // 其余的进 `plugins/<插件名>/`；`plugin.json` 里记下拆出去的 Skill。
     let manifest = rest.get(".claude-plugin/plugin.json").and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
@@ -226,22 +268,27 @@ pub fn install(root: &Path, item: &Plugin, tree: &Tree, history_key: &str) -> Re
     plugins::write_tree(&dir, &rest).map_err(|e| format!("写不了 {}：{e}", relative(root, &dir)))
 }
 
-/// 从项目里移除一项：装着的插件（连它带来的 Skill），或者库里有的那个单独的 Skill。返回有没有删到东西。
-pub fn remove(root: &Path, name: &str, library: &[(Plugin, Tree)]) -> Result<bool, String> {
+/// 从项目里移除一项：装着的插件（连它带来的 Skill），或者库里有的那个单独的 Skill。
+/// 返回（有没有删到东西，插件移走了但没删掉的 Skill 是为什么）。
+pub fn remove(root: &Path, name: &str, library: &[(Plugin, Tree)]) -> Result<(bool, Option<String>), String> {
     let home = skills_home(root);
     let mut removed = false;
+    let mut left: Option<String> = None;
     for (plugin, dir) in installed(root).into_iter().filter(|(p, _)| p.info.name == name) {
+        // 哪个 Skill 删不了（不合规的名字、指到项目外面的）不拦着把插件本身移走；最后说一声。
         for skill in &plugin.split_skills {
-            remove_dir(root, &home.join(skill))?;
+            if let Err(why) = remove_skill(root, skill) {
+                left.get_or_insert(why);
+            }
         }
         remove_dir(root, &dir)?;
         removed = true;
     }
     if !removed && library.iter().any(|(p, _)| p.info.kind == "skill" && p.info.name == name) && exists(&home.join(name)) {
-        remove_dir(root, &home.join(name))?;
+        remove_skill(root, name)?;
         removed = true;
     }
-    Ok(removed)
+    Ok((removed, left.filter(|_| removed).map(|why| format!("插件移走了，但它带来的 Skill 有没删掉的：{why}"))))
 }
 
 /// 默认注入：库里「每个项目都装」的、这个项目里没有、也没被站主移除过的，装上。返回这次装了哪几个（界面上的名字）。
@@ -364,7 +411,8 @@ pub(crate) fn prepare(store: &std::sync::Mutex<crate::store::Store>, library_dir
     let db = store.lock().map_err(|_| "读不到项目。")?;
     let mut ws = db.workspace(workspace_id).map_err(|_| "没找到这个项目。")?;
     let root = PathBuf::from(&ws.path);
-    if !root.is_dir() || db.workspace_running(workspace_id).unwrap_or(true) {
+    // 移出了列表的项目也不动（从归档里只读地看它的任务时不该往它的文件夹里写）。
+    if ws.hidden || !root.is_dir() || db.workspace_running(workspace_id).unwrap_or(true) {
         return Ok(Prepared::default());
     }
     let mut out = Prepared::default();
@@ -407,11 +455,16 @@ pub(crate) fn change(store: &std::sync::Mutex<crate::store::Store>, library_dir:
         install(&root, item, tree, workspace_id)?;
         ws.settings.plugins_removed.retain(|n| n != name);
     } else {
-        if !remove(&root, name, &library)? {
+        let (removed, left) = remove(&root, name, &library)?;
+        if !removed {
             return Err(format!("这个项目里没装 {name}。"));
         }
         if !ws.settings.plugins_removed.iter().any(|n| n == name) {
             ws.settings.plugins_removed.push(name.to_string());
+        }
+        if let Some(why) = left {
+            db.save_workspace(&ws).map_err(|e| e.to_string())?;
+            return Err(why);
         }
     }
     db.save_workspace(&ws).map_err(|e| e.to_string())?;
@@ -513,7 +566,57 @@ mod tests {
         put(&e, "AGENTS.md", "规则");
         put(&e, "CLAUDE.md", "规则");
         assert_eq!(ensure_structure(&e, "戊").unwrap(), vec![".claude/skills/", ".agents/skills → ../.claude/skills"]);
-        for dir in [a, b, c, d, e] {
+        // 克隆下来的默认结构：`.agents/skills` 的软链接跟来了，空的 `.claude/skills` 没跟来（git 不存空文件夹）。
+        // 把缺的那一边建成真的文件夹，不链回去套成环。
+        let f = temp("f");
+        put(&f, "CLAUDE.md", "规则");
+        std::os::unix::fs::symlink("CLAUDE.md", f.join("AGENTS.md")).unwrap();
+        std::fs::create_dir_all(f.join(".agents")).unwrap();
+        std::os::unix::fs::symlink("../.claude/skills", f.join(".agents/skills")).unwrap();
+        assert!(dangling(&f.join(".agents/skills")));
+        assert_eq!(ensure_structure(&f, "己").unwrap(), vec![".claude/skills/"]);
+        assert!(real_dir(&f.join(".claude/skills")) && f.join(".agents/skills").is_dir());
+        assert_eq!(skills_home(&f), f.join(".claude/skills"));
+        assert!(ensure_structure(&f, "己").unwrap().is_empty());
+        for dir in [a, b, c, d, e, f] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn names_from_a_project_plugin_file_never_reach_outside_the_skills_folder() {
+        let root = temp("evil");
+        let lib_dir = library("1.0.0", false);
+        let lib = plugins::library_trees(&lib_dir);
+        ensure_structure(&root, "试").unwrap();
+        put(&root, "src/main.rs", "fn main() {}");
+        put(&root, ".claude/skills/mine/SKILL.md", "---\nname: mine\ndescription: 我的\n---\nx");
+        // 一份别人写的（或者手改过的）plugin.json：`peck.skills` 里塞了往外走的路径。
+        put(&root, ".claude/plugins/evil/.claude-plugin/plugin.json", r#"{"name": "evil", "version": "1.0.0", "peck": {"skills": ["", ".", "..", "../../src", "/tmp", "a/b", "ok-skill"]}}"#);
+        put(&root, ".claude/skills/ok-skill/SKILL.md", "---\nname: ok-skill\ndescription: 它带来的\n---\nx");
+        let have = installed(&root);
+        assert_eq!(have[0].0.split_skills, vec!["ok-skill"], "不合规的名字读进来就丢掉");
+        assert_eq!(remove(&root, "evil", &lib).unwrap(), (true, None));
+        assert!(!root.join(".claude/plugins/evil").exists() && !root.join(".claude/skills/ok-skill").exists());
+        assert!(root.join("src/main.rs").is_file() && root.join(".claude/skills/mine/SKILL.md").is_file() && root.join("CLAUDE.md").is_file());
+        assert!(remove_skill(&root, "..").is_err() && remove_skill(&root, "").is_err() && remove_skill(&root, "a/b").is_err());
+        assert!(real_dir(&root.join(".claude/skills")));
+
+        // Skill 文件夹是一个指到项目外面的软链接：不顺着它往外装、往外删。
+        let outside = temp("outside");
+        let other = temp("linked");
+        put(&other, "CLAUDE.md", "x");
+        put(&other, "AGENTS.md", "x");
+        std::fs::create_dir_all(other.join(".claude")).unwrap();
+        std::fs::create_dir_all(other.join(".agents")).unwrap();
+        std::os::unix::fs::symlink(&outside, other.join(".claude/skills")).unwrap();
+        std::os::unix::fs::symlink(&outside, other.join(".agents/skills")).unwrap();
+        assert!(install(&other, &lib[0].0, &lib[0].1, "w").unwrap_err().contains("指到项目外面"));
+        assert!(install(&other, &lib[1].0, &lib[1].1, "w").unwrap_err().contains("指到项目外面"));
+        assert!(inject_defaults(&other, &Default::default(), &Default::default(), &lib, "w").is_empty());
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "外面那个文件夹一个字没动");
+        assert!(installed(&other).is_empty());
+        for dir in [root, lib_dir, outside, other] {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
@@ -573,13 +676,13 @@ mod tests {
 
         // REMOVE：项目里那一份连它带来的 Skill 一起删；站主自己的 Skill 不碰。
         put(&root, ".claude/skills/mine/SKILL.md", "---\nname: mine\ndescription: 我的\n---\nx");
-        assert!(remove(&root, "git-plan", &lib2).unwrap());
+        assert_eq!(remove(&root, "git-plan", &lib2).unwrap(), (true, None));
         assert!(!root.join(".claude/plugins/git-plan").exists() && !root.join(".claude/skills/git-plan").exists());
-        assert!(remove(&root, "zh-copy", &lib2).unwrap());
+        assert!(remove(&root, "zh-copy", &lib2).unwrap().0);
         assert!(!root.join(".claude/skills/zh-copy").exists());
-        assert!(!remove(&root, "mine", &lib2).unwrap(), "库里没有的不是 Peck 装的，不删");
+        assert!(!remove(&root, "mine", &lib2).unwrap().0, "库里没有的不是 Peck 装的，不删");
         assert!(root.join(".claude/skills/mine/SKILL.md").is_file());
-        assert!(!remove(&root, "git-plan", &lib2).unwrap());
+        assert!(!remove(&root, "git-plan", &lib2).unwrap().0);
         for dir in [root, lib_dir, lib2_dir] {
             let _ = std::fs::remove_dir_all(dir);
         }
@@ -662,6 +765,19 @@ mod tests {
         }
         assert_eq!(prepare(&store, &lib_dir, "w2").unwrap().installed, vec!["zh-copy"]);
         assert!(!root.join("ws2/.claude/plugins/git-plan").exists() && root.join("ws2/.claude/skills/zh-copy/SKILL.md").is_file());
+        // 移出了列表的项目：不动（回到列表以后再点开才做）。
+        {
+            let db = store.lock().unwrap();
+            let mut gone = db.workspace("w1").unwrap();
+            gone.id = "w3".into();
+            gone.path = root.join("ws3").to_string_lossy().into_owned();
+            gone.settings = Default::default();
+            gone.hidden = true;
+            std::fs::create_dir_all(root.join("ws3")).unwrap();
+            db.save_workspace(&gone).unwrap();
+        }
+        assert_eq!(prepare(&store, &lib_dir, "w3").unwrap(), Prepared::default());
+        assert!(std::fs::read_dir(root.join("ws3")).unwrap().next().is_none());
         // 文件夹不在了：什么都不做，也不报错。
         std::fs::remove_dir_all(root.join("ws2")).unwrap();
         assert_eq!(prepare(&store, &lib_dir, "w2").unwrap(), Prepared::default());

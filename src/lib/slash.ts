@@ -35,13 +35,13 @@ export const CLI_ONLY = new Set([
 
 /** 整句只有 `/` 加几个字（还没写参数）：弹列表。 */
 export function slashAt(draft: string): { query: string } | null {
-  const m = draft.match(/^\/([A-Za-z0-9_.:-]{0,64})$/);
+  const m = draft.match(/^\/([A-Za-z0-9_.:-]{0,130})$/);
   return m ? { query: m[1] } : null;
 }
 
 /** 这句话是不是一个斜杠命令：`/名字` 后面空格接参数（可以换行）。 */
 export function parseSlash(text: string): { name: string; args: string } | null {
-  const m = text.trim().match(/^\/([A-Za-z0-9_.:-]{1,64})(?:\s+([\s\S]*))?$/);
+  const m = text.trim().match(/^\/([A-Za-z0-9_.:-]{1,130})(?:\s+([\s\S]*))?$/);
   return m ? { name: m[1], args: (m[2] ?? "").trim() } : null;
 }
 

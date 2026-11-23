@@ -268,7 +268,8 @@ function skillWhere(name: string): string {
 /** 模型提议存一条 Skill（v0.10 C3）：不打断任务，跑着、跑完都能批。SAVE 存（任务还在跑、要写进项目的，做完再写），
  *  EDIT 改了再存，SKIP 不要。替换已有的给 Diff。 */
 const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: boolean; onAppend?: (e: AgentEvent) => void; say: (m: unknown) => void }> = ({ skill, runId, running, onAppend, say }) => {
-  const [draft, setDraft] = useState<SkillDraft>({ name: skill.name, description: skill.description, body: skill.body, scope: skill.scope });
+  // 1.1.0 以前提的「全局」Skill 现在只能存进项目：草稿的范围收成项目的（和原来的不一样，存的时候就带着草稿发过去）。
+  const [draft, setDraft] = useState<SkillDraft>({ name: skill.name, description: skill.description, body: skill.body, scope: skill.scope === "project-skills" ? "project-skills" : "project" });
   const [editing, setEditing] = useState(false);
   const [sent, setSent] = useState(false);
   const [all, setAll] = useState(false);

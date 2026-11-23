@@ -542,4 +542,44 @@ mod tests {
         }
         println!("outcome: {outcome:?}");
     }
+    /// 真跑收尾 Hook（v1.1.0，本地，平时不跑）：`PECK_LIVE_CODEX=<codex 路径> PECK_LIVE_CWD=<一个 git 仓库>`。
+    /// Codex 改一个文件，再续上它的会话、只读地问 Git Plan 的那一句，Peck 用答回来的那一行提交。
+    /// 花一个 Codex 小任务的授权（两轮）；审批一律批准一次。
+    #[tokio::test]
+    #[ignore]
+    async fn live_stop_hook_commits_the_round() {
+        use crate::harness::{git, hooks};
+        let bin = PathBuf::from(std::env::var("PECK_LIVE_CODEX").expect("PECK_LIVE_CODEX"));
+        let cwd = PathBuf::from(std::env::var("PECK_LIVE_CWD").expect("PECK_LIVE_CWD"));
+        let setup = EngineSetup { path: crate::agent::build_augmented_path(&[bin.parent().unwrap().to_string_lossy().into_owned()]), bin, env: vec![] };
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sink, events) = auto_answer("codex", tx, |_| ApprovalDecision::AllowOnce, "好");
+        let t = AgentTask {
+            run_id: "live-hook".into(),
+            prompt: "在 notes.txt 末尾加一行「hook smoke」。只改这一个文件，不要运行任何 git 命令。".into(),
+            cwd: cwd.clone(),
+            permission: PermissionLevel::Edit,
+            model: Some(std::env::var("PECK_LIVE_MODEL").unwrap_or_else(|_| "gpt-6-luna".into())),
+            effort: Some("low".into()),
+            resume: None,
+            peck_mcp: None,
+            env: vec![],
+            folders: vec![],
+        };
+        let backend = CodexBackend::new(setup);
+        let outcome = backend.run(t.clone(), sink, rx).await.expect("第一轮");
+        println!("round: {:?}, {} events", outcome.reason, events.lock().unwrap().len());
+        let files = git::changed(&cwd).unwrap();
+        println!("changed: {files:?}");
+        // 问的就是库里 Git Plan 那一句。
+        let hooks_json: serde_json::Value = serde_json::from_str(include_str!("../../../defaults/library/plugins/git-plan/hooks/hooks.json")).unwrap();
+        let ask = hooks_json["hooks"]["Stop"][0]["hooks"][0]["ask"].as_str().unwrap().to_string();
+        let again = AgentTask { resume: outcome.session_ref.clone(), ..t };
+        let answer = hooks::ask_cli(&backend, "codex", again, &ask, |body| println!("usage: {}", serde_json::to_string(&body).unwrap().chars().take(160).collect::<String>())).await;
+        println!("answer: {answer:?}");
+        let hook = hooks::StopHook { plugin: "Git Plan".into(), ask };
+        let done = hooks::commit(&hook, &cwd, &files, answer.as_deref());
+        println!("{}", serde_json::to_string(&done).unwrap());
+        println!("uncommitted now: {:?}", git::changed(&cwd).unwrap());
+    }
 }
