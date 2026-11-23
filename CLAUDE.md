@@ -43,6 +43,7 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 
 - 自带插件嵌在程序里（`src-tauri/defaults/plugins/`），插件库的源在 `src-tauri/defaults/library/`；系统级的插件和 Skill 只在开发 Peck 时新建、更新，改了就升它自己的 `version`。跑着的模型（`create_skill`）只写项目里的。
 - 插件的命令一律带插件前缀：`/<插件名>:<命令>`（`/git-plan:plan`）。不带前缀的只有 Peck 自己的那几个。
+- 装进项目的是项目自己的文件：Peck 不自己改，库里有新版只提示 UPDATE、点了才覆盖。
 - 格式、放哪、怎么装进项目见 `docs/architecture.md`「插件」。
 
 ## 文档

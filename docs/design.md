@@ -40,7 +40,8 @@
 | Workspace folders | 项目的其他文件夹（只读 / 能改） |
 | Git worktree | 独立工作区（WORKTREE；APPLY 搬回、DISCARD 丢掉） |
 | Tooltip / help text | ⓘ |
-| MCP server | MCP 服务器（设置 → MCP） |
+| MCP server | MCP 服务器（设置 → PLUGINS 的 MCP SERVERS） |
+| Plugin | 插件（不译成别的；BUILT-IN 自带的、LIBRARY 插件库里的；INSTALL / UPDATE / REMOVE） |
 | Preview / annotate | 预览（右栏 PREVIEW）；NOTE 点元素写批注 |
 | Scheduled task | 定时任务（在对话里设；PROJECTS 头上的钟里看；任务名前面 ⏰） |
 | Missed run | 错过了（`[ MISSED ]` 卡片：RUN NOW / SKIP） |
@@ -80,9 +81,11 @@
 - **PROVIDERS**：每家一块：Key 框 + SAVE + REMOVE；Aliyun 下面一行选地域（BEIJING / SINGAPORE）和 SAVE；Vertex 一行两个方框（GCLOUD、PROJECT ID 的状态）。
 - **AGENTS**：委派给谁；PRESETS 一行一套：USE / IN USE、EDIT 展开改名字和写规范 / 实施 / 审查 / 委派，自带的改过有 RESET、自己的能 DELETE（点两下）、ADD PRESET 按左栏现在的组合起头。
 - **QUOTA**：汇率；价格表 REFRESH；按家分组，一行一个模型（进、出、缓存命中、缓存写入、分档、高峰倍数），EDIT 就地改，改过的标 EDITED、能 RESET，ADD MODEL 加自己的。
-- **ACCESS**：默认档、五类高危、「总是允许」能撤。**CLI**：CLI 目录，五家的色点 / 版本 / 位置（FOUND / NOT FOUND），Claude Code、Codex 的 LOGIN / RELOGIN。**LOOK**：明暗、编辑器（能打字的下拉）、App 图标 J2 / A3。**MCP**：一行一台，TEST 列出工具（只读的带锁、会删改的写出来）；编辑时有「钥匙串」一行存要保密的变量。**ARCHIVE**：见上。**KEYS**：键盘一览。
+- **ACCESS**：默认档、五类高危、「总是允许」能撤。**CLI**：CLI 目录，五家的色点 / 版本 / 位置（FOUND / NOT FOUND），Claude Code、Codex 的 LOGIN / RELOGIN。**LOOK**：明暗、编辑器（能打字的下拉）、App 图标 J2 / A3。
+- **PLUGINS**：三块。BUILT-IN、LIBRARY 一行一个插件（名字、版本、说明），点名字展开一张清单：SKILL、COMMAND（怎么打、参数、做什么）、TOOL、HOOK（什么时候、问哪一句、Peck 跑什么）、MCP；库里的右边一个 EVERY PROJECT 开关，单独的 Skill 带 SKILL 标签。MCP SERVERS 一行一台，TEST 列出工具（只读的带锁、会删改的写出来）；编辑时有「钥匙串」一行存要保密的变量。
+- **ARCHIVE**：见上。**KEYS**：键盘一览。
 
-**项目设置**（右键 → 项目设置）：名字、文件夹、默认预设（有它「默认谁来干」变灰）、默认谁来干和权限、FOLDERS（每行 READ / WRITE）、ENV（`NAME=value`）、MCP（`.mcp.json` 里的和设置里的放在一起：名字、出处、命令、开关、TEST）、SKILLS（名字、在哪、描述、开关；用了几次、30 天没用的琥珀色、有旧版的能 RESTORE；自带插件的三个写「Peck 自带」）、COMMANDS（插件带的命令，`/插件名:命令`）、MEMORY、「总是允许」过的、ARCHIVE ALL TASKS、移出列表。
+**项目设置**（右键 → 项目设置）：名字、文件夹、默认预设（有它「默认谁来干」变灰）、默认谁来干和权限、FOLDERS（每行 READ / WRITE）、ENV（`NAME=value`）、PLUGINS（和设置里一样一行一个、点名字展开：自带的带 BUILT-IN 标签和开关；库里的没装是暗的、右边 INSTALL，装着的 REMOVE（点两下），有新版多一个青色的版本标签和 UPDATE）、SKILLS（项目自己的和插件带进来的：名字、在哪、哪个插件的、描述、开关；用了几次、30 天没用的琥珀色、有旧版的能 RESTORE）、MCP（`.mcp.json` 里的和设置里的放在一起：名字、出处、命令、开关、TEST）、MEMORY、「总是允许」过的、ARCHIVE ALL TASKS、移出列表。
 
 **额度与花费**（顶栏 QUOTA）：顶上三块读数（这个月 API 花的和上限、近几天 CLI 折算的、DeepSeek 余额）；按引擎叠的每天柱子（7D / 30D / 90D）；按模型和引擎的横条；每个客户端一张订阅额度卡，每个窗口一条 20 格刻度，写还剩多少（剩 25% 起琥珀、10% 起红），没读到写原因、留上次的读数。
 

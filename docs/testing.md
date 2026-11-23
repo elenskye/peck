@@ -40,9 +40,10 @@
 | 换引擎接着发 | 合作做完的任务里换成 CLI、关审查再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
 | 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |
 | 截图、贴图 | 带「截图」；输入框粘贴或拖进图 | 演示图；小图，发出去一行「这一句带了 1 张图」 |
-| 斜杠命令 | 输入框打 `/` | Peck 自己的八个（插件带的命令等项目里装了插件才有）；`/undo` 发一句话给模型、`/model` 提示不转发 |
+| 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
+| 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页三块，点名字展开清单、EVERY PROJECT 开关；项目里三种状态：notebook 装着旧版（青色版本标签 + UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后下面 SKILLS 多一行 |
 
-- 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、MCP、SKILLS、COMMANDS、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。
+- 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、PLUGINS、SKILLS、MCP、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
