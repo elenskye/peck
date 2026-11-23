@@ -407,6 +407,7 @@ impl MuseConverter {
                         cache_read: read,
                         cache_write: write,
                         reasoning: None,
+                        web_searches: None,
                         context_used: self.context.0,
                         context_window: self.context.1,
                     },

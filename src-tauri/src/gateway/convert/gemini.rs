@@ -8,10 +8,15 @@
 //!
 //! 流里一块常被拆成好几段（同一种文字接着来），这里拼回去；签名跟着它到的那一块走。
 //! Gemini 不总给工具调用 id，没给的这里编一个 `peck-call-<n>`，回放时不发。
+//!
+//! 联网搜索（v1.1.1，Gemini 3 起）：工具里加 `googleSearch`，`toolConfig` 开 `includeServerSideToolInvocations`
+//! （和函数调用一起用要它，函数调用随之是 `VALIDATED`）。回答里的 `toolCall` / `toolResponse` part 连同签名原样存成
+//! `Part::ServerTool`、同一来源原样放回（不带就 400）；来源在 `groundingMetadata` 里；按搜的条数记次数。
 
 use super::{minus, priced, system_text, tool_names, WireStream};
 use crate::gateway::catalog::{ModelSpec, Thinking};
 use crate::gateway::event::{OpaqueReasoning, Origin, TokenUsage};
+use crate::gateway::search::{self, Native, Source};
 use crate::gateway::{Message, ModelEvent, ModelRequest, ModelResponse, Part, Role, StopReason};
 use serde_json::{json, Value};
 
@@ -51,13 +56,21 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin) -> Val
     if !system.is_empty() {
         body["systemInstruction"] = json!({"parts": [{"text": system}]});
     }
+    let mut tools = Vec::new();
+    if request.web_search && search::native(model) == Some(Native::Gemini) {
+        tools.push(json!({"googleSearch": {}}));
+        body["toolConfig"] = json!({"includeServerSideToolInvocations": true, "functionCallingConfig": {"mode": "VALIDATED"}});
+    }
     if !request.tools.is_empty() {
         let declarations: Vec<Value> = request
             .tools
             .iter()
             .map(|t| json!({"name": t.name, "description": t.description, "parametersJsonSchema": t.input_schema}))
             .collect();
-        body["tools"] = json!([{"functionDeclarations": declarations}]);
+        tools.push(json!({"functionDeclarations": declarations}));
+    }
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools);
     }
     body
 }
@@ -91,7 +104,7 @@ fn user_parts(message: &Message, names: &std::collections::HashMap<String, Strin
             }
             Part::Text { text } => texts.push(json!({"text": text})),
             Part::Image { media_type, data } => texts.push(json!({"inlineData": {"mimeType": media_type, "data": data}})),
-            Part::Reasoning { .. } | Part::ToolCall { .. } => {}
+            Part::Reasoning { .. } | Part::ToolCall { .. } | Part::ServerTool { .. } => {}
         }
     }
     results.extend(texts);
@@ -141,6 +154,12 @@ fn model_parts(message: &Message, origin: &Origin) -> Vec<Value> {
                 }
                 out.push(p);
             }
+            // 联网搜索的 `toolCall` / `toolResponse`：同一来源原样放回（签名在里面）。
+            Part::ServerTool { opaque } => {
+                if opaque.origin.can_replay_to(origin) {
+                    out.push(opaque.data.clone());
+                }
+            }
             Part::ToolResult { .. } | Part::Image { .. } => {}
         }
     }
@@ -151,6 +170,8 @@ enum Piece {
     Thought { text: String, signature: Option<String> },
     Text { text: String, signature: Option<String> },
     Call { id: String, name: String, args: Value, signature: Option<String> },
+    /// 服务端工具（联网搜索）的 part，原样。
+    Raw { data: Value },
 }
 
 pub struct GeminiStream {
@@ -163,6 +184,10 @@ pub struct GeminiStream {
     response_model: Option<String>,
     error: Option<String>,
     calls: usize,
+    /// 服务端搜了几条（`toolCall` 里的 queries）。
+    searches: u64,
+    /// 还没报「搜完了」的服务端调用（等 `groundingMetadata` 的来源）。
+    open: Vec<(String, Option<String>)>,
 }
 
 impl GeminiStream {
@@ -177,6 +202,8 @@ impl GeminiStream {
             response_model: None,
             error: None,
             calls: 0,
+            searches: 0,
+            open: Vec::new(),
         }
     }
 
@@ -218,6 +245,22 @@ impl WireStream for GeminiStream {
         let mut out = Vec::new();
         let candidate = &data["candidates"][0];
         for p in candidate["content"]["parts"].as_array().into_iter().flatten() {
+            // 联网搜索：Google 那边跑的调用和结果，原样留着。
+            if let Some(call) = p.get("toolCall") {
+                let queries: Vec<&str> = call["args"]["queries"].as_array().into_iter().flatten().filter_map(|q| q.as_str()).collect();
+                self.searches += queries.len().max(1) as u64;
+                let id = call["id"].as_str().unwrap_or("").to_string();
+                let query = (!queries.is_empty()).then(|| queries.join(" / "));
+                let name = if call["toolType"].as_str().is_some_and(|t| t.starts_with("GOOGLE_SEARCH")) { "web_search" } else { call["toolType"].as_str().unwrap_or("server_tool") };
+                out.push(ModelEvent::ServerToolStarted { call_id: id.clone(), name: name.into(), query: query.clone() });
+                self.open.push((id, query));
+                self.pieces.push(Piece::Raw { data: p.clone() });
+                continue;
+            }
+            if p.get("toolResponse").is_some() {
+                self.pieces.push(Piece::Raw { data: p.clone() });
+                continue;
+            }
             let signature = p["thoughtSignature"].as_str().map(str::to_string);
             if let Some(call) = p.get("functionCall") {
                 self.calls += 1;
@@ -279,6 +322,27 @@ impl WireStream for GeminiStream {
                 });
             }
         }
+        // 来源到了（一般在最后一段）：还开着的搜索都算搜完，来源挂在第一条上。
+        let grounding = &candidate["groundingMetadata"];
+        if grounding.is_object() && !self.open.is_empty() {
+            let mut sources: Vec<Source> = grounding["groundingChunks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| {
+                    let url = c["web"]["uri"].as_str()?.to_string();
+                    Some(Source { title: c["web"]["title"].as_str().unwrap_or(&url).to_string(), url })
+                })
+                .collect();
+            for (call_id, query) in std::mem::take(&mut self.open) {
+                out.push(ModelEvent::ServerToolDone { call_id, query, sources: std::mem::take(&mut sources), error: None });
+            }
+        }
+        if self.searches == 0 {
+            if let Some(n) = grounding["webSearchQueries"].as_array().map(|q| q.len() as u64).filter(|n| *n > 0) {
+                self.usage.web_searches = Some(n);
+            }
+        }
         if let Some(f) = candidate["finishReason"].as_str() {
             self.finish = Some(f.into());
         }
@@ -329,6 +393,11 @@ impl WireStream for GeminiStream {
                             .and_then(|sig| this.opaque(json!({"thoughtSignature": sig}))),
                     });
                 }
+                Piece::Raw { data } => {
+                    if let Some(opaque) = this.opaque(data.clone()) {
+                        parts.push(Part::ServerTool { opaque });
+                    }
+                }
             }
         }
         let stop = if this.blocked.is_some() {
@@ -344,14 +413,18 @@ impl WireStream for GeminiStream {
                 other => StopReason::Other(other.to_lowercase()),
             }
         };
-        let cost = priced(this.catalog_id.as_deref(), None, &this.usage);
+        let mut usage = this.usage.clone();
+        if this.searches > 0 {
+            usage.web_searches = Some(this.searches);
+        }
+        let cost = priced(this.catalog_id.as_deref(), None, &usage);
         Ok(ModelResponse {
             message: Message {
                 role: Role::Assistant,
                 parts,
             },
             stop,
-            usage: this.usage,
+            usage,
             cost,
             response_model: this.response_model,
         })
@@ -363,6 +436,10 @@ fn signature_of(piece: &Piece) -> Option<&String> {
         Piece::Thought { signature, .. } | Piece::Text { signature, .. } | Piece::Call { signature, .. } => {
             signature.as_ref()
         }
+        Piece::Raw { data } => match data.get("thoughtSignature") {
+            Some(Value::String(s)) => Some(s),
+            _ => None,
+        },
     }
 }
 
@@ -371,6 +448,7 @@ fn set_signature(piece: &mut Piece, sig: String) {
         Piece::Thought { signature, .. } | Piece::Text { signature, .. } | Piece::Call { signature, .. } => {
             *signature = Some(sig)
         }
+        Piece::Raw { data } => data["thoughtSignature"] = json!(sig),
     }
 }
 
@@ -435,6 +513,7 @@ mod tests {
             thinking: true,
             effort: Some("low".into()),
             max_output_tokens: 800,
+            web_search: false,
         };
         let body = encode(&request, model, &origin());
         let c = &body["contents"];
@@ -474,5 +553,55 @@ mod tests {
         let mut s: Box<dyn WireStream> = Box::new(GeminiStream::new(origin(), None));
         s.feed(&chunk(json!([{"text": "半"}]), None));
         assert!(s.finish().is_err());
+    }
+
+    #[test]
+    fn google_search_runs_with_function_calls_and_its_parts_replay_with_signatures() {
+        let flash = catalog().model("google/gemini-3.8-flash").unwrap();
+        let origin = Origin { provider: "google".into(), wire: Wire::Gemini, model: "gemini-3.8-flash".into() };
+        let user = Message { role: Role::User, parts: vec![Part::Text { text: "Tauri 最新版？".into() }] };
+        let mut request = ModelRequest {
+            model: "google/gemini-3.8-flash".into(),
+            system: vec![],
+            messages: vec![user],
+            tools: vec![ToolSpec { name: "read_file".into(), description: "读".into(), input_schema: json!({"type": "object"}) }],
+            thinking: true,
+            effort: None,
+            max_output_tokens: 1000,
+            web_search: true,
+        };
+        let body = encode(&request, flash, &origin);
+        assert_eq!(body["tools"][0], json!({"googleSearch": {}}));
+        assert_eq!(body["tools"][1]["functionDeclarations"][0]["name"], "read_file");
+        assert_eq!(body["toolConfig"], json!({"includeServerSideToolInvocations": true, "functionCallingConfig": {"mode": "VALIDATED"}}));
+
+        let mut s = GeminiStream::new(origin.clone(), Some("google/gemini-3.8-flash".into()));
+        let mut events = s.feed(&chunk(json!([
+            {"toolCall": {"toolType": "GOOGLE_SEARCH_WEB", "args": {"queries": ["tauri 2 release", "tauri latest"]}, "id": "tc1"}, "thoughtSignature": "sigA"},
+            {"toolResponse": {"toolType": "GOOGLE_SEARCH_WEB", "response": {"search_suggestions": "<div/>"}, "id": "tc1"}, "thoughtSignature": "sigB"}
+        ]), None));
+        let mut last = chunk(json!([{"text": "最新是 2.9。"}]), Some("STOP"));
+        last["candidates"][0]["groundingMetadata"] = json!({"webSearchQueries": ["tauri 2 release", "tauri latest"], "groundingChunks": [{"web": {"uri": "https://vertexaisearch.cloud.google.com/x", "title": "tauri.app"}}]});
+        last["usageMetadata"] = json!({"promptTokenCount": 800, "candidatesTokenCount": 20});
+        events.extend(s.feed(&last));
+        assert_eq!(events[0], ModelEvent::ServerToolStarted { call_id: "tc1".into(), name: "web_search".into(), query: Some("tauri 2 release / tauri latest".into()) });
+        assert!(matches!(&events[2], ModelEvent::ServerToolDone { sources, .. } if sources[0].title == "tauri.app"), "{events:?}");
+        let response = Box::new(s).finish().unwrap();
+        assert_eq!(response.usage.web_searches, Some(2), "按搜的条数记");
+        assert_eq!(response.stop, StopReason::EndTurn);
+
+        request.messages.push(response.message.clone());
+        let body = encode(&request, flash, &origin);
+        let parts = &body["contents"][1]["parts"];
+        assert_eq!((parts[0]["thoughtSignature"].as_str(), parts[1]["thoughtSignature"].as_str()), (Some("sigA"), Some("sigB")), "原样带回，签名在");
+        assert!(parts[0]["toolCall"].is_object() && parts[1]["toolResponse"].is_object());
+        let other = Origin { model: "gemini-4-carbon".into(), ..origin.clone() };
+        let body = encode(&request, flash, &other);
+        assert!(!body["contents"][1]["parts"].as_array().unwrap().iter().any(|p| p.get("toolCall").is_some()), "换了模型不带");
+
+        // Gemini 2.x 没有能和函数调用一起用的原生搜索：不加。
+        let mut old = flash.clone();
+        old.api_model = "gemini-2.5-flash".into();
+        assert!(encode(&request, &old, &origin).get("toolConfig").is_none());
     }
 }

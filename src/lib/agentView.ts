@@ -119,6 +119,8 @@ export interface UsageLine {
   output: number | null;
   cacheRead: number | null;
   cacheWrite: number | null;
+  /** 联网搜索了几次（v1.1.1）。 */
+  webSearches: number | null;
   usd: number | null;
   source: CostSource;
   /** 有过请求报不出用量。 */
@@ -452,12 +454,14 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
 }
 
 function usageLine(u: TokenUsage, c: Cost): UsageLine {
-  const known = u.input != null || u.output != null;
+  // Peck 的 web_search 那一条只有搜索次数和花费（没有 token），也算报了。
+  const known = u.input != null || u.output != null || u.webSearches != null;
   return {
     input: u.input ?? null,
     output: u.output ?? null,
     cacheRead: u.cacheRead ?? null,
     cacheWrite: u.cacheWrite ?? null,
+    webSearches: u.webSearches ?? null,
     usd: c.usd ?? null,
     source: c.source,
     partial: !known,
@@ -472,6 +476,7 @@ export function addUsage(a: UsageLine, b: UsageLine): UsageLine {
     output: plus(a.output, b.output),
     cacheRead: plus(a.cacheRead, b.cacheRead),
     cacheWrite: plus(a.cacheWrite, b.cacheWrite),
+    webSearches: plus(a.webSearches, b.webSearches),
     // 有一次算不出花费，总数就不准：标出来，但已知的照加。
     usd: plus(a.usd, b.usd),
     source: a.source === b.source ? a.source : a.source === "unknown" || b.source === "unknown" ? "unknown" : a.source === "estimated" || b.source === "estimated" ? "estimated" : a.source,
@@ -573,6 +578,8 @@ const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^读 Skill (.*)$/s, "Read skill $1"],
   [/^读 (.*)$/s, "Read $1"],
   [/^搜网页 (.*)$/s, "Search the web: $1"],
+  [/^搜网页$/, "Search the web"],
+  [/^供应商那边跑 (.*)$/s, "Run $1 on the provider"],
   [/^取网页 (.*)$/s, "Fetch $1"],
   [/^取 (.*)$/s, "Fetch $1"],
   [/^搜「(.*)」$/s, "Search “$1”"],
@@ -686,12 +693,13 @@ export function usd(v: number | null | undefined): string | null {
   return `$${v.toFixed(2)}`;
 }
 
-/** 一行花费：「进 12.3k · 出 640 · 缓存命中 8.1k · $0.0042」；CLI 估的「估 $0.03」。 */
+/** 一行花费：「进 12.3k · 出 640 · 缓存命中 8.1k · 搜 2 次 · $0.0042」；CLI 估的「估 $0.03」。 */
 export function usageText(u: UsageLine): string {
   const bits: string[] = [];
   if (u.input != null) bits.push(`进 ${fmt(u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0))}`);
   if (u.output != null) bits.push(`出 ${fmt(u.output)}`);
   if (u.cacheRead) bits.push(`缓存命中 ${fmt(u.cacheRead)}`);
+  if (u.webSearches) bits.push(`搜 ${u.webSearches} 次`);
   const money = usd(u.usd);
   if (money == null) bits.push("花费未知");
   else bits.push(`${u.source === "estimated" ? "估 " : ""}${money}${u.partial ? "（有一部分算不出）" : ""}`);

@@ -568,6 +568,7 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
                 review,
                 delegate,
                 images: vec![],
+                search: crate::gateway::search::Keys::from_state(state),
             },
             out,
         );
@@ -590,6 +591,7 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
                 worktree: false,
                 delegate,
                 images: vec![],
+                search: crate::gateway::search::Keys::from_state(state),
             },
             provider,
             out,

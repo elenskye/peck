@@ -354,6 +354,8 @@ pub fn messages_estimate(messages: &[Message]) -> (u64, u64) {
                 Part::ToolResult { output, .. } => tools += estimate(output) + 4,
                 // 一张图大概 1600 个 token（各家按尺寸算，1568 像素见方左右），不按 base64 的长度算。
                 Part::Image { .. } => tools += IMAGE_TOKENS,
+                // 联网搜索的原件（搜到的网页内容也算输入）：按原文估，实报的用量会再校准。
+                Part::ServerTool { opaque } => tools += estimate(&opaque.data.to_string()),
             }
         }
     }

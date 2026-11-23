@@ -124,7 +124,8 @@ fn assistant_message(message: &Message, origin: &Origin, dialect: Dialect) -> Va
                 input,
                 ..
             } => calls.push(json!({"id": call_id, "type": "function", "function": {"name": name, "arguments": input.to_string()}})),
-            Part::ToolResult { .. } | Part::Image { .. } => {}
+            // 别家的联网搜索原件（换了模型）：丢掉，查到的东西在文字里。
+            Part::ToolResult { .. } | Part::Image { .. } | Part::ServerTool { .. } => {}
         }
     }
     let mut m = json!({"role": "assistant", "content": text});
@@ -362,6 +363,7 @@ mod tests {
             thinking: true,
             effort: Some("high".into()),
             max_output_tokens: 500,
+            web_search: false,
         };
         let body = encode(&request, model, &o, Dialect::DeepSeek);
         let m = &body["messages"];

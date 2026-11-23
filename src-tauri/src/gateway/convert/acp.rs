@@ -341,6 +341,7 @@ impl AcpConverter {
                     cache_read: read,
                     cache_write: write,
                     reasoning: n("reasoningTokens").or(n("thoughtTokens")),
+                    web_searches: None,
                     context_used: None,
                     context_window: None,
                 },

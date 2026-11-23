@@ -114,6 +114,7 @@ pub async fn team_run_start(
             review,
             delegate,
             images,
+            search: crate::gateway::search::Keys::from_state(&state),
         },
         move |e: &AgentEvent| {
             let _ = channel.send(e.clone());
@@ -137,6 +138,8 @@ pub(crate) struct TeamRun {
     pub delegate: Option<Delegate>,
     /// 这一句附的图（v0.8）：写规范的、实施的看得到。
     pub images: Vec<crate::gateway::ImageInput>,
+    /// 联网搜索手上有什么（v1.1.1）：每一段按自己的模型挑。
+    pub search: crate::gateway::search::Keys,
 }
 
 /// 记在任务上的「谁」：`team:<写规范>|<实施>|<审查>`（没有的那一格空着）。
@@ -171,6 +174,7 @@ struct PeckBase {
     level: PermissionLevel,
     /// 插件的收尾 Hook（v1.1.0）：实施、按审查改那两段做完时问一句提交说明（后问的盖掉先问的）。
     stop_ask: Option<super::hooks::StopAsk>,
+    search: crate::gateway::search::Keys,
 }
 
 impl PeckBase {
@@ -207,6 +211,7 @@ impl PeckBase {
             mcp_seen: Some(super::mcp_client::seen_hook(self.store.clone(), self.workspace_id.clone())),
             delegations_used: self.delegations_used,
             subtask: None,
+            search: self.search.clone(),
         }
     }
 
@@ -500,7 +505,7 @@ impl Stager {
 }
 
 pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Result<String, String> {
-    let TeamRun { store, active_runs, session_id, prompt, permission, level, cost_cap, env, worktree, spec, implement, review, delegate, images } = run;
+    let TeamRun { store, active_runs, session_id, prompt, permission, level, cost_cap, env, worktree, spec, implement, review, delegate, images, search } = run;
     if spec.is_none() && review.is_none() {
         return Err("PLOOP 的写规范和审查至少开一样。".into());
     }
@@ -629,6 +634,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         extras: peck_tools,
         level,
         stop_ask: stop_ask.clone(),
+        search,
     };
     // 引擎看到的请求：换引擎带过来的经过、@ 进来的旧任务、站主的原话。
     let mut lead: Vec<String> = Vec::new();
@@ -983,6 +989,7 @@ mod tests {
                 review: Some(reviewer),
                 delegate: None,
                 images: vec![],
+                search: Default::default(),
             },
             move |e| seen.lock().unwrap().push(e.clone()),
         )

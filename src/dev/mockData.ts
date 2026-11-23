@@ -589,5 +589,6 @@ export const MOCK_API_STATUS: ApiStatus = {
     { providerId: "openai", state: "missing" },
     { providerId: "google", state: "missing" },
     { providerId: "aliyun", state: "missing" },
+    { providerId: "tavily", state: "missing" },
   ],
 };

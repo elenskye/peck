@@ -236,6 +236,7 @@ pub async fn harness_run_start(
             worktree: worktree.unwrap_or(false),
             delegate,
             images,
+            search: crate::gateway::search::Keys::from_state(&state),
         },
         provider,
         move |e: &AgentEvent| {
@@ -336,6 +337,8 @@ pub(crate) struct PeckRun {
     pub delegate: Option<super::r#loop::Delegate>,
     /// 这一句附的图（v0.8）。
     pub images: Vec<crate::gateway::ImageInput>,
+    /// 联网搜索手上有什么（v1.1.1）。
+    pub search: crate::gateway::search::Keys,
 }
 
 /// 命令的环境：站主 shell 的那份 + 这个项目自己的环境变量（同名的项目的算）。
@@ -423,7 +426,7 @@ pub(crate) fn start_peck_run(
     provider: Arc<dyn ModelProvider>,
     out: impl Fn(&AgentEvent) + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, delegate, images } = run;
+    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, delegate, images, search } = run;
     let label = model_label(&model_id);
     if worktree && level == PermissionLevel::Plan {
         return Err("PLAN 只读，不用独立工作区。".into());
@@ -561,6 +564,7 @@ pub(crate) fn start_peck_run(
         mcp_seen: Some(super::mcp_client::seen_hook(store.clone(), workspace_id.clone())),
         delegations_used: store.lock().ok().and_then(|db| db.delegations_in_session(&session_id).ok()).unwrap_or(0),
         subtask: None,
+        search,
     };
     let hook_store = store.clone();
     let hook_ws = workspace_id.clone();
@@ -754,6 +758,7 @@ pub async fn harness_oneshot(
             mcp_seen: None,
             delegations_used: 0,
             subtask: None,
+            search: crate::gateway::search::Keys::from_state(&state),
         };
         (Arc::new(PeckBackend::new(provider, config, vec![])), "peck".into())
     } else if let Some(engine) = who.strip_prefix("cli:") {
@@ -1099,6 +1104,7 @@ mod tests {
                 worktree: false,
                 delegate: None,
                 images: vec![],
+                search: Default::default(),
             },
             model,
             move |e| {
@@ -1179,6 +1185,7 @@ mod tests {
                 worktree: true,
                 delegate: None,
                 images: vec![],
+                search: Default::default(),
             },
             model,
             move |e| {
@@ -1238,6 +1245,7 @@ mod tests {
             worktree: false,
             delegate: None,
             images: vec![],
+            search: Default::default(),
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         let run_id = start_peck_run(make("把标题改成中文"), Arc::new(ScriptedModel::peck_demo(Duration::ZERO)), move |e| {

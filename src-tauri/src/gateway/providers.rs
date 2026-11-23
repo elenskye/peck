@@ -540,6 +540,7 @@ mod tests {
             thinking: false,
             effort: None,
             max_output_tokens: 100,
+            web_search: false,
         }
     }
 
@@ -737,6 +738,7 @@ mod tests {
                     Part::ToolCall { .. } => "tool_call",
                     Part::ToolResult { .. } => "tool_result",
                     Part::Image { .. } => "image",
+                    Part::ServerTool { .. } => "server_tool",
                 })
                 .collect::<Vec<_>>()
         };
@@ -776,6 +778,49 @@ mod tests {
         }
     }
 
+    /// 原生联网搜索真跑（v1.1.1，平时不跑，花两次请求 + 几次搜索）：一次让它搜（带着 Peck 的工具，验证能一起用），
+    /// 一次把带搜索原件的回答原样放回再问一句（验证回放被接受）。参数同 `live_two_requests`。
+    #[tokio::test]
+    #[ignore]
+    async fn live_web_search() {
+        let model_id = std::env::var("PECK_LIVE_MODEL").expect("PECK_LIVE_MODEL");
+        let keys = PathBuf::from(std::env::var("PECK_LIVE_KEYS").expect("PECK_LIVE_KEYS"));
+        let spec = catalog().model(&model_id).unwrap();
+        assert!(crate::gateway::search::native(spec).is_some(), "{model_id} 没有原生搜索");
+        let file = if spec.provider == "google" { "gemini" } else { spec.provider.as_str() };
+        let key = Zeroizing::new(std::fs::read_to_string(keys.join(file)).unwrap().trim().to_string());
+        let p = HttpProvider::new(&model_id, Credential::Key(key), &GatewayConfig::default(), None).unwrap();
+        let mut request = live_request(&model_id, std::env::var("PECK_LIVE_EFFORT").ok().filter(|e| !e.is_empty()));
+        request.web_search = true;
+        request.messages = vec![Message {
+            role: Role::User,
+            parts: vec![Part::Text { text: "上网查一下：Tauri 现在最新的稳定版是哪个版本？只搜一次，一句话回答并给出处。".into() }],
+        }];
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (_c, cancel) = watch::channel(false);
+        let first = p.complete(request.clone(), tx, cancel).await.unwrap_or_else(|e| panic!("第一次失败：{e}"));
+        while let Ok(e) = rx.try_recv() {
+            if !matches!(e, ModelEvent::TextDelta { .. } | ModelEvent::ReasoningDelta { .. }) {
+                println!("event: {e:?}");
+            }
+        }
+        let kinds: Vec<String> = first.message.parts.iter().map(|p| match p {
+            Part::ServerTool { opaque } => format!("server:{}", opaque.data["type"].as_str().or_else(|| opaque.data.as_object().and_then(|o| o.keys().find(|k| *k != "thoughtSignature")).map(|k| k.as_str())).unwrap_or("?")),
+            Part::Text { text } => format!("text:{}", text.chars().take(80).collect::<String>()),
+            other => format!("{:?}", std::mem::discriminant(other)),
+        }).collect();
+        println!("req1: {:?} {kinds:?} usage={:?} cost={:?}", first.stop, first.usage, first.cost);
+        assert!(first.message.parts.iter().any(|p| matches!(p, Part::ServerTool { .. })), "没搜");
+        request.messages.push(first.message.clone());
+        request.messages.push(Message { role: Role::User, parts: vec![Part::Text { text: "谢谢。用五个字以内再说一遍版本号，不用再搜。".into() }] });
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (_c, cancel) = watch::channel(false);
+        match p.complete(request, tx, cancel).await {
+            Ok(r) => println!("req2: {:?} usage={:?} cost={:?}", r.stop, r.usage, r.cost),
+            Err(e) => panic!("第二次（带着搜索原件回放）失败：{e}"),
+        }
+    }
+
 }
 
 /// 录 API 夹具用的小任务（和 Anthropic 那份一样）：notes.txt 里有几条。
@@ -810,6 +855,7 @@ pub(crate) fn live_request(model_id: &str, effort: Option<String>) -> ModelReque
         thinking: true,
         effort,
         max_output_tokens: 2000,
+        web_search: false,
     }
 }
 

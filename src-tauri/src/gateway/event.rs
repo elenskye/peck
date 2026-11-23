@@ -675,6 +675,9 @@ pub struct TokenUsage {
     pub cache_write: Option<u64>,
     #[serde(default)]
     pub reasoning: Option<u64>,
+    /// 联网搜索了几次（v1.1.1）：供应商自己的搜索按次收费，Peck 的 `web_search`（DeepSeek、Tavily）也按次记。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_searches: Option<u64>,
     /// 现在上下文里有多少 tokens（能报的引擎才有）。
     #[serde(default)]
     pub context_used: Option<u64>,

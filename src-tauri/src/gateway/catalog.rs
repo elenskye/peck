@@ -177,9 +177,11 @@ impl ModelSpec {
         let usd = regional
             .or_else(|| super::prices::usd_for(&self.api_model, usage))
             .or_else(|| self.price.as_ref().map(|p| p.cost(usage)));
+        // 供应商自己的联网搜索按次另收（v1.1.1，`search::fee`）。
+        let searches = usage.web_searches.unwrap_or(0) as f64 * super::search::fee(&self.provider).unwrap_or(0.0);
         match usd {
             Some(usd) => Cost {
-                usd: Some(usd),
+                usd: Some(usd + searches),
                 source: CostSource::Priced,
             },
             None => Cost::unknown(),

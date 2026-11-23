@@ -64,6 +64,8 @@ export interface TokenUsage {
   cacheRead?: number | null;
   cacheWrite?: number | null;
   reasoning?: number | null;
+  /** 联网搜索了几次（v1.1.1）：供应商自己的搜索、Peck 的 web_search 都按次另收。 */
+  webSearches?: number | null;
   contextUsed?: number | null;
   contextWindow?: number | null;
 }

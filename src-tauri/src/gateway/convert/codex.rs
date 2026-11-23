@@ -316,6 +316,7 @@ fn usage(tokens: &Value, window: Option<u64>, context_used: Option<u64>) -> Toke
         cache_read: Some(cached),
         cache_write: Some(cache_write),
         reasoning: n("reasoningOutputTokens"),
+        web_searches: None,
         context_used,
         context_window: window,
     }

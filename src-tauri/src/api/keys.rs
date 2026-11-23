@@ -29,8 +29,9 @@ impl KeyGroup {
     }
 }
 
-/// 不是 AI 的 Key：（id，名字）。现在还没有；加一个就是在这里加一行，它自动进「其他」那一包。
-pub const OTHER_KEYS: &[(&str, &str)] = &[];
+/// 不是 AI 的 Key：（id，名字）。加一个就是在这里加一行，它自动进「其他」那一包。
+/// Tavily（v1.1.1）：Peck Loop 联网搜索的备用（没有原生搜索的模型用，见 `gateway/search.rs`）。
+pub const OTHER_KEYS: &[(&str, &str)] = &[("tavily", "Tavily")];
 
 /// 这个 Key 归哪一包；不认识的是 None。
 pub fn group_of(id: &str) -> Option<KeyGroup> {

@@ -26,6 +26,7 @@ pub mod prices;
 pub mod project_mcp;
 pub mod providers;
 pub mod runner;
+pub mod search;
 
 use event::{
     ApprovalDecision, Cost, OpaqueReasoning, PermissionLevel, TokenUsage, TurnEndReason,
@@ -71,6 +72,9 @@ pub struct ModelRequest {
     #[serde(default)]
     pub effort: Option<String>,
     pub max_output_tokens: u32,
+    /// 开供应商自己的联网搜索（v1.1.1，见 [`search`]）：只对 [`search::native`] 认的模型有用，别的忽略。
+    #[serde(default)]
+    pub web_search: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +135,12 @@ pub enum Part {
         #[serde(default)]
         is_error: bool,
     },
+    /// 供应商在自己那边跑的工具（v1.1.1：联网搜索）：Anthropic 的 `server_tool_use` / `*_tool_result` 块、
+    /// OpenAI 的 `web_search_call` 项、Gemini 的 `toolCall` / `toolResponse` part，原件放在 `opaque.data`。
+    /// 只回放给同一个来源（和思考一样）；换了模型整块丢掉，查到的东西模型已经写进回答里了。
+    ServerTool {
+        opaque: OpaqueReasoning,
+    },
     /// 一张图（v0.8）：站主贴进来的、`screenshot_app` 截的。只放在用户那一边；只发给能看图的模型。
     Image {
         /// `image/png`、`image/jpeg`……
@@ -169,6 +179,23 @@ pub enum ModelEvent {
     ReasoningDelta { text: String },
     /// 模型开始写一个工具调用（参数还没写完）。界面可以先露出「要读文件……」。
     ToolCallStarted { call_id: String, name: String },
+    /// 供应商那边开始跑一个工具（v1.1.1：联网搜索）。`query` 这时可能还不知道。
+    ServerToolStarted {
+        call_id: String,
+        name: String,
+        #[serde(default)]
+        query: Option<String>,
+    },
+    /// 供应商那边的工具跑完了：搜了什么、找到哪些网页，或者为什么没搜成。
+    ServerToolDone {
+        call_id: String,
+        #[serde(default)]
+        query: Option<String>,
+        #[serde(default)]
+        sources: Vec<search::Source>,
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -191,6 +218,8 @@ pub enum StopReason {
     ToolUse,
     MaxTokens,
     Refusal,
+    /// 供应商那边的工具跑到一半先停下（Anthropic 的 `pause_turn`）：原样再发一次，它接着跑。
+    Paused,
     Other(String),
 }
 

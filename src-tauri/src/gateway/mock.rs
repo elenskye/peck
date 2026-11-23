@@ -499,6 +499,7 @@ mod tests {
             thinking: true,
             effort: None,
             max_output_tokens: 1000,
+            web_search: false,
         }
     }
 

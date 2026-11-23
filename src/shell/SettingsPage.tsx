@@ -133,37 +133,41 @@ function useApiConfig(apiStatus: ApiStatus | null, onRefreshApi: Props["onRefres
   return { config, change, dirty, busy, act, save };
 }
 
+/** 不是 AI 供应商的 Key（v1.1.1，和后端 `OTHER_KEYS` 对应）：Tavily 是 Peck Loop 联网搜索的备用。 */
+const SEARCH_KEYS = [{ id: "tavily", name: "Tavily" }];
+
 const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
   const { config, change, dirty, busy, act, save } = useApiConfig(apiStatus, onRefreshApi, say);
   const [keys, setKeys] = useState<Record<string, string>>({});
   if (!apiStatus || !config) return <p className="hint">在读设置…</p>;
+  const keyBlock = (p: { id: string; name: string }) => {
+    const state = apiStatus.keys.find((k) => k.providerId === p.id)?.state ?? "missing";
+    return (
+      <div key={p.id} className="set-block">
+        <Row name={p.name} off={state !== "saved"} desc={KEY_STATE[state]}>
+          {state === "saved" ? <Tag v="ok">SAVED</Tag> : <Tag>{state === "unloaded" || state === "unavailable" ? "NOT READ" : "NO KEY"}</Tag>}
+        </Row>
+        <div className="set-keys">
+          <Field className="set-keys-wide" type="password" aria-label={`${p.name} 的 Key`} placeholder={`粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />
+          <Btn sm disabled={busy || !keys[p.id]?.trim()} onClick={() => void act(async () => { await api.setKey(p.id, keys[p.id]); setKeys((k) => ({ ...k, [p.id]: "" })); await onRefreshApi(); say(apiStatus.mode === "mock" ? "假 Key 只存在内存里，没进钥匙串" : "Key 已保存到钥匙串；认证通过要发一次请求才知道"); })}>SAVE</Btn>
+          <Btn sm v="danger" disabled={busy || state !== "saved"} onClick={() => void act(async () => { await api.setKey(p.id, null); await onRefreshApi(); })}>REMOVE</Btn>
+          {p.id === "aliyun" && (
+            <>
+              <Seg label="Aliyun 的地域" sm items={[{ id: "beijing", label: "BEIJING" }, { id: "singapore", label: "SINGAPORE" }]} value={config.aliyunRegion} onChange={(aliyunRegion) => change({ ...config, aliyunRegion })} />
+              <Btn sm disabled={busy || !dirty} onClick={() => void save("Aliyun 的地域存好了")}>SAVE</Btn>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
   return (
     <>
-      <div className="set-rows">
-        {apiStatus.providers.map((p) => {
-          const state = apiStatus.keys.find((k) => k.providerId === p.id)?.state ?? "missing";
-          return (
-            <div key={p.id} className="set-block">
-              <Row name={p.name} off={state !== "saved"} desc={KEY_STATE[state]}>
-                {state === "saved" ? <Tag v="ok">SAVED</Tag> : <Tag>{state === "unloaded" || state === "unavailable" ? "NOT READ" : "NO KEY"}</Tag>}
-              </Row>
-              <div className="set-keys">
-                <Field className="set-keys-wide" type="password" aria-label={`${p.name} 的 Key`} placeholder={`粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />
-                <Btn sm disabled={busy || !keys[p.id]?.trim()} onClick={() => void act(async () => { await api.setKey(p.id, keys[p.id]); setKeys((k) => ({ ...k, [p.id]: "" })); await onRefreshApi(); say(apiStatus.mode === "mock" ? "假 Key 只存在内存里，没进钥匙串" : "Key 已保存到钥匙串；认证通过要发一次请求才知道"); })}>SAVE</Btn>
-                <Btn sm v="danger" disabled={busy || state !== "saved"} onClick={() => void act(async () => { await api.setKey(p.id, null); await onRefreshApi(); })}>REMOVE</Btn>
-                {p.id === "aliyun" && (
-                  <>
-                    <Seg label="Aliyun 的地域" sm items={[{ id: "beijing", label: "BEIJING" }, { id: "singapore", label: "SINGAPORE" }]} value={config.aliyunRegion} onChange={(aliyunRegion) => change({ ...config, aliyunRegion })} />
-                    <Btn sm disabled={busy || !dirty} onClick={() => void save("Aliyun 的地域存好了")}>SAVE</Btn>
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <div className="set-rows">{apiStatus.providers.map(keyBlock)}</div>
       <div className="set-inline"><Btn sm disabled={busy} onClick={() => void act(async () => { await api.loadKeys(); await onRefreshApi(); })}>READ KEYS</Btn></div>
       <Vertex say={say} />
+      <p className="lbl">SEARCH</p>
+      <div className="set-rows">{SEARCH_KEYS.map(keyBlock)}</div>
     </>
   );
 };

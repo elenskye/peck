@@ -7,6 +7,7 @@
 // - 「撤销」「撤掉」「回退」：读 Skill → 列任务快照 → 复述 → `restore_snapshot`（高危卡片）；
 // - 「定时」「每周」「每天」「每隔」：读 Skill → 复述确认（ASK）→ `schedule_task`；
 // - 「dev server」：`bash_background` 带 keep 起一个留着的 dev server（右栏 PREVIEW 头上看得到）。
+// - 「搜一下」「上网」「最新版」：联网搜索两次（v1.1.1），回答里写出处，花费行多「搜 2 次」。
 import type { AgentCaps, EventBody, ToolKind } from "@/lib/agentEvents";
 import type { ReplayEvent } from "@/dev/gatewayMock";
 
@@ -95,7 +96,7 @@ function done(callId: string, output: string, extra: Partial<Extract<EventBody, 
 /** Peck Loop 的演示剧本。`files` 是这个项目的假文件（路径 → 内容）；`prompt` 里的字挑场景（见文件开头）。 */
 export function peckDemo(runId: string, files: Record<string, string>, prompt = "", options: DemoOptions = { window: 1_000_000, project: false }): { rounds: Round[]; edit: { path: string; before: string; after: string }; /** 这个剧本改不改那个文件。 */ edits: boolean } {
   const o = options;
-  const scenario: Scenario | "main" = /长任务/.test(prompt) ? "long" : /撤销|撤掉|回退/.test(prompt) ? "restore" : /定时|每周|每天|每隔/.test(prompt) ? "schedule" : /dev server/i.test(prompt) ? "server" : "main";
+  const scenario: Scenario | "main" = /长任务/.test(prompt) ? "long" : /撤销|撤掉|回退/.test(prompt) ? "restore" : /定时|每周|每天|每隔/.test(prompt) ? "schedule" : /dev server/i.test(prompt) ? "server" : /搜一下|上网|最新版/.test(prompt) ? "web" : "main";
   const paths = Object.keys(files).sort();
   const editPath = paths.find((p) => /\.(tsx?|rs|go)$/.test(p) && !p.includes("legacy")) ?? paths[0] ?? "README.md";
   const before = files[editPath] ?? "";
@@ -211,9 +212,9 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
   return { rounds, edit: { path: editPath, before, after }, edits: true };
 }
 
-type Scenario = "long" | "restore" | "schedule" | "server";
+type Scenario = "long" | "restore" | "schedule" | "server" | "web";
 
-/** 别的场景：长任务压缩、快照回退、定时任务、留着的 dev server。 */
+/** 别的场景：长任务压缩、快照回退、定时任务、留着的 dev server、联网搜索。 */
 function scenarioRounds(
   scenario: Scenario, o: DemoOptions,
   editRound: (id: string, extra?: ReplayEvent[]) => ReplayEvent[], editPath: string, runId: string,
@@ -251,6 +252,18 @@ function scenarioRounds(
         done("t3", `设好了。\n${o.onSchedule?.() ?? "id sched-demo ·「依赖更新」"}`),
       ]),
       (state) => (state.answer.includes("改") ? [] : [...say(4, "设好了：**每周一 09:00** 检查依赖更新，每次开一个新对话。PROJECTS 头上的钟里能看到；要改时间、换人或者取消，跟我说一声。"), usage(200, 70, 5600, 0.0002), context(o, 1500, 1900)]),
+    ];
+  }
+  if (scenario === "web") {
+    const searched = (n: number): ReplayEvent => ({ type: "usage.updated", usage: { webSearches: n }, cost: { usd: 0.01 * n, source: "priced" }, scope: "turn" }) as ReplayEvent;
+    return [
+      [context(o, 600, 0), ...say(1, "", "要查网上现在的情况：先搜一下。"), usage(4300, 60, 0, 0.0006),
+        tool("w1", "web_search", "fetch", "搜网页 Tauri latest stable release", { query: "Tauri latest stable release" }),
+        done("w1", "搜了「Tauri latest stable release」：\nTauri 2.9（演示）— https://v2.tauri.app/release/\nReleases · tauri-apps/tauri — https://github.com/tauri-apps/tauri/releases"),
+        tool("w2", "web_search", "fetch", "搜网页 Tauri 2.9 release notes", { query: "Tauri 2.9 release notes" }),
+        done("w2", "搜了「Tauri 2.9 release notes」：\nTauri 2.9 release notes（演示）— https://v2.tauri.app/release/tauri/v2.9.0/"),
+        searched(2)],
+      [context(o, 900, 1400), ...say(2, "查到了：Tauri 现在最新的稳定版是 **2.9**（演示数据）。\n\n出处：\n- https://v2.tauri.app/release/\n- https://v2.tauri.app/release/tauri/v2.9.0/\n\n→ 看看项目里用的是哪个版本"), usage(1200, 90, 4300, 0.0004), context(o, 1100, 1400)],
     ];
   }
   if (scenario === "server") {

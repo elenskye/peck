@@ -3,10 +3,14 @@
 //! 不让 OpenAI 存对话（`store: false`），所以思考要带着密文回来：请求里要
 //! `include: ["reasoning.encrypted_content"]`，回放时把 `reasoning` 项（摘要 + 密文）和
 //! `function_call` 项原样放回 `input`。回放的项不带 `id`（不存的时候 OpenAI 找不到这些 id）。
+//!
+//! 联网搜索（v1.1.1）：工具里加 `{"type": "web_search"}`，`include` 要上来源（`web_search_call.action.sources`）；
+//! 回答里的 `web_search_call` 项存成 `Part::ServerTool`，同一来源原样放回（也不带 `id`），一次 `search` 记一次。
 
 use super::{minus, priced, system_text, WireStream};
 use crate::gateway::catalog::{ModelSpec, Thinking};
 use crate::gateway::event::{OpaqueReasoning, Origin, TokenUsage};
+use crate::gateway::search::{self, Native, Source};
 use crate::gateway::{Message, ModelEvent, ModelRequest, ModelResponse, Part, Role, StopReason};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -32,12 +36,16 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin) -> Val
     if !system.is_empty() {
         body["instructions"] = json!(system);
     }
-    if !request.tools.is_empty() {
-        let tools: Vec<Value> = request
-            .tools
-            .iter()
-            .map(|t| json!({"type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false}))
-            .collect();
+    let mut tools: Vec<Value> = request
+        .tools
+        .iter()
+        .map(|t| json!({"type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false}))
+        .collect();
+    if request.web_search && search::native(model) == Some(Native::OpenAi) {
+        tools.push(json!({"type": "web_search"}));
+        body["include"] = json!(["reasoning.encrypted_content", "web_search_call.action.sources"]);
+    }
+    if !tools.is_empty() {
         body["tools"] = Value::Array(tools);
     }
     match (model.thinking, request.thinking) {
@@ -65,7 +73,7 @@ fn user_items(message: &Message, input: &mut Vec<Value>) {
             Part::Image { media_type, data } => {
                 texts.push(json!({"type": "input_image", "image_url": format!("data:{media_type};base64,{data}")}))
             }
-            Part::Reasoning { .. } | Part::ToolCall { .. } => {}
+            Part::Reasoning { .. } | Part::ToolCall { .. } | Part::ServerTool { .. } => {}
         }
     }
     if !texts.is_empty() {
@@ -105,9 +113,35 @@ fn assistant_items(message: &Message, origin: &Origin, input: &mut Vec<Value>) {
                 "name": name,
                 "arguments": args.to_string(),
             })),
+            // 联网搜索的那一项：同一来源原样放回（不带 id，和上面一样）。
+            Part::ServerTool { opaque } => {
+                if opaque.origin.can_replay_to(origin) {
+                    input.push(opaque.data.clone());
+                }
+            }
             Part::ToolResult { .. } | Part::Image { .. } => {}
         }
     }
+}
+
+/// 一个 `web_search_call` 项：搜的什么、看了哪些网页。
+fn search_of(item: &Value) -> (Option<String>, Vec<Source>) {
+    let action = &item["action"];
+    let query = action["query"].as_str().map(str::to_string).or_else(|| {
+        let qs: Vec<&str> = action["queries"].as_array().into_iter().flatten().filter_map(|q| q.as_str()).collect();
+        (!qs.is_empty()).then(|| qs.join(" / "))
+    });
+    let query = query.or_else(|| action["url"].as_str().map(|u| format!("打开 {u}")));
+    let sources = action["sources"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            let url = s["url"].as_str()?.to_string();
+            Some(Source { title: s["title"].as_str().unwrap_or(&url).to_string(), url })
+        })
+        .collect();
+    (query, sources)
 }
 
 pub struct ResponsesStream {
@@ -175,6 +209,13 @@ impl WireStream for ResponsesStream {
                         name: item["name"].as_str().unwrap_or("").into(),
                     }];
                 }
+                if item["type"] == "web_search_call" {
+                    return vec![ModelEvent::ServerToolStarted {
+                        call_id: item["id"].as_str().unwrap_or("").into(),
+                        name: "web_search".into(),
+                        query: search_of(item).0,
+                    }];
+                }
                 vec![]
             }
             "response.output_text.delta" => text(data, |t| ModelEvent::TextDelta { text: t }),
@@ -190,7 +231,13 @@ impl WireStream for ResponsesStream {
             }
             "response.output_item.done" => {
                 let index = data["output_index"].as_u64().unwrap_or(self.items.len() as u64);
-                self.items.insert(index, data["item"].clone());
+                let item = &data["item"];
+                self.items.insert(index, item.clone());
+                if item["type"] == "web_search_call" {
+                    let (query, sources) = search_of(item);
+                    let error = (item["status"] == "failed").then(|| "没搜成".to_string());
+                    return vec![ModelEvent::ServerToolDone { call_id: item["id"].as_str().unwrap_or("").into(), query, sources, error }];
+                }
                 vec![]
             }
             "response.completed" | "response.incomplete" | "response.failed" => {
@@ -230,6 +277,7 @@ impl WireStream for ResponsesStream {
             .unwrap_or_else(|| this.items.into_values().collect());
         let mut parts = Vec::new();
         let mut refused = false;
+        let mut usage = this.usage;
         for item in &output {
             match item["type"].as_str().unwrap_or("") {
                 "reasoning" => {
@@ -282,6 +330,17 @@ impl WireStream for ResponsesStream {
                         signature: None,
                     });
                 }
+                "web_search_call" => {
+                    // 一次「搜」收一次钱；打开网页、页内查找不算。
+                    if item["action"]["type"] == "search" {
+                        usage.web_searches = Some(usage.web_searches.unwrap_or(0) + 1);
+                    }
+                    let mut data = item.clone();
+                    if let Some(o) = data.as_object_mut() {
+                        o.remove("id");
+                    }
+                    parts.push(Part::ServerTool { opaque: OpaqueReasoning { origin: this.origin.clone(), data } });
+                }
                 _ => {}
             }
         }
@@ -299,14 +358,14 @@ impl WireStream for ResponsesStream {
         } else {
             StopReason::EndTurn
         };
-        let cost = priced(this.catalog_id.as_deref(), None, &this.usage);
+        let cost = priced(this.catalog_id.as_deref(), None, &usage);
         Ok(ModelResponse {
             message: Message {
                 role: Role::Assistant,
                 parts,
             },
             stop,
-            usage: this.usage,
+            usage,
             cost,
             response_model: this.response_model,
         })
@@ -397,6 +456,7 @@ mod tests {
             thinking: true,
             effort: Some("low".into()),
             max_output_tokens: 1000,
+            web_search: false,
         };
         let body = encode(&request, model, &origin());
         assert_eq!(body["store"], false);
@@ -422,5 +482,51 @@ mod tests {
         assert_eq!(short.unwrap().stop, StopReason::MaxTokens);
         let (_, failed) = run(&[json!({"type": "response.failed", "response": {"status": "failed", "error": {"message": "overloaded"}}})]);
         assert!(failed.unwrap_err().contains("overloaded"));
+    }
+
+    #[test]
+    fn web_search_calls_are_shown_counted_and_replayed_without_ids() {
+        let model = catalog().model(MODEL).unwrap();
+        let user = Message { role: Role::User, parts: vec![Part::Text { text: "Tauri 最新版？".into() }] };
+        let mut request = ModelRequest {
+            model: MODEL.into(),
+            system: vec![],
+            messages: vec![user.clone()],
+            tools: vec![],
+            thinking: false,
+            effort: None,
+            max_output_tokens: 1000,
+            web_search: true,
+        };
+        let body = encode(&request, model, &origin());
+        assert_eq!(body["tools"], json!([{"type": "web_search"}]));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content", "web_search_call.action.sources"]));
+
+        let call = json!({"id": "ws_1", "type": "web_search_call", "status": "completed", "action": {"type": "search", "query": "tauri 2 release", "sources": [{"type": "url", "url": "https://tauri.app/release"}]}});
+        let open = json!({"id": "ws_2", "type": "web_search_call", "status": "completed", "action": {"type": "open_page", "url": "https://tauri.app/release"}});
+        let message = json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "最新是 2.9。", "annotations": [{"type": "url_citation", "url": "https://tauri.app/release"}]}]});
+        let (events, response) = run(&[
+            json!({"type": "response.output_item.added", "output_index": 0, "item": {"id": "ws_1", "type": "web_search_call", "status": "in_progress"}}),
+            json!({"type": "response.output_item.done", "output_index": 0, "item": call}),
+            json!({"type": "response.output_item.done", "output_index": 1, "item": open}),
+            json!({"type": "response.completed", "response": {"status": "completed", "output": [call, open, message], "usage": {"input_tokens": 500, "output_tokens": 40}}}),
+        ]);
+        assert_eq!(events[0], ModelEvent::ServerToolStarted { call_id: "ws_1".into(), name: "web_search".into(), query: None });
+        assert_eq!(
+            events[1],
+            ModelEvent::ServerToolDone { call_id: "ws_1".into(), query: Some("tauri 2 release".into()), sources: vec![Source { title: "https://tauri.app/release".into(), url: "https://tauri.app/release".into() }], error: None }
+        );
+        let response = response.unwrap();
+        assert_eq!(response.usage.web_searches, Some(1), "打开网页不算一次搜索");
+        assert_eq!(response.stop, StopReason::EndTurn);
+
+        request.messages.push(response.message.clone());
+        let body = encode(&request, model, &origin());
+        let replayed: Vec<&Value> = body["input"].as_array().unwrap().iter().filter(|i| i["type"] == "web_search_call").collect();
+        assert_eq!(replayed.len(), 2);
+        assert!(replayed.iter().all(|i| i.get("id").is_none() && i["action"].is_object()), "不存对话：回放不带 id");
+        let other = Origin { model: "gpt-6-astra".into(), ..origin() };
+        let body = encode(&request, model, &other);
+        assert!(!body["input"].as_array().unwrap().iter().any(|i| i["type"] == "web_search_call"), "换了模型不带");
     }
 }

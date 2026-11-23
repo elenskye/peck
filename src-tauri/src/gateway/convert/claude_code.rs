@@ -338,6 +338,7 @@ impl ClaudeCodeConverter {
                     cache_read: n("cache_read_input_tokens"),
                     cache_write: n("cache_creation_input_tokens"),
                     reasoning: u["output_tokens_details"]["thinking_tokens"].as_u64(),
+                    web_searches: None,
                     context_used: None,
                     context_window,
                 },
