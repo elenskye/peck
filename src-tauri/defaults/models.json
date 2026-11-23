@@ -29,7 +29,7 @@
     {
       "id": "aliyun",
       "label": "Aliyun",
-      "wire": "chat",
+      "wire": "responses",
       "dialect": "qwen",
       "auth": "key",
       "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",

@@ -457,12 +457,10 @@ pub fn names_for(level: PermissionLevel, oneshot: bool) -> Vec<&'static str> {
     }
 }
 
-/// 这个模型改文件用哪种工具：OpenAI 线协议的（GPT）用 V4A 的 `apply_patch`，别的用 `write_patch`。
+/// 这个模型改文件用哪种工具：GPT（OpenAI）用 V4A 的 `apply_patch`，别的用 `write_patch`。百炼也走 Responses 线协议，
+/// 但 Qwen 没按 V4A 训练过，照旧 `write_patch`（v1.1.2）。
 pub fn uses_v4a(model_id: &str) -> bool {
-    let cat = crate::gateway::catalog::catalog();
-    cat.model(model_id)
-        .and_then(|m| cat.provider(&m.provider))
-        .is_some_and(|p| p.wire == crate::gateway::event::Wire::Responses)
+    crate::gateway::catalog::catalog().model(model_id).is_some_and(|m| m.provider == "openai")
 }
 
 /// 换成这个模型用的那套改文件的工具；看不了图的（或者不在 Mac 上）不给截图。

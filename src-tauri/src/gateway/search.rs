@@ -2,12 +2,11 @@
 //!
 //! 两条路，[`Keys::route`] 按模型挑：
 //! - **原生**：供应商自己的搜索、又能和 Peck 的工具放在同一个请求里的，接它自己的协议——Anthropic 的 `web_search`
-//!   服务端工具（Haiku、Vertex 上的 Claude 只有基础版 `web_search_20250305`）、OpenAI Responses 的 `web_search`、
-//!   Gemini API 的 `googleSearch`（Gemini 3 起，开 `toolConfig.includeServerSideToolInvocations`）。搜索在供应商那边跑，
+//!   服务端工具（Haiku、Vertex 上的 Claude 只有基础版 `web_search_20250305`）、Responses 的 `web_search`（OpenAI；
+//!   百炼 v1.1.2 起也走 Responses）、Gemini API 的 `googleSearch`（Gemini 3 起，开 `toolConfig.includeServerSideToolInvocations`）。搜索在供应商那边跑，
 //!   原件存在对话里（`Part::ServerTool`），只回放给同一个来源；按次的费用记进用量（`web_searches`）。
 //! - **Peck 的 `web_search` 工具**：别的模型用。DeepSeek 用它家的 Search API（同一个 Key；聊天里的
-//!   `deepseek_web_search` 不能和函数工具一起用）；百炼（Chat Completions 的 `enable_search` 不返回来源，过程里看不见）、
-//!   Vertex 上的 Gemini（官方没写能和函数调用一起用）走 Tavily（设置 → PROVIDERS 填 Key）；DeepSeek 搜不了也退到 Tavily。
+//!   `deepseek_web_search` 不能和函数工具一起用）；Vertex 上的 Gemini（官方没写能和函数调用一起用）走 Tavily（设置 → PROVIDERS 填 Key）；DeepSeek 搜不了也退到 Tavily。
 //!   都没有就不给这个工具。
 
 use super::catalog::ModelSpec;
@@ -39,8 +38,8 @@ pub struct Source {
 pub enum Native {
     /// Anthropic Messages 的服务端工具，带工具类型。
     Anthropic(&'static str),
-    /// OpenAI Responses 的 `{"type": "web_search"}`。
-    OpenAi,
+    /// Responses 线协议的 `{"type": "web_search"}`（OpenAI、百炼）。
+    Responses,
     /// Gemini API 的 `googleSearch` + 和函数调用一起用（Gemini 3 起）。
     Gemini,
 }
@@ -51,7 +50,7 @@ pub fn native(model: &ModelSpec) -> Option<Native> {
         "anthropic" if model.api_model.contains("haiku") => Some(Native::Anthropic(ANTHROPIC_BASIC)),
         "anthropic" => Some(Native::Anthropic(ANTHROPIC_DYNAMIC)),
         "vertex-anthropic" => Some(Native::Anthropic(ANTHROPIC_BASIC)),
-        "openai" => Some(Native::OpenAi),
+        "openai" | "aliyun" => Some(Native::Responses),
         "google" if gemini_generation(&model.api_model) >= 3 => Some(Native::Gemini),
         _ => None,
     }
@@ -73,6 +72,8 @@ pub fn fee(provider: &str) -> Option<f64> {
         "anthropic" | "vertex-anthropic" | "openai" => Some(0.01),
         "google" => Some(0.014),
         "deepseek" => Some(0.000_75),
+        // 百炼北京 4 元 / 千次（新加坡贵得多，这里按北京记）。
+        "aliyun" => Some(0.000_6),
         "tavily" => Some(0.008),
         _ => None,
     }
@@ -403,11 +404,11 @@ mod tests {
         assert_eq!(native(spec("anthropic/claude-opus-5-5")), Some(Native::Anthropic(ANTHROPIC_DYNAMIC)));
         assert_eq!(native(spec("anthropic/claude-haiku-5-5")), Some(Native::Anthropic(ANTHROPIC_BASIC)));
         assert_eq!(native(spec("vertex-anthropic/claude-sonnet-5-5@default")), Some(Native::Anthropic(ANTHROPIC_BASIC)));
-        assert_eq!(native(spec("openai/gpt-6-luna")), Some(Native::OpenAi));
+        assert_eq!(native(spec("openai/gpt-6-luna")), Some(Native::Responses));
+        assert_eq!(native(spec("aliyun/qwen3.8-flash")), Some(Native::Responses), "百炼 v1.1.2 起走 Responses，用它自己的 web_search");
         assert_eq!(native(spec("google/gemini-3.8-flash")), Some(Native::Gemini));
         assert_eq!(native(spec("vertex-google/gemini-4-carbon")), None, "Vertex 上的 Gemini 走 Peck 的工具");
         assert_eq!(native(spec("deepseek/deepseek-flash")), None);
-        assert_eq!(native(spec("aliyun/qwen3.8-max")), None);
         assert_eq!(gemini_generation("gemini-2.5-pro"), 2);
 
         let none = Keys::default();
@@ -419,10 +420,10 @@ mod tests {
             _ => vec![],
         };
         assert_eq!(ids(both.route(Some(spec("deepseek/deepseek-flash")))), ["deepseek", "tavily"], "DeepSeek 先用自己的，退到 Tavily");
-        assert_eq!(ids(both.route(Some(spec("aliyun/qwen3.8-max")))), ["tavily"]);
+        assert_eq!(ids(both.route(Some(spec("vertex-google/gemini-4-carbon")))), ["tavily"]);
         assert!(matches!(both.route(Some(spec("anthropic/claude-opus-5-5"))), Route::Native));
         let mock = Keys { mock: true, ..Default::default() };
-        assert_eq!(ids(mock.route(Some(spec("aliyun/qwen3.8-max")))), ["mock"]);
+        assert_eq!(ids(mock.route(Some(spec("deepseek/deepseek-flash")))), ["mock"]);
     }
 
     #[test]

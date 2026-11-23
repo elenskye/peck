@@ -126,13 +126,8 @@ impl HttpProvider {
         let i = &self.0;
         match i.provider.wire {
             Wire::Messages => anthropic::encode(request, &i.model, &i.origin, i.provider.auth == Auth::Adc),
-            Wire::Responses => responses::encode(request, &i.model, &i.origin),
-            Wire::Chat => chat::encode(
-                request,
-                &i.model,
-                &i.origin,
-                chat::Dialect::from_catalog(i.provider.dialect.as_deref()),
-            ),
+            Wire::Responses => responses::encode(request, &i.model, &i.origin, responses::Dialect::from_catalog(i.provider.dialect.as_deref())),
+            Wire::Chat => chat::encode(request, &i.model, &i.origin),
             Wire::Gemini => gemini::encode(request, &i.model, &i.origin),
         }
     }
@@ -142,13 +137,8 @@ impl HttpProvider {
         let id = Some(i.model.id.clone());
         match i.provider.wire {
             Wire::Messages => Box::new(anthropic::AnthropicStream::new(i.origin.clone(), id)),
-            Wire::Responses => Box::new(responses::ResponsesStream::new(i.origin.clone(), id)),
-            Wire::Chat => Box::new(chat::ChatStream::new(
-                i.origin.clone(),
-                id,
-                i.region.clone(),
-                chat::Dialect::from_catalog(i.provider.dialect.as_deref()),
-            )),
+            Wire::Responses => Box::new(responses::ResponsesStream::new(i.origin.clone(), id, i.region.clone())),
+            Wire::Chat => Box::new(chat::ChatStream::new(i.origin.clone(), id)),
             Wire::Gemini => Box::new(gemini::GeminiStream::new(i.origin.clone(), id)),
         }
     }
@@ -690,8 +680,8 @@ mod tests {
         assert_eq!(url("anthropic/claude-haiku-5-5", None), "https://api.anthropic.com/v1/messages");
         assert_eq!(url("openai/gpt-6-luna", None), "https://api.openai.com/v1/responses");
         assert_eq!(url("deepseek/deepseek-flash", None), "https://api.deepseek.com/chat/completions");
-        assert_eq!(url("aliyun/qwen3.8-flash", None), "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
-        assert_eq!(url("aliyun/qwen3.8-flash", Some("singapore")), "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions");
+        assert_eq!(url("aliyun/qwen3.8-flash", None), "https://dashscope.aliyuncs.com/compatible-mode/v1/responses");
+        assert_eq!(url("aliyun/qwen3.8-flash", Some("singapore")), "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses");
         assert_eq!(
             url("google/gemini-3.5-flash-lite", None),
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse"
@@ -972,15 +962,6 @@ mod fixture_tests {
         let (_, second) = round_trip("api-deepseek-tools", "deepseek/deepseek-flash", None, Some("high"));
         assert!(matches!(&second.message.parts[0], Part::Reasoning { .. }));
         assert!(second.usage.cache_read.unwrap() > 0, "第二次应该命中缓存");
-    }
-
-    #[test]
-    fn aliyun_chat_fixture() {
-        let (first, _) = round_trip("api-aliyun-tools", "aliyun/qwen3.8-flash", None, None);
-        assert!(matches!(&first.message.parts[0], Part::Reasoning { .. }));
-        // 百炼不放回思考：第二次请求里没有 reasoning_content。
-        let sent = recorded("api-aliyun-tools", "req2.request.json");
-        assert!(sent["messages"][2].get("reasoning_content").is_none());
     }
 
     #[test]

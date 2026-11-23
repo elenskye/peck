@@ -6,6 +6,9 @@
 //!
 //! 联网搜索（v1.1.1）：工具里加 `{"type": "web_search"}`，`include` 要上来源（`web_search_call.action.sources`）；
 //! 回答里的 `web_search_call` 项存成 `Part::ServerTool`，同一来源原样放回（也不带 `id`），一次 `search` 记一次。
+//!
+//! 百炼（v1.1.2）也走这条线协议（[`Dialect::Qwen`]）：思考开关是顶层的 `enable_thinking`、强度 `reasoning.effort`，
+//! 没有 `include`（文档没写，不发），思考流在 `response.reasoning_text.delta`；联网搜索一样是 `web_search`。
 
 use super::{minus, priced, system_text, WireStream};
 use crate::gateway::catalog::{ModelSpec, Thinking};
@@ -15,8 +18,25 @@ use crate::gateway::{Message, ModelEvent, ModelRequest, ModelResponse, Part, Rol
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+/// 同一条线协议的两种方言。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dialect {
+    OpenAi,
+    /// 百炼（DashScope 的 OpenAI 兼容 Responses）。
+    Qwen,
+}
+
+impl Dialect {
+    pub fn from_catalog(dialect: Option<&str>) -> Self {
+        match dialect {
+            Some("qwen") => Self::Qwen,
+            _ => Self::OpenAi,
+        }
+    }
+}
+
 /// 统一的请求 → Responses 的 body。
-pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin) -> Value {
+pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, dialect: Dialect) -> Value {
     let mut input = Vec::new();
     for message in &request.messages {
         match message.role {
@@ -29,9 +49,11 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin) -> Val
         "input": input,
         "stream": true,
         "store": false,
-        "include": ["reasoning.encrypted_content"],
         "max_output_tokens": request.max_output_tokens,
     });
+    if dialect == Dialect::OpenAi {
+        body["include"] = json!(["reasoning.encrypted_content"]);
+    }
     let system = system_text(request);
     if !system.is_empty() {
         body["instructions"] = json!(system);
@@ -41,23 +63,35 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin) -> Val
         .iter()
         .map(|t| json!({"type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false}))
         .collect();
-    if request.web_search && search::native(model) == Some(Native::OpenAi) {
+    if request.web_search && search::native(model) == Some(Native::Responses) {
         tools.push(json!({"type": "web_search"}));
-        body["include"] = json!(["reasoning.encrypted_content", "web_search_call.action.sources"]);
+        if dialect == Dialect::OpenAi {
+            body["include"] = json!(["reasoning.encrypted_content", "web_search_call.action.sources"]);
+        }
     }
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools);
     }
-    match (model.thinking, request.thinking) {
-        (Thinking::Always, _) | (Thinking::Switch, true) => {
+    match (dialect, model.thinking, request.thinking) {
+        (Dialect::OpenAi, Thinking::Always, _) | (Dialect::OpenAi, Thinking::Switch, true) => {
             let mut reasoning = json!({"summary": "auto"});
             if let Some(effort) = &request.effort {
                 reasoning["effort"] = json!(effort);
             }
             body["reasoning"] = reasoning;
         }
-        (Thinking::Switch, false) => body["reasoning"] = json!({"effort": "none"}),
-        (Thinking::Never, _) => {}
+        (Dialect::OpenAi, Thinking::Switch, false) => body["reasoning"] = json!({"effort": "none"}),
+        // 百炼：开关用 enable_thinking（有的模型不认 effort 的 none），开着时有强度就带 reasoning.effort。
+        (Dialect::Qwen, Thinking::Never, _) | (Dialect::OpenAi, Thinking::Never, _) => {}
+        (Dialect::Qwen, thinking, asked) => {
+            let on = thinking == Thinking::Always || asked;
+            if thinking == Thinking::Switch {
+                body["enable_thinking"] = json!(on);
+            }
+            if let (true, Some(effort)) = (on, &request.effort) {
+                body["reasoning"] = json!({"effort": effort});
+            }
+        }
     }
     body
 }
@@ -147,6 +181,8 @@ fn search_of(item: &Value) -> (Option<String>, Vec<Source>) {
 pub struct ResponsesStream {
     origin: Origin,
     catalog_id: Option<String>,
+    /// 百炼按地域不同价（新加坡）。
+    region: Option<String>,
     /// `output_item.done` 收到的完整项（按位置）；`response.completed` 里有整份时以那份为准。
     items: BTreeMap<u64, Value>,
     output: Option<Vec<Value>>,
@@ -158,10 +194,11 @@ pub struct ResponsesStream {
 }
 
 impl ResponsesStream {
-    pub fn new(origin: Origin, catalog_id: Option<String>) -> Self {
+    pub fn new(origin: Origin, catalog_id: Option<String>, region: Option<String>) -> Self {
         Self {
             origin,
             catalog_id,
+            region,
             items: BTreeMap::new(),
             output: None,
             usage: TokenUsage::default(),
@@ -184,7 +221,8 @@ impl ResponsesStream {
             // input_tokens 里含缓存读和缓存写，这里拆开（缓存写 2026 年起单独计费）。
             let details = &u["input_tokens_details"];
             let cached = details["cached_tokens"].as_u64();
-            let written = details["cache_write_tokens"].as_u64();
+            // 百炼的会话缓存写入叫 cache_creation_input_tokens。
+            let written = details["cache_write_tokens"].as_u64().or_else(|| details["cache_creation_input_tokens"].as_u64());
             self.usage.input = minus(minus(u["input_tokens"].as_u64(), cached), written);
             self.usage.cache_read = cached;
             self.usage.cache_write = written;
@@ -358,7 +396,7 @@ impl WireStream for ResponsesStream {
         } else {
             StopReason::EndTurn
         };
-        let cost = priced(this.catalog_id.as_deref(), None, &usage);
+        let cost = priced(this.catalog_id.as_deref(), this.region.as_deref(), &usage);
         Ok(ModelResponse {
             message: Message {
                 role: Role::Assistant,
@@ -407,7 +445,7 @@ mod tests {
     }
 
     fn run(lines: &[Value]) -> (Vec<ModelEvent>, Result<ModelResponse, String>) {
-        let mut s: Box<dyn WireStream> = Box::new(ResponsesStream::new(origin(), Some(MODEL.into())));
+        let mut s: Box<dyn WireStream> = Box::new(ResponsesStream::new(origin(), Some(MODEL.into()), None));
         let events = lines.iter().flat_map(|l| s.feed(l)).collect();
         (events, s.finish())
     }
@@ -458,7 +496,7 @@ mod tests {
             max_output_tokens: 1000,
             web_search: false,
         };
-        let body = encode(&request, model, &origin());
+        let body = encode(&request, model, &origin(), Dialect::OpenAi);
         assert_eq!(body["store"], false);
         assert_eq!(body["instructions"], "简短回答");
         assert_eq!(body["reasoning"], json!({"summary": "auto", "effort": "low"}));
@@ -469,7 +507,7 @@ mod tests {
 
         // 换一家：思考丢掉，调用和结果照旧。
         let other = Origin { model: "gpt-6.1-sol".into(), ..origin() };
-        let body = encode(&request, model, &other);
+        let body = encode(&request, model, &other, Dialect::OpenAi);
         assert!(body["input"].as_array().unwrap().iter().all(|i| i["type"] != "reasoning"));
     }
 
@@ -498,7 +536,7 @@ mod tests {
             max_output_tokens: 1000,
             web_search: true,
         };
-        let body = encode(&request, model, &origin());
+        let body = encode(&request, model, &origin(), Dialect::OpenAi);
         assert_eq!(body["tools"], json!([{"type": "web_search"}]));
         assert_eq!(body["include"], json!(["reasoning.encrypted_content", "web_search_call.action.sources"]));
 
@@ -521,12 +559,51 @@ mod tests {
         assert_eq!(response.stop, StopReason::EndTurn);
 
         request.messages.push(response.message.clone());
-        let body = encode(&request, model, &origin());
+        let body = encode(&request, model, &origin(), Dialect::OpenAi);
         let replayed: Vec<&Value> = body["input"].as_array().unwrap().iter().filter(|i| i["type"] == "web_search_call").collect();
         assert_eq!(replayed.len(), 2);
         assert!(replayed.iter().all(|i| i.get("id").is_none() && i["action"].is_object()), "不存对话：回放不带 id");
         let other = Origin { model: "gpt-6-astra".into(), ..origin() };
-        let body = encode(&request, model, &other);
+        let body = encode(&request, model, &other, Dialect::OpenAi);
         assert!(!body["input"].as_array().unwrap().iter().any(|i| i["type"] == "web_search_call"), "换了模型不带");
+    }
+
+    #[test]
+    fn qwen_on_responses_uses_enable_thinking_its_own_search_and_regional_prices() {
+        let qwen = catalog().model("aliyun/qwen3.8-flash").unwrap();
+        let origin = Origin { provider: "aliyun".into(), wire: Wire::Responses, model: "qwen3.8-flash".into() };
+        let user = Message { role: Role::User, parts: vec![Part::Text { text: "Tauri 最新版？".into() }] };
+        let mut request = ModelRequest {
+            model: "aliyun/qwen3.8-flash".into(),
+            system: vec![],
+            messages: vec![user],
+            tools: vec![ToolSpec { name: "read_file".into(), description: "读".into(), input_schema: json!({"type": "object"}) }],
+            thinking: true,
+            effort: Some("low".into()),
+            max_output_tokens: 1000,
+            web_search: true,
+        };
+        let body = encode(&request, qwen, &origin, Dialect::Qwen);
+        assert_eq!((body["enable_thinking"].as_bool(), body["reasoning"].clone()), (Some(true), json!({"effort": "low"})));
+        assert!(body.get("include").is_none(), "百炼不发 include");
+        assert_eq!(body["tools"][1], json!({"type": "web_search"}), "函数工具和 web_search 放在一起");
+        request.thinking = false;
+        let body = encode(&request, qwen, &origin, Dialect::Qwen);
+        assert_eq!(body["enable_thinking"], false);
+        assert!(body.get("reasoning").is_none(), "关思考不发 effort none");
+
+        // 流：思考在 reasoning_text.delta；新加坡按地域价。
+        let mut s: Box<dyn WireStream> = Box::new(ResponsesStream::new(origin, Some("aliyun/qwen3.8-flash".into()), Some("singapore".into())));
+        let mut events = s.feed(&json!({"type": "response.reasoning_text.delta", "delta": "想一下"}));
+        events.extend(s.feed(&json!({"type": "response.completed", "response": {"status": "completed", "output": [
+            {"type": "reasoning", "id": "msg_1", "summary": [{"type": "summary_text", "text": "想一下"}]},
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "好"}]}
+        ], "usage": {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 600}, "output_tokens": 10}}})));
+        assert_eq!(events, vec![ModelEvent::ReasoningDelta { text: "想一下".into() }]);
+        let r = s.finish().unwrap();
+        assert_eq!((r.usage.input, r.usage.cache_read), (Some(400), Some(600)));
+        let price = &qwen.region_prices["singapore"];
+        let want = (400.0 * price.input + 10.0 * price.output + 600.0 * price.cache_read.unwrap_or(price.input)) / 1e6;
+        assert!((r.cost.usd.unwrap() - want).abs() < 1e-12, "{:?} vs {want}", r.cost.usd);
     }
 }

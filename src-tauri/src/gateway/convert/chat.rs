@@ -1,9 +1,7 @@
-//! Chat Completions（流式 SSE），DeepSeek 和百炼两种方言。
+//! Chat Completions（流式 SSE），现在只有 DeepSeek 用（百炼 v1.1.2 起走 Responses）。
 //!
 //! - DeepSeek：思考开关是 `thinking: {type}`，强度 `reasoning_effort`；调用工具的那一轮里
 //!   `reasoning_content` 要原样放回（来源一样才放）。缓存命中在 `prompt_cache_hit_tokens`。
-//! - 百炼（Qwen）：开关是 `enable_thinking`；历史里的 `reasoning_content` 不放回（百炼不读它）。
-//!   缓存命中在 `prompt_tokens_details.cached_tokens`。
 
 use super::{minus, priced, system_text, WireStream};
 use crate::gateway::catalog::{ModelSpec, Thinking};
@@ -12,23 +10,8 @@ use crate::gateway::{Message, ModelEvent, ModelRequest, ModelResponse, Part, Rol
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialect {
-    DeepSeek,
-    Qwen,
-}
-
-impl Dialect {
-    pub fn from_catalog(dialect: Option<&str>) -> Self {
-        match dialect {
-            Some("qwen") => Self::Qwen,
-            _ => Self::DeepSeek,
-        }
-    }
-}
-
 /// 统一的请求 → Chat Completions 的 body。
-pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, dialect: Dialect) -> Value {
+pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin) -> Value {
     let mut messages = Vec::new();
     let system = system_text(request);
     if !system.is_empty() {
@@ -61,7 +44,7 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, dialec
                     messages.push(json!({"role": "user", "content": texts.join("\n\n")}));
                 }
             }
-            Role::Assistant => messages.push(assistant_message(message, origin, dialect)),
+            Role::Assistant => messages.push(assistant_message(message, origin)),
         }
     }
     let mut body = json!({
@@ -84,27 +67,18 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, dialec
         Thinking::Switch => request.thinking,
         Thinking::Never => false,
     };
-    match dialect {
-        Dialect::DeepSeek => {
-            if model.thinking != Thinking::Never {
-                body["thinking"] = json!({"type": if on { "enabled" } else { "disabled" }});
-            }
-            if on {
-                if let Some(effort) = &request.effort {
-                    body["reasoning_effort"] = json!(effort);
-                }
-            }
-        }
-        Dialect::Qwen => {
-            if model.thinking == Thinking::Switch {
-                body["enable_thinking"] = json!(on);
-            }
+    if model.thinking != Thinking::Never {
+        body["thinking"] = json!({"type": if on { "enabled" } else { "disabled" }});
+    }
+    if on {
+        if let Some(effort) = &request.effort {
+            body["reasoning_effort"] = json!(effort);
         }
     }
     body
 }
 
-fn assistant_message(message: &Message, origin: &Origin, dialect: Dialect) -> Value {
+fn assistant_message(message: &Message, origin: &Origin) -> Value {
     let mut text = String::new();
     let mut reasoning = String::new();
     let mut calls = Vec::new();
@@ -112,8 +86,7 @@ fn assistant_message(message: &Message, origin: &Origin, dialect: Dialect) -> Va
         match part {
             Part::Text { text: t } => text.push_str(t),
             Part::Reasoning { text: t, opaque } => {
-                if dialect == Dialect::DeepSeek
-                    && opaque.as_ref().is_some_and(|o| o.origin.can_replay_to(origin))
+                if opaque.as_ref().is_some_and(|o| o.origin.can_replay_to(origin))
                 {
                     reasoning.push_str(t);
                 }
@@ -148,8 +121,6 @@ struct Call {
 pub struct ChatStream {
     origin: Origin,
     catalog_id: Option<String>,
-    region: Option<String>,
-    dialect: Dialect,
     text: String,
     reasoning: String,
     calls: BTreeMap<u64, Call>,
@@ -160,12 +131,10 @@ pub struct ChatStream {
 }
 
 impl ChatStream {
-    pub fn new(origin: Origin, catalog_id: Option<String>, region: Option<String>, dialect: Dialect) -> Self {
+    pub fn new(origin: Origin, catalog_id: Option<String>) -> Self {
         Self {
             origin,
             catalog_id,
-            region,
-            dialect,
             text: String::new(),
             reasoning: String::new(),
             calls: BTreeMap::new(),
@@ -181,21 +150,9 @@ impl ChatStream {
             return;
         }
         let prompt = u["prompt_tokens"].as_u64();
-        match self.dialect {
-            Dialect::DeepSeek => {
-                let hit = u["prompt_cache_hit_tokens"].as_u64();
-                self.usage.cache_read = hit;
-                self.usage.input = u["prompt_cache_miss_tokens"].as_u64().or_else(|| minus(prompt, hit));
-            }
-            Dialect::Qwen => {
-                let details = &u["prompt_tokens_details"];
-                let hit = details["cached_tokens"].as_u64();
-                let created = details["cache_creation_input_tokens"].as_u64();
-                self.usage.cache_read = hit;
-                self.usage.cache_write = created;
-                self.usage.input = minus(minus(prompt, hit), created);
-            }
-        }
+        let hit = u["prompt_cache_hit_tokens"].as_u64();
+        self.usage.cache_read = hit;
+        self.usage.input = u["prompt_cache_miss_tokens"].as_u64().or_else(|| minus(prompt, hit));
         self.usage.output = u["completion_tokens"].as_u64();
         self.usage.reasoning = u["completion_tokens_details"]["reasoning_tokens"].as_u64();
     }
@@ -302,7 +259,7 @@ impl WireStream for ChatStream {
             "content_filter" | "insufficient_system_resource" => StopReason::Refusal,
             other => StopReason::Other(other.into()),
         };
-        let cost = priced(this.catalog_id.as_deref(), this.region.as_deref(), &this.usage);
+        let cost = priced(this.catalog_id.as_deref(), None, &this.usage);
         Ok(ModelResponse {
             message: Message {
                 role: Role::Assistant,
@@ -334,7 +291,7 @@ mod tests {
     fn deepseek_reasoning_is_replayed_and_tool_fragments_join() {
         let o = origin("deepseek", "deepseek-flash");
         let mut s: Box<dyn WireStream> =
-            Box::new(ChatStream::new(o.clone(), Some("deepseek/deepseek-flash".into()), None, Dialect::DeepSeek));
+            Box::new(ChatStream::new(o.clone(), Some("deepseek/deepseek-flash".into())));
         let mut events = Vec::new();
         for line in [
             json!({"model": "deepseek-flash", "choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": "要读"}}]}),
@@ -365,39 +322,18 @@ mod tests {
             max_output_tokens: 500,
             web_search: false,
         };
-        let body = encode(&request, model, &o, Dialect::DeepSeek);
+        let body = encode(&request, model, &o);
         let m = &body["messages"];
         assert_eq!(m[1]["reasoning_content"], "要读");
         assert_eq!(m[1]["tool_calls"][0]["function"]["arguments"], "{\"path\":\"a\"}");
         assert_eq!(m[2], json!({"role": "tool", "tool_call_id": "call_1", "content": "内容"}));
         assert_eq!(body["thinking"], json!({"type": "enabled"}));
         assert_eq!(body["reasoning_effort"], "high");
-        // 百炼：不放回思考，开关用 enable_thinking。
-        let qwen = catalog().model("aliyun/qwen3.8-flash").unwrap();
-        let body = encode(&request, qwen, &origin("aliyun", "qwen3.8-flash"), Dialect::Qwen);
-        assert!(body["messages"][1].get("reasoning_content").is_none());
-        assert_eq!(body["enable_thinking"], true);
-        assert!(body.get("thinking").is_none());
     }
 
     #[test]
-    fn qwen_cache_usage_and_cut_stream() {
-        let mut s: Box<dyn WireStream> = Box::new(ChatStream::new(
-            origin("aliyun", "qwen3.8-flash"),
-            Some("aliyun/qwen3.8-flash".into()),
-            Some("singapore".into()),
-            Dialect::Qwen,
-        ));
-        s.feed(&json!({"choices": [{"delta": {"content": "好"}, "finish_reason": "stop"}]}));
-        s.feed(&json!({"choices": [], "usage": {"prompt_tokens": 1000, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 600}}}));
-        let r = s.finish().unwrap();
-        assert_eq!((r.usage.input, r.usage.cache_read), (Some(400), Some(600)));
-        // 新加坡价：0.15 / 0.47 / 缓存读 0.016
-        let want = (400.0 * 0.15 + 10.0 * 0.47 + 600.0 * 0.016) / 1e6;
-        assert!((r.cost.usd.unwrap() - want).abs() < 1e-12);
-
-        let mut cut: Box<dyn WireStream> =
-            Box::new(ChatStream::new(origin("deepseek", "x"), None, None, Dialect::DeepSeek));
+    fn a_cut_stream_is_an_error() {
+        let mut cut: Box<dyn WireStream> = Box::new(ChatStream::new(origin("deepseek", "x"), None));
         cut.feed(&json!({"choices": [{"delta": {"content": "半"}}]}));
         assert!(cut.finish().is_err());
     }

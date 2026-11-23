@@ -19,7 +19,8 @@ const PROVIDERS = [
   {
     id: "aliyun",
     label: "Aliyun",
-    wire: "chat",
+    // v1.1.2 起走 Responses（联网搜索用它的 web_search）；方言见 convert/responses.rs。
+    wire: "responses",
     dialect: "qwen",
     auth: "key",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
