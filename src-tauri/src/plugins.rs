@@ -36,12 +36,14 @@ const MAX_FILES: usize = 200;
 const MAX_DEPTH: usize = 5;
 
 /// 插件能要的 Peck 工具（`plugin.json` 的 `peck.tools`）。不在这里的照样列出来，标「Peck 没有这个工具」。
-const KNOWN_TOOLS: [&str; 5] = [
+/// 前五个归自带插件；`git_commit` 是给库里的插件用的，项目里装着要它的插件才给。
+pub(crate) const KNOWN_TOOLS: [&str; 6] = [
     crate::harness::extras::RESTORE_SNAPSHOT,
     crate::harness::extras::SCHEDULE_TASK,
     crate::harness::extras::LIST_SCHEDULES,
     crate::harness::extras::CANCEL_SCHEDULE,
     crate::harness::tools::CREATE_SKILL,
+    crate::harness::git::GIT_COMMIT,
 ];
 
 /// 自带插件在界面上的顺序。
@@ -675,8 +677,9 @@ mod tests {
                 assert!(t.known && !t.description.is_empty(), "{} / {}", p.info.name, t.name);
             }
         }
-        // 每个 Peck 工具归且只归一个自带插件。
+        // 每个 Peck 工具归且只归一个自带插件；`git_commit` 是留给库里的插件的。
         let mut owned: Vec<&str> = all.iter().flat_map(|p| p.info.tools.iter().map(|t| t.name.as_str())).collect();
+        owned.push(crate::harness::git::GIT_COMMIT);
         owned.sort();
         let mut known = KNOWN_TOOLS.to_vec();
         known.sort();
@@ -700,8 +703,27 @@ mod tests {
 
     #[test]
     fn bundled_library_items_all_parse() {
+        let mut names = Vec::new();
         for (key, tree) in group(LIBRARY_FILES, 2) {
-            parse_item(&key[0], &key[1], &tree).unwrap_or_else(|e| panic!("{}: {e}", key.join("/")));
+            let item = parse_item(&key[0], &key[1], &tree).unwrap_or_else(|e| panic!("{}: {e}", key.join("/")));
+            assert_ne!(item.info.version, "0.0.0", "{}", item.info.name);
+            for t in &item.info.tools {
+                assert!(t.known && !t.description.is_empty(), "{} / {}", item.info.name, t.name);
+            }
+            names.push(item.info.name.clone());
+            if item.info.name == "git-plan" {
+                // Git Plan：默认每个项目都装；一份 Skill、三个带前缀的命令、`git_commit`、一轮做完的 Hook。
+                let i = &item.info;
+                assert!(i.every_project && i.title == "Git Plan");
+                assert_eq!(i.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["git-plan"]);
+                assert_eq!(i.commands.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["git-plan:commits", "git-plan:plan", "git-plan:release"]);
+                assert!(i.commands.iter().all(|c| !c.description.is_empty()));
+                assert_eq!(i.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["git_commit"]);
+                assert_eq!(i.hooks.iter().map(|h| (h.event.as_str(), h.kind.as_str(), h.run.as_deref())).collect::<Vec<_>>(), vec![("Stop", "peck", Some("git_commit"))]);
+                assert!(i.hooks[0].ask.as_deref().is_some_and(|a| a.contains("v<版本>: <description>")));
+                assert!(item.skills[0].text.contains("push 由站主做") && item.skills[0].text.contains("不署名"));
+            }
         }
+        assert!(names.contains(&"git-plan".to_string()));
     }
 }

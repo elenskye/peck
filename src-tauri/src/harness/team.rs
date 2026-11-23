@@ -539,7 +539,7 @@ impl Stager {
             (Engine::Cli { engine, backend, .. }, _) => {
                 let delegate = if matches!(role, StageRole::Implement | StageRole::Fix) { self.cli_delegate.clone() } else { None };
                 let extras = (!read_only).then(|| self.extras.clone());
-                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()), extras, read_only, off: self.tools_off.clone() };
+                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()), extras, read_only, off: self.tools_off.clone(), git: mcp::GitOffer::of(&self.skill_root, &self.cwd, level) };
                 let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
                 let token = peck_mcp.as_ref().map(|m| m.token.clone());
                 let prompt = format!("{}{}", task.prompt, runner::folders_note(&self.folders, level));

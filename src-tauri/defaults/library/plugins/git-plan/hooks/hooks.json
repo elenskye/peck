@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "peck",
+            "ask": "这一轮做完了，Peck 要替你提交这一轮改过的文件。请只回一行提交说明，格式 v<版本>: <description>：版本是这个项目现在在做的版本号，description 用小写英文、简约概括（比如 fix some problems、minor improvement）。不要署名，不要别的话，不要调用工具。",
+            "run": "git_commit"
+          }
+        ]
+      }
+    ]
+  }
+}

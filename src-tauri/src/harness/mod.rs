@@ -7,6 +7,7 @@ pub mod compact;
 pub mod context;
 pub mod delegate;
 pub mod extras;
+pub mod git;
 pub mod history;
 pub mod mcp_client;
 pub mod permission;

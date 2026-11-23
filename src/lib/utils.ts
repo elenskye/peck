@@ -198,6 +198,7 @@ export function plainTerminal(text: string): string {
 export function ruleWord(rule: string): string {
   if (rule === "install-deps") return "装依赖";
   if (rule === "long-running") return "起常驻进程";
+  if (rule === "git-commit") return "提交（git commit，不 push）";
   const project = /^mcp-project:([^:]+):/.exec(rule);
   if (project) return `起项目里的 MCP ${project[1]}`;
   if (rule.startsWith("mcp:")) return `MCP ${rule.slice(4)} 会改东西的工具`;

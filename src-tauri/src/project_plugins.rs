@@ -269,6 +269,14 @@ pub fn commands(root: &Path, plugins_off: &[String]) -> Vec<(String, plugins::Co
     builtin.chain(mine).collect()
 }
 
+/// 项目里装着的插件要用的 Peck 工具（`plugin.json` 的 `peck.tools` 里 Peck 有的那些，比如 `git_commit`）。
+pub fn tools_on(root: &Path) -> Vec<String> {
+    let mut out: Vec<String> = installed(root).into_iter().flat_map(|(p, _)| p.info.tools.into_iter().filter(|t| t.known).map(|t| t.name)).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// 项目里某个 Skill 是哪个装着的插件带来的。
 pub fn owner_of(have: &[(Plugin, PathBuf)], skill: &str) -> Option<String> {
     have.iter().find(|(p, _)| p.split_skills.iter().any(|s| s == skill)).map(|(p, _)| p.info.name.clone())

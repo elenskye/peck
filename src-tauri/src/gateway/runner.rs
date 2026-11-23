@@ -351,6 +351,7 @@ pub(crate) fn start_engine_run(
             })),
             read_only: level == PermissionLevel::Plan,
             off: crate::plugins::tools_off(&settings.plugins_off),
+            git: mcp::GitOffer::of(&workspace, &cwd, level),
         };
         let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
         let token = peck_mcp.as_ref().map(|m| m.token.clone());

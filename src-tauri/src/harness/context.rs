@@ -43,6 +43,8 @@ pub struct ProjectLayer {
     pub skill_root: Option<std::path::PathBuf>,
     /// 这个项目里不给的 Peck 工具（v1.1.0）：项目设置里关掉的自带插件的那几个。
     pub tools_off: Vec<String>,
+    /// 项目里装着的插件要用的 Peck 工具（v1.1.0，`git_commit` 这类）：装着才给。
+    pub plugin_tools: Vec<String>,
 }
 
 /// 读项目根下的说明文件：`AGENTS.md` 优先，没有就 `CLAUDE.md`。空文件当没有。
@@ -73,13 +75,14 @@ pub fn read_instructions(root: &Path) -> Option<Instructions> {
 
 impl ProjectLayer {
     pub fn load(root: &Path, memories: Vec<String>) -> Self {
-        Self { instructions: read_instructions(root), memories, skills: vec![], skill_root: None, tools_off: vec![] }
+        Self { instructions: read_instructions(root), memories, skills: vec![], skill_root: None, tools_off: vec![], plugin_tools: vec![] }
     }
 
     /// 带上 Skills（项目设置里关掉的不带）和自带插件的开关：关掉的插件，它的 Skill、工具都不给。
     pub fn with_skills(mut self, root: &Path, settings: &crate::workspace::ProjectSettings) -> Self {
         self.skills = crate::skills::for_loop(root, &settings.skills_off, &settings.plugins_off);
         self.tools_off = crate::plugins::tools_off(&settings.plugins_off);
+        self.plugin_tools = crate::project_plugins::tools_on(root);
         self.skill_root = (!self.tools_off.iter().any(|t| t == super::tools::CREATE_SKILL)).then(|| root.to_path_buf());
         self
     }
@@ -377,7 +380,7 @@ mod tests {
         p.write("AGENTS.md", &"x".repeat(INSTRUCTIONS_MAX + 10));
         let i = read_instructions(&p.dir).unwrap();
         assert!(i.truncated && i.text.len() == INSTRUCTIONS_MAX);
-        let layer = ProjectLayer { instructions: Some(i), memories: vec!["测试用 pnpm test".into()], skills: vec![], skill_root: None, tools_off: vec![] };
+        let layer = ProjectLayer { instructions: Some(i), memories: vec!["测试用 pnpm test".into()], skills: vec![], skill_root: None, tools_off: vec![], plugin_tools: vec![] };
         let text = layer.text().unwrap();
         assert!(text.contains("# Project instructions (AGENTS.md)") && text.contains("cut") && text.contains("- 测试用 pnpm test"));
         assert_eq!(ProjectLayer::default().text(), None);

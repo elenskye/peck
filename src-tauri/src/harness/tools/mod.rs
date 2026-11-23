@@ -416,6 +416,7 @@ pub fn title_of(name: &str, input: &Value) -> String {
         }
         ASK_USER => "问你".into(),
         MEMORY => "想记住几条".into(),
+        super::git::GIT_COMMIT => super::git::card(input).0,
         CREATE_SKILL => format!("想存成 Skill {}", s("name")),
         super::extras::RESTORE_SNAPSHOT => match (s("action").as_str(), input.get("task").and_then(Value::as_u64)) {
             ("restore", Some(n)) => format!("回到任务 {n} {}", if s("to") == "after" { "结束后" } else { "开始前" }),
@@ -590,6 +591,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["name"]}),
         ),
         CREATE_SKILL => (crate::skill_propose::TOOL_DESCRIPTION, crate::skill_propose::tool_schema()),
+        super::git::GIT_COMMIT => (super::git::DESCRIPTION, super::git::schema()),
         super::extras::RESTORE_SNAPSHOT => (super::extras::RESTORE_DESCRIPTION, super::extras::restore_schema()),
         super::extras::SCHEDULE_TASK => (super::extras::SCHEDULE_DESCRIPTION, super::extras::schedule_schema()),
         super::extras::LIST_SCHEDULES => (super::extras::LIST_SCHEDULES_DESCRIPTION, json!({"type":"object","properties":{}})),

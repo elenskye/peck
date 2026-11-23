@@ -590,6 +590,7 @@ const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^(问你|问站主)$/, "Ask you"],
   [/^想记住几条$/, "Propose memory"],
   [/^想存成 Skill (.*)$/s, "Propose skill $1"],
+  [/^提交：(.*)$/s, "Commit $1"],
   [/^用 MCP (.*)$/s, "MCP $1"],
   [/^列出文件$/, "List files"],
   [/^想一想$/, "Think"],

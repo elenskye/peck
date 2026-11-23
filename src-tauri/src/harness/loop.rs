@@ -475,6 +475,11 @@ impl Run {
         if extras {
             names.extend(super::extras::NAMES);
         }
+        // 项目里装着的插件要的工具（v1.1.0）：`git_commit` 只在会改东西的任务里给（PLAN、ONE SHOT、子任务没有）。
+        let commits = self.config.context.project.plugin_tools.iter().any(|t| t == super::git::GIT_COMMIT);
+        if commits && self.level != PermissionLevel::Plan && !self.config.oneshot && self.config.subtask.is_none() {
+            names.push(super::git::GIT_COMMIT);
+        }
         // 自带插件按项目开关（v1.1.0）：关掉的插件的工具不给；讲这些工具的自带 Skill，工具一个都没给的也不列。
         names.retain(|n| !self.config.context.project.tools_off.iter().any(|t| t == n));
         self.config.context.project.skills.retain(|k| match (&k.builtin, &k.plugin) {
@@ -1074,6 +1079,28 @@ impl Run {
             tools::BASH_RUN => self.bash(call_id, input).await,
             tools::BASH_BACKGROUND => self.background(call_id, input).await,
             super::extras::RESTORE_SNAPSHOT => self.restore_snapshot(call_id, input).await,
+            super::git::GIT_COMMIT => {
+                // EDIT 问一次（能「这个项目总是允许」）；AUTO 不问。提交改不了文件，不算高危。
+                if self.level == PermissionLevel::Edit && !self.allowed.contains(super::git::RULE) {
+                    let (title, detail) = super::git::card(input);
+                    let d = self.approve_as(ToolKind::Other, call_id, title, detail, false).await;
+                    if d == ApprovalDecision::AllowAlways {
+                        self.allowed.insert(super::git::RULE.to_string());
+                        if let Some(hook) = &self.hook {
+                            hook(super::git::RULE);
+                        }
+                    }
+                    if !d.allows() {
+                        return (ToolStatus::Denied, "站主没批这次提交，什么都没提交。".into(), None, vec![]);
+                    }
+                }
+                let (root, input) = (self.task.cwd.clone(), input.clone());
+                match tokio::task::spawn_blocking(move || super::git::call(&root, &input)).await {
+                    Ok(Ok(text)) => (ToolStatus::Ok, text, None, vec![]),
+                    Ok(Err(e)) => (ToolStatus::Failed, e, None, vec![]),
+                    Err(_) => (ToolStatus::Failed, "提交出错了。".into(), None, vec![]),
+                }
+            }
             super::extras::SCHEDULE_TASK | super::extras::LIST_SCHEDULES | super::extras::CANCEL_SCHEDULE => {
                 let Some(x) = self.config.extras.clone() else {
                     return (ToolStatus::Failed, "这里设不了定时任务。".into(), None, vec![]);
@@ -1974,6 +2001,75 @@ mod tests {
         let first = requests.lock().unwrap()[0].clone();
         assert!(!first.tools.iter().any(|t| t.name == "load_skill" || t.name == "create_skill"));
         assert!(!first.system.iter().any(|b| b.text.contains("create_skill") || b.text.contains("peck-skills")));
+    }
+
+    #[tokio::test]
+    async fn git_commit_is_offered_where_a_plugin_asks_for_it_and_edit_asks_once() {
+        use crate::harness::git::testing as g;
+        let p = TempProject::new();
+        g::init(&p.dir);
+        let one = |file: &str, version: &str| {
+            Arc::new(ScriptedModel::new(
+                "deepseek/deepseek-flash",
+                vec![turn("", vec![("git_commit", json!({"message": format!("v{version}: fix some problems"), "paths": [file]}))]), turn("提交了。", vec![])],
+                Duration::ZERO,
+            ))
+        };
+        // 项目里没装要它的插件：没有这个工具，硬调也不行。
+        let model = one("a.txt", "1.0.1");
+        let requests = model.requests.clone();
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.context.project = ProjectLayer::default().with_skills(&p.dir, &Default::default());
+        p.write("a.txt", "a\n");
+        let (_, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Auto, "提交"), |_| None).await;
+        assert!(!requests.lock().unwrap()[0].tools.iter().any(|t| t.name == "git_commit"));
+        assert!(events.iter().any(|e| matches!(e.body, EventBody::ToolCallCompleted { status: ToolStatus::Denied, .. })));
+        assert_eq!(g::log(&p.dir, "%s").len(), 1);
+
+        // 装着 Git Plan。EDIT：弹一张不是高危的卡片，点了「总是允许」；只提交点名的那个文件。
+        g::install_git_plan(&p.dir);
+        let model = one("a.txt", "1.0.1");
+        let requests = model.requests.clone();
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.context.project = ProjectLayer::default().with_skills(&p.dir, &Default::default());
+        let mut cards = Vec::new();
+        let (_, events) = drive(&PeckBackend::new(model, cfg.clone(), vec![]), task(&p, PermissionLevel::Edit, "提交"), |e| match e {
+            EventBody::ApprovalRequested { request_id, high_risk, title, options, .. } => {
+                cards.push((*high_risk, title.clone(), options.contains(&ApprovalDecision::AllowAlways)));
+                Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::AllowAlways })
+            }
+            _ => None,
+        })
+        .await;
+        assert!(requests.lock().unwrap()[0].tools.iter().any(|t| t.name == "git_commit"));
+        assert_eq!(cards, vec![(false, "提交：v1.0.1: fix some problems".to_string(), true)]);
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { status: ToolStatus::Ok, output: Some(o), .. } if o.contains("Committed") && o.contains("Not pushed"))));
+        assert_eq!(g::log(&p.dir, "%s")[0], "v1.0.1: fix some problems");
+        assert_eq!(g::files_in_head(&p.dir), vec!["a.txt"]);
+
+        // AUTO：不问。「总是允许」过的 EDIT 也不问。PLAN：没有这个工具。
+        for (level, file, version) in [(PermissionLevel::Auto, "b.txt", "1.0.2"), (PermissionLevel::Edit, "c.txt", "1.0.3")] {
+            p.write(file, "x\n");
+            let mut again = cfg.clone();
+            if level == PermissionLevel::Edit {
+                again.allowed.insert(crate::harness::git::RULE.to_string());
+            }
+            let mut asked = 0;
+            let _ = drive(&PeckBackend::new(one(file, version), again, vec![]), task(&p, level, "提交"), |e| {
+                if matches!(e, EventBody::ApprovalRequested { .. }) {
+                    asked += 1;
+                }
+                None
+            })
+            .await;
+            assert_eq!(asked, 0, "{level:?}");
+            assert_eq!(g::files_in_head(&p.dir), vec![file]);
+        }
+        let model = one("d.txt", "1.0.4");
+        let requests = model.requests.clone();
+        let _ = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Plan, "提交"), |_| None).await;
+        assert!(!requests.lock().unwrap()[0].tools.iter().any(|t| t.name == "git_commit"));
+        assert_eq!(g::log(&p.dir, "%s").len(), 4);
     }
 
     #[tokio::test]

@@ -7,6 +7,9 @@
 //! - `restore_snapshot`、`schedule_task`、`list_schedules`、`cancel_schedule`（v1.0.2，见 `harness/extras.rs`）：
 //!   快照回退和定时任务，和 Peck Loop 同一套；回退先弹高危卡片，站主批了才动。
 //!
+//! - `git_commit`（v1.1.0，见 `harness/git.rs`）：项目里装着要它的插件（Git Plan）、这一段不是只读的才给。EDIT 档
+//!   先弹一张卡片（能「总是允许」），AUTO 不问。
+//!
 //! 所以 v0.10 起每个 CLI 任务都挂这个入口（只这一次进程，不改 CLI 的配置）。
 //!
 //! 第一次用时起服务（随机端口），App 开着就一直在。令牌只在内存里，不进事件、不进日志。
@@ -40,12 +43,35 @@ pub struct Offer {
     pub read_only: bool,
     /// 这个项目里不给的 Peck 工具（v1.1.0）：项目设置里关掉的自带插件的那几个。
     pub off: Vec<String>,
+    /// 给 `git_commit`（v1.1.0）：在哪个文件夹里提交；`ask` 是 EDIT 档（没「总是允许」过就先问站主）。
+    /// 要有 `extras`（卡片、「总是允许」靠它里面的任务号和项目号）。
+    pub git: Option<GitOffer>,
+}
+
+#[derive(Clone)]
+pub struct GitOffer {
+    pub root: std::path::PathBuf,
+    pub ask: bool,
+}
+
+impl GitOffer {
+    /// 这个项目装着要 `git_commit` 的插件、这一段不是 PLAN 才给。
+    pub fn of(project: &std::path::Path, cwd: &std::path::Path, level: super::event::PermissionLevel) -> Option<Self> {
+        use super::event::PermissionLevel;
+        let wanted = crate::project_plugins::tools_on(project).iter().any(|t| t == crate::harness::git::GIT_COMMIT);
+        (wanted && level != PermissionLevel::Plan).then(|| Self { root: cwd.to_path_buf(), ask: level == PermissionLevel::Edit })
+    }
 }
 
 impl Offer {
     /// 这个工具给不给（没被项目关掉）。
     fn has(&self, tool: &str) -> bool {
         !self.off.iter().any(|t| t == tool)
+    }
+
+    /// 给 `git_commit`。
+    fn git(&self) -> Option<(&GitOffer, &Arc<crate::harness::extras::Extras>)> {
+        self.git.as_ref().zip(self.extras.as_ref()).filter(|_| !self.read_only)
     }
 
     /// 给 `create_skill`。
@@ -248,6 +274,9 @@ impl McpHub {
                 if offer.skill().is_some() {
                     lines.push("create_skill proposes saving a reusable procedure you worked out as a skill (SKILL.md); the user approves it. Use it instead of writing skill files yourself.");
                 }
+                if offer.git().is_some() {
+                    lines.push("git_commit commits changes in this project's repository (commit only: no push, no history rewriting, no signature). Use it instead of running git commit yourself; Peck already commits each finished round on its own, so call it only for an extra commit or when the user asks.");
+                }
                 let extra = offer.extra_names();
                 if extra.contains(&crate::harness::extras::RESTORE_SNAPSHOT) {
                     lines.push("restore_snapshot goes back to Peck's snapshot of the project from before or after an earlier task (undo / redo what a task changed); use it when the user asks to undo, revert or restore a task's changes, never on your own, and restate what you are about to do and get the user's yes first.");
@@ -307,6 +336,10 @@ impl McpHub {
                         "annotations": {"readOnlyHint": true}
                     }));
                 }
+                if offer.git().is_some() {
+                    use crate::harness::git as g;
+                    tools.push(json!({"name": g::GIT_COMMIT, "title": "Commit changes", "description": g::DESCRIPTION, "inputSchema": g::schema(), "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
+                }
                 {
                     use crate::harness::extras as x;
                     let mut extra = vec![
@@ -329,6 +362,16 @@ impl McpHub {
                 let n = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
                 let said = extras_call(x, &name, args, sink, offer.read_only, n).await;
                 match said {
+                    Ok(text) => ok(json!({"content": [{"type": "text", "text": text}]})),
+                    Err(why) => ok(json!({"content": [{"type": "text", "text": why}], "isError": true})),
+                }
+            }
+            "tools/call" if m["params"]["name"] == crate::harness::git::GIT_COMMIT => {
+                let Some((g, x)) = offer.git().map(|(g, x)| (g.clone(), x.clone())) else {
+                    return ok(json!({"content": [{"type": "text", "text": "git_commit is off for this task"}], "isError": true}));
+                };
+                let n = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
+                match git_call(g, x, m["params"]["arguments"].clone(), sink, n).await {
                     Ok(text) => ok(json!({"content": [{"type": "text", "text": text}]})),
                     Err(why) => ok(json!({"content": [{"type": "text", "text": why}], "isError": true})),
                 }
@@ -468,6 +511,44 @@ async fn extras_call(x: Arc<crate::harness::extras::Extras>, name: &str, args: V
         return Err("站主没批这次回退，文件都没动。".into());
     }
     tokio::task::spawn_blocking(move || x.restore(&plan)).await.unwrap_or_else(|_| Err("回退出错了。".into()))
+}
+
+/// `git_commit`（CLI 调过来）。EDIT 档、这个项目没「总是允许」过：先弹一张卡片（和回退同一条路，不是高危，
+/// 多一个「总是允许」），批了才提交。
+async fn git_call(g: GitOffer, x: Arc<crate::harness::extras::Extras>, args: Value, sink: &EventSink, n: u64) -> Result<String, String> {
+    use super::event::{ApprovalDecision, ResolvedBy, ToolKind};
+    use crate::harness::git;
+    let allowed = x.store.lock().ok().and_then(|db| db.harness_allowed(&x.workspace_id).ok()).is_some_and(|rules| rules.contains(git::RULE));
+    if g.ask && !allowed {
+        let prefix = format!("peck-tool-{n}-");
+        let request_id = format!("{prefix}approve");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        super::runner::register_sub_control(&x.run_id, &prefix, tx);
+        let (title, detail) = git::card(&args);
+        let options = vec![ApprovalDecision::AllowOnce, ApprovalDecision::AllowAlways, ApprovalDecision::DenyOnce];
+        sink.emit(EventBody::ApprovalRequested { request_id: request_id.clone(), call_id: None, kind: ToolKind::Other, title, detail: Some(detail), high_risk: false, options: options.clone() });
+        let decision = loop {
+            match rx.recv().await {
+                Some(super::Control::Approve { decision, .. }) => break Some(if options.contains(&decision) { decision } else if decision.allows() { ApprovalDecision::AllowOnce } else { ApprovalDecision::DenyOnce }),
+                Some(super::Control::Interrupt) | None => break None,
+                Some(_) => {}
+            }
+        };
+        super::runner::unregister_sub_control(&x.run_id, &prefix);
+        let Some(decision) = decision else {
+            return Err("任务停了，站主没批这次提交，什么都没提交。".into());
+        };
+        sink.emit(EventBody::ApprovalResolved { request_id, decision, by: ResolvedBy::User });
+        if !decision.allows() {
+            return Err("站主没批这次提交，什么都没提交。".into());
+        }
+        if decision == ApprovalDecision::AllowAlways {
+            if let Ok(db) = x.store.lock() {
+                let _ = db.harness_allow(&x.workspace_id, git::RULE);
+            }
+        }
+    }
+    tokio::task::spawn_blocking(move || git::call(&g.root, &args)).await.unwrap_or_else(|_| Err("提交出错了。".into()))
 }
 
 /// 引擎的控制通道收到一个回答：是 Peck 的 `ask_user` 的就交过去，并发 `user_input.resolved`。
@@ -653,6 +734,81 @@ mod tests {
         assert!(!root.join(".claude").exists());
         hub.unregister(&mcp.token);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_commit_reaches_a_cli_only_where_a_plugin_asks_and_edit_asks_once() {
+        use crate::gateway::event::{ApprovalDecision, PermissionLevel};
+        use crate::harness::extras::testing as x;
+        use crate::harness::git::testing as g;
+        let w = x::world();
+        g::init(&w.p.dir);
+        // 项目里没装要它的插件：不给。
+        assert!(GitOffer::of(&w.p.dir, &w.p.dir, PermissionLevel::Auto).is_none());
+        g::install_git_plan(&w.p.dir);
+        assert!(GitOffer::of(&w.p.dir, &w.p.dir, PermissionLevel::Plan).is_none(), "PLAN 不给");
+        let hub = McpHub::start().await.unwrap();
+        let seen: Arc<Mutex<Vec<AgentEvent>>> = Arc::default();
+        let s2 = seen.clone();
+        let sink = EventSink::new("run-mcp-git", None, "codex", None, move |e: &AgentEvent| s2.lock().unwrap().push(e.clone()));
+        let call = |id: u64, args: Value| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": "git_commit", "arguments": args}});
+
+        // AUTO：列得出来，直接提交，只提交点名的文件。
+        let auto = Offer { extras: Some(Arc::new(x::extras(&w, "run-mcp-git"))), git: GitOffer::of(&w.p.dir, &w.p.dir, PermissionLevel::Auto), ..Default::default() };
+        let mcp = hub.register_offer(sink.clone(), auto);
+        let (_, init) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": PROTOCOL}})).await;
+        assert!(init["result"]["instructions"].as_str().unwrap().contains("git_commit"));
+        let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
+        assert!(tools["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "git_commit"));
+        w.p.write("a.txt", "a\n");
+        w.p.write("b.txt", "b\n");
+        let (_, r) = post(&mcp.url, &mcp.token, call(3, json!({"message": "v1.0.1: fix some problems", "paths": ["a.txt"]}))).await;
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("Committed"), "{r}");
+        assert_eq!(g::files_in_head(&w.p.dir), vec!["a.txt"]);
+        let (_, r) = post(&mcp.url, &mcp.token, call(4, json!({"message": "update"}))).await;
+        assert!(r["result"]["isError"] == true && r["result"]["content"][0]["text"].as_str().unwrap().contains("格式不对"), "{r}");
+        assert!(!seen.lock().unwrap().iter().any(|e| matches!(e.body, EventBody::ApprovalRequested { .. })), "AUTO 不问");
+        hub.unregister(&mcp.token);
+
+        // EDIT：先弹卡片（不是高危，能「总是允许」）；不批不提交，「总是允许」以后不再问。
+        let edit = Offer { extras: Some(Arc::new(x::extras(&w, "run-mcp-git"))), git: GitOffer::of(&w.p.dir, &w.p.dir, PermissionLevel::Edit), ..Default::default() };
+        let mcp = hub.register_offer(sink.clone(), edit);
+        for (decision, commits) in [(ApprovalDecision::DenyOnce, 2), (ApprovalDecision::AllowAlways, 3)] {
+            seen.lock().unwrap().clear();
+            let (url, token) = (mcp.url.clone(), mcp.token.clone());
+            let body = call(5, json!({"message": "v1.0.1: minor improvement", "paths": ["b.txt"]}));
+            let pending = tokio::spawn(async move { post(&url, &token, body).await });
+            let request_id = loop {
+                if let Some(id) = seen.lock().unwrap().iter().find_map(|e| match &e.body {
+                    EventBody::ApprovalRequested { request_id, high_risk: false, options, title, .. } if options.contains(&ApprovalDecision::AllowAlways) && title.contains("v1.0.1: minor improvement") => Some(request_id.clone()),
+                    _ => None,
+                }) {
+                    break id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            };
+            crate::gateway::runner::route_control("run-mcp-git", crate::gateway::Control::Approve { request_id, decision }).unwrap();
+            let (_, r) = pending.await.unwrap();
+            assert_eq!(r["result"]["isError"].as_bool().unwrap_or(false), !decision.allows(), "{r}");
+            assert_eq!(g::log(&w.p.dir, "%s").len(), commits);
+        }
+        assert!(w.store.lock().unwrap().harness_allowed("wx").unwrap().contains(crate::harness::git::RULE));
+        seen.lock().unwrap().clear();
+        w.p.write("c.txt", "c\n");
+        let (_, r) = post(&mcp.url, &mcp.token, call(6, json!({"message": "v1.0.2: add c", "paths": ["c.txt"]}))).await;
+        assert!(r["result"]["isError"].as_bool() != Some(true), "{r}");
+        assert!(!seen.lock().unwrap().iter().any(|e| matches!(e.body, EventBody::ApprovalRequested { .. })), "总是允许过就不再问");
+        hub.unregister(&mcp.token);
+
+        // 只读的那一段：就算带着也不给、不收。
+        let ro = Offer { extras: Some(Arc::new(x::extras(&w, "run-mcp-git"))), git: Some(GitOffer { root: w.p.dir.clone(), ask: false }), read_only: true, ..Default::default() };
+        let mcp = hub.register_offer(sink, ro);
+        let (_, tools) = post(&mcp.url, &mcp.token, json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list"})).await;
+        assert!(!tools["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "git_commit"));
+        let (_, r) = post(&mcp.url, &mcp.token, call(8, json!({"message": "v1.0.3: x"}))).await;
+        assert_eq!(r["result"]["isError"], true);
+        hub.unregister(&mcp.token);
+        let _ = std::fs::remove_dir_all(&w.root);
     }
 
     #[tokio::test]

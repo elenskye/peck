@@ -1,0 +1,12 @@
+{
+  "name": "git-plan",
+  "version": "1.0.0",
+  "description": "版本和提交的规矩：版本号怎么升、什么时候分 Phase、提交说明怎么写。一轮做完 Peck 自动提交这一轮改过的文件，不 push。",
+  "peck": {
+    "title": "Git Plan",
+    "everyProject": true,
+    "tools": [
+      { "name": "git_commit", "description": "提交改动（能指定文件）。只会 commit：不 push、不改历史、不署名；说明不是 v<版本>: <description> 的拒绝。PLAN 不给，EDIT 问一次，AUTO 不问。" }
+    ]
+  }
+}
