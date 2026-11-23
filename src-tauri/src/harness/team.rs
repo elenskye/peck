@@ -1,11 +1,11 @@
-//! 多引擎合作（v0.8 Phase 11）：接力（前一个只读、写一份实施规范，后一个照着做）和交叉审查（另一个引擎
-//! 只读地看这次的 Diff，说要改就交回实施的那一个修一次）。两样能一起开。
+//! PLOOP（v1.1.1 起，以前叫接力）：Peck Loop 深度参与的工作流。几个 API 模型一段一段来：写规范（只读，
+//! 写一份实施规范）→ 实施 → 审查（只读地看这次的 Diff）→ 要改就交回实施的那一个修一次。写规范、审查各自能不开。
+//! 每一段都是 Peck Loop + 一个 API 模型；CLI 不进来（站主 2026-11-23 定：CLI 引擎 Peck 只当外壳，CLI 之间
+//! 交接靠换引擎 + 一句话或 `/review`）。
 //!
-//! 一个任务还是一个任务号、一份任务前快照、一条事件日志（改动记录、回退、独立工作区照常）；每一段是一个
-//! 引擎跑一回合：前面一条 `stage.started`，这一段引擎自己的 `turn.completed` 换成 `stage.completed`
-//! （`EventSink::for_stage`），整个任务最后一条 `turn.completed`。每一段的引擎可以是 API 模型（Peck Loop）
-//! 或 CLI；Antigravity 只做直接调用，不进来（站主 2026-11-12 定）。审批、回答、追加、打断都走同一个
-//! 控制通道，转给正在跑的那一段。
+//! 一个任务还是一个任务号、一份任务前快照、一条事件日志（改动记录、回退、独立工作区照常）；每一段跑一回合：
+//! 前面一条 `stage.started`，这一段自己的 `turn.completed` 换成 `stage.completed`（`EventSink::for_stage`），
+//! 整个任务最后一条 `turn.completed`。审批、回答、追加、打断都走同一个控制通道，转给正在跑的那一段。
 
 use super::context::ProjectLayer;
 use super::r#loop::{ContextConfig, Delegate, HistoryProbe, LoopConfig, PeckBackend};
@@ -14,7 +14,7 @@ use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus,
 use crate::flow::{DispatchPlan, ResolvedStepPlan};
 use crate::gateway::event::{AgentEvent, CriterionCheck, EventBody, NoticeLevel, PermissionLevel, ReviewVerdict, StageRole, TurnEndReason};
 use crate::gateway::log::EventSink;
-use crate::gateway::{catalog, engines, mcp, providers, runner, AgentBackend, AgentTask, Control, ModelProvider};
+use crate::gateway::{catalog, providers, runner, AgentBackend, AgentTask, Control, ModelProvider};
 use crate::process::ProcessCancelHandle;
 use crate::run::ActiveRunContext;
 use crate::snapshot::{record_run_base, record_run_finish, ShadowRepo};
@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 /// 审查看的 Diff 最多多大（多了截掉，审查的人自己读文件）。
 const REVIEW_DIFF_BYTES: usize = 60_000;
 
-/// 界面选的一个人：谁（`api:…` / `cli:…`）、CLI 里的哪个模型、思考强度。
+/// 界面选的一个人：谁（`api:…`）、思考强度。`model` 是以前 CLI 那一格留下的，旧的定时任务里可能有，不看。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamPick {
@@ -43,65 +43,28 @@ pub struct TeamPick {
     pub effort: Option<String>,
 }
 
-pub(crate) enum Engine {
-    Peck { model_id: String, provider: Arc<dyn ModelProvider> },
-    Cli { engine: String, backend: Arc<dyn AgentBackend>, model: Option<String> },
-}
-
-/// 合作里的一个人。
+/// PLOOP 里的一个人：一个 API 模型（Peck Loop 跑）。
 pub(crate) struct Member {
     pub who: String,
     pub label: String,
     pub effort: Option<String>,
-    pub engine: Engine,
+    pub model_id: String,
+    pub provider: Arc<dyn ModelProvider>,
 }
 
-impl Member {
-    fn engine_id(&self) -> String {
-        match &self.engine {
-            Engine::Peck { .. } => "peck".into(),
-            Engine::Cli { engine, .. } => engine.clone(),
-        }
-    }
-
-    fn model(&self) -> Option<String> {
-        match &self.engine {
-            Engine::Peck { model_id, .. } => Some(model_id.clone()),
-            Engine::Cli { model, .. } => model.clone(),
-        }
-    }
-
-    fn is_peck(&self) -> bool {
-        matches!(self.engine, Engine::Peck { .. })
-    }
-}
-
-/// 「谁」→ 一个能跑的人。Antigravity 只做直接调用，不进合作。
+/// 「谁」→ 一个能跑的人。只认 API 模型：CLI 不进 PLOOP。
 pub(crate) async fn member_of(state: &AppState, pick: &TeamPick) -> Result<Member, String> {
     let effort = pick.effort.clone().filter(|e| !e.trim().is_empty() && e != "default");
-    if let Some(id) = pick.who.strip_prefix("api:") {
-        catalog::catalog().model(id).ok_or_else(|| format!("模型目录里没有 {id}。"))?;
-        let provider = providers::for_model(state, id).await.map_err(|e| e.message)?;
-        return Ok(Member { who: pick.who.clone(), label: model_label(id), effort, engine: Engine::Peck { model_id: id.to_string(), provider } });
-    }
-    if let Some(engine) = pick.who.strip_prefix("cli:") {
-        if crate::gateway::caps::AgentCaps::for_engine(engine).direct_only {
-            return Err("Antigravity 只做直接调用，不进接力和审查。".into());
-        }
-        let label = catalog::catalog()
-            .engines
-            .iter()
-            .find(|e| e.id == engine)
-            .map(|e| e.label.clone())
-            .ok_or_else(|| format!("不认识的引擎 {engine}。"))?;
-        let backend = engines::from_state(state, engine).await.map_err(|e| e.message)?;
-        let model = pick.model.clone().filter(|m| !m.trim().is_empty());
-        return Ok(Member { who: pick.who.clone(), label, effort, engine: Engine::Cli { engine: engine.to_string(), backend, model } });
-    }
-    Err("接力和审查只认 API 模型或 CLI 引擎。".into())
+    let Some(id) = pick.who.strip_prefix("api:") else {
+        return Err("PLOOP 只用 API 模型：CLI 之间交接换引擎接着发一句，或者用 /review。".into());
+    };
+    catalog::catalog().model(id).ok_or_else(|| format!("模型目录里没有 {id}。"))?;
+    let provider = providers::for_model(state, id).await.map_err(|e| e.message)?;
+    Ok(Member { who: pick.who.clone(), label: model_label(id), effort, model_id: id.to_string(), provider })
 }
 
-/// 发一个合作的任务：`who` 是实施的那一个；`plan_by` 写规范（接力），`review_by` 审查。至少选一样。
+/// 发一个 PLOOP 的任务：`who` 是实施的那一个；`plan_by` 写规范，`review_by` 审查。至少选一样（都不选就是
+/// 一个 API 模型单干，走 `harness_run_start`）。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn team_run_start(
@@ -133,7 +96,6 @@ pub async fn team_run_start(
         Some(p) => Some(member_of(&state, p).await?),
         None => None,
     };
-    // 委派：实施的是 Peck Loop 照旧；是 CLI（v0.9 B1）经本机 MCP（start_team_run 里按这一段准备）。
     let delegate = super::run::delegate_of(&state, delegate.as_deref()).await?;
     let images = super::run::checked_images(images)?;
     start_team_run(
@@ -173,7 +135,7 @@ pub(crate) struct TeamRun {
     pub implement: Member,
     pub review: Option<Member>,
     pub delegate: Option<Delegate>,
-    /// 这一句附的图（v0.8）：写规范的、实施的看得到（Peck Loop 直接给图，CLI 给存好的文件路径）。
+    /// 这一句附的图（v0.8）：写规范的、实施的看得到。
     pub images: Vec<crate::gateway::ImageInput>,
 }
 
@@ -462,7 +424,6 @@ struct StageEnd {
     reason: TurnEndReason,
     error: Option<String>,
     text: String,
-    session_ref: Option<String>,
     /// 审查逐条判的结果（带了验收标准才有）。
     checks: Vec<CriterionCheck>,
 }
@@ -475,21 +436,6 @@ struct Stager {
     base: EventSink,
     current: Arc<Mutex<Option<mpsc::UnboundedSender<Control>>>>,
     last_text: Arc<Mutex<String>>,
-    /// 正在跑的这一段的档位（事件出口按它替 CLI 审批）。
-    /// 正在跑的这一段是 CLI 时它的档位；Peck Loop 那一段为空——它自己按档位问，规则不碰
-    /// （以前也套规则，Peck Loop 的「起常驻进程」确认被批成 `ApproveByRule`，循环不认、一直等；v0.10 收尾审查）。
-    stage_level: Arc<Mutex<Option<PermissionLevel>>>,
-    /// 实施的是 CLI、选了委派（v0.9 B1）：实施和按审查改那两段的本机 MCP 带 `delegate_task`。
-    cli_delegate: Option<Arc<super::delegate::CliDelegate>>,
-    /// 项目的环境变量、其他文件夹（v0.10：CLI 那几段也带）。
-    project_env: Vec<(String, String)>,
-    folders: Vec<(PathBuf, bool)>,
-    /// 项目根（v0.10 C3）：CLI 那几段的本机 MCP 带 `create_skill`，提议的 Skill 写进这里。
-    skill_root: PathBuf,
-    /// 快照回退、定时任务（v1.0.2）：CLI 实施、按审查改的那两段经本机 MCP 用。
-    extras: Arc<super::extras::Extras>,
-    /// 这个项目里不给的 Peck 工具（v1.1.0：关掉的自带插件的）。
-    tools_off: Vec<String>,
 }
 
 impl Stager {
@@ -500,21 +446,17 @@ impl Stager {
         member: &Member,
         role: StageRole,
         prompt: String,
-        peck: Option<&PeckBackend>,
-        resume: Option<String>,
+        backend: &PeckBackend,
         criteria: &[String],
         title: Option<String>,
     ) -> StageEnd {
         let read_only = matches!(role, StageRole::Spec | StageRole::Review);
         let level = if read_only { PermissionLevel::Plan } else { self.level };
-        if let Ok(mut l) = self.stage_level.lock() {
-            *l = (!member.is_peck()).then_some(level);
-        }
-        let engine = member.engine_id();
+        let engine = "peck".to_string();
         self.base.emit(EventBody::StageStarted {
             stage: role,
             engine: engine.clone(),
-            model: member.model(),
+            model: Some(member.model_id.clone()),
             title: title.unwrap_or_else(|| format!("{} {}", member.label, role.word())),
         });
         if let Ok(mut t) = self.last_text.lock() {
@@ -530,41 +472,22 @@ impl Stager {
             prompt,
             cwd: self.cwd.clone(),
             permission: level,
-            model: member.model(),
+            model: Some(member.model_id.clone()),
             effort: member.effort.clone(),
-            resume,
+            resume: None,
             peck_mcp: None,
             env: vec![],
             folders: vec![],
         };
-        let outcome = match (&member.engine, peck) {
-            (Engine::Peck { .. }, Some(backend)) => backend.run(task, sink.clone(), rx).await,
-            (Engine::Cli { engine, backend, .. }, _) => {
-                let delegate = if matches!(role, StageRole::Implement | StageRole::Fix) { self.cli_delegate.clone() } else { None };
-                let extras = (!read_only).then(|| self.extras.clone());
-                let offer = mcp::Offer { ask_user: engine == "grok", delegate, skill_root: Some(self.skill_root.clone()), extras, read_only, off: self.tools_off.clone(), git: mcp::GitOffer::of(&self.skill_root, &self.cwd, level) };
-                let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
-                let token = peck_mcp.as_ref().map(|m| m.token.clone());
-                let prompt = format!("{}{}", task.prompt, runner::folders_note(&self.folders, level));
-                let r = backend.run(AgentTask { peck_mcp, prompt, env: self.project_env.clone(), folders: self.folders.clone(), ..task }, sink.clone(), rx).await;
-                if let (Some(token), Ok(h)) = (token, mcp::hub().await) {
-                    h.unregister(&token);
-                }
-                r
-            }
-            (Engine::Peck { .. }, None) => Err(crate::gateway::GatewayError::new(crate::gateway::ErrorKind::Internal, "Peck Loop 没准备好。")),
-        };
+        let outcome = backend.run(task, sink.clone(), rx).await;
         if let Ok(mut c) = self.current.lock() {
             *c = None;
         }
-        let (reason, error, session_ref) = match outcome {
-            Ok(o) => {
-                let (r, e) = sink.stage_end().unwrap_or((o.reason, None));
-                (r, e, o.session_ref)
-            }
+        let (reason, error) = match outcome {
+            Ok(o) => sink.stage_end().unwrap_or((o.reason, None)),
             Err(e) => {
                 sink.emit(EventBody::Error { message: e.message.clone(), fatal: true });
-                (TurnEndReason::Error, Some(e.message), None)
+                (TurnEndReason::Error, Some(e.message))
             }
         };
         let text = self.last_text.lock().map(|t| t.clone()).unwrap_or_default();
@@ -572,17 +495,17 @@ impl Stager {
         let checks = if reviewed && !criteria.is_empty() { checks_of(&text, criteria) } else { vec![] };
         let verdict = reviewed.then(|| verdict_with(&text, &checks));
         self.base.emit(EventBody::StageCompleted { stage: role, reason, error: error.clone(), verdict, checks: checks.clone() });
-        StageEnd { reason, error, text, session_ref, checks }
+        StageEnd { reason, error, text, checks }
     }
 }
 
 pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Result<String, String> {
     let TeamRun { store, active_runs, session_id, prompt, permission, level, cost_cap, env, worktree, spec, implement, review, delegate, images } = run;
     if spec.is_none() && review.is_none() {
-        return Err("接力和审查至少选一样。".into());
+        return Err("PLOOP 的写规范和审查至少开一样。".into());
     }
     if level == PermissionLevel::Plan {
-        return Err("PLAN 只读：接力和审查要动手，选 EDIT 或 AUTO。".into());
+        return Err("PLAN 只读：PLOOP 的写规范、审查要动手，选 EDIT 或 AUTO。".into());
     }
     let who = team_who(spec.as_ref().map(|m| m.who.as_str()), &implement.who, review.as_ref().map(|m| m.who.as_str()));
     let title = {
@@ -602,9 +525,8 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
     };
     let env = with_project_env(env, &settings.env_pairs());
     let folders: Vec<(PathBuf, bool)> = if worktree { settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { settings.live_folders() };
-    // 项目的其他文件夹：Peck Loop 和 CLI（v0.10）都认；能改的锁上。
+    // 项目的其他文件夹：能改的锁上。
     let writable: Vec<PathBuf> = folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect();
-    let project_env = settings.env_pairs();
     let (run_id, step_id, workspace, workspace_id, cancel_rx, refs, fork, earlier, prior_changed) = {
         let mut active = active_runs.lock().map_err(|e| e.to_string())?;
         let mut db = store.lock().map_err(|e| e.to_string())?;
@@ -667,10 +589,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
     };
     let cwd = super::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
     let allowed = store.lock().ok().and_then(|db| db.harness_allowed(&workspace_id).ok()).unwrap_or_default();
-    // Peck 替 CLI 审批（和单独发 CLI 一样，runner::rule_allows）：按正在跑的这一段的档位（写规范、审查是 PLAN，不替它批）。
-    let stage_level: Arc<Mutex<Option<PermissionLevel>>> = Arc::new(Mutex::new(None));
-    let (rule_level, rule_root, rule_allowed) = (stage_level.clone(), cwd.clone(), allowed.clone());
-    let rule_hints = store.lock().ok().map(|db| super::mcp_client::hints_for(&db, &workspace_id)).unwrap_or_default();
     // MCP（v0.10 A2）：设置里的 + 项目 .mcp.json 里的，几段共用一组。
     let (mcp_list, mut mcp_notes) = {
         let db = store.lock().map_err(|e| e.to_string())?;
@@ -678,8 +596,8 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         super::mcp_client::for_project(&db, &ws)
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
-    // 这个任务是谁在干（对话里设定时任务时默认照这一套：接力、审查、委派都带着）。
-    let pick_of = |m: &Member| TeamPick { who: m.who.clone(), model: if m.is_peck() { None } else { m.model() }, effort: m.effort.clone() };
+    // 这个任务是谁在干（对话里设定时任务时默认照这一套：写规范、审查、委派都带着）。
+    let pick_of = |m: &Member| TeamPick { who: m.who.clone(), model: None, effort: m.effort.clone() };
     let lead = pick_of(&implement);
     let peck_tools = Arc::new(super::extras::Extras {
         store: store.clone(),
@@ -688,7 +606,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         run_id: run_id.clone(),
         setup: crate::schedule::Setup { who: lead.who, model: lead.model, effort: lead.effort, plan_by: spec.as_ref().map(pick_of), review_by: review.as_ref().map(pick_of), delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) },
     });
-    let tools_off = crate::plugins::tools_off(&settings.plugins_off);
     // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有。
     let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
     let stop_ask = super::hooks::StopAsk::of(&stop_hook);
@@ -709,7 +626,7 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         mcp: mcp_list,
         mcp_slot: Default::default(),
         delegations_used: store.lock().ok().and_then(|db| db.delegations_in_session(&session_id).ok()).unwrap_or(0),
-        extras: peck_tools.clone(),
+        extras: peck_tools,
         level,
         stop_ask: stop_ask.clone(),
     };
@@ -720,15 +637,11 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
     }
     lead.extend(refs);
     let request = if lead.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", lead.join("\n\n")) };
-    // 附图：CLI 那几段看文件路径，Peck Loop 那几段直接给图。
-    let attachments = super::run::save_attachments(&session_id, &images);
-    let cli_request = format!("{request}{}", super::run::attachment_note(&attachments));
     let fork_note = fork.as_ref().map(|f| super::history::fork_notice(f, &title));
 
     let (team_tx, mut team_rx) = mpsc::unbounded_channel::<Control>();
     runner::register_control(&run_id, team_tx.clone());
     let id = run_id.clone();
-    let rule_tx = team_tx.clone();
     tokio::spawn(async move {
         let last_text = Arc::new(Mutex::new(String::new()));
         let seen = last_text.clone();
@@ -736,29 +649,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             if let (EventBody::MessageCompleted { text, .. }, None) = (&e.body, &e.subagent_id) {
                 if let Ok(mut t) = seen.lock() {
                     *t = text.clone();
-                }
-            }
-            let level = rule_level.lock().ok().and_then(|l| *l);
-            // 委派出去的子任务（带 subagent_id）、Peck Loop 那一段是 Peck Loop 自己按档位问的：不替它批、不改卡片。
-            if let (None, Some(level)) = (&e.subagent_id, level) {
-                if let Some(request_id) = runner::rule_allows(level, &e.body, &rule_root, &rule_allowed) {
-                    let _ = rule_tx.send(Control::ApproveByRule { request_id });
-                    return;
-                }
-                match runner::mcp_hint(level, &e.body, &rule_hints, &rule_allowed) {
-                    Some(runner::HintAction::Approve(request_id)) => {
-                        let _ = rule_tx.send(Control::ApproveByRule { request_id });
-                        return;
-                    }
-                    Some(runner::HintAction::Flag(flagged)) => {
-                        out(&AgentEvent { body: flagged, ..e.clone() });
-                        return;
-                    }
-                    None => {}
-                }
-                if let Some(flagged) = runner::flag_high_risk(&e.body, &rule_root) {
-                    out(&AgentEvent { body: flagged, ..e.clone() });
-                    return;
                 }
             }
             out(e);
@@ -779,14 +669,11 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             }
         });
         let interrupt = team_tx.clone();
-        let stop_id = id.clone();
         let mut cancel_rx = cancel_rx;
         let watcher = tokio::spawn(async move {
             while cancel_rx.changed().await.is_ok() {
                 if *cancel_rx.borrow() {
                     let _ = interrupt.send(Control::Interrupt);
-                    // CLI 那一段委派出去的子任务也停（v0.10 收尾审查）。
-                    runner::interrupt_subs(&stop_id);
                     break;
                 }
             }
@@ -821,34 +708,21 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         run_sink.emit(RunEvent::StepStarted { run_id: id.clone(), step_id: step_id.clone(), step_index: 0, agent_id: "team".into() });
         base.emit(EventBody::TurnStarted { turn_id: format!("turn-{id}") });
 
-        let cli_delegate = match (&implement.engine, delegate.clone()) {
-            (Engine::Cli { engine, .. }, Some(d)) if runner::supports_delegate(engine) => {
-                super::delegate::prepare(&store, d, &id, &session_id, &cwd, level, cost_cap).ok()
-            }
-            _ => None,
+        let stager = Stager { run_id: id.clone(), cwd: cwd.clone(), level, base: base.clone(), current, last_text };
+        let peck_of = |m: &Member, read_only: bool, with_images: bool| -> PeckBackend {
+            let d = if read_only { None } else { delegate.clone() };
+            let b = peck_base.backend(m.provider.clone(), peck_base.config(&m.model_id, read_only, None, d));
+            if with_images { b.with_images(images.clone()) } else { b }
         };
-        let delegate_note = cli_delegate.as_deref().map(super::delegate::prompt_note).unwrap_or_default();
-        let stager = Stager { run_id: id.clone(), cwd: cwd.clone(), level, base: base.clone(), current, last_text, stage_level, cli_delegate, project_env: project_env.clone(), folders: folders.clone(), skill_root: workspace.clone(), extras: peck_tools, tools_off };
-        let peck_of = |m: &Member, read_only: bool, brief: Option<String>, with_images: bool| -> Option<PeckBackend> {
-            match &m.engine {
-                Engine::Peck { model_id, provider } => {
-                    let d = if read_only { None } else { delegate.clone() };
-                    let b = peck_base.backend(provider.clone(), peck_base.config(model_id, read_only, brief, d));
-                    Some(if with_images { b.with_images(images.clone()) } else { b })
-                }
-                Engine::Cli { .. } => None,
-            }
-        };
-        let ask = |m: &Member| if m.is_peck() { request.clone() } else { cli_request.clone() };
         let mut end: (TurnEndReason, Option<String>) = (TurnEndReason::Done, None);
         let mut final_text = String::new();
         let mut spec_text: Option<String> = None;
         // ① 接力：写规范（只读）。
         let mut criteria: Vec<String> = Vec::new();
         if let Some(writer) = &spec {
-            let backend = peck_of(writer, true, None, true);
-            let first_ask = spec_prompt(&ask(writer), &implement.label, level);
-            let r = stager.run(writer, StageRole::Spec, first_ask.clone(), backend.as_ref(), None, &[], None).await;
+            let backend = peck_of(writer, true, true);
+            let first_ask = spec_prompt(&request, &implement.label, level);
+            let r = stager.run(writer, StageRole::Spec, first_ask, &backend, &[], None).await;
             if r.reason != TurnEndReason::Done {
                 end = (r.reason, r.error.or(Some(format!("{} 没写完规范。", writer.label))));
             } else if r.text.trim().is_empty() {
@@ -856,19 +730,10 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             } else {
                 let mut text = r.text.clone();
                 criteria = criteria_of(&text);
-                // 没写验收标准：让它补一次（Peck Loop 接着原对话；CLI 能续接就续，不能就把草稿带上）。
+                // 没写验收标准：让它补一次（接着原对话）。
                 if criteria.is_empty() && !stopped.load(Ordering::SeqCst) {
-                    let resume = match &writer.engine {
-                        Engine::Cli { backend, .. } if backend.caps().resume => r.session_ref.clone(),
-                        _ => None,
-                    };
-                    let again = if writer.is_peck() || resume.is_some() {
-                        SPEC_RETRY.to_string()
-                    } else {
-                        format!("{first_ask}\n\n<peck-spec-draft>\n{}\n</peck-spec-draft>\n{SPEC_RETRY}", text.trim())
-                    };
                     let title = Some(format!("{} 补验收标准", writer.label));
-                    let more = stager.run(writer, StageRole::Spec, again, backend.as_ref(), resume, &[], title).await;
+                    let more = stager.run(writer, StageRole::Spec, SPEC_RETRY.to_string(), &backend, &[], title).await;
                     let added = criteria_of(&more.text);
                     if more.reason == TurnEndReason::Done && !added.is_empty() {
                         text = format!("{}\n\n{}", text.trim_end(), more.text.trim());
@@ -881,16 +746,13 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             }
         }
         // ② 实施。
-        let impl_backend = peck_of(&implement, false, None, true);
-        let mut impl_ref = None;
+        let impl_backend = peck_of(&implement, false, true);
         if end.0 == TurnEndReason::Done && !stopped.load(Ordering::SeqCst) {
             let text = match (&spec_text, &spec) {
-                (Some(s), Some(w)) => implement_prompt(&ask(&implement), s, &w.label),
-                _ => ask(&implement),
+                (Some(s), Some(w)) => implement_prompt(&request, s, &w.label),
+                _ => request.clone(),
             };
-            let text = format!("{text}{delegate_note}");
-            let r = stager.run(&implement, StageRole::Implement, text, impl_backend.as_ref(), None, &[], None).await;
-            impl_ref = r.session_ref.clone();
+            let r = stager.run(&implement, StageRole::Implement, text, &impl_backend, &[], None).await;
             final_text = r.text.clone();
             if r.reason != TurnEndReason::Done {
                 end = (r.reason, r.error);
@@ -905,26 +767,15 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             if diff.trim().is_empty() {
                 base.emit(EventBody::Notice { level: NoticeLevel::Info, text: "这次没改文件，不用审查。".into() });
             } else {
-                let backend = peck_of(reviewer, true, None, false);
-                let r = stager.run(reviewer, StageRole::Review, review_prompt(&request, spec_text.as_deref(), &criteria, &diff, &implement.label, level), backend.as_ref(), None, &criteria, None).await;
+                let backend = peck_of(reviewer, true, false);
+                let r = stager.run(reviewer, StageRole::Review, review_prompt(&request, spec_text.as_deref(), &criteria, &diff, &implement.label, level), &backend, &criteria, None).await;
                 if r.reason != TurnEndReason::Done {
                     end = (r.reason, r.error.or(Some(format!("{} 没审完。", reviewer.label))));
                 } else if verdict_with(&r.text, &r.checks) == ReviewVerdict::Changes && !stopped.load(Ordering::SeqCst) {
-                    // ④ 按审查改：Peck Loop 接着原来的对话；CLI 能续接就续，不能就把原话带上。
-                    let resume = match &implement.engine {
-                        Engine::Cli { backend, .. } if backend.caps().resume => impl_ref.clone(),
-                        _ => None,
-                    };
+                    // ④ 按审查改：接着实施的那一个原来的对话。
                     let failed: Vec<CriterionCheck> = r.checks.iter().filter(|c| c.pass == Some(false)).cloned().collect();
-                    let text = if implement.is_peck() || resume.is_some() {
-                        fix_prompt(&r.text, &reviewer.label, &failed)
-                    } else {
-                        format!("{request}\n\n{}", fix_prompt(&r.text, &reviewer.label, &failed))
-                    };
-                    let f = stager.run(&implement, StageRole::Fix, text, impl_backend.as_ref(), resume, &[], None).await;
-                    if f.session_ref.is_some() {
-                        impl_ref = f.session_ref.clone();
-                    }
+                    let text = fix_prompt(&r.text, &reviewer.label, &failed);
+                    let f = stager.run(&implement, StageRole::Fix, text, &impl_backend, &[], None).await;
                     if !f.text.trim().is_empty() {
                         final_text = f.text;
                     }
@@ -951,7 +802,6 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
             TurnEndReason::Interrupted => (StepStatus::Cancelled, RunStatus::Cancelled, "已停止。".into()),
             _ => (StepStatus::Failed, RunStatus::Failed, format!("没做完：{}", end.1.unwrap_or_else(|| "出错了。".into()))),
         };
-        runner::interrupt_subs(&id);
         let mut changeset = ChangeSetSummary::default();
         if let (Some(r), Some(before)) = (repo.as_ref(), before.as_ref()) {
             if let Ok(after) = r.create_snapshot(&format!("{step_id}-after")) {
@@ -963,34 +813,9 @@ pub(crate) fn start_team_run(run: TeamRun, out: impl Fn(&AgentEvent) + Send + Sy
         finish_extras(&id, &extras, &mut changeset);
         // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
         crate::skill_propose::flush(&id);
-        // 收尾 Hook（v1.1.0）：问实施的那一个要一行提交说明——Peck Loop 收尾时已经答了；CLI 续上它的会话问。
-        let asked = stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default();
-        let (answered, usage_to, hook_id, hook_cwd, hook_env) = (stop_ask.clone(), base.clone(), id.clone(), cwd.clone(), project_env.clone());
-        let implementer = &implement;
-        let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
-            match &implementer.engine {
-                Engine::Peck { .. } => answered.and_then(|a| a.take()),
-                Engine::Cli { engine, backend, .. } => {
-                    let task = AgentTask {
-                        run_id: hook_id,
-                        prompt: String::new(),
-                        cwd: hook_cwd,
-                        permission: PermissionLevel::Plan,
-                        model: implementer.model(),
-                        effort: implementer.effort.clone(),
-                        resume: impl_ref,
-                        peck_mcp: None,
-                        env: hook_env,
-                        folders: vec![],
-                    };
-                    super::hooks::ask_cli(backend.as_ref(), engine, task, &asked, move |body| {
-                        usage_to.emit(body);
-                    })
-                    .await
-                }
-            }
-        })
-        .await;
+        // 收尾 Hook（v1.1.0）：实施的那一个收尾时已经答了一行提交说明。
+        let answered = stop_ask.clone();
+        let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move { answered.and_then(|a| a.take()) }).await;
         if let Some(body) = hooked {
             base.emit(body);
         }
@@ -1088,7 +913,8 @@ mod tests {
             who: format!("api:{id}"),
             label: label.into(),
             effort: None,
-            engine: Engine::Peck { model_id: id.into(), provider: Arc::new(ScriptedModel::new(id, turns, Duration::from_millis(1))) },
+            model_id: id.into(),
+            provider: Arc::new(ScriptedModel::new(id, turns, Duration::from_millis(1))),
         }
     }
 

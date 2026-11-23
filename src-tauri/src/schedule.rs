@@ -193,6 +193,12 @@ impl Schedule {
         if self.title.is_empty() {
             self.title = self.prompt.chars().take(30).collect();
         }
+        // PLOOP（v1.1.1）只用 API 模型：写规范、审查的只能是 API 模型。
+        for who in [self.plan_by.as_ref().map(|p| &p.who), self.review_by.as_ref().map(|p| &p.who)].into_iter().flatten() {
+            if !who.starts_with("api:") {
+                return Err("PLOOP 只用 API 模型：写规范、审查的选 API 模型。".into());
+            }
+        }
         for who in [Some(&self.who), self.plan_by.as_ref().map(|p| &p.who), self.review_by.as_ref().map(|p| &p.who)].into_iter().flatten() {
             if !who.starts_with("api:") && !who.starts_with("cli:") {
                 return Err("定时任务选一个 API 模型或一个 CLI。".into());
@@ -207,7 +213,7 @@ impl Schedule {
             return Err("权限只有 PLAN、EDIT、AUTO 三档。".into());
         }
         if self.permission == "plan" && (self.plan_by.is_some() || self.review_by.is_some()) {
-            return Err("PLAN 只读：接力和审查要动手，权限选 EDIT 或 AUTO。".into());
+            return Err("PLAN 只读：PLOOP 的写规范、审查要动手，权限选 EDIT 或 AUTO。".into());
         }
         let bad_time = |t: &str| parse_time(t).is_none().then(|| format!("时间写成 09:30 这样：{t}"));
         match &mut self.when {
@@ -530,7 +536,7 @@ pub async fn fire(app: &tauri::AppHandle, schedule: &Schedule) -> Result<Fired, 
     Ok(fired)
 }
 
-/// 照这个定时任务记着的那一套起一个任务：有接力或审查走合作，不然一个 API 模型或一个 CLI。
+/// 照这个定时任务记着的那一套起一个任务：有写规范或审查走 PLOOP，不然一个 API 模型或一个 CLI（CLI 不委派）。
 async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resume: Option<String>, out: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Result<String, String> {
     use crate::harness::{run, team};
     let level = run::permission_of(Some(&schedule.permission))?;
@@ -609,8 +615,6 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
             default_account: true,
             worktree: false,
             attachments: vec![],
-            delegate,
-            cost_cap: cost_cap(state),
         },
         backend,
         out,
@@ -888,6 +892,8 @@ mod tests {
         let mut s = daily("09:00", false, 480);
         s.permission = "plan".into();
         s.review_by = Some(TeamPick { who: "cli:codex".into(), model: None, effort: None });
+        assert!(s.clone().checked().unwrap_err().contains("PLOOP 只用 API"), "PLOOP 里 CLI 不能审查");
+        s.review_by = Some(TeamPick { who: "api:deepseek/deepseek-flash".into(), model: None, effort: None });
         assert!(s.checked().unwrap_err().contains("PLAN"));
         // 旧记录（没有 days、session、missedAt）照样读得出来。
         let old = r#"{"id":"a","workspaceId":"w","title":"t","prompt":"p","who":"cli:codex","permission":"edit","when":{"kind":"daily","time":"09:00","weekdays":true},"offsetMin":480,"enabled":true}"#;

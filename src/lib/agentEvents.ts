@@ -265,7 +265,7 @@ export interface Price {
   tiers?: PriceTier[];
 }
 
-/** `flow` 只在前端：「谁来干」里拼出来的接力那一项（`ModelPicker` 的 `RELAY_ENTRY`），后端不发。 */
+/** `flow` 只在前端：「谁来干」里拼出来的 PLOOP 那一项（`ModelPicker` 的 `PLOOP_ENTRY`），后端不发。 */
 export type EntryGroup = "peck" | "cli" | "flow";
 
 export interface ModelEntry {
@@ -381,8 +381,4 @@ export interface GatewayRunArgs {
   worktree?: boolean;
   /** 这一句附的图（v0.8）：存成文件，路径写在这一句后面。 */
   images?: { mediaType: string; data: string }[];
-  /** 委派给哪个 API 模型（v0.9 B1）：CLI 经 Peck 的本机 MCP 调 `delegate_task`。Antigravity 不委派。 */
-  delegate?: string;
-  /** 花费上限（委派的子任务是 Peck Loop，照算）。 */
-  costCap?: number | null;
 }

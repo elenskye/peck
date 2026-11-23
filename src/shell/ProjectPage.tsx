@@ -3,9 +3,8 @@ import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, type AllowRule, type MemoryNote, type ProjectMcpView, type SkillRow, type SkillVersion, type ToolHint } from "@/lib/ipc";
 import type { Permission, ProjectOverview, ProjectSettings } from "@/lib/types";
 import { ago, cn, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
-import { Btn, Dot, Field, Icon, Info, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
+import { Btn, Field, Icon, Info, ModHead, Row, Seg, Switch } from "@/ui";
 import { WhoPicker, pickable } from "@/shell/ModelPicker";
-import { presetProblems, presetSummary, type Preset } from "@/lib/presets";
 import { ProjectPluginsSection } from "@/shell/Plugins";
 
 
@@ -19,11 +18,9 @@ export const ProjectPage: React.FC<{
   onReveal: (id: string) => void;
   onRemove: (id: string) => void;
   onArchiveAll: (id: string) => void;
-  /** 存着的合作预设（v0.9 B2）：给项目指定默认用哪套。 */
-  presets: Preset[];
   onClose: () => void;
   say: (message: unknown) => void;
-}> = ({ project, entries, native, onChanged, onRelocate, onReveal, onRemove, onArchiveAll, presets, onClose, say }) => {
+}> = ({ project, entries, native, onChanged, onRelocate, onReveal, onRemove, onArchiveAll, onClose, say }) => {
   const { workspace, tasks, missing } = project;
   const [name, setName] = useState(workspace.name);
   const [rules, setRules] = useState<AllowRule[] | null>(null);
@@ -72,7 +69,6 @@ export const ProjectPage: React.FC<{
     void save({ settings: { ...settings, env } }, "环境变量存好了");
   };
   const who = options.find((e) => e.id === settings.who) ?? null;
-  const preset = presets.find((p) => p.id === settings.preset) ?? null;
   return (
     <section className="col page" aria-label="项目设置">
       <div className="pk-mod col-grow page-mod is-big">
@@ -97,27 +93,7 @@ export const ProjectPage: React.FC<{
                 <Info text="换文件夹：任务记录、快照、「总是允许」都跟过去。" />
               </div>
             </div>
-            <Row name="默认预设" desc={preset ? presetSummary(preset, entries) : settings.preset ? "选的预设删掉了" : "不用"} info="打开这个项目时，AGENTS 套用这套合作预设（写规范、实施、审查、委派）；有它就不看下面的「默认谁来干」。预设在左栏 AGENTS 最上面那行管。">
-              <MenuChip sm disabled={saving} ariaLabel="这个项目的默认预设" label={preset?.name ?? "不用"}>
-                {(close) => (
-                  <>
-                    <button type="button" role="menuitem" className={cn("pk-menu-item", !settings.preset && "is-on")} onClick={() => { void save({ settings: { ...settings, preset: null } }, "这个项目不用预设了"); close(); }}>
-                      <Dot kind="" /><b>不用</b><span>看「默认谁来干」</span>
-                    </button>
-                    {presets.map((p) => {
-                      const problems = presetProblems(p, entries);
-                      return (
-                        <button key={p.id} type="button" role="menuitem" className={cn("pk-menu-item", settings.preset === p.id && "is-on", problems.length > 0 && "is-off")} title={problems.join("；") || undefined}
-                          onClick={() => { void save({ settings: { ...settings, preset: p.id } }, `这个项目默认用「${p.name}」`); close(); }}>
-                          <Dot kind="" /><b>{p.name}</b><span>{problems[0] ?? presetSummary(p, entries)}</span>
-                        </button>
-                      );
-                    })}
-                  </>
-                )}
-              </MenuChip>
-            </Row>
-            <Row name="默认谁来干" off={!!preset} desc={preset ? "用了预设，这一行不看" : settings.who ? undefined : "跟全局"} info="打开这个项目时，左栏 AGENTS 换成它；空着就用上一次选的那个。">
+            <Row name="默认谁来干" desc={settings.who ? undefined : "跟全局"} info="打开这个项目时，左栏 AGENTS 换成它；空着就用上一次选的那个。">
               <WhoPicker entries={options} value={who} up={false} onChange={(id) => void save({ settings: { ...settings, who: id } }, "这个项目默认用它了")} />
               {settings.who && <Btn sm v="ghost" onClick={() => void save({ settings: { ...settings, who: null } }, "改回跟全局")}>CLEAR</Btn>}
             </Row>

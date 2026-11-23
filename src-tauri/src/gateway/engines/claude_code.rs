@@ -79,7 +79,7 @@ impl ClaudeCodeBackend {
                 "timeout": PECK_MCP_TIMEOUT_MS,
                 "alwaysLoad": true,
             }}});
-            args.extend(["--allowedTools".into(), "mcp__peck__ask_user,mcp__peck__delegate_task,mcp__peck__create_skill".into(), format!("--mcp-config={config}")]);
+            args.extend(["--allowedTools".into(), "mcp__peck__ask_user,mcp__peck__create_skill".into(), format!("--mcp-config={config}")]);
         }
         args
     }
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(cfg["mcpServers"]["peck"]["headers"]["Authorization"], "Bearer ${PECK_MCP_TOKEN}", "令牌不进命令行");
         assert_eq!(cfg["mcpServers"]["peck"]["timeout"], 1_800_000);
         assert!(!with_mcp.join(" ").contains("tok\""));
-        assert!(with_mcp.join(" ").contains("--allowedTools mcp__peck__ask_user,mcp__peck__delegate_task,mcp__peck__create_skill"));
+        assert!(with_mcp.join(" ").contains("--allowedTools mcp__peck__ask_user,mcp__peck__create_skill"));
         assert!(with_effort.contains("--effort high"));
     }
 

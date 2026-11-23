@@ -1,13 +1,12 @@
-// `?mock` 里的多引擎合作（v0.8 Phase 11）：接力（写规范 → 实施）、交叉审查（要改就交回修一次）、委派（子任务）。
+// `?mock` 里的 PLOOP（v1.1.1，以前的接力）：写规范 → 实施、审查（要改就交回修一次）、委派（子任务），都是 API 模型。
 // 每一段前面一条 stage.started、后面一条 stage.completed（这一段引擎自己的 turn.completed 换掉），
 // 整个任务最后一条 turn.completed 由 replayAgent 补。审查默认说要改；这句话里带「通过」就直接过。
 import type { AgentCaps, CriterionCheck, StageRole, ToolKind } from "@/lib/agentEvents";
 import type { ReplayEvent } from "@/dev/gatewayMock";
-import { MOCK_ENGINE_REPLAYS } from "@/dev/gatewayMock";
 import type { Round } from "@/dev/peckMock";
 
 export interface Member {
-  /** api:… / cli:… */
+  /** api:… */
   who: string;
   label: string;
 }
@@ -17,8 +16,8 @@ const STAGE_CAPS: AgentCaps = {
   resume: true, mcpInject: false, usage: "per_turn", cost: "estimated", quota: false, switchModel: true, needsTty: false, directOnly: false,
 };
 
-const engineOf = (m: Member) => (m.who.startsWith("api:") ? "peck" : m.who.slice(4));
-const modelOf = (m: Member) => (m.who.startsWith("api:") ? m.who.slice(4) : null);
+const engineOf = (_m: Member) => "peck";
+const modelOf = (m: Member) => m.who.slice(4);
 
 function tool(callId: string, name: string, kind: ToolKind, title: string, input: unknown, subagentId?: string): ReplayEvent {
   return { type: "tool_call.started", callId, name, kind, title, input, ...(subagentId ? { subagentId } : {}) } as ReplayEvent;
@@ -81,13 +80,7 @@ export function specRounds(runId: string, writer: Member, builder: Member, editP
   ]);
 }
 
-/** CLI 实施：回放这家录下来的过程（turn.completed 换成这一段的收尾）。 */
-export function cliRounds(m: Member): Round[] {
-  const replay = MOCK_ENGINE_REPLAYS[m.who.slice(4)] ?? [];
-  return [replay.filter((e) => e.type !== "session.started")];
-}
-
-/** 审查（只读）：看一遍 Diff，挑一处要改的（或者直接过）。接力带了验收标准就逐条判（v0.9）。 */
+/** 审查（只读）：看一遍 Diff，挑一处要改的（或者直接过）。写了规范（带验收标准）就逐条判（v0.9）。 */
 export function reviewRounds(runId: string, reviewer: Member, editPath: string, pass: boolean, withCriteria = false): Round[] {
   const notes = [
     pass ? "第 1 行写的是「已改」" : `第 1 行写成了「待办」，其实已经做完了，改成「已改」`,

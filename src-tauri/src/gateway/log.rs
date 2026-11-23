@@ -17,11 +17,6 @@ pub struct EventSink {
     /// 接力、审查的一段（v0.8）：这一段的引擎（事件日志的 `engine` 列按它记，花费上限才认得出 Peck Loop）；
     /// 引擎自己收尾的 `turn.completed` 不发，记在这里，由发任务的那一层发 `stage.completed`。
     stage: Option<Arc<StageSlot>>,
-    /// 委派出去的子任务（v0.9 B1，`for_delegate`）：它自己的 `session.started`、`turn.started`、`turn.completed`
-    /// 不发（它挂在那一步下面，不是一个新回合），收尾记在这里。
-    quiet: Option<Arc<Mutex<Option<(super::event::TurnEndReason, Option<String>)>>>>,
-    /// 委派的子任务另外旁听一份（收它最后的报告、改了哪些文件）。
-    tap: Option<Arc<dyn Fn(&AgentEvent) + Send + Sync>>,
 }
 
 /// 一段的引擎和它怎么收尾的。
@@ -70,8 +65,6 @@ impl EventSink {
             }),
             subagent_id: None,
             stage: None,
-            quiet: None,
-            tap: None,
         }
     }
 
@@ -94,26 +87,7 @@ impl EventSink {
             inner: self.inner.clone(),
             subagent_id: Some(subagent_id.into()),
             stage: self.stage.clone(),
-            quiet: None,
-            tap: self.tap.clone(),
         }
-    }
-
-    /// 委派出去、整段跑一个 Peck Loop 的子任务（v0.9 B1）：带 `subagent_id`，子任务自己的开头和收尾不发；
-    /// 发出去的每一条再给 `tap` 一份。
-    pub fn for_delegate(&self, subagent_id: impl Into<String>, tap: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            subagent_id: Some(subagent_id.into()),
-            stage: self.stage.clone(),
-            quiet: Some(Arc::new(Mutex::new(None))),
-            tap: Some(Arc::new(tap)),
-        }
-    }
-
-    /// 委派的子任务收尾时报的（原因、错误）；没报过为空。
-    pub fn delegate_end(&self) -> Option<(super::event::TurnEndReason, Option<String>)> {
-        self.quiet.as_ref().and_then(|q| q.lock().ok().and_then(|e| e.clone()))
     }
 
     /// 接力、审查的一段用这个 sink 发：序号和整个任务共用，日志里记这一段的引擎；
@@ -123,8 +97,6 @@ impl EventSink {
             inner: self.inner.clone(),
             subagent_id: self.subagent_id.clone(),
             stage: Some(Arc::new(StageSlot { engine: engine.into(), ended: Mutex::new(None) })),
-            quiet: None,
-            tap: self.tap.clone(),
         }
     }
 
@@ -153,20 +125,6 @@ impl EventSink {
 
     /// 带原件发：原件只进日志，不发给界面。
     pub fn emit_raw(&self, body: EventBody, raw: Option<Value>) -> AgentEvent {
-        if let Some(quiet) = &self.quiet {
-            match &body {
-                EventBody::TurnCompleted { reason, error, .. } => {
-                    if let Ok(mut e) = quiet.lock() {
-                        *e = Some((*reason, error.clone()));
-                    }
-                    return AgentEvent { seq: 0, at: now_ms(), subagent_id: self.subagent_id.clone(), body };
-                }
-                EventBody::SessionStarted { .. } | EventBody::TurnStarted { .. } => {
-                    return AgentEvent { seq: 0, at: now_ms(), subagent_id: self.subagent_id.clone(), body };
-                }
-                _ => {}
-            }
-        }
         if let (EventBody::TurnCompleted { reason, error, .. }, Some(slot), None) = (&body, &self.stage, &self.subagent_id) {
             if let Ok(mut e) = slot.ended.lock() {
                 *e = Some((*reason, error.clone()));
@@ -208,9 +166,6 @@ impl EventSink {
             }
         }
         (self.inner.out)(&event);
-        if let Some(tap) = &self.tap {
-            tap(&event);
-        }
         event
     }
 }

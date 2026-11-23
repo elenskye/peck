@@ -1,6 +1,6 @@
-// 「谁来干」（站主 2026-11-13 定；v0.8 改）。
-//   FLOW：怎么干——API（Peck Loop 配一个 API 模型）、CLI（一个 CLI 整包干）、接力（任意两个，前一个写规范、
-//         后一个实施；API 模型和 CLI 都行，Antigravity 除外）。审查、委派是另外两行（AGENTS 里）。
+// 「谁来干」（站主 2026-11-13 定；v0.8 改；v1.1.1 接力换成 PLOOP）。
+//   FLOW：怎么干——API（Peck Loop 配一个 API 模型单干）、CLI（一个 CLI 整包干，Peck 只当外壳）、
+//         PLOOP（Peck Loop 深度参与的工作流：写规范 → 实施 → 审查，外加委派，几格都只选 API 模型）。
 //   这里的 WhoPicker 是 ONE SHOT 和项目设置用的小号：只有 API、CLI。
 // 支持思考强度的模型、CLI 旁边再出一个强度选择。
 import React from "react";
@@ -8,20 +8,19 @@ import type { ModelEntry } from "@/lib/agentEvents";
 import { entryDot, versionText } from "@/lib/utils";
 import { Dot, MenuChip } from "@/ui";
 import type { AppSettings } from "@/lib/settings";
-import { RELAY, canDelegate, currentSetup, matches } from "@/lib/presets";
 
 /** 每百万 token 的价格：国内的模型是人民币。 */
 export const money = (v: number, sym = "$") => `${sym}${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(2).replace(/\.?0+$/, "") : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}`;
 
-/** 接力（v0.8）：「谁来干」里的一项，两家在设置的 `relay` 里。 */
-export const RELAY_ID = "relay";
+/** PLOOP（v1.1.1）：「谁来干」里的一项，几格选谁在设置的 `ploop`、`review`、`delegate` 里。 */
+export const PLOOP_ID = "ploop";
 
-export const RELAY_ENTRY: ModelEntry = {
-  id: RELAY_ID,
+export const PLOOP_ENTRY: ModelEntry = {
+  id: PLOOP_ID,
   group: "flow",
-  label: "接力",
-  provider: "relay",
-  providerLabel: "接力",
+  label: "PLOOP",
+  provider: "ploop",
+  providerLabel: "Peck Loop",
   available: true,
   directOnly: false,
   efforts: [],
@@ -31,20 +30,20 @@ export const RELAY_ENTRY: ModelEntry = {
   },
 };
 
-/** 能选的：用得了的，加上接力（至少有一个不是只做直接调用的才有）。 */
+/** 能选的：用得了的，加上 PLOOP（有一个能用的 API 模型才有）。 */
 export function pickable(entries: ModelEntry[]): ModelEntry[] {
   const list = entries.filter((e) => e.available);
-  return list.some((e) => !e.directOnly) ? [...list, RELAY_ENTRY] : list;
+  return ploopable(list).length ? [...list, PLOOP_ENTRY] : list;
 }
 
-/** 接力、审查能选的：API 模型和 CLI（Antigravity 只做直接调用，不进来）。 */
-export function teamable(entries: ModelEntry[]): ModelEntry[] {
-  return entries.filter((e) => e.available && !e.directOnly && (e.group === "peck" || e.group === "cli"));
+/** PLOOP 里几格能选的：只有 API 模型（CLI 引擎 Peck 只当外壳，不进工作流）。 */
+export function ploopable(entries: ModelEntry[]): ModelEntry[] {
+  return entries.filter((e) => e.available && !e.directOnly && e.group === "peck");
 }
 
 // ---------- FLOW ----------
 
-export type FlowKind = "api" | "cli" | "relay";
+export type FlowKind = "api" | "cli" | "ploop";
 
 const FLOWS: Array<{ id: FlowKind; label: string; note: string; none: string }> = [
   { id: "api", label: "API", note: "Peck Loop · 一个 API 模型", none: "先在设置里配 Key" },
@@ -53,7 +52,7 @@ const FLOWS: Array<{ id: FlowKind; label: string; note: string; none: string }> 
 
 /** 这一项属于哪种干法。 */
 export function flowOf(e: ModelEntry): FlowKind {
-  if (e.id === RELAY_ID) return "relay";
+  if (e.id === PLOOP_ID) return "ploop";
   if (e.group === "peck") return "api";
   return "cli";
 }
@@ -250,42 +249,38 @@ export function sendEffort(e: ModelEntry | null, settings: { efforts: Record<str
   return effortFor(e, settings.efforts);
 }
 
-/** 一项的短名字（接力、审查那几行用）。 */
+/** 一项的短名字（PLOOP 那几行用）。 */
 export function shortName(entries: ModelEntry[], id: string | undefined): string {
   const e = id ? entries.find((x) => x.id === id) : undefined;
   return e ? e.label.toUpperCase() : "没选";
 }
 
-/** 短的一行（输入框下、AGENTS 收起时）：用着预设、没改过就写预设名；不然接力写「接力」，一个的写它的名字。
- *  `flags` 时开了审查、委派各多两个字（不写是谁，全的在 [`whoText`]）。 */
-export function whoShort(e: ModelEntry | null, settings: AppSettings, entries: ModelEntry[], flags = true): string {
+/** 短的一行（输入框下、AGENTS 收起时）：PLOOP 写「PLOOP」，一个的写它的名字。
+ *  `flags` 时 PLOOP 开了写规范、审查、委派各多几个字（不写是谁，全的在 [`whoText`]）。 */
+export function whoShort(e: ModelEntry | null, settings: AppSettings, _entries: ModelEntry[], flags = true): string {
   if (!e) return flags ? "还没选谁来干" : "还没选";
-  const relay = flowOf(e) === "relay";
-  const delegates = (build: string) => canDelegate(entries.find((x) => x.id === build));
-  const active = settings.presets.find((p) => p.id === settings.preset);
-  const now = currentSetup(settings, relay ? RELAY : e.id);
-  if (active && matches(active, now, delegates)) return active.name;
-  const parts = [relay ? "接力" : labelOf(e)];
+  if (flowOf(e) !== "ploop") return labelOf(e);
+  const parts = ["PLOOP"];
+  if (flags && settings.ploop.spec) parts.push("写规范");
   if (flags && settings.review) parts.push("审查");
-  if (flags && settings.delegate && now && delegates(now.build)) parts.push("委派");
+  if (flags && settings.delegate) parts.push("委派");
   return parts.join(" · ");
 }
 
-/** 全的一行（悬停看）：接力写两家，开了审查、委派也写上是谁。 */
+/** 全的一行（悬停看）：PLOOP 写各格是谁。 */
 export function whoText(
   e: ModelEntry | null,
-  settings: { cliModels: Record<string, string>; cliModelNames?: Record<string, string>; efforts: Record<string, string>; relay?: { spec?: string; build?: string }; review?: string; delegate?: string },
+  settings: { cliModels: Record<string, string>; cliModelNames?: Record<string, string>; efforts: Record<string, string>; ploop?: { spec?: string; build?: string }; review?: string; delegate?: string },
   entries: ModelEntry[] = [],
 ): string {
   if (!e) return "还没选谁来干";
   const flow = flowOf(e);
-  const extra: string[] = [];
-  if (settings.review) extra.push(`审查 ${shortName(entries, settings.review)}`);
-  // 能委派（v0.9 B1）：实施的是 API 模型，或 Claude Code、Codex、Grok。
-  const builderId = flow === "relay" ? settings.relay?.build : e.id;
-  const builder = entries.find((x) => x.id === builderId) ?? (builderId === e.id ? e : undefined);
-  if (settings.delegate && canDelegate(builder)) extra.push(`委派 ${shortName(entries, settings.delegate)}`);
-  if (flow === "relay") return [`接力 · ${shortName(entries, settings.relay?.spec)} → ${shortName(entries, settings.relay?.build)}`, ...extra].join(" · ");
+  if (flow === "ploop") {
+    const spec = settings.ploop?.spec;
+    const head = spec ? `${shortName(entries, spec)} 写规范 → ${shortName(entries, settings.ploop?.build)} 实施` : `${shortName(entries, settings.ploop?.build)} 实施`;
+    const extra = [settings.review && `审查 ${shortName(entries, settings.review)}`, settings.delegate && `委派 ${shortName(entries, settings.delegate)}`].filter(Boolean);
+    return ["PLOOP", head, ...extra].join(" · ");
+  }
   const parts = [labelOf(e)];
   if (flow === "cli") {
     const engine = cliEngine(e)!;
@@ -299,5 +294,5 @@ export function whoText(
     const v = sendEffort(e, settings);
     if (v) parts.push(`思考 ${v.toUpperCase()}`);
   }
-  return [...parts, ...extra].join(" · ");
+  return parts.join(" · ");
 }

@@ -46,10 +46,6 @@ pub async fn gateway_run_start(
     worktree: Option<bool>,
     // 这一句附的图（v0.8）：存成文件，路径写在这一句后面。
     images: Option<Vec<super::ImageInput>>,
-    // 委派给哪个 API 模型（v0.9 B1）：CLI 经 Peck 的本机 MCP 调 delegate_task。
-    delegate: Option<String>,
-    // 花费上限（委派的子任务是 Peck Loop，照算）。
-    cost_cap: Option<f64>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
@@ -57,9 +53,8 @@ pub async fn gateway_run_start(
         return Err("先写一句话。".into());
     }
     let level = permission_of(permission.as_deref())?;
-    let delegate = crate::harness::run::delegate_of(&state, delegate.as_deref()).await?;
     let Some(engine) = who.strip_prefix("cli:").map(str::to_string) else {
-        return Err("这个入口只跑 CLI 引擎（cli:…）；接力、规划 + 实施照旧走原来的发任务。".into());
+        return Err("这个入口只跑 CLI 引擎（cli:…）。".into());
     };
     let label = catalog::catalog()
         .engines
@@ -89,8 +84,6 @@ pub async fn gateway_run_start(
             default_account,
             worktree: worktree.unwrap_or(false),
             attachments,
-            delegate,
-            cost_cap,
         },
         backend,
         move |e: &AgentEvent| {
@@ -118,9 +111,6 @@ pub(crate) struct EngineRun {
     pub worktree: bool,
     /// 附图存成的文件（v0.8）：路径写在引擎看到的这一句后面。
     pub attachments: Vec<PathBuf>,
-    /// 委派（v0.9 B1）：给 CLI 的本机 MCP 加 `delegate_task`。Antigravity、PLAN 不委派。
-    pub delegate: Option<crate::harness::r#loop::Delegate>,
-    pub cost_cap: Option<f64>,
 }
 
 /// 占任务号、记任务、起引擎（后台跑），返回任务 id。
@@ -145,8 +135,6 @@ pub(crate) fn start_engine_run(
         default_account,
         worktree,
         attachments,
-        delegate,
-        cost_cap,
     } = run;
     if worktree && level == PermissionLevel::Plan {
         return Err("PLAN 只读，不用独立工作区。".into());
@@ -221,18 +209,7 @@ pub(crate) fn start_engine_run(
     // 独立工作区：先建好；建不了这个任务就算失败。
     let cwd = crate::harness::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
     // 这个任务是谁在干（对话里设定时任务时默认照它）。
-    let setup = crate::schedule::Setup { who: who.clone(), model: model.clone(), effort: effort.clone(), plan_by: None, review_by: None, delegate: delegate.as_ref().map(|d| format!("api:{}", d.model_id)) };
-    // 委派（v0.9 B1）：能委派的 CLI、不是 PLAN 才开；这一句后面告诉它有 delegate_task。
-    let cli_delegate = match delegate {
-        Some(d) if level != PermissionLevel::Plan && supports_delegate(&engine) => {
-            Some(crate::harness::delegate::prepare(&store, d, &run_id, &session_id, &cwd, level, cost_cap)?)
-        }
-        _ => None,
-    };
-    let engine_prompt = match &cli_delegate {
-        Some(d) => format!("{engine_prompt}{}", crate::harness::delegate::prompt_note(d)),
-        None => engine_prompt,
-    };
+    let setup = crate::schedule::Setup { who: who.clone(), model: model.clone(), effort: effort.clone(), plan_by: None, review_by: None, delegate: None };
 
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     if let Ok(mut c) = controls().lock() {
@@ -323,7 +300,7 @@ pub(crate) fn start_engine_run(
             agent_id: engine.clone(),
         });
 
-        // 停止：`run_cancel` 改成发打断（委派出去的子任务也一起停）。
+        // 停止：`run_cancel` 改成发打断（本机 MCP 里等着批的回退、提交也一起停）。
         let interrupt = control_tx.clone();
         let stop_id = id.clone();
         let mut cancel_rx = cancel_rx;
@@ -337,10 +314,9 @@ pub(crate) fn start_engine_run(
             }
         });
         // Peck 的本机 MCP（v0.10 起每个 CLI 任务都挂）：`create_skill` 都给（C3），`ask_user` 只给自己没有问站主通道的
-        // Grok、Antigravity，`delegate_task` 选了委派才给。
+        // Grok、Antigravity。
         let offer = mcp::Offer {
             ask_user: matches!(engine.as_str(), "grok" | "antigravity"),
-            delegate: cli_delegate.clone(),
             skill_root: Some(workspace.clone()),
             extras: Some(Arc::new(crate::harness::extras::Extras {
                 store: store.clone(),
@@ -497,8 +473,7 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
     if !options.contains(&super::event::ApprovalDecision::AllowOnce) {
         return None;
     }
-    // Peck 自己的本机 MCP（`ask_user`、`delegate_task`，v0.9 B1；`create_skill`，v0.10 C3）：CLI 问要不要用，直接批
-    // （子任务里每一步照 Peck 的档位问）。`create_skill` 只是提议、不写盘，PLAN 也批。
+    // Peck 自己的本机 MCP（`ask_user`；`create_skill`，v0.10 C3）：CLI 问要不要用，直接批。`create_skill` 只是提议、不写盘，PLAN 也批。
     let peck_tool = *kind == ToolKind::Mcp && title.contains("MCP peck · ");
     // 定时任务那三个不碰项目文件，PLAN 也批；`restore_snapshot` 在 PLAN 下给站主（它自己也会拒掉回退）。
     if peck_tool && ["create_skill", "load_skill", "schedule_task", "list_schedules", "cancel_schedule"].iter().any(|t| title.contains(t)) {
@@ -609,14 +584,7 @@ pub async fn gateway_control(run_id: String, control: Control) -> Result<(), Str
     route_control(&run_id, control)
 }
 
-/// 能经本机 MCP 委派的 CLI（v0.9 B1）：Antigravity 只做直接调用，不委派；Muse 还没接上（`muse serve -c` 按字段
-/// 写的 `mcpServers.peck` 收下了，但会话里看不出连没连上，要真跑一轮才知道，见 HANDOFF）。
-pub(crate) fn supports_delegate(engine: &str) -> bool {
-    // Muse 经 `session/start` 的 `config.mcpServers` 挂上本机 MCP（v0.10 C3 时接上）。
-    matches!(engine, "claude-code" | "codex" | "grok" | "muse")
-}
-
-/// 委派出去的子任务的控制通道（v0.9 B1）：任务 id → [(审批、提问编号的前缀, 通道)]。
+/// 本机 MCP 里等着站主批的事（回退、提交走的子通道）：任务 id → [(审批、提问编号的前缀, 通道)]。
 fn sub_controls() -> &'static Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<Control>)>>> {
     static C: OnceLock<Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<Control>)>>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(HashMap::new()))
@@ -749,8 +717,6 @@ mod tests {
             default_account: true,
             worktree: false,
             attachments: vec![],
-            delegate: None,
-            cost_cap: None,
         };
         let run_id = start_engine_run(run, backend.clone(), move |e| {
             let _ = tx.send(e.clone());
@@ -774,8 +740,6 @@ mod tests {
             default_account: true,
             worktree: false,
             attachments: vec![],
-            delegate: None,
-            cost_cap: None,
         };
         assert!(start_engine_run(again, backend, |_| {}).unwrap_err().contains("一次跑一个"));
 
@@ -997,10 +961,10 @@ mod route_tests {
         };
         let root = std::path::Path::new("/tmp");
         let none = std::collections::HashSet::new();
-        assert_eq!(rule_allows(PermissionLevel::Edit, &ask("用 MCP peck · delegate_task？"), root, &none).as_deref(), Some("q1"));
+        assert_eq!(rule_allows(PermissionLevel::Edit, &ask("用 MCP peck · git_commit？"), root, &none).as_deref(), Some("q1"));
         assert_eq!(rule_allows(PermissionLevel::Edit, &ask("MCP peck · ask_user"), root, &none).as_deref(), Some("q1"));
         assert_eq!(rule_allows(PermissionLevel::Edit, &ask("用 MCP dw · write_board？"), root, &none), None, "别的 MCP 照旧问站主");
-        assert_eq!(rule_allows(PermissionLevel::Plan, &ask("用 MCP peck · delegate_task？"), root, &none), None);
+        assert_eq!(rule_allows(PermissionLevel::Plan, &ask("用 MCP peck · git_commit？"), root, &none), None);
         // Codex 改项目里的文件（一行一个路径）：EDIT 批；有一个在项目外就给站主。
         let edit = |detail: &str| EventBody::ApprovalRequested {
             request_id: "q1".into(),

@@ -5,7 +5,6 @@
 pub mod background;
 pub mod compact;
 pub mod context;
-pub mod delegate;
 pub mod extras;
 pub mod git;
 pub mod history;

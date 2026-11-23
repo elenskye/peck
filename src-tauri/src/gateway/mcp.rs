@@ -2,7 +2,6 @@
 //! 每个任务一个随机令牌（`Authorization: Bearer …`）。工具按这个任务给的（[`Offer`]）：
 //! - `ask_user`：引擎问站主一句，Peck 弹 ASK 卡片，站主答了把答案还给引擎。只给 Grok、Antigravity（ACP 自己没有
 //!   「问站主」）；Codex（`requestUserInput`）、Claude Code（`AskUserQuestion`）、Muse（`userInput/request`）有自己的通道。
-//! - `delegate_task`：选了委派时（v0.9 B1，见 `harness/delegate.rs`）。
 //! - `create_skill`：提议存一条 Skill（v0.10 C3，见 `skill_propose`），五家 CLI 都给（站主 2026-11-16 定）。
 //! - `restore_snapshot`、`schedule_task`、`list_schedules`、`cancel_schedule`（v1.0.2，见 `harness/extras.rs`）：
 //!   快照回退和定时任务，和 Peck Loop 同一套；回退先弹高危卡片，站主批了才动。
@@ -35,8 +34,6 @@ const PROTOCOL: &str = "2025-06-18";
 pub struct Offer {
     /// 给 `ask_user`（引擎自己没有问站主的通道时）。
     pub ask_user: bool,
-    /// 给 `delegate_task`（v0.9 B1）。
-    pub delegate: Option<Arc<crate::harness::delegate::CliDelegate>>,
     /// 给 `create_skill`（v0.10 C3）：项目根，提议的 Skill 写进它的 `.claude/skills`。
     pub skill_root: Option<std::path::PathBuf>,
     /// 给快照回退和定时任务那四个（v1.0.2）。
@@ -279,9 +276,6 @@ impl McpHub {
                 if offer.ask_user {
                     lines.push("ask_user asks the person you are working for and waits for their answer.");
                 }
-                if offer.delegate.is_some() {
-                    lines.push("delegate_task hands a self-contained subtask to a cheaper model working in the same project and returns its report.");
-                }
                 if offer.skill().is_some() {
                     lines.push("create_skill proposes saving a reusable procedure you worked out as a skill (SKILL.md); the user approves it. Use it instead of writing skill files yourself.");
                 }
@@ -325,22 +319,6 @@ impl McpHub {
                         "required": ["question"]
                     },
                     "annotations": {"readOnlyHint": true}
-                    }));
-                }
-                if let Some(d) = &offer.delegate {
-                    tools.push(json!({
-                        "name": "delegate_task",
-                        "title": "Delegate a subtask",
-                        "description": crate::harness::delegate::tool_description(d),
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "task": {"type": "string", "description": "The subtask, complete enough to do without asking: what to change, where, how to check it."},
-                                "files": {"type": "array", "items": {"type": "string"}, "description": "Optional project-relative paths to start with."}
-                            },
-                            "required": ["task"]
-                        },
-                        "annotations": {"readOnlyHint": false, "destructiveHint": false}
                     }));
                 }
                 if offer.skill().is_some() {
@@ -420,20 +398,6 @@ impl McpHub {
                     Ok(Ok(text)) => ok(json!({"content": [{"type": "text", "text": text}]})),
                     Ok(Err(why)) => ok(json!({"content": [{"type": "text", "text": why}], "isError": true})),
                     Err(_) => ok(json!({"content": [{"type": "text", "text": "create_skill failed"}], "isError": true})),
-                }
-            }
-            "tools/call" if m["params"]["name"] == "delegate_task" => {
-                let Some(d) = &offer.delegate else {
-                    return ok(json!({"content": [{"type": "text", "text": "delegation is off for this task"}], "isError": true}));
-                };
-                let args = &m["params"]["arguments"];
-                let files: Vec<String> = args["files"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
-                    .unwrap_or_default();
-                match crate::harness::delegate::run(d, sink, args["task"].as_str().unwrap_or(""), &files).await {
-                    Ok(text) => ok(json!({"content": [{"type": "text", "text": text}]})),
-                    Err(why) => ok(json!({"content": [{"type": "text", "text": why}], "isError": true})),
                 }
             }
             "tools/call" if m["params"]["name"] == "ask_user" && offer.ask_user => {

@@ -17,8 +17,6 @@ export interface Workspace {
 export interface ProjectSettings {
   who?: string | null;
   permission?: string | null;
-  /** 这个项目默认用哪套合作预设（v0.9 B2）；有它就不看 who。 */
-  preset?: string | null;
   /** 项目即环境（v0.7）：主文件夹以外的文件夹，能改还是只读。 */
   folders?: ProjectFolder[];
   /** 这个项目的环境变量（v0.7；v0.10 起 CLI 引擎也带）。 */

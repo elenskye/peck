@@ -283,7 +283,7 @@ export const ipc = {
     channel.onmessage = onEvent;
     return invoke<string>("harness_run_start", { ...args, channel });
   },
-  /** 合作（v0.8）：接力（planBy 写规范）和 / 或交叉审查（reviewBy），who 是实施的那一个。一个任务、一条事件流。 */
+  /** PLOOP（v1.1.1，以前的接力）：写规范（planBy）和 / 或审查（reviewBy），who 是实施的那一个；都是 API 模型。一个任务、一条事件流。 */
   async teamRunStart(args: TeamRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
     if (isMockMode()) return mockIpc.teamRunStart(args, onEvent);
     const channel = new Channel<AgentEvent>();
@@ -543,20 +543,18 @@ export interface ImageInput {
   data: string;
 }
 
-/** 合作里的一个人（v0.8）。 */
+/** PLOOP 里的一个人：一个 API 模型和它的思考强度。 */
 export interface TeamPick {
   who: string;
-  model?: string;
   effort?: string;
 }
 
 export interface TeamRunArgs {
   sessionId: string;
   prompt: string;
-  /** 实施的那一个（api:… 或 cli:…）。 */
+  /** 实施的那一个（api:…）。 */
   who: string;
   permission?: Permission;
-  model?: string;
   effort?: string;
   costCap?: number | null;
   worktree?: boolean;

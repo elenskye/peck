@@ -16,7 +16,7 @@ import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccoun
 import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, TeamRunArgs } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
-import { cliRounds, delegateRound, fixRounds, reviewRounds, specRounds, stage, type Member } from "@/dev/teamMock";
+import { delegateRound, fixRounds, reviewRounds, specRounds, stage, type Member } from "@/dev/teamMock";
 import type { ApiConfig, ApiStatus } from "@/lib/api";
 import type {
   FileChangeKind,
@@ -472,15 +472,15 @@ export const mockIpc = {
     void replayAgent(runId, [replay], forkNotice(args.sessionId, runId, `cli:${engine}`, label), onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
     return runId;
   },
-  // ── 合作（v0.8）：接力（写规范 → 实施）、交叉审查（要改就修一次）。一个任务、一条事件流 ──
+  // ── PLOOP（v1.1.1）：写规范 → 实施、审查（要改就修一次），都是 API 模型。一个任务、一条事件流 ──
   async teamRunStart(args: TeamRunArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
     if (!args.prompt.trim()) throw new Error("先写一句话。");
-    if (!args.planBy && !args.reviewBy) throw new Error("接力和审查至少选一样。");
-    if ((args.permission ?? "edit") === "plan") throw new Error("PLAN 只读：接力和审查要动手，选 EDIT 或 AUTO。");
+    if (!args.planBy && !args.reviewBy) throw new Error("PLOOP 的写规范和审查至少开一样。");
+    if ((args.permission ?? "edit") === "plan") throw new Error("PLAN 只读：PLOOP 的写规范、审查要动手，选 EDIT 或 AUTO。");
     const member = (who: string): Member => {
+      if (!who.startsWith("api:")) throw new Error("PLOOP 只用 API 模型：CLI 之间交接换引擎接着发一句，或者用 /review。");
       const e = MOCK_MODEL_ENTRIES.find((x) => x.id === who);
-      if (e?.directOnly) throw new Error("Antigravity 只做直接调用，不进接力和审查。");
-      return { who, label: who.startsWith("api:") ? `Peck · ${e?.label ?? who.slice(4)}` : e?.label ?? who.slice(4) };
+      return { who, label: `Peck · ${e?.label ?? who.slice(4)}` };
     };
     const builder = member(args.who);
     const writer = args.planBy ? member(args.planBy.who) : null;
@@ -493,10 +493,8 @@ export const mockIpc = {
     const demo = peckDemo(runId, files, "", { window: 1_000_000, project: false });
     const editPath = demo.edit.path;
     const sub = args.delegate ? MOCK_MODEL_ENTRIES.find((e) => e.id === args.delegate) : undefined;
-    // 实施的是 Peck Loop：主线剧本（委派的话插一段子任务）；是 CLI：回放它录下来的过程。
-    const buildRounds: Round[] = builder.who.startsWith("api:")
-      ? [...demo.rounds.slice(0, 1), ...(sub ? [delegateRound(runId, { who: sub.id, label: sub.label }, editPath)] : []), ...demo.rounds.slice(1)]
-      : cliRounds(builder);
+    // 实施：主线剧本（委派的话插一段子任务）。
+    const buildRounds: Round[] = [...demo.rounds.slice(0, 1), ...(sub ? [delegateRound(runId, { who: sub.id, label: sub.label }, editPath)] : []), ...demo.rounds.slice(1)];
     const pass = /通过/.test(args.prompt);
     const rounds: Round[] = [
       ...(writer ? specRounds(runId, writer, builder, editPath) : []),

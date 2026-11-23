@@ -4,7 +4,6 @@ import { api, type ApiStatus } from "@/lib/api";
 import { ipc, isMockMode, type ImageInput, type Schedule, type TeamPick } from "@/lib/ipc";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from "@/lib/settings";
-import { applyPreset, canDelegate, presetProblems } from "@/lib/presets";
 import { involvedIds, quotaHint, swapPatch } from "@/lib/quota";
 import { usageApi, type ClientCard } from "@/lib/usage";
 import { applyTheme } from "@/lib/theme";
@@ -20,7 +19,7 @@ import { ProjectPage } from "@/shell/ProjectPage";
 import type { InboxItem, LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
 import { AgentsPanel } from "@/shell/AgentsPanel";
-import { RELAY_ID, cliModelOf, sendEffort, teamable } from "@/shell/ModelPicker";
+import { PLOOP_ID, cliModelOf, ploopable, sendEffort } from "@/shell/ModelPicker";
 import { Icon } from "@/ui";
 
 export interface TermEntry {
@@ -137,7 +136,7 @@ const App: React.FC = () => {
   const swapRef = useRef(swapOnce);
   swapRef.current = swapOnce;
   const [quotaDismissed, setQuotaDismissed] = useState<string | null>(null);
-  const chosenId = useMemo(() => (settings.pick === RELAY_ID ? RELAY_ID : chosenEntry(entries, settings)?.id ?? null), [entries, settings]);
+  const chosenId = useMemo(() => (settings.pick === PLOOP_ID ? PLOOP_ID : chosenEntry(entries, settings)?.id ?? null), [entries, settings]);
   const hint = useMemo(() => {
     const h = quotaHint(involvedIds(settings, chosenId), entries, clients, settings.quotaWarn);
     return h && `${h.from}|${h.text}` !== quotaDismissed ? h : null;
@@ -368,32 +367,27 @@ const App: React.FC = () => {
     const s = settingsRef.current;
     // 额度提醒里点了「这次换」（v0.9 B3）：这一次把 from 换成 to（模型、强度照 to 自己的），设置不动。
     const swap = swapRef.current;
-    const swapped = (id?: string) => (swap && id === swap.from ? swap.to : id);
     if (swap && who === swap.from) {
       const e = entries.find((x) => x.id === swap.to) ?? null;
       who = swap.to;
       model = cliModelOf(e, s);
       effort = sendEffort(e, s);
     }
-    // 接力（v0.8）：实施的是 relay.build、写规范的是 relay.spec；开了审查（不是 PLAN）也走合作。
-    // 存着的可能已经用不了（CLI 这次没检测到、Key 删了）：只认 AGENTS 里现在能选的，和界面上显示的一样。
-    const team = teamable(entries);
+    // PLOOP（v1.1.1）：实施的是 ploop.build，写规范的 ploop.spec、审查的 review、委派的 delegate 各自能不开；几格都只认 API 模型。
+    // 存着的可能已经用不了（Key 删了）：只认 AGENTS 里现在能选的，和界面上显示的一样。API、CLI 单干的没有审查、委派。
+    const team = ploopable(entries);
     const usable = (id?: string) => (id && team.some((e) => e.id === id) ? id : undefined);
     const pickOf = (id: string): TeamPick => {
       const e = entries.find((x) => x.id === id) ?? null;
-      return { who: id, model: cliModelOf(e, s), effort: sendEffort(e, s) };
+      return { who: id, effort: sendEffort(e, s) };
     };
-    const relay = who === RELAY_ID;
-    const spec = relay ? usable(swapped(s.relay.spec)) : undefined;
-    const builder = relay ? usable(swapped(s.relay.build)) : who;
-    if (!builder) { say("接力还没选实施的那一个（或选的那个现在用不了）"); return false; }
-    if (relay && !spec) { say("接力还没选写规范的那一个（或选的那个现在用不了）"); return false; }
-    if (relay && permission === "plan") { say("PLAN 只读：接力要动手，选 EDIT 或 AUTO"); return false; }
-    // Antigravity 这类只做直接调用的不进审查、委派。
-    const automatable = relay || team.some((e) => e.id === builder);
-    const reviewId = automatable && permission !== "plan" ? usable(swapped(s.review)) : undefined;
-    // 委派（v0.9 B1）：实施的是 API 模型或能经本机 MCP 委派的 CLI（Claude Code、Codex、Grok）。
-    const delegate = canDelegate(entries.find((e) => e.id === builder)) ? usable(s.delegate) : undefined;
+    const ploop = who === PLOOP_ID;
+    const spec = ploop ? usable(s.ploop.spec) : undefined;
+    const builder = ploop ? usable(s.ploop.build) : who;
+    if (!builder) { say("PLOOP 还没选实施的那一个（或选的那个现在用不了）"); return false; }
+    if (spec && permission === "plan") { say("PLAN 只读：PLOOP 写了规范要动手，选 EDIT 或 AUTO"); return false; }
+    const reviewId = ploop && permission !== "plan" ? usable(s.review) : undefined;
+    const delegate = ploop ? usable(s.delegate) : undefined;
     try {
       let target = taskId;
       if (!target) {
@@ -402,18 +396,18 @@ const App: React.FC = () => {
       }
       const ctx = { projectId: project.workspace.id, taskId: target, prompt };
       let runId: string;
-      const builderPick = relay ? pickOf(builder) : { who, model, effort };
+      const builderPick = ploop ? pickOf(builder) : { who, model, effort };
       const reviewBy = reviewId ? pickOf(reviewId) : undefined;
       // 事件可能比任务号先到：先攒着，拿到任务号再一起放进去。
       let id: string | null = null;
       const early: AgentEvent[] = [];
       const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
-      if (relay || reviewBy) {
-        id = await ipc.teamRunStart({ sessionId: target, prompt, who: builderPick.who, model: builderPick.model, effort: builderPick.effort, permission, costCap: s.costCap, worktree, delegate, planBy: spec ? pickOf(spec) : undefined, reviewBy, images }, onEvent);
-      } else if (who.startsWith("api:")) {
-        id = await ipc.harnessRunStart({ sessionId: target, prompt, who, permission, effort, costCap: s.costCap, worktree, delegate, images }, onEvent);
+      if (spec || reviewBy) {
+        id = await ipc.teamRunStart({ sessionId: target, prompt, who: builderPick.who, effort: builderPick.effort, permission, costCap: s.costCap, worktree, delegate, planBy: spec ? pickOf(spec) : undefined, reviewBy, images }, onEvent);
+      } else if (builderPick.who.startsWith("api:")) {
+        id = await ipc.harnessRunStart({ sessionId: target, prompt, who: builderPick.who, permission, effort: builderPick.effort, costCap: s.costCap, worktree, delegate, images }, onEvent);
       } else {
-        id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images, delegate, costCap: s.costCap }, onEvent);
+        id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images }, onEvent);
       }
       runId = id;
       if (swap) setSwapOnce(null);
@@ -519,12 +513,8 @@ const App: React.FC = () => {
   const applyProjectDefaults = (id: string | null) => {
     const ws = projects.find((p) => p.workspace.id === id)?.workspace;
     const patch: Partial<AppSettings> = {};
-    // 项目指定了合作预设（v0.9 B2）：套用它（里面有用不了的就不换，提示一句），不看 who。
-    const preset = ws?.settings?.preset ? settingsRef.current.presets.find((p) => p.id === ws.settings!.preset) : undefined;
-    const problems = preset ? presetProblems(preset, entries) : [];
-    if (preset && !problems.length) Object.assign(patch, applyPreset(preset, settingsRef.current));
-    else if (preset) say(`这个项目的预设「${preset.name}」现在用不了：${problems.join("；")}`);
-    const who = !preset ? ws?.settings?.who : null;
+    // 以前存的「接力」是现在的 PLOOP（v1.1.1）；项目的默认预设去掉了，存着的不看。
+    const who = ws?.settings?.who === "relay" ? PLOOP_ID : ws?.settings?.who;
     if (who && who !== settingsRef.current.pick) patch.pick = who;
     if (ws?.settings?.permission && ws.settings.permission !== settingsRef.current.permission) patch.permission = ws.settings.permission as Permission;
     if (Object.keys(patch).length) updateSettings(patch);
@@ -691,7 +681,6 @@ const App: React.FC = () => {
             onReveal={(id) => act(() => ipc.workspaceReveal(id))}
             onRemove={removeProject}
             onArchiveAll={archiveProjectTasks}
-            presets={settings.presets}
             onClose={() => setPage("")}
             say={say}
           />
@@ -752,7 +741,6 @@ const App: React.FC = () => {
                 quota={hint ? {
                   hint,
                   swapped: swapOnce && swapOnce.from === hint.from ? entries.find((e) => e.id === swapOnce.to) ?? null : null,
-                  presetName: settings.presets.find((p) => p.id === settings.preset)?.name ?? null,
                   onOnce: () => { if (hint.to) setSwapOnce({ from: hint.from, to: hint.to.id }); },
                   onAlways: () => { if (hint.to) { updateSettings(swapPatch(settingsRef.current, hint.from, hint.to.id)); setSwapOnce(null); say(`以后用 ${hint.to.label} 代替 ${hint.fromLabel}`); } },
                   onUndo: () => setSwapOnce(null),

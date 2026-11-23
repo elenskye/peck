@@ -2,24 +2,19 @@
 import { ipc } from "@/lib/ipc";
 import type { ThemeChoice } from "@/lib/theme";
 import type { Permission } from "@/lib/types";
-import { normalizePresets, type Preset } from "@/lib/presets";
 
 export interface AppSettings {
   theme: ThemeChoice;
-  /** 「谁来干」：模型列表里的 id（api:…、cli:…），或者 `relay`（接力，两家见 `relay`）。空着用列表里第一个能用的。 */
+  /** 「谁来干」：模型列表里的 id（api:…、cli:…），或者 `ploop`（PLOOP，几个 API 模型见 `ploop`）。空着用列表里第一个能用的。 */
   pick: string;
-  /** 每种干法（FLOW：api、cli、relay）上次选的哪个；换 FLOW 时回到它。 */
+  /** 每种干法（FLOW：api、cli、ploop）上次选的哪个；换 FLOW 时回到它。 */
   picks: Partial<Record<string, string>>;
-  /** 接力（v0.8）：谁写规范、谁实施（模型列表里的 id，API 模型或 CLI，Antigravity 除外）。 */
-  relay: { spec?: string; build?: string };
-  /** 交叉审查（v0.8）：做完以后谁来看这次的改动（空着不审查）。 */
+  /** PLOOP（v1.1.1，以前的接力）：谁写规范（空着不写）、谁实施。都只能是 API 模型。 */
+  ploop: { spec?: string; build?: string };
+  /** PLOOP 的审查：做完以后哪个 API 模型来看这次的改动（空着不审查）。 */
   review: string;
-  /** 委派（v0.8）：子任务交给哪个 API 模型（空着不委派）。v0.9 起实施的是 CLI（Antigravity 除外）也能委派。 */
+  /** PLOOP 的委派：子任务交给哪个 API 模型（空着不委派）。 */
   delegate: string;
-  /** 合作预设（v0.9 B2）：存着的几套组合（自带两套在前）。 */
-  presets: Preset[];
-  /** 上次套用的预设（空着是没用预设）；AGENTS 改了以后它还在，界面标「改过」。 */
-  preset: string;
   /** 额度提醒（v0.9 B3）：要用到的 CLI 订阅窗口用到这么多（百分比）就提醒换一家；null 是关了。 */
   quotaWarn: number | null;
   /** 每家 CLI 用哪个模型（引擎 id → CLI 里的模型名；空着用 CLI 自己的默认）。 */
@@ -42,7 +37,7 @@ export interface AppSettings {
   maxRounds: number;
   /** ONE SHOT 最多几轮（v1.0.3，5–400，默认 12）。 */
   oneshotRounds: number;
-  /** 委派的子任务最多几轮（v1.0.3，5–400，默认 24；Peck Loop 和 CLI 委派的都按它）。 */
+  /** 委派的子任务最多几轮（v1.0.3，5–400，默认 24）。 */
   subRounds: number;
   /** Dock 里的 App 图标。 */
   appIcon: "j2" | "a3";
@@ -57,11 +52,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   pick: "",
   picks: {},
-  relay: {},
+  ploop: {},
   review: "",
   delegate: "",
-  presets: normalizePresets(undefined),
-  preset: "",
   quotaWarn: 85,
   cliModels: {},
   cliModelNames: {},
@@ -88,19 +81,20 @@ export async function loadSettings(): Promise<AppSettings> {
       void saveSettings(fresh).catch(() => {});
       return fresh;
     }
-    // 旧版本存的 `mode`、`who`（v0.8 以前的「谁来干」）不要了：读的时候丢掉，下次存就没了。
-    const { mode: _mode, who: _who, ...saved } = JSON.parse(raw) as Partial<AppSettings> & { mode?: unknown; who?: unknown };
+    // 旧版本存的 `mode`、`who`（v0.8 以前的「谁来干」）、`presets`、`preset`（v1.1.1 去掉的预设）不要了：读的时候丢掉，下次存就没了。
+    // 接力（`relay`）换成了 PLOOP：只留 API 模型那几格。
+    const { mode: _mode, who: _who, presets: _presets, preset: _preset, relay, ...saved } = JSON.parse(raw) as Partial<AppSettings> & { mode?: unknown; who?: unknown; presets?: unknown; preset?: unknown; relay?: { spec?: string; build?: string } };
+    const api = (id?: string) => (id?.startsWith("api:") ? id : undefined);
+    const old = saved.ploop ?? relay ?? {};
     const settings: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...saved,
-      pick: saved.pick ?? "",
-      relay: { ...saved.relay },
-      review: saved.review ?? "",
-      delegate: saved.delegate ?? "",
-      presets: normalizePresets(saved.presets),
-      preset: saved.preset ?? "",
+      pick: saved.pick === "relay" ? "ploop" : saved.pick ?? "",
+      ploop: { spec: api(old.spec), build: api(old.build) },
+      review: api(saved.review) ?? "",
+      delegate: api(saved.delegate) ?? "",
       quotaWarn: saved.quotaWarn === null ? null : typeof saved.quotaWarn === "number" ? Math.min(100, Math.max(50, saved.quotaWarn)) : 85,
-      picks: Object.fromEntries(Object.entries({ ...saved.picks }).filter(([k]) => k === "api" || k === "cli" || k === "relay")),
+      picks: Object.fromEntries(Object.entries({ ...saved.picks }).map(([k, v]) => (k === "relay" ? ["ploop", "ploop"] : [k, v])).filter(([k]) => k === "api" || k === "cli" || k === "ploop")),
       cliModels: { ...saved.cliModels },
       cliModelNames: { ...saved.cliModelNames },
       fold: { ...saved.fold },

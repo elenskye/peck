@@ -26,9 +26,6 @@ pub struct Workspace {
 pub struct ProjectSettings {
     pub who: Option<String>,
     pub permission: Option<String>,
-    /// 这个项目默认用哪套合作预设（v0.9 B2，预设的 id；预设本身存在界面设置里）。有它就不看 `who`。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub preset: Option<String>,
     /// 项目即环境（v0.7）：主文件夹以外的文件夹，每个自己选能改还是只读。 Peck Loop 的工具和命令都认。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<ProjectFolder>,

@@ -1,18 +1,16 @@
-// 左栏下面的【AGENTS】：选谁来干（站主 2026-11-13 定，原来是输入框下的三个按钮；v0.8 改）。
-//   FLOW 一排分段（API、CLI、接力）；
-//   CLI：五家直接列出来点选，下面是这家 CLI 的模型（从 CLI 自己那里读）和思考强度；
-//   API：模型用按供应商分组的下拉，下面是思考强度；接力：写规范的、实施的各一个下拉（API 模型或 CLI）。
-//   下面两行：审查（做完以后谁来看这次的改动，OFF 不审）、委派（子任务交给哪个便宜的 API 模型；v0.9 起实施的是 CLI 也行，Antigravity 除外）。
-//   最上面一行「预设」（v0.9 B2）：存几套组合一键切换。
+// 左栏下面的【AGENTS】：选谁来干（站主 2026-11-13 定，原来是输入框下的三个按钮；v0.8 改；v1.1.1 接力换成 PLOOP）。
+//   FLOW 一排分段（API、CLI、PLOOP）；
+//   API：Peck Loop + 一个 API 模型单干，模型用按供应商分组的下拉，下面是思考强度；
+//   CLI：五家直接列出来点选，下面是这家 CLI 的模型（从 CLI 自己那里读）和思考强度。Peck 只当外壳：没有审查、委派；
+//   PLOOP：Peck Loop 深度参与的工作流，写规范（OFF 不写）、实施、审查（OFF 不审）各一个下拉，只列 API 模型；委派在设置 → AGENTS。
 // 能收起，收起时头上一行写现在是谁。在跑的时候不能换。
 import React, { useEffect, useRef, useState } from "react";
 import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, type CliModel, type CliModels } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
-import { RELAY, applyPreset, canDelegate, currentSetup, matches, presetProblems, presetSummary } from "@/lib/presets";
 import { ago, cn, entryDot } from "@/lib/utils";
 import { Dot, FoldBtn, Icon, Info, MenuChip, ModHead } from "@/ui";
-import { cliEngine, defaultEffort, firstOf, flowOf, labelOf, money, pickable, teamable, whoShort, type FlowKind } from "@/shell/ModelPicker";
+import { cliEngine, defaultEffort, firstOf, flowOf, labelOf, money, pickable, ploopable, whoShort, type FlowKind } from "@/shell/ModelPicker";
 
 const priceOf = (e: ModelEntry) => {
   if (!e.price) return "价格未知";
@@ -21,13 +19,13 @@ const priceOf = (e: ModelEntry) => {
 };
 
 const FLOWS: Array<{ id: FlowKind; label: string; does: string; none: string }> = [
-  { id: "api", label: "API", does: "Peck Loop 配一个 API 模型", none: "先在设置里配 Key" },
-  { id: "cli", label: "CLI", does: "一个 CLI 整包干", none: "没检测到 CLI" },
-  { id: "relay", label: "接力", does: "任意两个：前一个只读写规范，后一个照着做", none: "先配 Key 或装 CLI" },
+  { id: "api", label: "API", does: "Peck Loop 配一个 API 模型单干", none: "先在设置里配 Key" },
+  { id: "cli", label: "CLI", does: "一个 CLI 整包干，Peck 只当外壳", none: "没检测到 CLI" },
+  { id: "ploop", label: "PLOOP", does: "Peck Loop 的工作流：写规范 → 实施 → 审查，都是 API 模型", none: "先在设置里配 Key" },
 ];
 
-/** 头上的 ⓘ（站主 2026-11-22 要的）：接力、审查里没有「思考」那一行，强度从哪来写在这里。 */
-const EFFORT_NOTE = "工作流的思考强度跟着每个模型自己的设置：接力里写规范的、实施的和审查的，各用它在 API / CLI 里选过的那一档（没选过用默认）。委派的模型用它的默认思考强度。";
+/** 头上的 ⓘ（站主 2026-11-22 要的）：PLOOP 里没有「思考」那一行，强度从哪来写在这里。 */
+const EFFORT_NOTE = "PLOOP 的思考强度跟着每个模型自己的设置：写规范的、实施的和审查的，各用它在 API 里选过的那一档（没选过用默认）。委派的模型用它的默认思考强度。";
 
 interface Props {
   /** 模型列表（全部，含用不了的：CLI 没检测到的也列出来、变灰）。 */
@@ -37,7 +35,7 @@ interface Props {
   onSettings: (patch: Partial<AppSettings>) => void;
   /** 这个项目有任务在跑：不能换。 */
   disabled: boolean;
-  /** 打开设置（`AGENTS`：管理预设、委派）。 */
+  /** 打开设置（`AGENTS`：PLOOP 的委派）。 */
   onOpenSettings: (section?: "AGENTS") => void;
   /** PROJECTS 收起了：这一块占满。 */
   grow: boolean;
@@ -84,7 +82,7 @@ const EffortRow: React.FC<{ options: string[]; value: string; onChange: (v: stri
 export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSettings, disabled, onOpenSettings, grow, solo, onFold: fold, flash, say }) => {
   const folded = !solo && !!settings.fold.agents;
   const options = pickable(entries);
-  const team = teamable(entries);
+  const team = ploopable(entries);
   const flow = value ? flowOf(value) : null;
   const ref = useRef<HTMLDivElement>(null);
   const [lit, setLit] = useState(false);
@@ -101,13 +99,13 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
     if (!e) return;
     onSettings({ pick: id, picks: { ...settings.picks, [flowOf(e)]: id } });
   };
-  // 接力的两行没选过时显示的是第一项：把它真的存下来，发任务和输入框下那行才对得上。
+  // PLOOP 实施那一行没选过（或选的那个现在用不了）时显示的是第一项：把它真的存下来，发任务和输入框下那行才对得上。
   const firstTeam = team[0]?.id;
+  const buildOk = team.some((e) => e.id === settings.ploop.build);
   useEffect(() => {
-    if (flow !== "relay" || !firstTeam || (settings.relay.spec && settings.relay.build)) return;
-    onSettings({ relay: { ...settings.relay, spec: settings.relay.spec ?? firstTeam, build: settings.relay.build ?? firstTeam } });
-  }, [flow, firstTeam, settings.relay, onSettings]);
-  const chosen = flow === "relay" ? RELAY : value?.id ?? null;
+    if (flow !== "ploop" || !firstTeam || buildOk) return;
+    onSettings({ ploop: { ...settings.ploop, build: firstTeam } });
+  }, [flow, firstTeam, buildOk, settings.ploop, onSettings]);
   // 头上一行放不下就截断，收起 / 展开的按钮不会被挤出去（站主 11-17 的 Bug：接力的长名字把按钮挤没了，重启也打不开）。
   const note = folded ? whoShort(value, settings, entries, false) : disabled ? "在跑，跑完再换" : undefined;
 
@@ -118,7 +116,6 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
       </ModHead>
       {!folded && (
         <div className="agents-body scroll">
-          <PresetRow entries={entries} settings={settings} onSettings={onSettings} chosen={chosen} disabled={disabled} say={say} onManage={() => onOpenSettings("AGENTS")} />
           <div className="pk-seg pk-seg--sm pk-seg--full agents-flow" role="group" aria-label="FLOW：怎么干">
             {FLOWS.map((f) => {
               const first = firstOf(options, f.id, settings.picks);
@@ -133,19 +130,14 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
           </div>
           {flow === "api" && value && <ApiBody entries={options} value={value} settings={settings} onSettings={onSettings} choose={choose} disabled={disabled} />}
           {flow === "cli" && value && <CliBody entries={entries} value={value} settings={settings} onSettings={onSettings} choose={choose} disabled={disabled} say={say} />}
-          {flow === "relay" && (
+          {/* PLOOP：几格都只列 API 模型；存着的现在用不了（Key 删了）就显示成没选。委派在设置 → AGENTS（站主 11-17：进阶的放设置）。 */}
+          {flow === "ploop" && (
             <>
-              <TeamRow k="写规范" entries={team} value={settings.relay.spec ?? team[0]?.id ?? ""} disabled={disabled}
-                onChange={(id) => onSettings({ relay: { ...settings.relay, spec: id } })} />
-              <TeamRow k="实施" entries={team} value={settings.relay.build ?? team[0]?.id ?? ""} disabled={disabled}
-                onChange={(id) => onSettings({ relay: { ...settings.relay, build: id } })} />
-            </>
-          )}
-          {/* 委派挪到设置 → AGENTS（站主 11-17：进阶的放设置）；审查留在这里。 */}
-          {value && !value.directOnly && team.length > 0 && (
-            <>
-              <div className="agents-sep" />
-              <TeamRow k="审查" entries={team} value={settings.review} off="OFF" disabled={disabled}
+              <TeamRow k="写规范" entries={team} value={usable(team, settings.ploop.spec)} off="OFF" disabled={disabled}
+                onChange={(id) => onSettings({ ploop: { ...settings.ploop, spec: id || undefined } })} />
+              <TeamRow k="实施" entries={team} value={usable(team, settings.ploop.build) || firstTeam || ""} disabled={disabled}
+                onChange={(id) => onSettings({ ploop: { ...settings.ploop, build: id } })} />
+              <TeamRow k="审查" entries={team} value={usable(team, settings.review)} off="OFF" disabled={disabled}
                 onChange={(id) => onSettings({ review: id })} />
             </>
           )}
@@ -160,52 +152,13 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
   );
 };
 
-/** 预设（v0.9 B2）：这里只选用哪一套；存、改、删在设置 → AGENTS（站主 11-17：预设在左栏改不了，挪到设置）。 */
-const PresetRow: React.FC<{ entries: ModelEntry[]; settings: AppSettings; onSettings: Props["onSettings"]; chosen: string | null; disabled: boolean; say: Props["say"]; onManage: () => void }> = ({ entries, settings, onSettings, chosen, disabled, say, onManage }) => {
-  const active = settings.presets.find((p) => p.id === settings.preset) ?? null;
-  const now = currentSetup(settings, chosen);
-  const changed = !!active && !matches(active, now, (build) => canDelegate(entries.find((x) => x.id === build)));
-  const label = active ? `${active.name}${changed ? " · 改过" : ""}` : "不用预设";
-  const use = (id: string) => {
-    const p = settings.presets.find((x) => x.id === id);
-    if (!p) return;
-    const problems = presetProblems(p, entries);
-    if (problems.length) { say(`「${p.name}」现在用不了：${problems.join("；")}`); return; }
-    onSettings(applyPreset(p, settings));
-  };
-  return (
-    <div className="agents-row agents-row--team">
-      <span className="agents-k">预设</span>
-      <MenuChip sm disabled={disabled} ariaLabel="合作预设" title={active ? presetSummary(active, entries) : "没用预设"} label={label}>
-        {(close) => (
-          <>
-            {settings.presets.map((p) => {
-              const problems = presetProblems(p, entries);
-              return (
-                <button key={p.id} type="button" role="menuitem" title={problems.length ? problems.join("；") : presetSummary(p, entries)}
-                  className={cn("pk-menu-item", p.id === settings.preset && "is-on", problems.length > 0 && "is-off")}
-                  onClick={() => { use(p.id); close(); }}>
-                  <Dot kind="" />
-                  <b>{p.name}</b>
-                  <span>{problems.length ? "用不了" : ""}</span>
-                </button>
-              );
-            })}
-            <div className="pk-menu-sep" />
-            <button type="button" className="pk-menu-action" onClick={() => { close(); onManage(); }}>
-              <Icon name="gear" size={12} />管理预设<em>设置</em>
-            </button>
-          </>
-        )}
-      </MenuChip>
-    </div>
-  );
-};
+/** 存着的这一格现在还能选就是它，不然空着（显示成没选，发的时候也当没选）。 */
+const usable = (team: ModelEntry[], id?: string) => (id && team.some((e) => e.id === id) ? id : "");
 
 /** 模型名收短：去掉供应商前缀（目录里没有的 id 也能显示）。 */
 const bareName = (id: string) => id.replace(/^(api|cli):/, "").replace(/^[a-z-]+\//, "");
 
-/** 选一个 API 模型或 CLI 的下拉（接力、审查；设置里的预设、委派也用）。`off` 给了就能不选。
+/** 选一个模型的下拉（PLOOP 那几格；设置里的委派也用）。`off` 给了就能不选。
  *  CLI 不带版本号（站主 11-17：版本在设置 → CLI 里看）；API 模型带价格（每百万 token）。 */
 export const ModelChip: React.FC<{ label: string; entries: ModelEntry[]; value: string; off?: string; disabled?: boolean; onChange: (id: string) => void }> = ({ label: aria, entries, value, off, disabled, onChange }) => {
   const chosen = entries.find((e) => e.id === value) ?? null;
@@ -247,7 +200,7 @@ export const ModelChip: React.FC<{ label: string; entries: ModelEntry[]; value: 
   );
 };
 
-/** 接力、审查的一行。 */
+/** PLOOP 的一行。 */
 const TeamRow: React.FC<{ k: string; entries: ModelEntry[]; value: string; off?: string; disabled: boolean; onChange: (id: string) => void }> = ({ k, ...rest }) => (
   <div className="agents-row agents-row--team">
     <span className="agents-k">{k}</span>
@@ -255,7 +208,7 @@ const TeamRow: React.FC<{ k: string; entries: ModelEntry[]; value: string; off?:
   </div>
 );
 
-/** 一列能点选的（CLI 五家、接力两对）：用不了的变灰、写为什么。 */
+/** 一列能点选的（CLI 五家）：用不了的变灰、写为什么。 */
 const PickList: React.FC<{ items: ModelEntry[]; value: ModelEntry; choose: (id: string) => void; disabled: boolean; note: (e: ModelEntry) => string }> = ({ items, value, choose, disabled, note }) => (
   <ul className="agents-list" role="listbox" aria-label="选一个">
     {items.map((e) => (

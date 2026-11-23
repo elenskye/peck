@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { canAutomate, type AgentEvent, type Control, type ModelEntry } from "@/lib/agentEvents";
+import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
 import type { AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
-import { canDelegate } from "@/lib/presets";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
 import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath, type DotKind } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, ModHead, Seg, useNow } from "@/ui";
@@ -14,7 +13,7 @@ import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { dayClock, scheduleWhen } from "@/lib/schedules";
-import { RELAY_ID, cliModelOf, pickable, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
+import { PLOOP_ID, cliModelOf, pickable, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
 
 interface Props {
   project: ProjectOverview;
@@ -60,20 +59,18 @@ interface Props {
   say: (message: unknown) => void;
 }
 
-/** 额度提醒那一行（v0.9 B3）：「这次换」只换下一次发出去的；「以后都换」改 AGENTS（和套用着的预设）。 */
+/** 额度提醒那一行（v0.9 B3）：「这次换」只换下一次发出去的；「以后都换」改 AGENTS。 */
 export interface QuotaBar {
   hint: QuotaHint;
   /** 点过「这次换」：换成了谁。 */
   swapped: ModelEntry | null;
-  /** 套用着的预设（「以后都换」顺带改它）。 */
-  presetName: string | null;
   onOnce: () => void;
   onAlways: () => void;
   onUndo: () => void;
   onDismiss: () => void;
 }
 
-const QuotaLine: React.FC<{ quota: QuotaBar }> = ({ quota: { hint, swapped, presetName, onOnce, onAlways, onUndo, onDismiss } }) => (
+const QuotaLine: React.FC<{ quota: QuotaBar }> = ({ quota: { hint, swapped, onOnce, onAlways, onUndo, onDismiss } }) => (
   <div className="pk-bar pk-bar--wait quota-bar" role="status">
     <Icon name={swapped ? "clock" : "bang"} size={12} />
     {swapped ? (
@@ -85,7 +82,7 @@ const QuotaLine: React.FC<{ quota: QuotaBar }> = ({ quota: { hint, swapped, pres
       <>
         <span className="pk-bar-text">{hint.text}{hint.to ? `，换成 ${hint.to.label}？` : "，别家的额度也读不到或不够"}</span>
         {hint.to && <Btn sm onClick={onOnce}>这次换</Btn>}
-        {hint.to && <Btn sm v="ghost" onClick={onAlways}>{presetName ? `改进「${presetName}」` : "以后都换"}</Btn>}
+        {hint.to && <Btn sm v="ghost" onClick={onAlways}>以后都换</Btn>}
         <button type="button" className="head-icon" aria-label="不提醒这一条" title="不提醒这一条" onClick={onDismiss}><Icon name="x" size={12} /></button>
       </>
     )}
@@ -112,23 +109,19 @@ function describeOne(entry: ModelEntry): { name: string; dot: DotKind; does: str
   };
 }
 
-/** 选了谁，NEW TASK 上写它怎么干：接力写两家，开了审查、委派各多一行。 */
+/** 选了谁，NEW TASK 上写它怎么干：PLOOP 一格一行（写规范、实施、审查、委派，开了的才写）。 */
 function describe(entry: ModelEntry, entries: ModelEntry[], settings: AppSettings): Array<{ name: string; dot: DotKind; does: string; model?: string }> {
   const find = (id?: string) => (id ? entries.find((e) => e.id === id) : undefined);
   const out: Array<{ name: string; dot: DotKind; does: string; model?: string }> = [];
-  let builder: ModelEntry | undefined = entry;
-  if (entry.id === RELAY_ID) {
-    const spec = find(settings.relay.spec);
-    builder = find(settings.relay.build);
-    out.push(spec ? { ...describeOne(spec), does: "先只读地看项目，写一份实施规范交给下一个。" } : { name: "写规范的", dot: "", does: "在 AGENTS 里选一个。" });
-    out.push(builder ? { ...describeOne(builder), does: `照规范动手改。${describeOne(builder).does}` } : { name: "实施的", dot: "", does: "在 AGENTS 里选一个。" });
-  } else {
-    out.push(describeOne(entry));
-  }
+  if (entry.id !== PLOOP_ID) return [describeOne(entry)];
+  const spec = find(settings.ploop.spec);
+  const builder = find(settings.ploop.build);
+  if (spec) out.push({ ...describeOne(spec), does: "先只读地看项目，写一份实施规范（带验收标准）交给实施的那一个。" });
+  out.push(builder ? { ...describeOne(builder), does: spec ? `照规范动手改。${describeOne(builder).does}` : describeOne(builder).does } : { name: "实施的", dot: "", does: "在 AGENTS 里选一个。" });
   const reviewer = find(settings.review);
   if (reviewer) out.push({ ...describeOne(reviewer), does: "做完以后只读地看这次的 Diff；说要改就交回实施的那一个修一次（PLAN 不审查）。" });
   const sub = find(settings.delegate);
-  if (sub && canDelegate(builder)) out.push({ name: `委派 · ${sub.label}`, dot: "api", does: "写得清楚的子任务交给它（同样的工具和权限），一个任务最多 6 次。" });
+  if (sub) out.push({ name: `委派 · ${sub.label}`, dot: "api", does: "写得清楚的子任务交给它（同样的工具和权限），一个任务最多 6 次。" });
   return out;
 }
 
@@ -441,9 +434,9 @@ const Composer: React.FC<Props & {
       case "review": {
         const last = lastChanged(runs);
         if (!last) { say("这个任务还没有改过文件（或者都撤销了），没什么可审的"); return; }
-        // 没选审查：用现在这个；现在是接力的话用接力里实施的那一个（接力不能 PLAN 发，以前会报错；v0.10 收尾审查）。
-        const current = who?.id === RELAY_ID ? entries.find((e) => e.id === settings.relay.build && e.available !== false) ?? null : who;
-        const pick = entries.find((e) => e.id === settings.review && canAutomate(e) && e.available !== false) ?? current;
+        // 用现在这个审（换个引擎再 /review 就是别家来审）；PLOOP 用它的审查，没开审查用实施的那一个。
+        const ploopPick = (id: string) => entries.find((e) => e.id === id && e.group === "peck" && e.available !== false) ?? null;
+        const pick = who?.id === PLOOP_ID ? ploopPick(settings.review) ?? ploopPick(settings.ploop.build ?? "") : who;
         if (!pick) return;
         const ok = await onSend(reviewPrompt(last.run, last.index), pick.id, "plan", sendEffort(pick, settings), cliModelOf(pick, settings));
         if (ok) say(`${pick.label} 在审（PLAN，只读）`);

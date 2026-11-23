@@ -5,12 +5,10 @@ import type { AppSettings } from "@/lib/settings";
 import type { ThemeChoice } from "@/lib/theme";
 import type { CliAccount, CliAccountStatus, CliLoginState, EngineAccounts, GatewayConfig, ModelEntry } from "@/lib/agentEvents";
 import type { Permission, ProjectOverview } from "@/lib/types";
-import { BUILTIN_PRESETS, RELAY, applyPreset, canDelegate, currentSetup, presetProblems, presetSummary, type Preset } from "@/lib/presets";
 import { PERMISSIONS, ago, cn, copyText, engineDot, plainLine, ruleWord, shortenHomePath, versionNumber } from "@/lib/utils";
 import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
 import { ModelChip } from "@/shell/AgentsPanel";
-import { pickable, teamable } from "@/shell/ModelPicker";
-import { chosenEntry } from "@/shell/MiddleColumn";
+import { PLOOP_ID, ploopable } from "@/shell/ModelPicker";
 import { PluginsSettings } from "@/shell/Plugins";
 
 /** 设置的分组（v0.10 Refine：只写英文；DEV、NOTIFY、LIMIT 并成 GENERAL，新加 AGENTS、QUOTA）。 */
@@ -627,103 +625,16 @@ const Keys: React.FC = () => (
   </div>
 );
 
-// ---------- AGENTS：委派、预设（站主 11-17：从左栏挪过来，预设在这里能改） ----------
+// ---------- AGENTS：PLOOP 的委派（站主 11-17：从左栏挪过来；v1.1.1 预设去掉了） ----------
 
-type PresetDraft = { id: string | null; name: string; spec: string; build: string; review: string; delegate: string };
-
-const roles = (p: Pick<Preset, "spec" | "build" | "review" | "delegate" | "name">) => JSON.stringify([p.name, p.spec ?? "", p.build, p.review ?? "", p.delegate ?? ""]);
-
-const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries, say }) => {
-  const team = teamable(entries);
-  const apis = team.filter((e) => e.group === "peck");
-  const builders = pickable(entries).filter((e) => e.id !== RELAY);
-  const [draft, setDraft] = useState<PresetDraft | null>(null);
-  // 「CONFIRM」记着是哪一套，4 秒没点第二下就作废。
-  const [armed, setArmed] = useState<string | null>(null);
-  useEffect(() => {
-    if (!armed) return;
-    const t = window.setTimeout(() => setArmed(null), 4000);
-    return () => window.clearTimeout(t);
-  }, [armed]);
-  const chosen = settings.pick === RELAY ? RELAY : chosenEntry(entries, settings)?.id ?? null;
-  const now = currentSetup(settings, chosen);
-  const builderNow = settings.pick === RELAY ? settings.relay.build : chosen;
-  const use = (p: Preset) => {
-    const problems = presetProblems(p, entries);
-    if (problems.length) { say(`「${p.name}」现在用不了：${problems.join("；")}`); return; }
-    onSettings(applyPreset(p, settings));
-    say(`用上了「${p.name}」`);
-  };
-  const save = () => {
-    if (!draft) return;
-    const name = draft.name.trim().slice(0, 24);
-    if (!name || !draft.build) return;
-    const body = { name, spec: draft.spec || undefined, build: draft.build, review: draft.review || undefined, delegate: draft.delegate || undefined };
-    if (draft.id) {
-      const presets = settings.presets.map((p) => (p.id === draft.id ? { ...p, ...body } : p));
-      const patch: Partial<AppSettings> = { presets };
-      // 改的是正在用的那套：左栏 AGENTS 跟着变（用不了就只存）。
-      const edited = presets.find((p) => p.id === draft.id);
-      if (edited && settings.preset === edited.id && !presetProblems(edited, entries).length) Object.assign(patch, applyPreset(edited, settings), { presets });
-      onSettings(patch);
-      say(`「${name}」存好了`);
-    } else {
-      onSettings({ presets: [...settings.presets, { id: `preset:${Date.now().toString(36)}`, ...body }] });
-      say(`加了预设「${name}」`);
-    }
-    setDraft(null);
-  };
-  const editor = draft && (
-    <div className="pk-mod pk-mod--sunk set-editor">
-      <p className="lbl">{draft.id ? "EDIT PRESET" : "ADD PRESET"}</p>
-      <Row name="名字"><Field width={240} aria-label="预设的名字" value={draft.name} autoFocus onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Row>
-      <Row name="写规范"><ModelChip label="写规范" entries={team} value={draft.spec} off="OFF" onChange={(spec) => setDraft({ ...draft, spec })} /></Row>
-      <Row name="实施"><ModelChip label="实施" entries={draft.spec ? team : builders} value={draft.build} onChange={(build) => setDraft({ ...draft, build })} /></Row>
-      <Row name="审查"><ModelChip label="审查" entries={team} value={draft.review} off="OFF" onChange={(review) => setDraft({ ...draft, review })} /></Row>
-      <Row name="委派"><ModelChip label="委派" entries={apis} value={draft.delegate} off="OFF" onChange={(delegate) => setDraft({ ...draft, delegate })} /></Row>
-      <div className="set-inline">
-        <Btn v="primary" disabled={!draft.name.trim() || !draft.build} onClick={save}>SAVE</Btn>
-        <Btn v="ghost" onClick={() => setDraft(null)}>CANCEL</Btn>
-      </div>
-    </div>
-  );
+const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries }) => {
+  const apis = ploopable(entries);
   return (
-    <>
-      <div className="set-rows">
-        <Row name="委派" off={!settings.delegate} desc={settings.delegate && !canDelegate(entries.find((e) => e.id === builderNow)) ? "现在实施的这一个不委派" : undefined}>
-          <ModelChip label="委派给谁" entries={apis} value={settings.delegate} off="OFF" onChange={(delegate) => onSettings({ delegate })} />
-        </Row>
-      </div>
-      <p className="lbl">PRESETS</p>
-      <div className="set-rows">
-        {settings.presets.map((p) => {
-          if (draft?.id === p.id) return <React.Fragment key={p.id}>{editor}</React.Fragment>;
-          const problems = presetProblems(p, entries);
-          const builtin = BUILTIN_PRESETS.find((b) => b.id === p.id);
-          return (
-            <Row key={p.id} name={p.name} off={problems.length > 0} desc={problems[0] ?? presetSummary(p, entries)}>
-              {p.id === settings.preset ? <Tag v="ok">IN USE</Tag> : <Btn sm disabled={problems.length > 0} onClick={() => use(p)}>USE</Btn>}
-              <Btn sm onClick={() => setDraft({ id: p.id, name: p.name, spec: p.spec ?? "", build: p.build, review: p.review ?? "", delegate: p.delegate ?? "" })}>EDIT</Btn>
-              {builtin ? (
-                roles(builtin) !== roles(p) && <Btn sm onClick={() => { onSettings({ presets: settings.presets.map((x) => (x.id === p.id ? { ...builtin } : x)) }); say(`「${builtin.name}」回到自带的样子`); }}>RESET</Btn>
-              ) : (
-                <Btn sm v="danger" onClick={() => {
-                  if (armed !== p.id) { setArmed(p.id); return; }
-                  setArmed(null);
-                  onSettings({ presets: settings.presets.filter((x) => x.id !== p.id), ...(settings.preset === p.id ? { preset: "" } : {}) });
-                  say(`删掉了预设「${p.name}」`);
-                }}>{armed === p.id ? "CONFIRM" : "DELETE"}</Btn>
-              )}
-            </Row>
-          );
-        })}
-      </div>
-      {draft && !draft.id ? editor : !draft && (
-        <div className="set-inline">
-          <Btn sm icon="plus" onClick={() => setDraft({ id: null, name: "", spec: now?.spec ?? "", build: now?.build ?? builders[0]?.id ?? "", review: now?.review ?? "", delegate: now?.delegate ?? "" })}>ADD PRESET</Btn>
-        </div>
-      )}
-    </>
+    <div className="set-rows">
+      <Row name="委派" off={!settings.delegate} desc={settings.delegate && settings.pick !== PLOOP_ID ? "只在 PLOOP 里委派" : undefined}>
+        <ModelChip label="委派给谁" entries={apis} value={apis.some((e) => e.id === settings.delegate) ? settings.delegate : ""} off="OFF" onChange={(delegate) => onSettings({ delegate })} />
+      </Row>
+    </div>
   );
 };
 

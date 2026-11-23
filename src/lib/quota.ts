@@ -55,23 +55,12 @@ export function quotaHint(involved: string[], entries: ModelEntry[], cards: Clie
   return null;
 }
 
-/** 这次发任务会用到哪几家：实施的、写规范的（接力）、审查的。 */
-export function involvedIds(settings: AppSettings, chosen: string | null): string[] {
-  if (!chosen) return [];
-  const out = chosen === "relay" ? [settings.relay.build, settings.relay.spec] : [chosen];
-  if (settings.review && settings.permission !== "plan") out.push(settings.review);
-  return out.filter((x): x is string => !!x);
+/** 这次发任务会用到哪几家 CLI：只有单干的 CLI 有订阅额度（PLOOP 只用 API 模型）。 */
+export function involvedIds(_settings: AppSettings, chosen: string | null): string[] {
+  return chosen?.startsWith("cli:") ? [chosen] : [];
 }
 
-/** 「以后都换」：AGENTS 里用到 `from` 的那几行换成 `to`（套用着的预设也跟着改）。 */
+/** 「以后都换」：AGENTS 里选的 CLI 换成 `to`。 */
 export function swapPatch(settings: AppSettings, from: string, to: string): Partial<AppSettings> {
-  const swap = (id: string | undefined) => (id === from ? to : id);
-  const patch: Partial<AppSettings> = {};
-  if (settings.pick === from) { patch.pick = to; patch.picks = { ...settings.picks, cli: to }; }
-  if (settings.relay.spec === from || settings.relay.build === from) patch.relay = { spec: swap(settings.relay.spec), build: swap(settings.relay.build) };
-  if (settings.review === from) patch.review = to;
-  if (settings.preset) {
-    patch.presets = settings.presets.map((p) => (p.id === settings.preset ? { ...p, spec: swap(p.spec), build: swap(p.build) ?? p.build, review: swap(p.review) } : p));
-  }
-  return patch;
+  return settings.pick === from ? { pick: to, picks: { ...settings.picks, cli: to } } : {};
 }
