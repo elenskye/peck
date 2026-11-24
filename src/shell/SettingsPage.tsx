@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { api, type ApiConfig, type ApiMode, type ApiStatus } from "@/lib/api";
+import { api, type ApiMode, type ApiStatus } from "@/lib/api";
 import { ipc, isMockMode, type AllowRule, type McpServerConfig, type McpToolInfo, type PriceBook, type PriceRow, type PriceView } from "@/lib/ipc";
 import { SUBAGENT_KINDS, type AppSettings, type SubagentKind, type SubagentSettings } from "@/lib/settings";
 import type { ThemeChoice } from "@/lib/theme";
 import type { CliAccount, CliAccountStatus, CliLoginState, EngineAccounts, GatewayConfig, ModelEntry } from "@/lib/agentEvents";
 import type { Permission, ProjectOverview } from "@/lib/types";
 import { PERMISSIONS, ago, cn, copyText, engineDot, plainLine, ruleWord, shortenHomePath, versionNumber } from "@/lib/utils";
-import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch } from "@/ui";
+import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, SetHead, Switch } from "@/ui";
 import { ModelChip } from "@/shell/AgentsPanel";
 import { EffortPicker, defaultEffort, ploopMain, ploopable } from "@/shell/ModelPicker";
 import { PluginsSettings } from "@/shell/Plugins";
@@ -35,6 +35,10 @@ interface Props {
   onRestoreArchived: (taskId: string) => Promise<void>;
   /** 连同记录删掉。 */
   onDeleteArchived: (taskId: string) => Promise<void>;
+  /** 左栏的项目（PLUGINS 的小窗里按项目装、开关）。 */
+  projects: ProjectOverview[];
+  /** 改了某个项目的设置（自带插件的开关）：重读左栏。 */
+  onProjectsChanged: () => Promise<void>;
 }
 
 const Tag: React.FC<{ v?: "ok" | "wait" | "high"; children: React.ReactNode }> = ({ v, children }) => <em className={cn("pk-tag", v && `pk-tag--${v}`)}>{children}</em>;
@@ -55,7 +59,7 @@ export const SettingsPage: React.FC<Props> = (props) => {
               </button>
             ))}
           </nav>
-          <div className="set-pane scroll" key={section}>
+          <div className="set-pane set-scope scroll" key={section}>
             {section === "GENERAL" && <General {...props} />}
             {section === "PROVIDERS" && <Providers {...props} />}
             {section === "AGENTS" && <AgentsSettings {...props} />}
@@ -64,7 +68,7 @@ export const SettingsPage: React.FC<Props> = (props) => {
             {section === "ACCESS" && <Access {...props} />}
             {section === "CLI" && <Cli {...props} />}
             {section === "LOOK" && <Look {...props} />}
-            {section === "PLUGINS" && <><PluginsSettings say={props.say} /><p className="lbl">MCP SERVERS</p><Mcp {...props} /></>}
+            {section === "PLUGINS" && <><PluginsSettings projects={props.projects} onProjectsChanged={props.onProjectsChanged} say={props.say} /><Mcp {...props} /></>}
             {section === "ARCHIVE" && <Archive {...props} />}
             {section === "KEYS" && <Keys />}
           </div>
@@ -101,7 +105,7 @@ const Archive: React.FC<Props> = ({ onOpenArchived, onRestoreArchived, onDeleteA
             <b className="t-name">{g.workspace.name}</b>
             {!g.missing && <span>{g.workspace.hidden ? "移出列表了" : shortenHomePath(g.workspace.path)}</span>}
           </p>
-          <div className="set-rows">
+          <div className="set-rows set-rows--acts">
             {g.tasks.map((t) => (
               <Row key={t.id} name={plainLine(t.title)} desc={`${t.lastRun ? `任务 ${t.lastRun.number}` : ""}${t.runCount > 1 ? ` 等 ${t.runCount} 次` : ""} · ${ago(t.archivedAt ?? t.updatedAt)} 归档`}>
                 <Btn sm disabled={busy} aria-label={`只读打开「${plainLine(t.title)}」`} onClick={() => onOpenArchived(g, t.id)}>OPEN</Btn>
@@ -116,97 +120,84 @@ const Archive: React.FC<Props> = ({ onOpenArchived, onRestoreArchived, onDeleteA
   );
 };
 
-// ---------- 供应商和 Key ----------
+// ---------- 供应商和 Key（v1.1.6：只分 API KEYS、TOOL KEYS 两组，Vertex AI 并进 API KEYS） ----------
 
 const KEY_STATE: Record<string, string | undefined> = { unloaded: "在读钥匙串", unavailable: "钥匙串没授权" };
 
-/** Aliyun 的地域：改了要点 SAVE。 */
-function useApiConfig(apiStatus: ApiStatus | null, onRefreshApi: Props["onRefreshApi"], say: Props["say"]) {
-  const [config, setConfig] = useState<ApiConfig | null>(apiStatus?.config ?? null);
-  const [dirty, setDirty] = useState(false);
+/** 不是 AI 供应商的 Key（和后端 `OTHER_KEYS` 对应）：Tavily 是 Peck Loop 联网搜索的备用；Mathpix 是 `ocr_pdf`，两样都填了才给模型这个工具。 */
+const TOOL_KEYS = [
+  { id: "tavily", name: "Tavily" },
+  { id: "mathpix_id", name: "Mathpix App ID", hint: "粘贴 Mathpix 的 App ID" },
+  { id: "mathpix_key", name: "Mathpix App Key", hint: "粘贴 Mathpix 的 App Key" },
+];
+
+/** 一块：头一行名字、（Aliyun 的地域、Vertex 的 Location）、状态；下面一行框、SAVE、REMOVE。 */
+const KeyBlock: React.FC<{ name: string; off: boolean; desc?: string; tag: React.ReactNode; option?: React.ReactNode; field: React.ReactNode; save: React.ReactNode; remove: React.ReactNode }> = ({ name, off, desc, tag, option, field, save, remove }) => (
+  <div className="set-block">
+    <Row name={name} off={off} desc={desc}>{option}<span className="set-tag">{tag}</span></Row>
+    <div className="set-line set-line--key">{field}{save}{remove}</div>
+  </div>
+);
+
+const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
+  const [keys, setKeys] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (!dirty) setConfig(apiStatus?.config ?? null); }, [apiStatus, dirty]);
+  if (!apiStatus) return <p className="hint">在读设置…</p>;
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try { await fn(); } catch (e) { say(e); } finally { setBusy(false); }
   };
-  const change = (next: ApiConfig) => { setConfig(next); setDirty(true); };
-  const save = (message: string) => act(async () => { if (!config) return; await api.saveConfig(config); setDirty(false); await onRefreshApi(); say(message); });
-  return { config, change, dirty, busy, act, save };
-}
-
-/** 不是 AI 供应商的 Key（v1.1.1，和后端 `OTHER_KEYS` 对应）：Tavily 是 Peck Loop 联网搜索的备用。 */
-const SEARCH_KEYS = [{ id: "tavily", name: "Tavily" }];
-/** Mathpix（v1.1.4）：Peck Loop 的 `ocr_pdf`，两样都填了才给模型这个工具。 */
-const PDF_KEYS = [{ id: "mathpix_id", name: "Mathpix App ID", hint: "粘贴 Mathpix 的 App ID" }, { id: "mathpix_key", name: "Mathpix App Key", hint: "粘贴 Mathpix 的 App Key" }];
-
-const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
-  const { config, change, dirty, busy, act, save } = useApiConfig(apiStatus, onRefreshApi, say);
-  const [keys, setKeys] = useState<Record<string, string>>({});
-  if (!apiStatus || !config) return <p className="hint">在读设置…</p>;
   const keyBlock = (p: { id: string; name: string; hint?: string }) => {
     const state = apiStatus.keys.find((k) => k.providerId === p.id)?.state ?? "missing";
+    // Aliyun 的地域：点了就存。
+    const region = p.id === "aliyun" && (
+      <Seg label="Aliyun 的地域" sm disabled={busy} items={[{ id: "beijing", label: "BEIJING" }, { id: "singapore", label: "SINGAPORE" }]} value={apiStatus.config.aliyunRegion}
+        onChange={(aliyunRegion) => void act(async () => { await api.saveConfig({ ...apiStatus.config, aliyunRegion }); await onRefreshApi(); say("Aliyun 的地域存好了"); })} />
+    );
     return (
-      <div key={p.id} className="set-block">
-        <Row name={p.name} off={state !== "saved"} desc={KEY_STATE[state]}>
-          {state === "saved" ? <Tag v="ok">SAVED</Tag> : <Tag>{state === "unloaded" || state === "unavailable" ? "NOT READ" : "NO KEY"}</Tag>}
-        </Row>
-        <div className="set-keys">
-          <Field className="set-keys-wide" type="password" aria-label={`${p.name} 的 Key`} placeholder={p.hint ?? `粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />
-          <Btn sm disabled={busy || !keys[p.id]?.trim()} onClick={() => void act(async () => { await api.setKey(p.id, keys[p.id]); setKeys((k) => ({ ...k, [p.id]: "" })); await onRefreshApi(); say(apiStatus.mode === "mock" ? "假 Key 只存在内存里，没进钥匙串" : "Key 已保存到钥匙串；认证通过要发一次请求才知道"); })}>SAVE</Btn>
-          <Btn sm v="danger" disabled={busy || state !== "saved"} onClick={() => void act(async () => { await api.setKey(p.id, null); await onRefreshApi(); })}>REMOVE</Btn>
-          {p.id === "aliyun" && (
-            <>
-              <Seg label="Aliyun 的地域" sm items={[{ id: "beijing", label: "BEIJING" }, { id: "singapore", label: "SINGAPORE" }]} value={config.aliyunRegion} onChange={(aliyunRegion) => change({ ...config, aliyunRegion })} />
-              <Btn sm disabled={busy || !dirty} onClick={() => void save("Aliyun 的地域存好了")}>SAVE</Btn>
-            </>
-          )}
-        </div>
-      </div>
+      <KeyBlock key={p.id} name={p.name} off={state !== "saved"} desc={KEY_STATE[state]} option={region}
+        tag={state === "saved" ? <Tag v="ok">SAVED</Tag> : <Tag>{state === "unloaded" || state === "unavailable" ? "NOT READ" : "NO KEY"}</Tag>}
+        field={<Field type="password" aria-label={`${p.name} 的 Key`} placeholder={p.hint ?? `粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />}
+        save={<Btn sm disabled={busy || !keys[p.id]?.trim()} onClick={() => void act(async () => { await api.setKey(p.id, keys[p.id]); setKeys((k) => ({ ...k, [p.id]: "" })); await onRefreshApi(); say(apiStatus.mode === "mock" ? "假 Key 只存在内存里，没进钥匙串" : "Key 已保存到钥匙串；认证通过要发一次请求才知道"); })}>SAVE</Btn>}
+        remove={<Btn sm v="danger" disabled={busy || state !== "saved"} onClick={() => void act(async () => { await api.setKey(p.id, null); await onRefreshApi(); })}>REMOVE</Btn>} />
     );
   };
   return (
     <>
-      <div className="set-rows">{apiStatus.providers.map(keyBlock)}</div>
-      <div className="set-inline"><Btn sm disabled={busy} onClick={() => void act(async () => { await api.loadKeys(); await onRefreshApi(); })}>READ KEYS</Btn></div>
-      <Vertex say={say} />
-      <p className="lbl">SEARCH</p>
-      <div className="set-rows">{SEARCH_KEYS.map(keyBlock)}</div>
-      <p className="lbl">PDF</p>
-      <div className="set-rows">{PDF_KEYS.map(keyBlock)}</div>
+      <SetHead label="API KEYS"><Btn sm disabled={busy} onClick={() => void act(async () => { await api.loadKeys(); await onRefreshApi(); })}>READ KEYS</Btn></SetHead>
+      <div className="set-rows">
+        {apiStatus.providers.map(keyBlock)}
+        <Vertex say={say} />
+      </div>
+      <SetHead label="TOOL KEYS" />
+      <div className="set-rows">{TOOL_KEYS.map(keyBlock)}</div>
     </>
   );
 };
 
 // ---------- GENERAL：开发者选项 → 通知 → 花费上限（站主 11-17 并成一组） ----------
 
-/** 这个月已经花了多少（Peck Loop）：一条 20 格的进度（到 80% 变琥珀、到上限变红），右边写「花了 / 上限」。 */
-const SpendMeter: React.FC<{ cap: number | null }> = ({ cap }) => {
+/** 这个月已经花了多少（Peck Loop）：「花了 / 上限」写在名字下面，右边一格和输入框一样大的 20 格进度（到 80% 变琥珀、到上限变红）。 */
+const SpendRow: React.FC<{ cap: number | null }> = ({ cap }) => {
   const [spent, setSpent] = useState<number | null>(null);
   useEffect(() => { void ipc.harnessSpend().then((s) => setSpent(s.monthUsd)).catch(() => setSpent(null)); }, []);
   const used = spent == null ? "—" : `$${spent.toFixed(spent < 1 ? 4 : 2)}`;
   const part = cap && spent != null ? spent / cap : 0;
   const lit = Math.min(20, Math.round(part * 20));
   return (
-    <>
-      <div className={cn("q-meter set-meter", part >= 1 ? "is-bad" : part >= 0.8 && "is-warn")} role="meter" aria-valuenow={Math.round(part * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={cap ? `这个月用了上限的 ${Math.round(part * 100)}%` : "没设上限"}>
-        {Array.from({ length: 20 }, (_, i) => <i key={i} className={cn(i < lit && "is-on")} />)}
+    <Row name="这个月花了" desc={`${used} / ${cap ? `$${cap}` : "∞"}`}>
+      <div className="set-meter">
+        <div className={cn("q-meter", part >= 1 ? "is-bad" : part >= 0.8 && "is-warn")} role="meter" aria-valuenow={Math.round(part * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={cap ? `这个月用了上限的 ${Math.round(part * 100)}%` : "没设上限"}>
+          {Array.from({ length: 20 }, (_, i) => <i key={i} className={cn(i < lit && "is-on")} />)}
+        </div>
       </div>
-      <span className="set-meter-text t-code">{used} / {cap ? `$${cap}` : "∞"}</span>
-    </>
+    </Row>
   );
 };
 
-/** 数字那几行的控件：前面的单位、数字框、后面的单位各占固定的宽，几行的框就对齐了。 */
-const Num: React.FC<{ pre?: string; post?: string; children: React.ReactNode }> = ({ pre, post, children }) => (
-  <span className="set-num"><span className="set-unit">{pre}</span>{children}<span className="set-unit">{post}</span></span>
-);
-/** GENERAL 里的数字框一样宽。 */
-const NUM_WIDTH = 120;
-
 /** 有上下限的数字框：打字时照原样留着，离开或回车才夹到范围里存（以前每敲一个字就夹，打不出 120；v0.10 收尾审查）。
- *  `decimals` 给了就能写小数（汇率）。 */
-const BoundedNumber: React.FC<{ value: number; min: number; max: number; width: number; label: string; decimals?: number; off?: boolean; onCommit: (v: number) => void }> = ({ value, min, max, width, label, decimals, off, onCommit }) => {
+ *  `decimals` 给了就能写小数（汇率）；`unit` 写在框里右边。宽度跟着设置页的统一宽度。 */
+const BoundedNumber: React.FC<{ value: number; min: number; max: number; label: string; unit?: string; decimals?: number; off?: boolean; onCommit: (v: number) => void }> = ({ value, min, max, label, unit, decimals, off, onCommit }) => {
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
     if (draft == null) return;
@@ -216,7 +207,7 @@ const BoundedNumber: React.FC<{ value: number; min: number; max: number; width: 
     setDraft(null);
   };
   return (
-    <Field width={width} off={off} type="number" aria-label={label} min={min} max={max} step={decimals ? 1 / 10 ** decimals : 1} value={draft ?? String(value)}
+    <Field off={off} unit={unit} type="number" aria-label={label} min={min} max={max} step={decimals ? 1 / 10 ** decimals : 1} value={draft ?? String(value)}
       onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") commit(); }} />
   );
 };
@@ -230,18 +221,18 @@ const General: React.FC<Props> = ({ settings, onSettings, apiStatus, onRefreshAp
       </Row>
       <Row name="发通知"><Switch label="发通知" on={settings.notifyDone} onChange={(notifyDone) => onSettings({ notifyDone })} /></Row>
       <Row name="每月上限">
-        <Num pre="$"><Field width={NUM_WIDTH} type="number" aria-label="每月花费上限（美元）" min={0} value={settings.costCap ?? ""} onChange={(e) => onSettings({ costCap: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })} /></Num>
+        <Field type="number" unit="USD" aria-label="每月花费上限（美元）" placeholder="不设" min={0} value={settings.costCap ?? ""} onChange={(e) => onSettings({ costCap: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })} />
       </Row>
-      <Row name="这个月花了"><SpendMeter cap={settings.costCap} /></Row>
+      <SpendRow cap={settings.costCap} />
       <Row name="每个任务最多几轮">
-        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="Peck Loop 每个任务最多几轮" min={5} max={400} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} /></Num>
+        <BoundedNumber unit="轮" label="Peck Loop 每个任务最多几轮" min={5} max={400} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} />
       </Row>
       <Row name="ONE SHOT 最多几轮">
-        <Num post="轮"><BoundedNumber width={NUM_WIDTH} label="ONE SHOT 最多几轮" min={5} max={400} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} /></Num>
+        <BoundedNumber unit="轮" label="ONE SHOT 最多几轮" min={5} max={400} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} />
       </Row>
       <Row name="额度提醒" off={settings.quotaWarn == null}>
         <Switch label="额度提醒" on={settings.quotaWarn != null} onChange={(on) => onSettings({ quotaWarn: on ? 85 : null })} />
-        <Num post="%"><BoundedNumber width={NUM_WIDTH} label="额度提醒的百分比" min={50} max={100} off={settings.quotaWarn == null} value={settings.quotaWarn ?? 85} onCommit={(v) => onSettings({ quotaWarn: v })} /></Num>
+        <BoundedNumber unit="%" label="额度提醒的百分比" min={50} max={100} off={settings.quotaWarn == null} value={settings.quotaWarn ?? 85} onCommit={(v) => onSettings({ quotaWarn: v })} />
       </Row>
     </div>
   );
@@ -305,11 +296,11 @@ const Cli: React.FC<Props> = ({ onRefreshAgents, say }) => {
   };
   return (
     <>
+      <SetHead label="ENGINES"><Btn sm icon="undo" disabled={busy} onClick={() => recheck()}>RECHECK</Btn></SetHead>
       <div className="set-rows">
         <CliDir say={say} onSaved={() => recheck("CLI 目录存好了，重新检测过了")} />
         {engines?.map((e) => <EngineRow key={e.id} entry={e} />)}
       </div>
-      <div className="set-inline"><Btn icon="undo" disabled={busy} onClick={() => recheck()}>RECHECK</Btn></div>
       <CliAccounts say={say} />
     </>
   );
@@ -344,11 +335,10 @@ const CliAccounts: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
   if (!groups) return null;
   return (
     <>
-      <p className="lbl">LOGIN</p>
+      <SetHead label="LOGIN"><Btn sm icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("登录状态都看过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn></SetHead>
       <div className="set-rows">
         {groups.flatMap((g) => g.accounts.map((a) => <AccountRow key={g.engine} engine={g.engine} engineLabel={g.label} note={g.defaultNote} account={a} say={say} />))}
       </div>
-      <div className="set-inline"><Btn icon="undo" disabled={checking} onClick={() => void recheck().then(() => say("登录状态都看过了"))}>{checking ? "CHECKING" : "CHECK ALL"}</Btn></div>
     </>
   );
 };
@@ -381,13 +371,17 @@ const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; 
   const copy = (url: string) => { void copyText(url).then(() => say("登录链接复制好了：到你要用的浏览器（或隐身窗口）里打开")).catch(say); };
   const tag = status == null ? <Tag>NOT CHECKED</Tag> : status.loggedIn ? <Tag v="ok">SIGNED IN</Tag> : <Tag v="high">SIGNED OUT</Tag>;
   const who = status?.loggedIn ? [status.email, status.plan].filter(Boolean).join(" · ") : status?.detail;
+  const row = (
+    <Row name={engineLabel} desc={[who, note].filter(Boolean).join(" · ") || undefined}>
+      {tag}
+      <Btn sm disabled={busy || !!login?.running} onClick={() => void startLogin()}>{status?.loggedIn ? "RELOGIN" : "LOGIN"}</Btn>
+      <Btn sm disabled={busy} onClick={() => void check()}>CHECK</Btn>
+    </Row>
+  );
+  if (!login) return row;
   return (
     <div className="set-block">
-      <Row name={engineLabel} desc={[who, note].filter(Boolean).join(" · ") || undefined}>
-        {tag}
-        <Btn sm disabled={busy || !!login?.running} onClick={() => void startLogin()}>{status?.loggedIn ? "RELOGIN" : "LOGIN"}</Btn>
-        <Btn sm disabled={busy} onClick={() => void check()}>CHECK</Btn>
-      </Row>
+      {row}
       {login && (
         <div className="set-login">
           {login.url ? (
@@ -427,41 +421,32 @@ function useGatewayConfig(say: (m: unknown) => void) {
     // 只在打开时读一次：say 每次渲染可能是新的，跟着它重读会冲掉正在填的内容。
   }, []);
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
-  const save = async (message: string) => {
-    if (!draft) return;
+  const save = async (message: string, override?: GatewayConfig) => {
+    const config = override ?? draft;
+    if (!config) return;
     setBusy(true);
     try {
-      const next = await ipc.gatewayConfigSet(draft);
+      const next = await ipc.gatewayConfigSet(config);
       setSaved(next); setDraft(next); say(message);
     } catch (e) { say(e); } finally { setBusy(false); }
   };
   return { saved, draft, setDraft, adc, busy, dirty, save };
 }
 
+/** Vertex AI（v1.1.6 并进 API KEYS，和各家 Key 一样的一块）：头一行 Location 和状态（先说缺的：没有 gcloud、没存 Project ID），
+ *  下面一行 Project ID、SAVE（Project ID 和 Location 一起存）、REMOVE（清掉 Project ID）。 */
 const Vertex: React.FC<{ say: (m: unknown) => void }> = ({ say }) => {
   const { saved, draft, setDraft, adc, busy, dirty, save } = useGatewayConfig(say);
   if (!draft) return null;
-  const project = draft.vertex.projectId;
-  // 存过 Project ID 才算（站主 11-17：GCLOUD OK 右边一个方框，NEED PROJECT ID / PROJECT ID SAVED）。
   const savedProject = !!saved?.vertex.projectId;
   const set = (vertex: Partial<GatewayConfig["vertex"]>) => setDraft({ ...draft, vertex: { ...draft.vertex, ...vertex } });
   return (
-    <>
-      <p className="lbl">VERTEX AI</p>
-      <div className="set-rows">
-        <div className="set-block">
-          <Row name="Claude 和 Gemini" off={!adc || !savedProject}>
-            {adc ? <Tag v="ok">GCLOUD OK</Tag> : <Tag>NO GCLOUD</Tag>}
-            {savedProject ? <Tag v="ok">PROJECT ID SAVED</Tag> : <Tag>NEED PROJECT ID</Tag>}
-          </Row>
-          <div className="set-inline">
-            <Field aria-label="Vertex AI 的 Project ID" placeholder="Project ID" value={project} off={busy} onChange={(e) => set({ projectId: e.target.value })} />
-            <Field width={150} aria-label="Vertex AI 的 Location" placeholder="global" value={draft.vertex.location} off={busy} onChange={(e) => set({ location: e.target.value })} />
-            <Btn sm disabled={busy || !dirty} onClick={() => void save("Vertex AI 的设置存好了")}>SAVE</Btn>
-          </div>
-        </div>
-      </div>
-    </>
+    <KeyBlock name="Vertex AI" off={!adc || !savedProject}
+      option={<Field unit="LOCATION" aria-label="Vertex AI 的 Location" placeholder="global" value={draft.vertex.location} off={busy} onChange={(e) => set({ location: e.target.value })} />}
+      tag={!adc ? <Tag>NO GCLOUD</Tag> : savedProject ? <Tag v="ok">SAVED</Tag> : <Tag>NO PROJECT ID</Tag>}
+      field={<Field aria-label="Vertex AI 的 Project ID" placeholder="Project ID" value={draft.vertex.projectId} off={busy} onChange={(e) => set({ projectId: e.target.value })} />}
+      save={<Btn sm disabled={busy || !dirty} onClick={() => void save("Vertex AI 的设置存好了")}>SAVE</Btn>}
+      remove={<Btn sm v="danger" disabled={busy || !savedProject} onClick={() => saved && void save("Vertex AI 的 Project ID 清掉了", { ...saved, vertex: { ...saved.vertex, projectId: "" } })}>REMOVE</Btn>} />
   );
 };
 
@@ -471,7 +456,7 @@ const CliDir: React.FC<{ say: (m: unknown) => void; onSaved: () => void }> = ({ 
   return (
     <div className="set-block">
       <Row name="CLI 目录">{draft.cliDir ? <Tag v="ok">SET</Tag> : <Tag>PATH</Tag>}</Row>
-      <div className="set-inline">
+      <div className="set-line set-line--save">
         <Field aria-label="CLI 目录" placeholder="~/…/cli/bin" value={draft.cliDir} off={busy} onChange={(e) => setDraft({ ...draft, cliDir: e.target.value })} />
         <Btn sm disabled={busy || !dirty} onClick={() => void save("CLI 目录存好了").then(onSaved)}>SAVE</Btn>
       </div>
@@ -489,7 +474,7 @@ const Look: React.FC<Props> = ({ settings, onSettings }) => (
       <Seg<ThemeChoice> label="明暗" sm items={[{ id: "system", label: "SYSTEM" }, { id: "dark", label: "DARK" }, { id: "light", label: "LIGHT" }]} value={settings.theme} onChange={(theme) => onSettings({ theme })} />
     </Row>
     <Row name="编辑器">
-      <ComboField width={240} label="编辑器" placeholder="系统默认" emptyLabel="系统默认" options={EDITORS} value={settings.editorApp} onChange={(editorApp) => onSettings({ editorApp })} />
+      <ComboField label="编辑器" placeholder="系统默认" emptyLabel="系统默认" options={EDITORS} value={settings.editorApp} onChange={(editorApp) => onSettings({ editorApp })} />
     </Row>
     <Row name="App 图标">
       <Seg<"j2" | "a3"> label="App 图标" sm items={[{ id: "j2", label: "J2" }, { id: "a3", label: "A3" }]} value={settings.appIcon} onChange={(appIcon) => onSettings({ appIcon })} />
@@ -536,7 +521,10 @@ const Mcp: React.FC<Props> = ({ say }) => {
   };
   return (
     <>
-      <div className="set-rows">
+      <SetHead label="MCP SERVERS">
+        {!draft && <Btn sm icon="plus" disabled={busy || !list} onClick={() => setDraft({ server: { ...EMPTY_SERVER }, args: "", env: "", index: -1 })}>ADD SERVER</Btn>}
+      </SetHead>
+      <div className="set-rows set-rows--acts">
         {list?.map((server, i) => {
           const found = tools[server.name];
           return (
@@ -565,9 +553,9 @@ const Mcp: React.FC<Props> = ({ say }) => {
       {draft ? (
         <div className="pk-mod pk-mod--sunk set-editor">
           <p className="lbl">{draft.index < 0 ? "ADD SERVER" : "EDIT SERVER"}</p>
-          <Row name="名字"><Field width={200} aria-label="MCP 服务器的名字" placeholder="小写字母、数字、- 和 _" value={draft.server.name} onChange={(e) => setDraft({ ...draft, server: { ...draft.server, name: e.target.value } })} /></Row>
-          <Row name="命令"><Field width={320} aria-label="命令" placeholder="npx" value={draft.server.command} onChange={(e) => setDraft({ ...draft, server: { ...draft.server, command: e.target.value } })} /></Row>
-          <Row name="参数"><Field width={320} aria-label="参数" placeholder="-y @modelcontextprotocol/server-filesystem ." value={draft.args} onChange={(e) => setDraft({ ...draft, args: e.target.value })} /></Row>
+          <Row name="名字"><Field aria-label="MCP 服务器的名字" placeholder="小写字母、数字、- 和 _" value={draft.server.name} onChange={(e) => setDraft({ ...draft, server: { ...draft.server, name: e.target.value } })} /></Row>
+          <Row name="命令"><Field aria-label="命令" placeholder="npx" value={draft.server.command} onChange={(e) => setDraft({ ...draft, server: { ...draft.server, command: e.target.value } })} /></Row>
+          <Row name="参数"><Field aria-label="参数" placeholder="-y @modelcontextprotocol/server-filesystem ." value={draft.args} onChange={(e) => setDraft({ ...draft, args: e.target.value })} /></Row>
           <Row name="环境变量">
             <textarea className="t-code sel set-env" aria-label="环境变量" placeholder="NAME=value" rows={3} spellCheck={false} value={draft.env} onChange={(e) => setDraft({ ...draft, env: e.target.value })} />
           </Row>
@@ -577,14 +565,13 @@ const Mcp: React.FC<Props> = ({ say }) => {
             <Btn v="ghost" onClick={() => setDraft(null)}>CANCEL</Btn>
           </div>
         </div>
-      ) : (
-        <div className="set-inline"><Btn sm icon="plus" disabled={busy || !list} onClick={() => setDraft({ server: { ...EMPTY_SERVER }, args: "", env: "", index: -1 })}>ADD SERVER</Btn></div>
-      )}
+      ) : null}
     </>
   );
 };
 
-/** 一台 MCP 服务器放在钥匙串里的环境变量（v0.10）：只列名字；改值就再存一次，REMOVE 从钥匙串删掉。 */
+/** 一台 MCP 服务器放在钥匙串里的环境变量（v0.10）：只列名字；改值就再存一次，REMOVE 从钥匙串删掉。
+ *  v1.1.6：一块两行，存着的一行一个（名字、REMOVE），最下面一行变量名、值、SAVE。 */
 const McpSecrets: React.FC<{ server: McpServerConfig; onSaved: (next: McpServerConfig[]) => void; say: (m: unknown) => void }> = ({ server, onSaved, say }) => {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -592,21 +579,20 @@ const McpSecrets: React.FC<{ server: McpServerConfig; onSaved: (next: McpServerC
     try { onSaved(await ipc.mcpSecretSet(server.name, n, v)); setName(""); setValue(""); say(message); } catch (e) { say(e); }
   };
   return (
-    <Row name="钥匙串">
-      <div className="set-stack">
-        {(server.secretEnv ?? []).map((n) => (
-          <div key={n} className="set-inline">
-            <span className="t-code">{n}=••••</span>
-            <Btn sm v="danger" onClick={() => void set(n, null, `${n} 从钥匙串删了`)}>REMOVE</Btn>
-          </div>
-        ))}
-        <div className="set-inline">
-          <Field width={150} aria-label="钥匙串里的变量名" placeholder="GITHUB_TOKEN" value={name} onChange={(e) => setName(e.target.value)} />
-          <Field width={180} type="password" aria-label="变量的值" placeholder="值" value={value} onChange={(e) => setValue(e.target.value)} />
-          <Btn sm disabled={!name.trim() || !value.trim()} onClick={() => void set(name.trim(), value, `${name.trim()} 存进钥匙串了`)}>SAVE</Btn>
+    <div className="set-block">
+      <Row name="钥匙串" />
+      {(server.secretEnv ?? []).map((n) => (
+        <div key={n} className="set-line set-line--pair">
+          <span className="set-code">{n}=••••</span>
+          <Btn sm v="danger" onClick={() => void set(n, null, `${n} 从钥匙串删了`)}>REMOVE</Btn>
         </div>
+      ))}
+      <div className="set-line set-line--pair">
+        <Field aria-label="钥匙串里的变量名" placeholder="GITHUB_TOKEN" value={name} onChange={(e) => setName(e.target.value)} />
+        <Field type="password" aria-label="变量的值" placeholder="值" value={value} onChange={(e) => setValue(e.target.value)} />
+        <Btn sm disabled={!name.trim() || !value.trim()} onClick={() => void set(name.trim(), value, `${name.trim()} 存进钥匙串了`)}>SAVE</Btn>
       </div>
-    </Row>
+    </div>
   );
 };
 
@@ -641,15 +627,20 @@ const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries }) => {
     <EffortPicker entry={e} value={e ? settings.efforts[e.id] ?? defaultEffort(e) : ""} up={false} onChange={(v) => e && onSettings({ efforts: { ...settings.efforts, [e.id]: v } })} />
   );
   const patch = (kind: SubagentKind, next: Partial<SubagentSettings>) => onSettings({ subagents: { ...settings.subagents, [kind]: { ...settings.subagents[kind], ...next } } });
+  // 一块两行（v1.1.6）：头一行名字、做什么、开关；下面一行四格——模型、思考强度、最多几轮、同时几个，几块的格子对齐（没有的那格空着）。
   return (
     <>
+      <SetHead label="MAIN" />
       <div className="set-rows">
-        <Row name="主角色">
-          <ModelChip label="PLOOP 的主角色" entries={apis} value={main?.id ?? ""} onChange={(id) => onSettings({ ploop: { ...settings.ploop, main: id } })} />
-          {effort(main)}
-        </Row>
+        <div className="set-block">
+          <Row name="主角色" />
+          <div className="set-line set-line--agent">
+            <ModelChip label="PLOOP 的主角色" entries={apis} value={main?.id ?? ""} onChange={(id) => onSettings({ ploop: { ...settings.ploop, main: id } })} />
+            <span>{effort(main)}</span>
+          </div>
+        </div>
       </div>
-      <p className="lbl">SUBAGENTS</p>
+      <SetHead label="SUBAGENTS" />
       <div className="set-rows">
         {SUBAGENT_KINDS.map((k) => {
           const s = settings.subagents[k.id] ?? {};
@@ -659,16 +650,11 @@ const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries }) => {
               <Row name={k.id} off={!!s.off} desc={k.does}>
                 <Switch label={`${k.id} 开着`} on={!s.off} onChange={(on) => patch(k.id, { off: !on })} />
               </Row>
-              <div className="set-inline">
+              <div className="set-line set-line--agent">
                 <ModelChip label={`${k.id} 用哪个模型`} entries={apis} value={chosen?.id ?? ""} off="跟主角色" disabled={!!s.off} onChange={(id) => patch(k.id, { model: id })} />
-                {effort(chosen ?? main)}
-                <Num post="轮"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 最多几轮`} min={5} max={400} off={!!s.off} value={s.rounds ?? k.rounds} onCommit={(v) => patch(k.id, { rounds: v })} /></Num>
-                {k.parallel !== null && (
-                  <>
-                    <span className="set-word">同时</span>
-                    <Num post="个"><BoundedNumber width={NUM_WIDTH} label={`${k.id} 同时最多几个`} min={1} max={8} off={!!s.off} value={s.parallel ?? k.parallel} onCommit={(v) => patch(k.id, { parallel: v })} /></Num>
-                  </>
-                )}
+                <span>{effort(chosen ?? main)}</span>
+                <BoundedNumber unit="轮" label={`${k.id} 最多几轮`} min={5} max={400} off={!!s.off} value={s.rounds ?? k.rounds} onCommit={(v) => patch(k.id, { rounds: v })} />
+                <span>{k.parallel !== null && <BoundedNumber unit="个同时" label={`${k.id} 同时最多几个`} min={1} max={8} off={!!s.off} value={s.parallel ?? k.parallel} onCommit={(v) => patch(k.id, { parallel: v })} />}</span>
               </div>
             </div>
           );
@@ -740,8 +726,8 @@ const QuotaSettings: React.FC<{ say: Props["say"] }> = ({ say }) => {
       <p className="lbl">{draft.isNew ? "ADD MODEL" : draft.label}</p>
       {draft.isNew && (
         <>
-          <Row name="模型名"><Field width={260} aria-label="模型名" placeholder="gpt-6-luna" value={draft.model} onChange={(e) => set({ model: e.target.value })} /></Row>
-          <Row name="显示名"><Field width={260} aria-label="显示名" placeholder="GPT-6 Luna" value={draft.label} onChange={(e) => set({ label: e.target.value })} /></Row>
+          <Row name="模型名"><Field aria-label="模型名" placeholder="gpt-6-luna" value={draft.model} onChange={(e) => set({ model: e.target.value })} /></Row>
+          <Row name="显示名"><Field aria-label="显示名" placeholder="GPT-6 Luna" value={draft.label} onChange={(e) => set({ label: e.target.value })} /></Row>
           <Row name="哪家">
             <MenuChip sm up={false} ariaLabel="哪家" label={(book.vendors.find((v) => v.id === draft.vendor)?.label ?? "Other").toUpperCase()}>
               {(close) => [...book.vendors, { id: "other", label: "Other" }].map((v) => (
@@ -771,36 +757,31 @@ const QuotaSettings: React.FC<{ say: Props["say"] }> = ({ say }) => {
     <>
       <div className="set-rows">
         <Row name="汇率" desc={book.fxRate !== book.defaultFx ? `默认 ${book.defaultFx}` : undefined}>
-          <span className="hint">1 USD =</span>
-          <BoundedNumber width={110} decimals={3} min={0.2} max={99} label="汇率：1 美元换多少人民币" value={book.fxRate} onCommit={(fxRate) => void run(() => ipc.pricesSet({ fxRate }), "汇率存好了")} />
-          <span className="hint">CNY</span>
+          <BoundedNumber unit="CNY / USD" decimals={3} min={0.2} max={99} label="汇率：1 美元换多少人民币" value={book.fxRate} onCommit={(fxRate) => void run(() => ipc.pricesSet({ fxRate }), "汇率存好了")} />
         </Row>
         <Row name="价格表" desc={`内置 ${book.builtinDate}${book.refreshedAt ? ` · ${ago(book.refreshedAt)}刷新过` : ""}`}>
+          <Btn sm icon="plus" disabled={busy || !!draft} onClick={() => setDraft({ isNew: true, model: "", label: "", vendor: "other", currency: "USD", input: "", output: "", cacheRead: "", cacheWrite: "", peak: "", tiers: [] })}>ADD MODEL</Btn>
           <Btn sm icon="undo" disabled={busy} onClick={() => void refresh()}>{busy ? "REFRESHING" : "REFRESH"}</Btn>
         </Row>
       </div>
+      {draft?.isNew && editor}
       {groups.map(({ v, rows }) => (
         <React.Fragment key={v.id}>
           <p className="lbl">{v.label.toUpperCase()}<em className="menu-group-note">每百万 token</em></p>
-          <div className="set-rows">
+          <div className="set-rows set-rows--acts">
             {rows.map((r) => (draft && !draft.isNew && draft.model === r.model ? <React.Fragment key={r.model}>{editor}</React.Fragment> : (
-              <Row key={r.model} name={r.label} desc={<span className="t-code">{priceText(r)}</span>}>
+              <Row key={r.model} name={r.label} desc={<span className="t-code" title={priceText(r)}>{priceText(r)}</span>}>
                 {r.origin === "edited" && <Tag v="wait">EDITED</Tag>}
                 {r.origin === "online" && <Tag v="ok">UPDATED</Tag>}
                 {r.origin === "custom" && <Tag>ADDED</Tag>}
-                <Btn sm disabled={busy} onClick={() => edit(r)}>EDIT</Btn>
                 {r.origin === "edited" && <Btn sm disabled={busy} onClick={() => void run(() => ipc.pricesSet({ reset: r.model }), `${r.label} 回到内置的价格`)}>RESET</Btn>}
                 {r.origin === "custom" && <Btn sm v="danger" disabled={busy} onClick={() => void run(() => ipc.pricesSet({ reset: r.model }), `删掉了 ${r.label}`)}>DELETE</Btn>}
+                <Btn sm disabled={busy} onClick={() => edit(r)}>EDIT</Btn>
               </Row>
             )))}
           </div>
         </React.Fragment>
       ))}
-      {draft?.isNew ? editor : !draft && (
-        <div className="set-inline">
-          <Btn sm icon="plus" onClick={() => setDraft({ isNew: true, model: "", label: "", vendor: "other", currency: "USD", input: "", output: "", cacheRead: "", cacheWrite: "", peak: "", tiers: [] })}>ADD MODEL</Btn>
-        </div>
-      )}
     </>
   );
 };

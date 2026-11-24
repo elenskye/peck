@@ -310,13 +310,51 @@ export const Info: React.FC<{ text: React.ReactNode }> = ({ text }) => {
   );
 };
 
-/** 输入框（单独的一格）：前面一个 ›。 */
-export const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { off?: boolean; width?: number }> = ({ off, width, className, ...rest }) => (
+/** 输入框（单独的一格）：前面一个 ›；`unit` 是框里右边的单位（轮、%、USD），单位在框里、框就一样宽。 */
+export const Field: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { off?: boolean; width?: number; unit?: string }> = ({ off, width, unit, className, ...rest }) => (
   <label className={cn("pk-field", off && "is-off", className)} style={width ? { width } : undefined}>
     <span className="pk-prompt">›</span>
     <input {...rest} disabled={off || rest.disabled} spellCheck={false} autoComplete="off" autoCorrect="off" autoCapitalize="off" />
+    {unit && <span className="field-unit">{unit}</span>}
   </label>
 );
+
+/** 设置里一组的头（v1.1.6）：左边组名，右边这一组的按钮（RECHECK、ADD SERVER……），和下面控件的右边对齐。 */
+export const SetHead: React.FC<{ label: React.ReactNode; children?: React.ReactNode }> = ({ label, children }) => (
+  <div className="set-head">
+    <p className="lbl">{label}</p>
+    {children}
+  </div>
+);
+
+/** 小窗（v1.1.6）：盖在整个窗口上，中间一块模块；点外面、Esc、CLOSE 都关。里面的菜单、ⓘ 先收自己的 Esc。
+ *  里面和设置页一样放大 7/6、一样的行（`.set-scope`）。 */
+export const Modal: React.FC<{ label: string; onClose: () => void; children: React.ReactNode; className?: string }> = ({ label, onClose, children, className }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const back = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing) return;
+      if (document.querySelector(".pk-menu, .info-pop")) return;
+      e.preventDefault();
+      closeRef.current();
+    };
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("keydown", esc); back?.focus?.(); };
+  }, []);
+  return createPortal(
+    <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={ref} tabIndex={-1} className={cn("pk-mod modal pk-anim-reveal-s", className)} role="dialog" aria-modal="true" aria-label={label}>
+        <ModHead label={label}><Btn v="ghost" sm icon="x" onClick={onClose}>CLOSE</Btn></ModHead>
+        <div className="modal-body set-scope scroll">{children}</div>
+      </div>
+    </div>,
+    document.querySelector(".app") ?? document.body,
+  );
+};
 
 /** 能打字、也能从下拉里挑的输入框（设置里的编辑器）：下拉是 Peck 的菜单，不用系统的 datalist。
  *  `emptyLabel` 给了就在最前面多一项「空着」（比如「系统默认」）。 */

@@ -677,6 +677,8 @@ const App: React.FC = () => {
             onOpenArchived={openArchived}
             onRestoreArchived={(id) => restoreArchived(id, false)}
             onDeleteArchived={deleteArchived}
+            projects={projects}
+            onProjectsChanged={refreshProjects}
             settings={settings}
             onSettings={updateSettings}
             onRefreshAgents={refreshEntries}

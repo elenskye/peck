@@ -300,58 +300,83 @@ body { overflow: hidden; }
 .set-nav button.is-on { background: var(--color-cyan-soft); color: var(--color-text); }
 .set-nav button.is-on b { color: var(--color-cyan-text); }
 .set-pane { display: flex; flex-direction: column; min-width: 0; padding-right: var(--space-5); }
-.set-pane > * { flex: none; }
+.set-pane > * { flex: none; max-width: 760px; }
 .set-pane > :first-child { margin-top: 0; }
 .set-pane h2 { margin: 0; }
 .set-pane h2:not(:first-child) { margin-top: var(--space-11); }
 .set-pane .lead { margin-top: var(--space-2); }
+/* ---------- 设置页的统一排法（v1.1.6，设置、项目设置、小窗里都一样） ----------
+   - 一行（.set-row）：左边名字和一行状态，右边控件。行一样高（--set-h）；名字、状态都不换行，放不下就省略。
+   - 右边的主控件（输入框、下拉、能打字的下拉、进度条）一样宽（--set-w）、右边对齐；分段至少这么宽；控件一样高（--set-ctl-h）；
+     小按钮一样宽（--set-btn），每行都有的按钮放最右边，有时才有的放它左边，几行的按钮就对齐了。
+   - 一行放不下的做成一块两行（.set-block）：头一行和普通行一样，下面一行（.set-line）是固定的格子，几块的格子对齐。
+   - 一组的按钮（RECHECK、ADD SERVER）放在组头的右边（.set-head）。 */
+.set-scope { container-type: inline-size; --set-w: clamp(180px, 40cqw, 280px); --set-h: 56px; --set-ctl-h: 32px; --set-btn: 76px; }
+.set-head { display: flex; align-items: center; gap: var(--space-4); min-height: var(--set-ctl-h); margin: var(--space-8) 0 0; }
+.set-head .lbl { flex: 1; min-width: 0; margin: 0; }
+.set-head + .set-rows, .set-head + .plug-grid { margin-top: var(--space-4); }
+.set-scope > .set-head:first-child { margin-top: 0; }
 .set-rows { display: flex; flex-direction: column; margin-top: var(--space-7); border-bottom: 1px dotted var(--color-line-strong); }
-.set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-8); align-items: center; padding: var(--space-5) 0; border-top: 1px dotted var(--color-line-strong); }
+.set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-8); align-items: center; min-height: var(--set-h); padding: var(--space-3) 0; border-top: 1px dotted var(--color-line-strong); }
+.set-row > :first-child { min-width: 0; }
 .set-block { border-top: 1px dotted var(--color-line-strong); padding-bottom: var(--space-5); }
 .set-block > .set-row { border-top: 0; }
-.set-name { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.set-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-name > * { vertical-align: middle; }
+.set-name > :not(:first-child) { margin-left: var(--space-4); }
+.set-name > .pk-dot { margin-right: var(--space-4); }
 .set-ver { color: var(--color-text-3); }
-.set-cmd { display: block; margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-3); }
-.set-desc { margin-top: var(--space-1); font-size: var(--text-small); line-height: 1.5; color: var(--color-text-2); overflow-wrap: anywhere; }
+.set-cmd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-3); }
+.set-desc { margin-top: var(--space-1); font-size: var(--text-small); line-height: 1.5; color: var(--color-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .set-ctl { display: flex; align-items: center; gap: var(--space-4); justify-content: flex-end; }
 .set-row.is-off .set-name, .set-row.is-off .set-desc { color: var(--color-text-3); }
-/* 数字那几行：单位占固定的宽，几行的数字框左右都对齐；进度条和它们一样宽。 */
-.set-num { display: inline-flex; align-items: center; gap: var(--space-3); }
-.set-unit { flex: none; width: 16px; font-size: var(--text-small); color: var(--color-text-3); }
-.set-unit:first-child { text-align: right; }
-.set-inline .set-word { font-size: var(--text-small); color: var(--color-text-3); }
-.set-meter { flex: 0 1 240px; min-width: 60px; height: 10px; margin-right: calc(16px + var(--space-3)); order: 2; }
-/* 「这个月花了」那一行：名字短，进度条那边让出来能缩（设置页放大后窗口窄时不撑出横向滚动）。 */
-.set-row:has(.set-meter) { grid-template-columns: auto minmax(0, 1fr); }
-.set-meter-text { order: 1; font-size: var(--text-small); color: var(--color-text-2); }
-.set-inline { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-4); }
-.set-inline .pk-field { flex: 1 1 200px; min-width: 0; height: var(--size-button); }
-.set-inline .pk-field[style] { flex: none; }
-/* 供应商的 Key 一格网格：Key 框占前两格，SAVE、REMOVE 在后面；Aliyun 的地域在下一行，它的 SAVE 和上面的 SAVE 对齐。 */
-.set-keys { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
-.set-keys .pk-field { min-width: 0; height: var(--size-button); }
-/* 输入框里的 input 默认有 20 个字宽的最小宽度，窄的时候把右边的按钮挤出去：让它跟着框缩（v1.0.1，设置页放大后才看得出）。 */
-:is(.set-keys, .set-inline) .pk-field input { width: 0; }
-.set-keys > .set-keys-wide { grid-column: 1 / 3; }
-.set-keys > .pk-seg + .pk-btn { grid-column: 3; }
-/* 设置页很窄时（放大以后窗口又小）：Aliyun 的地域单独一行。 */
-.set-pane { container-type: inline-size; }
-@container (max-width: 380px) {
-  .set-keys > .pk-seg { grid-column: 1 / -1; justify-self: start; }
+/* 状态方框占固定的一格（Key 那几块）：前面的地域、Location 就对齐了。 */
+.set-tag { flex: none; display: inline-flex; justify-content: flex-end; width: 112px; }
+.set-scope .pk-field { height: var(--set-ctl-h); min-width: 0; }
+.set-scope .pk-field input { width: 0; flex: 1; min-width: 0; }
+.set-scope .pk-btn--sm { height: var(--set-ctl-h); min-width: var(--set-btn); }
+.set-scope .pk-chip--sm { height: var(--set-ctl-h); }
+.set-scope .pk-seg--sm > button { height: calc(var(--set-ctl-h) - 6px); }
+.set-ctl > :is(.pk-field, .menu-anchor, .set-meter) { flex: none; width: var(--set-w); }
+.set-ctl > .pk-seg { flex: none; min-width: var(--set-w); }
+.set-ctl > .pk-seg > button { flex: 1 1 auto; }
+:is(.set-ctl, .set-line) .menu-anchor { display: block; min-width: 0; }
+:is(.set-ctl, .set-line) .menu-anchor > .pk-chip { width: 100%; }
+:is(.set-ctl, .set-line) .menu-anchor .pk-chip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+/* 框里右边的单位。 */
+.field-unit { flex: none; margin-left: var(--space-3); font-size: var(--text-small); color: var(--color-text-3); white-space: nowrap; }
+/* 这个月花了：和输入框一样大的一格，20 格的进度在中间。 */
+.set-meter { display: flex; align-items: center; height: var(--set-ctl-h); }
+.set-meter .q-meter { flex: 1; height: 10px; }
+/* 下面那一行的格子：Key（框、SAVE、REMOVE）、一个框加 SAVE、子代理（模型、强度、轮数、同时几个）、钥匙串变量（名、值、SAVE）。 */
+.set-line { display: grid; align-items: center; gap: var(--space-4); margin-top: var(--space-2); }
+.set-line > * { min-width: 0; }
+.set-line--key { grid-template-columns: minmax(0, 1fr) var(--set-btn) var(--set-btn); }
+.set-line--save { grid-template-columns: minmax(0, 1fr) var(--set-btn); }
+.set-line--after { margin-top: var(--space-4); }
+.set-line--pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--set-btn); }
+.set-line--agent { grid-template-columns: minmax(0, 1fr) 128px 100px 116px; }
+.set-line .set-code { grid-column: 1 / -2; font-family: var(--font-code); font-size: var(--text-code); color: var(--color-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@container (max-width: 560px) {
+  .set-line--agent { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
-/* 价格表的编辑：进、出、缓存命中、缓存写入、高峰倍数一排。 */
-.set-price-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-4) var(--space-5); margin-top: var(--space-5); }
+/* 按钮多的列表（归档、MCP、价格表）窗口很窄时：每行都变成两行，按钮在下面一行。 */
+@container (max-width: 480px) {
+  .set-rows--acts > .set-row, .set-rows--acts > .set-block > .set-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+}
+.set-inline { display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
+.set-inline .pk-field { flex: 1 1 200px; min-width: 0; height: var(--set-ctl-h); }
+.set-inline .pk-field input { width: 0; }
+/* 价格表的编辑：进、出、缓存命中、缓存写入、高峰倍数一排（窄时三个一排）。 */
+.set-price-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-4) var(--space-5); margin-top: var(--space-5); }
+@container (max-width: 480px) { .set-price-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .set-price-f { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.set-price-f .pk-field { height: var(--size-button); min-width: 0; }
-.set-ctl .menu-anchor .pk-chip { min-width: 220px; }
-.set-ctl .menu-anchor .pk-chip .pk-chip-label { flex: 1; text-align: left; }
 .lbl .menu-group-note { float: none; margin-left: var(--space-4); text-transform: none; }
 /* 能打字的下拉（编辑器）。 */
 .combo-field { position: relative; }
 .combo-field input { padding-right: 18px; }
 .combo-caret { position: absolute; right: var(--space-3); top: 50%; transform: translateY(-50%); color: var(--color-text-3); pointer-events: none; }
 .combo-pop { min-width: 220px; }
-.set-ctl .pk-field { height: var(--size-button); }
 .set-editor { margin-top: var(--space-7); }
 .set-editor .lbl { margin-top: 0; }
 .set-opts { margin-top: var(--space-7); }
@@ -639,25 +664,53 @@ body { overflow: hidden; }
 .agent-skill-done code { font-family: var(--font-code); color: var(--color-text-2); }
 .skill-history { margin: 0 0 var(--space-3) var(--space-8); border-left: 1px dotted var(--color-line-strong); padding-left: var(--space-6); }
 .skill-history .set-row:first-child { border-top: 0; }
-/* 插件（v1.1.0）：一行一个，点名字展开看它带的 Skill、命令、工具、Hook、MCP。 */
-.plugin-name { display: inline-flex; align-items: center; gap: var(--space-3); font: inherit; color: inherit; text-align: left; }
-.plugin-name .pk-i { color: var(--color-text-3); }
-.plugin-name:hover .pk-i, .plugin-name[aria-expanded="true"] .pk-i { color: var(--color-cyan-text); }
-.plugin-every { color: var(--color-text-3); white-space: nowrap; }
-.plugin-detail { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-4) var(--space-7); margin: 0 0 var(--space-3) var(--space-8); padding-left: var(--space-6); border-left: 1px dotted var(--color-line-strong); font-size: var(--text-small); line-height: 1.5; }
+/* 小窗（v1.1.6）：盖住整个窗口，中间一块模块；里面整块放大 7/6（和设置页一样），窗口本身按屏幕尺寸算。 */
+.modal-scrim { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--space-11); background: color-mix(in srgb, var(--color-page) 72%, transparent); }
+.modal { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100vh - 2 * var(--space-11)); outline: none; }
+.modal > * { zoom: 1.16667; }
+.modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: var(--space-4); }
+.modal-body > :first-child { margin-top: 0; }
+/* 插件（v1.1.0；v1.1.6 改成卡片）：两栏，每张卡只有图标、名字、两行简介；点开小窗看全部。 */
+.plug-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-7); }
+@container (max-width: 440px) { .plug-grid { grid-template-columns: minmax(0, 1fr); } }
+.plug-card { position: relative; isolation: isolate; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: var(--space-6); align-items: start; height: 80px; padding: var(--space-5) var(--space-6); margin: 0; border: 0; clip-path: var(--pk-clip2); background: var(--color-line-strong); font: inherit; text-align: left; color: var(--color-text); cursor: pointer; }
+.plug-card::before { content: ""; position: absolute; inset: 1px; z-index: -1; clip-path: var(--pk-clip2); background: var(--color-panel); }
+.plug-card:hover, .plug-card:focus-visible { background: var(--color-cyan-line); outline: none; }
+.plug-card:hover::before { background: var(--color-raised); }
+.plug-card-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.plug-card-name { display: flex; align-items: center; gap: var(--space-4); min-width: 0; line-height: 20px; }
+.plug-card-name b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.plug-card-name .pk-tag { flex: none; }
+.plug-card-desc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--text-small); line-height: 1.5; color: var(--color-text-2); }
+.plug-card.is-off .plug-card-name b, .plug-card.is-off .plug-card-desc { color: var(--color-text-3); }
+.plug-card.is-off .plug-icon { opacity: .4; }
+/* 插件的图标：按名字算出来的 5×5 像素（左右对称）；插件青色，单独的 Skill 淡紫。 */
+.plug-icon { display: grid; grid-template-columns: repeat(5, 4px); grid-auto-rows: 4px; gap: 1px; place-content: center; width: 36px; height: 36px; clip-path: var(--pk-clip2); background: var(--color-panel-2); box-shadow: inset 0 0 0 1px var(--color-line); }
+.plug-icon i { background: transparent; }
+.plug-icon i.is-on { background: var(--color-cyan-text); }
+.plug-icon.is-skill i.is-on { background: var(--code-type); }
+.plug-icon--big { width: 44px; height: 44px; grid-template-columns: repeat(5, 5px); grid-auto-rows: 5px; }
+.plug-hero { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: var(--space-7); align-items: start; }
+.plug-hero-name { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.plug-hero-name b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-name); font-size: var(--text-title); font-weight: 400; }
+.plug-hero p { margin-top: var(--space-2); font-size: var(--text-body); line-height: 1.6; color: var(--color-text-2); }
+.plugin-detail { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-5) var(--space-7); margin-top: var(--space-5); font-size: var(--text-small); line-height: 1.5; }
 .plugin-detail dt { color: var(--color-text-3); padding-top: 1px; }
-.plugin-detail dd { margin: 0; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.plugin-detail dd p { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-5); color: var(--color-text-2); }
+.plugin-detail dd { margin: 0; display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.plugin-detail dd p { display: flex; flex-direction: column; gap: var(--space-1); color: var(--color-text-2); }
 .plugin-detail dd code { color: var(--color-text); overflow-wrap: anywhere; }
-.plugin-detail dd span { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.plugin-detail dd span { min-width: 0; overflow-wrap: anywhere; }
 .plugin-detail dd p.is-warn span { color: var(--color-warn); }
-.memory-text { font-family: var(--font-body); font-size: var(--text-body); letter-spacing: 0; text-transform: none; }
-/* 记忆的改字、自己记一条（v1.1.4）：输入框占满左边，按钮在右。 */
-.memory-edit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); }
-.memory-edit .pk-field { min-width: 0; height: var(--size-button); }
-.memory-edit .pk-field input { width: 0; flex: 1; }
-.memory-group + .memory-group { margin-top: var(--space-6); }
-.memory-path { margin-left: var(--space-4); color: var(--color-text-3); text-transform: none; letter-spacing: 0; }
+/* 项目记忆的小窗（v1.1.6）：一条一块，字照原样换行；改字、记一条都是多行的框。 */
+.memo-list { display: flex; flex-direction: column; border-bottom: 1px dotted var(--color-line-strong); }
+.memo { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5) 0; border-top: 1px dotted var(--color-line-strong); }
+.memo-text { font-size: var(--text-body); line-height: 1.6; color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.memo-foot { display: flex; align-items: center; gap: var(--space-4); min-height: var(--set-ctl-h); }
+.memo-meta { flex: 1; min-width: 0; font-size: var(--text-small); color: var(--color-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app .memo-edit { display: block; width: 100%; min-height: 64px; padding: var(--space-4) var(--space-5); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: none; overflow: hidden; font-family: var(--font-body); font-size: var(--text-body); line-height: 1.6; color: var(--color-text); }
+.app .memo-edit:focus { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+.app .memo-edit:disabled { opacity: .6; }
+.memo-add { margin-top: var(--space-7); }
 
 /* ---------- 审阅和预览（v0.7 Phase 10，云端取了沉静一边，本地改方案时并进 tokens） ---------- */
 /* Peck 的代码配色：青只给关键字；字符串、数、类型、属性用压低的几种色（不和绿、红、琥珀的意思撞），注释退到暗字。 */
@@ -719,7 +772,7 @@ body { overflow: hidden; }
 .float.info-pop { z-index: 70; width: 280px; overflow-y: auto; padding: var(--space-4) var(--space-6); background: var(--color-panel-2); box-shadow: 0 0 0 1px var(--color-cyan-line); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); white-space: normal; letter-spacing: 0; text-transform: none; user-select: text; }
 .lbl .info-btn, .pk-mod-head .info-btn { vertical-align: -2px; }
 
-.app .set-env { width: 320px; max-width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: vertical; }
+.app .set-env { width: var(--set-w); max-width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: vertical; }
 
 /* ---------- 本机（v0.8 Phase 12）：贴图、截图、复制、打开 ---------- */
 .composer-shots { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-3); }
@@ -756,9 +809,6 @@ body { overflow: hidden; }
 .preview-list li { display: flex; align-items: baseline; gap: var(--space-3); font-size: var(--text-small); }
 .preview-list .t-code { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-3); }
 .preview-note { flex: 1; min-width: 0; color: var(--color-text); }
-/* 一格里竖着摆几行（设置 → MCP 的钥匙串变量）。 */
-.set-stack { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.set-stack .set-inline { margin-top: 0; }
 
 /* 系统设置里开了「减弱动态效果」：动效都收成一下（在跑的样子照样显示，只是不动）。 */
 @media (prefers-reduced-motion: reduce) {

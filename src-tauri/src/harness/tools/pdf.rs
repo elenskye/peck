@@ -2,7 +2,7 @@
 //!
 //! - `read_pdf`：macOS 自带的 PDFKit（经 `osascript -l JavaScript`，和截图一样不加依赖），在本机一页页抽文字，不花钱、
 //!   马上出。没有文字层的页（扫描件）给能看图的模型附这一页的图（JPEG，最长边 1568），一次最多 6 张。
-//! - `ocr_pdf`：Mathpix（设置 → PROVIDERS → PDF 填了 Key 才给，`gateway/mathpix.rs`）：扫描件、公式（出 LaTeX）、表格；
+//! - `ocr_pdf`：Mathpix（设置 → PROVIDERS → TOOL KEYS 填了 Key 才给，`gateway/mathpix.rs`）：扫描件、公式（出 LaTeX）、表格；
 //!   按页收费，PDF 会传到 Mathpix，读完 Peck 把它那边的删掉。
 //!
 //! 两个都只读、哪一档都有；页码 `pages` 写 `3`、`1-5`、`1,3-4`，一次最多 [`MAX_PAGES`] 页（默认从第 1 页起）。

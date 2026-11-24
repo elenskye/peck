@@ -164,7 +164,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | 百炼（v1.1.2 起） | 一样是 Responses 的 `web_search`（和函数工具放在一起） | 0.0006（北京价，新加坡贵得多） |
 | Gemini（Gemini 3 起） | `googleSearch` + `toolConfig.includeServerSideToolInvocations`（和函数调用一起用要它，函数调用随之是 `VALIDATED`） | 0.014（按搜的条数） |
 | DeepSeek | Peck 的 `web_search` → DeepSeek Search API（同一个 Key）；搜不了退到 Tavily | 0.00075 |
-| Vertex 上的 Gemini、Gemini 2.x | Peck 的 `web_search` → Tavily（设置 → PROVIDERS → SEARCH 填 Key，`basic`） | 0.008 |
+| Vertex 上的 Gemini、Gemini 2.x | Peck 的 `web_search` → Tavily（设置 → PROVIDERS → TOOL KEYS 填 Key，`basic`） | 0.008 |
 
 - **原生的**：请求里开 `ModelRequest.web_search`，各家转换器加自己的工具。回答里供应商那边的调用和结果（Anthropic 的 `server_tool_use` / `*_tool_result`、OpenAI 的 `web_search_call`、Gemini 的 `toolCall` / `toolResponse` 连签名）原样存成 `Part::ServerTool`，和思考一样只回放给同一来源，换了模型丢掉。流里的 `ServerToolStarted` / `ServerToolDone` 显示成 `web_search` 的一步（来源列在输出里），没报完的在请求结束时收尾。Anthropic 搜到一半先停（`pause_turn`）原样再发一次。搜了几次记 `TokenUsage.web_searches`，费用加进这次请求的花费。
 - **不用原生的原因**：DeepSeek 聊天里的 `deepseek_web_search` 不能和函数工具一起用；Vertex 上的 Gemini 官方没写能和函数调用一起用。

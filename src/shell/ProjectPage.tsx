@@ -6,7 +6,7 @@ import { ago, cn, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
 import { Btn, Field, Icon, Info, ModHead, Row, Seg, Switch } from "@/ui";
 import { WhoPicker, pickable } from "@/shell/ModelPicker";
 import { ProjectPluginsSection } from "@/shell/Plugins";
-import { MemoryList } from "@/shell/Memory";
+import { MemoryModal, memoryCount } from "@/shell/Memory";
 
 
 /** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、MCP、Skills、记忆、「总是允许」过的、归档全部任务、移出列表。 */
@@ -30,6 +30,7 @@ export const ProjectPage: React.FC<{
   const [pluginRev, setPluginRev] = useState(0);
   const [archiveArmed, setArchiveArmed] = useState(false);
   const [memories, setMemories] = useState<MemoryNote[] | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   useEffect(() => setName(workspace.name), [workspace.name]);
   useEffect(() => {
     let live = true;
@@ -74,12 +75,12 @@ export const ProjectPage: React.FC<{
     <section className="col page" aria-label="项目设置">
       <div className="pk-mod col-grow page-mod is-big">
         <ModHead label="PROJECT"><Btn v="ghost" sm icon="x" onClick={onClose}>CLOSE</Btn></ModHead>
-        <div className="set-pane scroll">
+        <div className="set-pane set-scope scroll">
           <h2 className="t-title">项目设置<Info text={`只管这一个项目；空着的跟设置里的全局默认。${tasks.length ? `这个项目有 ${tasks.length} 个任务。` : ""}`} /></h2>
           <div className="set-rows">
             <div className="set-block">
               <Row name="名字" info="左栏和顶栏显示的名字；文件夹本身不改名。" />
-              <div className="set-inline">
+              <div className="set-line set-line--save">
                 <Field aria-label="项目的名字" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && name.trim() && name.trim() !== workspace.name) void save({ name }, "名字改好了"); }} />
                 <Btn sm disabled={!name.trim() || name.trim() === workspace.name} onClick={() => void save({ name }, "名字改好了")}>SAVE</Btn>
               </div>
@@ -95,8 +96,8 @@ export const ProjectPage: React.FC<{
               </div>
             </div>
             <Row name="默认谁来干" desc={settings.who ? undefined : "跟全局"} info="打开这个项目时，左栏 AGENTS 换成它；空着就用上一次选的那个。">
-              <WhoPicker entries={options} value={who} up={false} flows={["cli", "ploop"]} onChange={(id) => void save({ settings: { ...settings, who: id } }, "这个项目默认用它了")} />
               {settings.who && <Btn sm v="ghost" onClick={() => void save({ settings: { ...settings, who: null } }, "改回跟全局")}>CLEAR</Btn>}
+              <WhoPicker entries={options} value={who} up={false} flows={["cli", "ploop"]} onChange={(id) => void save({ settings: { ...settings, who: id } }, "这个项目默认用它了")} />
             </Row>
             <Row name="默认权限" info="GLOBAL 跟设置 → 权限里的默认档。">
               <Seg<Permission | "global"> label="这个项目的默认权限" sm
@@ -119,7 +120,7 @@ export const ProjectPage: React.FC<{
               </Row>
             ))}
           </div>
-          <div className="set-inline">
+          <div className="set-line set-line--save set-line--after">
             <Field aria-label="要加的文件夹的路径" placeholder={native ? "空着点 ADD 选文件夹" : "~/code/shared-lib"} value={folderPath} onChange={(e) => setFolderPath(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void addFolder(); }} />
             <Btn sm icon="folder" disabled={missing || (!native && !folderPath.trim())} onClick={() => void addFolder()}>ADD</Btn>
@@ -133,14 +134,21 @@ export const ProjectPage: React.FC<{
             {envDraft !== envText && <Btn sm v="ghost" onClick={() => setEnvDraft(envText)}>RESET</Btn>}
           </div>
 
-          <ProjectPluginsSection workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} onChanged={() => setPluginRev((n) => n + 1)} />
+          <ProjectPluginsSection project={project} say={say} onChanged={async () => { await onChanged(); setPluginRev((n) => n + 1); }} />
 
           <ProjectSkills workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} rev={pluginRev} />
 
           <ProjectMcp workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
 
           <p className="lbl">MEMORY<Info text="Peck Loop 觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；也能自己记、改。每次发任务都带上。全部项目的在设置 → MEMORY。" /></p>
-          {memories ? <MemoryList workspaceId={workspace.id} notes={memories} onChange={setMemories} say={say} /> : <p className="hint">在读…</p>}
+          <div className="set-rows">
+            <Row name="这个项目的记忆" off={!memories?.length} desc={memories ? memoryCount(memories.length) : "在读…"}>
+              <Btn sm disabled={!memories} onClick={() => setMemoryOpen(true)}>EDIT</Btn>
+            </Row>
+          </div>
+          {memoryOpen && memories && (
+            <MemoryModal workspaceId={workspace.id} name={workspace.name} path={workspace.path} notes={memories} onChange={setMemories} onClose={() => setMemoryOpen(false)} say={say} />
+          )}
 
           <p className="lbl">ALWAYS ALLOWED<Info text="EDIT 档装依赖、起常驻进程时弹卡，点 ALWAYS 就记在这里。" /></p>
           {rules && rules.length > 0 ? (

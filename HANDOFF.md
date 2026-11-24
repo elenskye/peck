@@ -1,38 +1,31 @@
 # 当前交接
 
-更新：2026-11-24。**v1.1.5 做完了，已装进 /Applications**。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-24。**v1.1.6 做完了，已装进 /Applications**。站主写明了版本号、不分 Phase，只改界面（前端），后端只改了一句提示里的分组名（PDF → TOOL KEYS），数据库没动。规则在 [CLAUDE.md](./CLAUDE.md)，界面在 [docs/design.md](./docs/design.md)「设置」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 这一版做了什么（1.1.5）
+## 这一版做了什么（1.1.6）
 
-1. **CLI 带项目记忆**：CLI 新会话（不是续上的）的第一句前面放一块 `<peck-memory>`（和 Peck Loop 系统提示里的同一份），排在开场时的 Hook 前面；续上的会话不重复带。
-2. **去掉 Antigravity**（Google 条款风险）：引擎、「直接调用」这个概念（`direct_only`）、模型目录和生成脚本里的条目、夹具、QUOTA 的额度卡片和检测、状态栏脚本里那一支、ACP 转换器里只给它用的分支、界面上的色点和图表色、各处文档；CLAUDE.md 写明不再接，roadmap「不做」也写了。仓库外 `cli/agy`、`cli/bin/agy` 移到了废纸篓（站主定的），`cli/README.md` 和 `briefs/peck-compaction-brief.md` 里的那几行也删了。
-3. **精简代码**（站主定的：删旧记录兼容、删死代码、合并重复，不拆文件）：
-   - 旧记录兼容：接力、审查的 `stage.*` 事件和界面上那几段（SPEC 一行、审查结论框、验收清单、按段花费里的几段）、`team:` 的「谁来干」、旧的 `delegate_task` 显示、`<peck-verify>`、定时任务的 `weekdays`、项目默认里存的 `relay` / `api:`。删之前只读查了正式库：没有「工作日」的定时任务、没有项目存过默认「谁来干」。
-   - 死代码：合作时代几段共用 MCP 服务器的 `mcp_slot`、永远是默认账号的 `default_account` / `without_quota_sync`、没人调的 `shortName`、没人用的样式（`.agents-row--team`、`.agent-stage*` 等）。用编译器、更严的类型检查、脚本扫了没人用的导出、样式、IPC、事件类型；只读子代理列了旧兼容的清单，我逐条核对后删。
-   - 合并：Peck Loop（`harness/run.rs`）和 CLI（`gateway/runner.rs`）发任务的占号、前后快照、收尾、停止都改用 `run.rs` 的 `claim_run`、`Lifecycle`、`abandon`、`watch_cancel`。
-   - 顺手修的：Peck Loop 占了任务号以后读库出错会提前返回，任务一直标着「在跑」、项目被占到重启（现在记成失败、放开项目）；项目设置里默认「谁来干」的列表把 PLOOP 滤掉了、PLOOP 选不了，却列着现在已经不能单独选的 API 模型（现在是 PLOOP 和各家 CLI）。
-   - 留着的：界面设置的迁移（正式版的设置还没迁移过，见「留意」）、数据库迁移、旧表和删任务时清旧表的那几行（外键）。
-   - 改动合计约 −1430 / +600 行。
-
+1. **设置页统一排法**（站主给的三条准则，写进 design.md「设置 → 统一排法」）：每行一样高；右边的主控件一样宽、右边对齐，控件一样高，单位写进框里；小按钮一样宽，每行都有的放最右；放不下一行的做成一块两行（头一行 + 下面固定的格子，几块的格子对齐）；名字、状态不换行、放不下省略；一组的按钮挪到组头右边。窗口窄时 AGENTS 的格子换成两行两列，归档、MCP、价格表每行变成两行——整组一起变。设置、项目设置、小窗共用 `.set-scope`。「这个月花了」那一行不再特殊：「花了 / 上限」写在名字下面，进度和输入框一样大。
+2. **PROVIDERS 只分两组**：API KEYS（各家 + 最后一块 Vertex AI）、TOOL KEYS（Tavily、Mathpix 两样）。Vertex 和别的 Key 一样一块：头一行 Location 和一个状态方框（NO GCLOUD / NO PROJECT ID / SAVED，原来是两个方框）、下面 Project ID + SAVE + REMOVE（新加的：清掉 Project ID）。Aliyun 的地域挪到头一行、点了就存（原来要另点 SAVE）。
+3. **MEMORY**：一个项目一行 + EDIT，开那个项目的记忆小窗（字照原样换行，EDIT 就地变多行的框，⌘↵ 存、Esc 取消；DELETE 改成点两下；最下面多行的框记一条）。项目设置的 MEMORY 也改成一行 + 同一个小窗。
+4. **PLUGINS**：学 Claude Desktop，两栏卡片（图标、名字、两行简介），点开小窗看全部；小窗里 PROJECTS 列左栏的全部项目，**能一个个项目装、更新、移除（库里的）或开关（自带的）**，库里的还有「每个项目都装」。图标按名字算出 5×5 像素（插件青色、单独的 Skill 淡紫）。项目设置的 PLUGINS 也是卡片 + 同一个小窗（只列这个项目）。
+- 新零件（`ui.tsx`）：`Modal`（小窗）、`SetHead`（组头）、`Field` 的 `unit`。删了 `MemoryList`、`PluginRow`、旧的 `.set-keys`、`.set-num`、`.memory-*`、`.plugin-name` 这些样式。
 - 新加依赖：没有。数据库没动（schema 11）。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（326 个；新加：CLI 新会话先带记忆、续上的不带；占号一次一个、`abandon` 放开项目；删掉的旧兼容带走了它们的测试）；`pnpm check`、`pnpm build`、`tsc --noUnusedLocals --noUnusedParameters` 过。
-- **`?mock`**：改过的两条假任务（原来的接力换成 PLOOP、Grok）显示正常；项目设置里默认「谁来干」能选 PLOOP、存得上；左栏 CLI 只剩四家；QUOTA 的图五种颜色、没有 Antigravity。
+- **自动测试**：`pnpm check`、`tsc --noUnusedLocals --noUnusedParameters`、`pnpm build` 过；全量 `cargo test` 过（326 个）。
+- **`?mock`**（内置浏览器，1360×860 和 1024×768 两种窗口，明暗各一次）：十一组量过行高一样、主控件左右边一样、没有横向滚动；AGENTS 窄时两行两列；Aliyun 地域和 Vertex Location 对齐；记忆小窗改一条 ⌘↵ 存上、Esc 只关小窗不关设置页；Git Plan 小窗里给 edge-gateway INSTALL 装上、Snapshots 在 notebook 里关掉后项目设置的卡片变暗。
 - **真跑**：没有。
-- **正式版**：装好了（`pnpm app:install`），版本号 1.1.5、签名校验过；窗口里没点过。
-- **没验的**：
-  - CLI 带记忆没在真 CLI 上跑过（只有假 CLI 的测试）。
-  - 正式版窗口里没点过：这一版和 1.1.4 的都没有。
+- **正式版**：装好了（`pnpm app:install`）；窗口里没点过。
+- **没验的**：正式版窗口（WKWebView）里的样子——`cqw` 单位、小窗里的放大倍数、`-webkit-line-clamp` 都只在内置浏览器里看过。
 
 ## 留给站主的
 
 - **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。
 - **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
-- **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目在项目设置 → PLUGINS 点 UPDATE 才有 HANDOFF 检查；Mathpix 的 Key 要在设置 → PROVIDERS → PDF 填。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.5 的全部提交。
-- 以前留下、还没验的：1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
+- **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.6 的全部提交。
+- 以前留下、还没验的：1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
 ## 已知问题
 
@@ -70,10 +63,13 @@
 | 预览的 RELOAD 回到最初的地址；`localhost` 只连 127.0.0.1 | 记着 |
 | Vertex 上的 Claude / Gemini 只有离线测试，没真跑过 | 站主开了 GCP 项目再试 |
 | PREVIEW 批注只在浏览器存储里；Esc 关设置页时没存的 MCP 编辑会丢 | 记着 |
+| 小窗打开的 0.2 秒动画里点下去会落到外面那层、把小窗关掉（动画用 clip-path，没露出来的部分点不中） | 记着 |
+| 设置 → PLUGINS 的小窗按项目一个个读状态（项目多了会慢一点）；点开时不在左栏的项目不列 | 记着 |
+| 窗口最窄（980）时设置页的名字会被省略得很短（「Vertex AI」只剩几个字） | 记着 |
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.4 新加的：设置 → MEMORY 的项目头（`.memory-group`、`.memory-path`）、改字和自己记一条那一行（`.memory-edit`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
 
 ## 留意
 

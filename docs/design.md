@@ -79,18 +79,29 @@
 
 ## 设置
 
-左边竖排十组，右边是内容，改了马上生效（Key、价格这类要点 SAVE）：
+左边竖排十组，右边是内容，改了马上生效（Key、价格这类要点 SAVE）。
 
-- **GENERAL**：API 请求发到哪（MOCK / REAL）、发通知、每月上限（`$` + 数字框）、这个月花了（20 格的进度条，左边写「花了 / 上限」；到 80% 琥珀、到上限红）、每个任务最多几轮（默认 40）、ONE SHOT 最多几轮（12）、额度提醒（开关在数字框左边，关了框变灰）。数字框一样宽、左右对齐，单位在框外占固定的宽。
-- **PROVIDERS**：每家一块：Key 框 + SAVE + REMOVE；Aliyun 下面一行选地域（BEIJING / SINGAPORE）和 SAVE；Vertex 一行两个方框（GCLOUD、PROJECT ID 的状态）；最下面 SEARCH 一块是 Tavily 的 Key（联网搜索的备用），PDF 一块是 Mathpix 的 App ID、App Key（两样都填了 Peck Loop 才有 `ocr_pdf`）。
-- **MEMORY**（v1.1.4）：一个项目一块，头上项目名和路径（移出列表的项目有记忆才列，排在最后、写「不在列表里」）；每条一行：字、谁提的和时间、EDIT（就地变输入框，SAVE / CANCEL，回车存、Esc 取消）、DELETE；最下面一行输入框「记一条：以后每次发任务都带上」+ ADD。项目设置里的 MEMORY 是同一块，只列这个项目。
-- **AGENTS**：「主角色」一行（下拉只列 API 模型 + 思考强度）；SUBAGENTS 五块，每块头上名字、一句做什么、开关，下面一行：模型（空着写「跟主角色」）、思考强度、最多几轮（24，member 40）、除了 auditor 都多一格「同时 N 个」（3，member 2）。思考强度按模型记，这里调的和 AGENTS 面板里的是同一档；关了的整块变暗。
-- **QUOTA**：汇率；价格表 REFRESH；按家分组，一行一个模型（进、出、缓存命中、缓存写入、分档、高峰倍数），EDIT 就地改，改过的标 EDITED、能 RESET，ADD MODEL 加自己的。
-- **ACCESS**：默认档、五类高危、「总是允许」能撤。**CLI**：CLI 目录，四家的色点 / 版本 / 位置（FOUND / NOT FOUND），Claude Code、Codex 的 LOGIN / RELOGIN。**LOOK**：明暗、编辑器（能打字的下拉）、App 图标 J2 / A3。
-- **PLUGINS**：三块。BUILT-IN、LIBRARY 一行一个插件（名字、版本、说明），点名字展开一张清单：SKILL、COMMAND（怎么打、参数、做什么）、TOOL、HOOK（什么时候、问哪一句、Peck 跑什么）、MCP；库里的右边一个 EVERY PROJECT 开关，单独的 Skill 带 SKILL 标签。MCP SERVERS 一行一台，TEST 列出工具（只读的带锁、会删改的写出来）；编辑时有「钥匙串」一行存要保密的变量。
+**统一排法**（v1.1.6，设置、项目设置、小窗都照这个；样式在 `app.css` 的 `.set-scope`）：
+
+- 一行：左边名字和一行状态，右边控件。**每行一样高**；名字、状态都不换行，放不下就省略。
+- 右边的主控件（输入框、下拉、能打字的下拉、进度条）**一样宽**、右边对齐，分段至少这么宽；控件一样高；单位写在框里右边（`轮`、`%`、`USD`）。
+- 小按钮一样宽。每行都有的按钮放最右边，有时才有的（RESET、UPDATE、CLEAR）放它左边，几行的按钮就对齐。
+- 一行放不下的做成**一块两行**：头一行和普通行一样（名字、状态、开关），下面一行是固定的格子，几块的格子对齐（没有的那格空着）。窗口窄时格子换成两行两列，按钮多的列表（归档、MCP、价格表）每行变成两行、按钮在下面——都是整组一起变，不是自动换行。
+- 一组的按钮（READ KEYS、RECHECK、CHECK ALL、ADD SERVER、ADD MODEL）放在组头右边。
+- 要编辑一串东西（项目记忆）、看一个东西的全部（插件）用**小窗**：盖住整个窗口，点外面、Esc、CLOSE 都关；里面的菜单、改字的框先收自己的 Esc。
+
+各组：
+
+- **GENERAL**：API 请求发到哪（MOCK / REAL）、发通知、每月上限（框里写 USD）、这个月花了（名字下面写「花了 / 上限」，右边一格和输入框一样大的 20 格进度；到 80% 琥珀、到上限红）、每个任务最多几轮（默认 40）、ONE SHOT 最多几轮（12）、额度提醒（开关在数字框左边，关了框变灰）。
+- **PROVIDERS**：两组。API KEYS（组头 READ KEYS）每家一块：头一行名字和状态（SAVED / NO KEY / NOT READ），下面一行 Key 框 + SAVE + REMOVE；Aliyun 头一行多一个地域（BEIJING / SINGAPORE，点了就存）；最后一块是 Vertex AI：头一行 Location 框和状态（先说缺的：NO GCLOUD、NO PROJECT ID，都有是 SAVED），下面一行 Project ID + SAVE（和 Location 一起存）+ REMOVE（清掉 Project ID）。TOOL KEYS：Tavily（联网搜索的备用）、Mathpix App ID、App Key（两样都填了 Peck Loop 才有 `ocr_pdf`），一样的块。
+- **MEMORY**：一个项目一行：名字，下面「几条 · 路径」（移出列表的项目有记忆才列，排在最后、写「不在列表里」），右边 EDIT 开这个项目的记忆小窗。小窗：头上项目名和路径；一条一块，字照原样换行，下面谁提的和时间、DELETE（点两下）、EDIT（就地变多行的框，⌘↵ 存、Esc 取消）；最下面一个多行的框 + ADD 自己记一条。项目设置里的 MEMORY 是一行「这个项目的记忆」+ EDIT，开同一个小窗。
+- **AGENTS**：MAIN 一块（主角色：下拉只列 API 模型 + 思考强度）；SUBAGENTS 五块，头一行名字、一句做什么、开关，下面一行四格：模型（空着写「跟主角色」）、思考强度、最多几轮（24，member 40）、同时几个（3，member 2；auditor 没有，那格空着）。思考强度按模型记，这里调的和 AGENTS 面板里的是同一档；关了的整块变暗。
+- **QUOTA**：汇率（框里写 CNY / USD）；价格表（组头那一行 ADD MODEL、REFRESH）；按家分组，一行一个模型（进、出、缓存命中、缓存写入、分档、高峰倍数，太长省略、悬停看全），EDIT 在最右、就地改，改过的标 EDITED、左边多一个 RESET，自己加的能 DELETE。
+- **ACCESS**：默认档、五类高危、「总是允许」能撤。**CLI**：ENGINES（组头 RECHECK）：CLI 目录一块，四家的色点 / 版本 / 位置（FOUND / NOT FOUND）；LOGIN（组头 CHECK ALL）：Claude Code、Codex 的 LOGIN / RELOGIN、CHECK。**LOOK**：明暗、编辑器（能打字的下拉）、App 图标 J2 / A3。
+- **PLUGINS**：BUILT-IN、LIBRARY 两组卡片，两栏（窗口窄时一栏）；每张只有图标、名字、两行简介。图标按名字算出来的 5×5 像素（左右对称），插件青色、单独的 Skill 淡紫。点开小窗：图标、名字、版本、BUILT-IN / LIBRARY / SKILL、全部说明；库里的多一行「每个项目都装」；PROJECTS 列左栏的全部项目，自带的每个项目一个开关，库里的写装着哪一版，INSTALL / UPDATE / REMOVE（点两下）；CONTENTS 是它带的 SKILL、COMMAND（怎么打、参数、做什么）、TOOL、HOOK（什么时候、问哪一句、Peck 跑什么）、MCP。MCP SERVERS（组头 ADD SERVER）一行一台，TEST 列出工具（只读的带锁、会删改的写出来）；编辑时有「钥匙串」一块存要保密的变量。
 - **ARCHIVE**：见上。**KEYS**：键盘一览。
 
-**项目设置**（右键 → 项目设置）：名字、文件夹、默认谁来干和权限、FOLDERS（每行 READ / WRITE）、ENV（`NAME=value`）、PLUGINS（和设置里一样一行一个、点名字展开：自带的带 BUILT-IN 标签和开关；库里的没装是暗的、右边 INSTALL，装着的 REMOVE（点两下），有新版多一个青色的版本标签和 UPDATE）、SKILLS（项目自己的和插件带进来的：名字、在哪、哪个插件的、描述、开关；用了几次、30 天没用的琥珀色、有旧版的能 RESTORE）、MCP（`.mcp.json` 里的和设置里的放在一起：名字、出处、命令、开关、TEST）、MEMORY、「总是允许」过的、ARCHIVE ALL TASKS、移出列表。
+**项目设置**（右键 → 项目设置）：名字、文件夹、默认谁来干和权限、FOLDERS（每行 READ / WRITE）、ENV（`NAME=value`）、PLUGINS（和设置里一样的卡片：这个项目里关着、没装的暗一些，库里有新版的名字后面多一个青色的版本号；点开同一个小窗，PROJECTS 只有这个项目）、SKILLS（项目自己的和插件带进来的：名字、在哪、哪个插件的、描述、开关；用了几次、30 天没用的琥珀色、有旧版的能 RESTORE）、MCP（`.mcp.json` 里的和设置里的放在一起：名字、出处、命令、开关、TEST）、MEMORY（一行 + EDIT 开小窗）、「总是允许」过的、ARCHIVE ALL TASKS、移出列表。
 
 **额度与花费**（顶栏 QUOTA）：顶上三块读数（这个月 API 花的和上限、近几天 CLI 折算的、DeepSeek 余额）；按引擎叠的每天柱子（7D / 30D / 90D）；按模型和引擎的横条；每个客户端一张订阅额度卡，每个窗口一条 20 格刻度，写还剩多少（剩 25% 起琥珀、10% 起红），没读到写原因、留上次的读数。
 

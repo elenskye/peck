@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.1.5**（2026-11-24）：CLI 新会话的第一句前面带上项目记忆；Antigravity 整个去掉（Google 条款风险）；清掉旧记录兼容和死代码，Peck Loop 和 CLI 两条发任务的流程合并成一套（`run.rs`）。v1.1.4 是设置里的 MEMORY、读 PDF / Notebook（PDFKit、Mathpix）、MCP 按需加载、SessionStart 和替 CLI 跑三个 Hook、Git Plan 的 HANDOFF 检查。
+**v1.1.6**（2026-11-24）：设置页统一排法（行一样高、控件一样宽、放不下做成两行的块，不自动换行）；PROVIDERS 只分 API KEYS、TOOL KEYS，Vertex AI 并进 API KEYS；MEMORY 改成项目一行 + 记忆小窗；PLUGINS 改成两栏卡片 + 小窗，能按项目装、开关。v1.1.5 是 CLI 新会话带项目记忆、去掉 Antigravity、清旧兼容和死代码、两条发任务的流程合并。
 
 ## 定位
 
@@ -61,4 +61,4 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.5 | — | — | 0 | 没有真跑 |
+| v1.1.6 | — | — | 0 | 没有真跑 |

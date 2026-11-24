@@ -2562,7 +2562,7 @@ async fn read_job(kit: ReadKit, name: String, input: Value) -> ReadOut {
 /// `ocr_pdf`（v1.1.4）：在本机把要读的几页拆成一份小 PDF，只把它送 Mathpix；识别成了按页记费用。
 async fn ocr_job(kit: ReadKit, input: Value) -> ReadOut {
     let Some(mathpix) = kit.ocr.clone() else {
-        return ReadOut::of(ToolStatus::Denied, "这个任务没有 Mathpix（设置 → PROVIDERS → PDF 填 Key 才有）。用 read_pdf。".into());
+        return ReadOut::of(ToolStatus::Denied, "这个任务没有 Mathpix（设置 → PROVIDERS → TOOL KEYS 填 Key 才有）。用 read_pdf。".into());
     };
     let ctx = kit.ctx.clone();
     let prepared = tokio::task::spawn_blocking(move || -> Result<(String, u32, Vec<u32>, PathBuf), String> {

@@ -4,7 +4,7 @@
 //!   （multipart：`file` + `options_json`）；每 2 秒查一次 `GET /v3/pdf/{id}`，`completed` 了取 `.mmd`（Mathpix Markdown：
 //!   公式是 LaTeX，表格是 LaTeX 的 tabular），最后 `DELETE` 掉它那边的文件和结果（删不掉的在结果里写一句）。
 //!   最多等 5 分钟，站主按停就不等了（也删）。
-//! - 认证是两个请求头 `app_id`、`app_key`（设置 → PROVIDERS → PDF，存在钥匙串「其他」那一包）。错误大多是 HTTP 200 带
+//! - 认证是两个请求头 `app_id`、`app_key`（设置 → PROVIDERS → TOOL KEYS，存在钥匙串「其他」那一包）。错误大多是 HTTP 200 带
 //!   `error_info.id`，所以每次都看 body。
 //! - 费用：每页 $0.005（官网 v3/pdf 的价，100 万页以内），按送去的页数记，算进这个任务和花费上限。
 //! - 模拟模式不联网，给一段假的结果、不记费用。
