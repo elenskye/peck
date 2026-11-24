@@ -8,6 +8,38 @@ import type { ClientCard } from "@/lib/usage";
 /** CLI 引擎 id → QUOTA 页客户端卡片的 id。 */
 const CLIENT_OF: Record<string, string> = { "claude-code": "claude-code", codex: "codex", muse: "muse-code", grok: "grok" };
 
+/** 这家 CLI 的额度卡片（QUOTA 页那一张）。 */
+export function cardOf(id: string, cards: ClientCard[]): ClientCard | null {
+  const engine = id.startsWith("cli:") ? id.slice(4) : null;
+  return (engine && cards.find((c) => c.client === CLIENT_OF[engine])) || null;
+}
+
+/** 窗口的名字：有时长就按时长叫（5 小时、每周），不然把客户端给的长名字收短。 */
+export function windowName(label: string, mins: number | null | undefined): string {
+  // 已经是中文名字的（「5 小时」「每周」「每周 Sonnet」）照写。
+  if (/[一-鿿]/.test(label) && !label.includes("·")) return label;
+  if (mins) {
+    if (mins < 1440) return `${Math.round(mins / 60)} 小时`;
+    if (mins === 1440) return "每天";
+    if (mins === 10080) return "每周";
+    if (mins >= 40000 && mins <= 45000) return "每月";
+    return `${Math.round(mins / 1440)} 天`;
+  }
+  const parts = label.split("·").map((x) => x.trim()).filter(Boolean);
+  const name = parts.find((p) => /primary|secondary/i.test(p)) ?? parts.find((p) => /[一-鿿]/.test(p)) ?? parts[0] ?? label;
+  if (/primary/i.test(name)) return "短窗口";
+  if (/secondary/i.test(name)) return "长窗口";
+  return name.length > 6 ? `${name.slice(0, 6)}…` : name;
+}
+
+/** 多久以后重置。 */
+export function resetIn(at: number): string {
+  const ms = at - Date.now();
+  if (ms <= 0) return "已经";
+  const h = ms / 3_600_000;
+  return h < 1 ? `${Math.ceil(ms / 60_000)} 分钟后` : h < 48 ? `${Math.round(h)} 小时后` : `${Math.round(h / 24)} 天后`;
+}
+
 /** 一家的窗口读数：已用百分比读得到的那几个。 */
 function windows(id: string, cards: ClientCard[]): Array<{ label: string; pct: number }> {
   const engine = id.startsWith("cli:") ? id.slice(4) : null;

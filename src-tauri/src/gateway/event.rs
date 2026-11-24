@@ -176,9 +176,16 @@ pub enum EventBody {
         /// 能不能自己写答案。
         #[serde(default = "yes")]
         free_text: bool,
+        /// 一次问了几个问题，或者有能多选的（v1.1.9）：每个问题自己的选项，卡片一个个画、各自作答
+        /// （`Control::Answer.answers` 照这个顺序）。只有一个单选的问题时为空，看上面的 `question`、`options`。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        questions: Vec<AskQuestion>,
     },
     #[serde(rename = "user_input.resolved")]
     UserInputResolved { request_id: String, answer: String },
+    /// 任务跑着时站主追加的一句（v1.1.9）：记在过程里当时那一处；交给引擎是 `Control::Append`。
+    #[serde(rename = "user.appended")]
+    UserAppended { text: String },
 
     // ── 子任务 ──
     #[serde(rename = "subagent.started")]
@@ -378,6 +385,7 @@ impl EventBody {
             Self::ApprovalResolved { .. } => "approval.resolved",
             Self::UserInputRequested { .. } => "user_input.requested",
             Self::UserInputResolved { .. } => "user_input.resolved",
+            Self::UserAppended { .. } => "user.appended",
             Self::SubagentStarted { .. } => "subagent.started",
             Self::SubagentCompleted { .. } => "subagent.completed",
             Self::AgentsRoster { .. } => "agents.roster",
@@ -402,7 +410,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 36] = [
+    pub const TYPE_NAMES: [&'static str; 37] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -420,6 +428,7 @@ impl EventBody {
         "approval.resolved",
         "user_input.requested",
         "user_input.resolved",
+        "user.appended",
         "subagent.started",
         "subagent.completed",
         "agents.roster",
@@ -691,6 +700,21 @@ impl ApprovalDecision {
     }
 }
 
+/// 一次问几个问题时的一个（v1.1.9）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestion {
+    /// 这个问题的短名（CLI 给的 `header`：「VER」「TRUST」）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// 能选好几个。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multi: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResolvedBy {
@@ -836,6 +860,7 @@ mod tests {
     fn type_names_match_serialized_tags() {
         let samples = vec![
             EventBody::TurnStarted { turn_id: "t".into() },
+            EventBody::UserAppended { text: "顺便".into() },
             EventBody::TrustPrompt { request_id: "trust-r".into(), engine: "muse".into(), label: "Muse".into() },
             EventBody::TrustResolved { request_id: "trust-r".into(), trusted: true },
             EventBody::Notice {

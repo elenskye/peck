@@ -161,15 +161,6 @@ body { overflow: hidden; }
 .composer-who span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-who:hover span { color: var(--color-cyan-text); }
 .composer-who:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: 2px; }
-.log { display: flex; flex-direction: column; }
-.log li { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: var(--space-4); padding: var(--space-3) 0; border-top: 1px dotted var(--color-line-strong); }
-.log li:first-child { border-top: 0; padding-top: 0; }
-.log-t { font-family: var(--font-dots); font-weight: 900; font-size: var(--text-label); line-height: var(--leading-name); color: var(--color-text-3); }
-.log b { display: block; }
-.log-n { display: block; font-size: var(--text-small); color: var(--color-text-2); }
-/* PLOOP 的成员名单（v1.1.2）：在 LOG 时间线上面，名字列宽一点（EXPLORER 这类）。 */
-.log-roster { margin-bottom: var(--space-5); padding-bottom: var(--space-4); border-bottom: 1px dotted var(--color-line-strong); }
-.log-roster li { grid-template-columns: 72px minmax(0, 1fr); }
 
 /* ---------- 中栏：新任务、对话、输入位 ---------- */
 .home { gap: var(--space-6); }
@@ -195,6 +186,8 @@ body { overflow: hidden; }
 .you { flex: none; display: flex; align-items: baseline; gap: var(--space-5); padding: 0 var(--space-2); }
 .you .t-label { color: var(--color-text-3); }
 /* `/compact` 那一次（v1.1.7）：不画 YOU，一行「压缩上下文」。 */
+/* 任务跑着时追加的一句（v1.1.9）：在过程里当时那一处 */
+.you--mid { padding: var(--space-3) 0; }
 .you-compact { flex: none; display: flex; align-items: center; gap: var(--space-4); margin: 0; padding: 0 var(--space-2); font-size: var(--text-small); color: var(--color-text-2); }
 .you-compact .t-label, .you-compact .pk-i { color: var(--color-text-3); }
 .you-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -434,7 +427,9 @@ body { overflow: hidden; }
 .you-text.md p { margin: 0; }
 
 .md-editor { flex: 1; min-width: 0; min-height: 22px; font-size: 13.5px; }
-.md-editor .cm-editor { max-height: 132px; }
+.md-editor .cm-editor { max-height: var(--md-max, 132px); }
+/* 中栏的输入框（v1.1.9）：跟着内容长高，到半个窗口才开始滚 */
+.composer .md-editor { --md-max: min(48vh, 520px); }
 .composer-in.is-off .md-editor { opacity: .6; }
 .composer-cost { font-size: var(--text-small); color: var(--color-text-3); white-space: nowrap; }
 
@@ -458,7 +453,9 @@ body { overflow: hidden; }
 .agent-line.is-bad { color: var(--color-bad); }
 .agent-asked { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-6); border-left: 2px solid var(--color-warn-line); font-size: var(--text-small); color: var(--color-text-2); }
 .agent-asked .t-label { margin-right: var(--space-4); color: var(--color-warn); }
-.agent-answer { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text); }
+.agent-answer { display: flex; align-items: flex-start; gap: var(--space-4); color: var(--color-text); white-space: pre-wrap; }
+.agent-answer .pk-i { margin-top: 3px; }
+.agent-asked > p:first-child { white-space: pre-wrap; }
 .agent-usage { font-size: var(--text-small); color: var(--color-text-3); padding-top: var(--space-3); border-top: 1px dotted var(--color-line); }
 .agent-card { position: relative; margin-top: var(--space-3); }
 .agent-card-detail { margin: var(--space-3) 0; padding: var(--space-4) var(--space-6); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-code); color: var(--color-text); }
@@ -624,6 +621,21 @@ body { overflow: hidden; }
 .web-link:hover { color: var(--color-text); }
 .ctx-ring:hover rect:not(.is-on) { fill: var(--color-line-strong); }
 .ctx-ring:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+/* 额度环（v1.1.9）：和上下文的 12 个点并排，是一段实心的弧；读不到画虚线 */
+.quota-ring { display: inline-flex; align-items: center; justify-content: center; width: var(--size-button-sm); height: var(--size-button-sm); margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.quota-ring circle { fill: none; stroke-width: 3; }
+.quota-ring-track { stroke: var(--color-block-off); }
+.quota-ring-arc { stroke: var(--color-cyan-text); }
+.quota-ring.is-warn .quota-ring-arc { stroke: var(--color-warn); }
+.quota-ring.is-bad .quota-ring-arc { stroke: var(--color-bad); }
+.quota-ring.is-unknown .quota-ring-track { stroke-dasharray: 2 2.32; }
+.quota-ring:hover .quota-ring-track { stroke: var(--color-line-strong); }
+.quota-ring:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+.quota-rows { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.quota-rows li { display: grid; grid-template-columns: 52px minmax(0, 1fr) 36px auto; gap: var(--space-4); align-items: center; font-size: var(--text-small); color: var(--color-text-2); }
+.quota-rows b { font-weight: 400; text-align: right; color: var(--color-text); }
+.quota-rows em { font-style: normal; min-width: 64px; text-align: right; color: var(--color-text-3); white-space: nowrap; }
+.quota-rows li.is-stale { opacity: .5; }
 .ctx-pop { min-width: 300px; max-width: 320px; }
 .ctx-pop > .pk-mod { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-6) var(--space-7); }
 .ctx-bar { display: grid; grid-template-columns: repeat(20, 1fr); gap: var(--space-1); }
@@ -676,6 +688,10 @@ body { overflow: hidden; }
 .skill-history { margin: 0 0 var(--space-3) var(--space-8); border-left: 1px dotted var(--color-line-strong); padding-left: var(--space-6); }
 .skill-history .set-row:first-child { border-top: 0; }
 /* 小窗（v1.1.6）：盖住整个窗口，中间一块模块；里面整块放大 7/6（和设置页一样），窗口本身按屏幕尺寸算。 */
+/* 附图点开看大的（v1.1.9）：盖住整个窗口，点哪都关 */
+.lightbox { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: var(--space-10); background: color-mix(in srgb, var(--color-page) 86%, transparent); cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; box-shadow: 0 0 0 1px var(--color-line-strong); }
+.composer-shot img { cursor: zoom-in; }
 .modal-scrim { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--space-11); background: color-mix(in srgb, var(--color-page) 72%, transparent); }
 .modal { display: flex; flex-direction: column; width: min(720px, 100%); max-height: calc(100vh - 2 * var(--space-11)); outline: none; }
 .modal > * { zoom: 1.16667; }
@@ -791,6 +807,9 @@ body { overflow: hidden; }
 .composer-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .composer-shot button { position: absolute; top: 2px; right: 2px; display: inline-flex; padding: 1px; border: 0; background: var(--color-panel); color: var(--color-text-2); cursor: pointer; }
 .composer-shot button:hover { color: var(--color-bad); }
+/* ASK 一次问几个（v1.1.9）：一个问题一段，中间一条虚线；问题前面是它的短名 */
+.ask-q + .ask-q { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px dashed var(--color-line); }
+.ask-q-head { margin-right: var(--space-3); color: var(--color-text-3); }
 /* + 附的文档、文件夹（v1.1.8）：一片一个，叉掉 */
 .composer-upload { cursor: default; max-width: 220px; }
 .composer-upload button { display: inline-flex; padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }

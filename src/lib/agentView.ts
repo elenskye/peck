@@ -5,7 +5,7 @@
 // - 没批、没答的审批和 ASK 单独拿出来做卡片；任务清单取最新的一份；
 // - 花费：这一次的进、出、缓存命中、美元（CLI 估的标「估」，不知道的写「未知」，不当 0）。
 // - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、后台命令、模型想记住的几条。
-import type { AgentEvent, ApprovalDecision, BackgroundKind, BoardItem, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, FileDiff, PlanStep, ResolvedBy, SkillReviewStatus, SkillScope, TokenUsage, ToolKind, ToolStatus } from "@/lib/agentEvents";
+import type { AgentEvent, ApprovalDecision, AskQuestion, BackgroundKind, BoardItem, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, FileDiff, PlanStep, ResolvedBy, SkillReviewStatus, SkillScope, TokenUsage, ToolKind, ToolStatus } from "@/lib/agentEvents";
 
 export interface ToolView {
   callId: string;
@@ -45,6 +45,8 @@ export interface AskView {
   question: string;
   options: string[];
   freeText: boolean;
+  /** 一次问了几个（v1.1.9）：一个个画、各自作答。 */
+  questions: AskQuestion[];
   answer?: string;
 }
 
@@ -82,6 +84,8 @@ export type ViewItem =
   | { kind: "asked"; id: string; ask: AskView }
   | { kind: "approved"; id: string; approval: ApprovalView }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
+  /** 任务跑着时站主追加的一句（v1.1.9）。 */
+  | { kind: "appended"; id: string; text: string }
   /** 站主在 TRUST 卡片上批了（v1.1.8）：留一行。 */
   | { kind: "trusted"; id: string; label: string }
   | { kind: "error"; id: string; text: string }
@@ -291,7 +295,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         break;
       }
       case "user_input.requested":
-        asks.set(e.requestId, { requestId: e.requestId, question: e.question, options: e.options ?? [], freeText: e.freeText ?? true });
+        asks.set(e.requestId, { requestId: e.requestId, question: e.question, options: e.options ?? [], freeText: e.freeText ?? true, questions: e.questions ?? [] });
         break;
       case "user_input.resolved": {
         const a = asks.get(e.requestId);
@@ -308,6 +312,9 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
       }
       case "notice":
         view.items.push({ kind: "notice", id: `n-${e.seq}`, level: e.level, text: e.text });
+        break;
+      case "user.appended":
+        view.items.push({ kind: "appended", id: `ua-${e.seq}`, text: e.text });
         break;
       case "trust.prompt":
         view.trust = { requestId: e.requestId, label: e.label };
@@ -632,8 +639,8 @@ export function waitingOnYou(events: AgentEvent[]): boolean {
   const open = new Set<string>();
   const skills = new Set<string>();
   for (const e of events) {
-    if (e.type === "approval.requested" || e.type === "user_input.requested") open.add(e.requestId);
-    else if (e.type === "approval.resolved" || e.type === "user_input.resolved") open.delete(e.requestId);
+    if (e.type === "approval.requested" || e.type === "user_input.requested" || e.type === "trust.prompt") open.add(e.requestId);
+    else if (e.type === "approval.resolved" || e.type === "user_input.resolved" || e.type === "trust.resolved") open.delete(e.requestId);
     else if (e.type === "turn.completed") open.clear();
     else if (e.type === "skill.proposed") skills.add(e.proposalId);
     else if (e.type === "skill.reviewed" && e.status !== "failed") skills.delete(e.proposalId);

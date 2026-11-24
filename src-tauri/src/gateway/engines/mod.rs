@@ -431,6 +431,27 @@ pub(crate) mod testing {
     use crate::gateway::event::{AgentEvent, ApprovalDecision};
     use crate::gateway::Control;
 
+    /// Codex、Muse 不报花费，事件出口按会话的模型估了一个（v1.1.9，`log::estimate_cli_cost`）：和转换器的夹具比之前
+    /// 把估的拿掉（夹具里是「未知」），顺手确认确实估过。
+    pub fn without_estimates(events: Vec<crate::gateway::convert::Emitted>) -> Vec<crate::gateway::convert::Emitted> {
+        use crate::gateway::event::{Cost, CostSource};
+        let mut estimated = 0;
+        let out = events
+            .into_iter()
+            .map(|mut e| {
+                if let EventBody::UsageUpdated { cost, .. } = &mut e.body {
+                    if cost.source == CostSource::Estimated {
+                        estimated += 1;
+                        *cost = Cost::unknown();
+                    }
+                }
+                e
+            })
+            .collect();
+        assert!(estimated > 0, "CLI 的用量没估出花费");
+        out
+    }
+
     /// 每来一个审批就按 `decide` 回答；提问一律回答 `answer`。返回 sink 和收到的事件。
     pub fn auto_answer(
         engine: &str,
@@ -442,6 +463,9 @@ pub(crate) mod testing {
         let seen = events.clone();
         // 真跑（live_*）时 `PECK_LIVE_LOG` 给一个文件：每个事件整条写一行 JSON，过程长也查得到。
         let log = std::env::var("PECK_LIVE_LOG").ok().map(std::path::PathBuf::from);
+        // 真跑时 `PECK_LIVE_APPEND=<一句话>`：第一步工具调用开始时追加这一句（验中途插话，v1.1.9）。
+        let append = std::env::var("PECK_LIVE_APPEND").ok().filter(|t| !t.trim().is_empty());
+        let appended = std::sync::atomic::AtomicBool::new(false);
         let sink = EventSink::new("test-run", None, engine, None, move |e: &AgentEvent| {
             if let Some(path) = &log {
                 use std::io::Write;
@@ -458,10 +482,12 @@ pub(crate) mod testing {
                     });
                 }
                 EventBody::UserInputRequested { request_id, .. } => {
-                    let _ = control.send(Control::Answer {
-                        request_id: request_id.clone(),
-                        answer: answer.into(),
-                    });
+                    let _ = control.send(Control::answer(request_id.clone(), answer));
+                }
+                EventBody::ToolCallStarted { .. } if e.subagent_id.is_none() => {
+                    if let Some(text) = append.as_ref().filter(|_| !appended.swap(true, std::sync::atomic::Ordering::SeqCst)) {
+                        let _ = control.send(Control::Append { text: text.clone() });
+                    }
                 }
                 _ => {}
             }

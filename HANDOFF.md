@@ -1,28 +1,40 @@
 # 当前交接
 
-更新：2026-11-24。**v1.1.8 做完了**（Muse 在 Peck 里开了头，Claude Code 审过、补完）；正式版还是 1.1.7，等 1.1.9 做完一起装。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。在做的版本：1.1.9。
+更新：2026-11-24。**v1.1.9 做完了，已装进 /Applications**（连同 1.1.8）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」和 [docs/design.md](./docs/design.md)「输入框」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 这一版做了什么（1.1.8）
+## 这一版做了什么（1.1.9）
 
-1. **开发准则**（站主定，优先级最高，进了 CLAUDE.md「界面」）：说明文字能不写就不写，必须写就写短。
-2. **输入框 `+`**（Muse 做的，收拾过）：附文档（多选）和文件夹（一次一个），最多 10 个、每个文件 10MB 以内；文件拷进这个任务的附件目录、文件夹只带路径，写在这一句后面，CLI 和 Peck Loop 都看得到。
-3. **TRUST 卡片**（站主在提问里定的：卡片上点 TRUST 就行、四家都管）：起 CLI 之前看它信没信任项目文件夹，没信任、站主也没批过就弹卡片，点了才起。批了记在项目设置里（项目设置多一个开关「CLI 信任这个文件夹」），以后每次带各家官方的开关：Muse、Codex、Claude Code 只对这一次进程生效，Grok 用它自己的 `--trust` 记进它的信任表。Muse 原来做的「打开终端自己点」去掉了。CLAUDE.md「边界」那句跟着改了。
-4. **FILES 的 ALL**（站主在提问里定的：加开关、默认藏）：有照 `.gitignore` 藏着的就多一片 ALL，点亮了变暗列出来，藏着的文件夹点开才读一层。底下那行「照忽略规则藏了 N 个」去掉了。
-5. **Muse、Grok 的订阅额度**：两家现在都读不到，不是 Peck 读错了——Muse 的官方接口对这个订阅回 `server_sent_no_usage`（命令行和会话里都一样，11-16 那次是最后一次有数）；Grok 的 `grok usage` 在这台机器的线路上不给套餐数据，只能在它里面 `/usage` 看。卡片上的原因改短改准了，手工记一笔还在。Muse 原来写的「跑一次 Grok 任务会自动带回」不对，去掉了。
-- 数据库没动（schema 11）。项目设置多了 `trusted`；事件多了 `trust.prompt`、`trust.resolved`；`AgentTask` 多了 `trusted`；`FileListing` 多了 `ignored`，新命令 `files_children`、`project_trust`、`dialog_pick_uploads`。没加依赖。
+1. **任务跑着时照样能发话**：正看着的任务在跑，输入框不锁，↵ 是接着说一句。PLOOP、Codex、Claude Code、Muse 马上送进去（后端本来就留着 `Control::Append`，这次接了界面、把这句话记进过程 `user.appended`）；Grok 的 ACP 一轮里插不了话，排在输入框上面，这一轮做完自动接着发、没做完放回输入框。这时不能用斜杠命令、不能带附件。
+2. **输入框右下角两个环**：上下文（12 个点，原来的；弹层里的说明文字都去掉了）和额度（一段实心的弧）。CLI 点开是这家订阅的几个窗口，环取用得最多的；读不到的画虚线，点开一句原因加 Peck 自己记的近 5 小时、近 7 天用量。PLOOP 是本月 API 花费 / 每月上限。
+3. **一次问几个问题**：Muse、Codex、Claude Code 一次问几个时，卡片一个问题一段、各选各的（能多选的是方框），都答了才能 SUBMIT，每个问题的答案各自送回去。以前只画第一个问题的选项、一个回答填给全部。
+4. **花费不再「未知」**：Muse、Codex 不报花费，现在按会话的模型查价格表估（标「估」）；以前存下的旧任务读的时候也补上。输入框旁真算不出时不写字。
+5. **Muse 的后台命令**：回合说完时问一次 `task/list`，有后台命令在跑就写一行「等 Muse 的 N 条后台命令跑完」、不关进程，等它跑完自己开下一回合接着收（最多 30 分钟，STOP 是不等了）。等的时候追加的话直接开成下一回合。
+6. **输入框**长到半个窗口才开始滚；**附图**点开放大。
+7. **右栏 LOG 去掉**（站主定的）：页签剩 FILES / ONE SHOT / PREVIEW / TERM（⌘1–⌘4）；对话里每次记录头上的按钮改叫 FILES。PLOOP 的成员名单不再显示（事件里还记着）。
+- 数据库没动（schema 11）。事件多了 `user.appended`，`user_input.requested` 多了 `questions`，`Control::Answer` 多了 `answers`。没加依赖。
+
+## 上一版（1.1.8，提交 `7a7fbec`）
+
+说明文字的准则进 CLAUDE.md；输入框 `+`（附文档、文件夹）；TRUST 卡片（四家都管，批了记在项目设置里、以后每次带各家官方的信任开关；Grok 用它自己的 `--trust`）；FILES 的 ALL；Muse、Grok 读不到额度时写明原因。项目设置多了 `trusted`，事件多了 `trust.prompt`、`trust.resolved`。
 
 ## Muse 那一轮的情况（站主问的）
 
-- **全量测试是谁在跑、跑完了吗**：是 Muse 自己的命令工具在跑（`cargo test`，它给自己设了等 5 分钟）。5 分钟没出结果它就把命令放到后台、接着改文档，然后说「测完我就写 HANDOFF」并结束了这一回合。CLI 的回合一结束 Peck 就收尾、关掉它的进程，后台那条命令跟着没了，也没有谁再叫醒它——所以 HANDOFF、装正式版、提交都没做。那 5 分钟大多花在编译上，测试本身只要几秒。
-- **留下的问题**：前端有一处语法错（`MiddleColumn.tsx` 多了一个 `}`），`pnpm check` 过不了——它那边跑不了前端检查，没发现。已修。
-- **三个问题只弹出第一个**：Muse 一次问了三个问题，Peck 的卡片只画了第一个问题的选项，站主的回答被原样填给了三个问题。1.1.9 修。
+- **全量测试是谁在跑、跑完了吗**：Muse 自己的命令工具在跑。它等了 5 分钟没出结果，把命令放到后台、接着改文档，说完「测完我就写 HANDOFF」这一回合就结束了。照 Muse 的设计，后台命令跑完它会自己再开一回合接着干（今晚真跑核实过）——但 Peck 以前在回合一结束就关掉它的进程，后台的测试跟着没了，它也没机会回来。**这是 Peck 的问题，1.1.9 修了**（第 5 条）。
+- **它留下的**：前端一处语法错（`MiddleColumn.tsx` 多了一个 `}`，它那边跑不了前端检查）、HANDOFF 没写、没装、没提交。都补上了。
+- **三个问题只弹出第一个**、**花费未知**：1.1.9 的第 3、4 条。
+- **额度**：今晚 Muse 的额度又读得到了（任务里报的、命令行读的都有：5 小时 14%、每周 10%）。11-16 到今天下午读不到时，它的服务器回的是「没有在计的窗口」（`server_sent_no_usage`），那 3 小时的任务里它也一次没报——原因在它那边，我只能猜（可能那段时间用的 Spark 1.3 没开计量窗口；今晚窗口是我用默认模型试的时候开的）。Grok 在这台机器的线路上官方就不给，只能在它里面 `/usage` 看。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（355 个；新加：TRUST 卡片等回答和收着别的控制、各家的信任开关、Codex 的信任表、NOT NOW 记着、藏着的文件清单和按层读、Muse 没给数据时的原因）；`pnpm check`、`pnpm build` 过。
-- **`?mock`**：peck 项目里选 CLI 发一句 → `[ TRUST ]` → 点 TRUST 留一行、接着回放；FILES 的 ALL 点亮、`node_modules` 点开读出一层；`+` 的小片。
-- **真 CLI（没花额度）**：`muse serve --trust-workspace` 建会话、用本地假 MCP 看——带了开关它才连 Peck 挂的 MCP；`codex -c projects={…} mcp list` 带了才读项目的 `.codex/config.toml`（点分的写法它不认）。
-- **没验的**：Grok 的 `--trust`（会往它的信任表里写一条，没替站主试；头一次在 Grok 任务的 TRUST 卡片上点了就知道，没记上会写一行）；Claude Code 的 `--settings`（`cli/bin` 的登录过期）；TRUST 卡片在正式版窗口里。
+- **自动测试**：全量 `cargo test` 过（360 个；新加：追加的话到引擎也进过程、几个问题各自的选项和答案、Claude Code 的多问题回答、CLI 花费估算和读旧事件时补、Muse 等后台命令回来和等的时候按 STOP）；`pnpm check`、`pnpm build` 过。
+- **`?mock`**（明暗各看过）：三问题卡片；跑着时追加（PLOOP 进过程、Grok 排队后自动发）；两个环和各自的弹层；附图放大；输入框 40 行时长到 413px 开始滚；LOG 页签没了；TRUST 卡片；FILES 的 ALL。
+- **真跑**（账本在 roadmap）：Muse 3 次——后台命令跑完它自己开下一回合（走协议看的），Peck 的引擎等到了那一回合（Spark、带 `--trust-workspace`），额度事件也到了；Codex 1 次——带信任开关，干活中途追加一句（`turn/steer`），最后照那句做了，花费估出来了。
+- **正式版**：装好了（`pnpm app:install`，版本号、签名核对过；用临时数据目录隔离着起了一次，能起来）；窗口里没点过。
+- **没验的**：
+  - Grok 的 `--trust`（会往它的信任表里写一条，没替站主试；头一次在 Grok 任务的 TRUST 卡片上点了就知道，没记上会写一行）和 Grok 的排队在真 CLI 上。
+  - Claude Code：`cli/bin` 的登录过期，信任开关（`--settings`）、多问题回答、追加都没在真的上面跑。
+  - Muse 的中途插话（`turn/steer`，代码没动）和三问题卡片在真 Muse 上：这一版 Muse 的 3 次用完了。
+  - 正式版窗口：1.1.8、1.1.9 的都没点过。
 
 ## 留给站主的
 
@@ -31,13 +43,20 @@
 - **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
 - **仓库里多了 `.agents/skills`**（指向 `.claude/skills` 的链接）：站主在 Peck 里第一次点开 peck 项目时 Peck 认结构建的，没跟踪、我没动，要不要提交站主定。
 - **Claude Code 重新登录**：设置 → CLI → LOGIN 里的 Claude Code（`cli/bin` 那份）登录过期了。登好以后要核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.8 的全部提交。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.9 的全部提交。
 - 以前留下、还没验的：1.1.6 的设置页在正式版窗口里；1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
 ## 已知问题
 
 | 问题 | 建议 |
 | --- | --- |
+| 排着的话（Grok）只在内存里，只在正看着那个任务时接着发；切到别的任务、重开 App 就不发了 | 记着 |
+| 任务跑着时追加的话带不了图和附件、用不了斜杠命令 | 记着 |
+| Claude Code 收到追加的话是排到它这一步之后；它已经在收尾时可能送不进去（会写一行） | 记着 |
+| TRUST 卡片等着时任务不往下走：定时任务碰到第一次要问的项目会一直等 | 先手动发一次、点掉 |
+| Muse 留着不停的后台命令（它起的 dev server）会让任务多等到 30 分钟才收 | 按 STOP 就收（照做完算） |
+| Claude Code 的 TRUST 卡片按「项目里有没有 `.mcp.json`」问：已经在 Claude Code 里批过的也会问一次 | 记着 |
+| CLI 的花费是按价格表估的 API 价，不是订阅真花的钱；旧任务按现在的价格补 | 记着 |
 | 以前版本的任务（v1.1.1 以前的接力、审查，v0.8 以前没记过程的）打开只剩状态和结果那一句（v1.1.5 删了兼容，站主定的） | 记着 |
 | 以前 Antigravity 跑过的任务，QUOTA 的图里算进 Peck Loop 那一色（它的用量大多没有花费） | 记着 |
 | 旧表 `api_calls`、`api_tasks`、`usage_calls`、`messages` 还在库里（几十行），删任务时那几行清理代码得留着（外键） | 要清就加一条迁移把四张表删掉 |
@@ -82,7 +101,7 @@
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
 
 ## 留意
 

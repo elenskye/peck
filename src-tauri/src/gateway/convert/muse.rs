@@ -385,20 +385,7 @@ impl MuseConverter {
                     return vec![];
                 };
                 let questions = p["questions"].as_array().cloned().unwrap_or_default();
-                let first = questions.first().cloned().unwrap_or(Value::Null);
-                vec![EventBody::UserInputRequested {
-                    request_id: Self::input_id(id),
-                    question: questions
-                        .iter()
-                        .filter_map(|q| q["question"].as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    options: first["options"]
-                        .as_array()
-                        .map(|o| o.iter().filter_map(|x| x["label"].as_str().map(str::to_string)).collect())
-                        .unwrap_or_default(),
-                    free_text: true,
-                }]
+                vec![super::ask_event(Self::input_id(id), &questions, true, |q| q["selection"]["mode"] == "multiple")]
             }
             "session/contextUsage" => {
                 self.context = (p["usedTokens"].as_u64(), p["windowTokens"].as_u64());

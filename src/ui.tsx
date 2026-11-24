@@ -356,6 +356,23 @@ export const Modal: React.FC<{ label: string; onClose: () => void; children: Rea
   );
 };
 
+/** 一张图放大看（v1.1.9）：盖住整个窗口，点一下或 Esc 关。 */
+export const Lightbox: React.FC<{ src: string; alt: string; onClose: () => void }> = ({ src, alt, onClose }) => {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeRef.current(); } };
+    window.addEventListener("keydown", esc, true);
+    return () => window.removeEventListener("keydown", esc, true);
+  }, []);
+  return createPortal(
+    <div className="lightbox pk-anim-reveal-s" role="dialog" aria-modal="true" aria-label={alt} onClick={onClose}>
+      <img src={src} alt={alt} />
+    </div>,
+    document.querySelector(".app") ?? document.body,
+  );
+};
+
 /** 能打字、也能从下拉里挑的输入框（设置里的编辑器）：下拉是 Peck 的菜单，不用系统的 datalist。
  *  `emptyLabel` 给了就在最前面多一项「空着」（比如「系统默认」）。 */
 export const ComboField: React.FC<{ value: string; options: string[]; onChange: (v: string) => void; label: string; placeholder?: string; width?: number; emptyLabel?: string }> = ({ value, options, onChange, label, placeholder, width, emptyLabel }) => {

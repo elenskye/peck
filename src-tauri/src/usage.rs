@@ -195,9 +195,10 @@ pub fn parse_muse_usage(v: &Value, collected_at: i64) -> ClientCard {
     }
     if windows.iter().all(|w| w.used_percent.is_none()) {
         card.status = "fields_missing".into();
-        // `allowance: null` + `reason: server_sent_no_usage`：Muse 的服务器这次没给这个订阅的数据（2026-11-16 以后一直这样）。
+        // `allowance: null` + `reason: server_sent_no_usage`：Muse 的服务器这会儿没有在计的窗口、不给数据
+        // （2026-11-16 到 11-24 下午一直这样；窗口开着时任务里的 `usage/changed` 和这条命令都有）。
         card.failure_reason = Some(if v.get("reason").and_then(Value::as_str) == Some("server_sent_no_usage") {
-            "Muse 的服务器没给这个订阅的额度数据。".into()
+            "Muse 的服务器这会儿没给额度数据。".into()
         } else {
             "Muse 返回了，但没有已用比例。".into()
         });
@@ -1866,7 +1867,7 @@ mod tests {
         // 服务器没给数据（站主的订阅 2026-11-16 以后一直这样）：说清楚是它没给，不是没登录。
         let none = parse_muse_usage(&json!({"schemaVersion":1,"allowance":null,"reason":"server_sent_no_usage","hint":"…"}), 1);
         assert_eq!(none.status, "fields_missing");
-        assert!(none.failure_reason.unwrap().contains("服务器没给"));
+        assert!(none.failure_reason.unwrap().contains("没给额度数据"));
     }
 
     #[test]

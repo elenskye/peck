@@ -285,6 +285,7 @@ pub(crate) fn start_engine_run(
             }
             out(e);
         });
+        register_sink(&id, &sink);
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Info, text });
         }
@@ -461,6 +462,7 @@ pub(crate) fn start_engine_run(
         if let Ok(mut c) = controls().lock() {
             c.remove(&id);
         }
+        unregister_sink(&id);
 
         let (step_status, run_status, failure) = match &outcome {
             Ok(o) => match o.reason {
@@ -690,7 +692,38 @@ fn edit_in_bounds(path: &std::path::Path, root: &std::path::Path) -> bool {
 
 #[tauri::command]
 pub async fn gateway_control(run_id: String, control: Control) -> Result<(), String> {
+    // 任务跑着时站主追加的一句（v1.1.9）：交给引擎，再记进过程（对话里画在当时那一处，重开还在）。
+    if let Control::Append { text } = &control {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return Err("先写一句话。".into());
+        }
+        let sink = sinks().lock().ok().and_then(|s| s.get(&run_id).cloned());
+        route_control(&run_id, Control::Append { text: text.clone() })?;
+        if let Some(sink) = sink {
+            sink.emit(EventBody::UserAppended { text });
+        }
+        return Ok(());
+    }
     route_control(&run_id, control)
+}
+
+/// 在跑的任务的事件出口（追加的话记进过程用）：任务 id → sink。
+fn sinks() -> &'static Mutex<HashMap<String, EventSink>> {
+    static S: OnceLock<Mutex<HashMap<String, EventSink>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn register_sink(run_id: &str, sink: &EventSink) {
+    if let Ok(mut s) = sinks().lock() {
+        s.insert(run_id.to_string(), sink.clone());
+    }
+}
+
+pub(crate) fn unregister_sink(run_id: &str) {
+    if let Ok(mut s) = sinks().lock() {
+        s.remove(run_id);
+    }
 }
 
 /// 本机 MCP 里等着站主批的事（回退、提交走的子通道）：任务 id → [(审批、提问编号的前缀, 通道)]。
@@ -1207,6 +1240,23 @@ pub(crate) fn unregister_control(run_id: &str) {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    /// 任务跑着时追加一句（v1.1.9）：交给引擎，也记进过程；空话不收，任务结束了报错。
+    #[tokio::test]
+    async fn an_appended_sentence_reaches_the_engine_and_the_log() {
+        let (sink, events) = EventSink::memory("codex");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        register_control("run-append", tx);
+        register_sink("run-append", &sink);
+        gateway_control("run-append".into(), Control::Append { text: "  顺便把 README 也改了  ".into() }).await.unwrap();
+        assert_eq!(rx.recv().await, Some(Control::Append { text: "顺便把 README 也改了".into() }));
+        assert!(matches!(&events.lock().unwrap()[0].body, EventBody::UserAppended { text } if text == "顺便把 README 也改了"));
+        assert!(gateway_control("run-append".into(), Control::Append { text: "  ".into() }).await.is_err());
+        unregister_control("run-append");
+        unregister_sink("run-append");
+        assert!(gateway_control("run-append".into(), Control::Append { text: "晚了".into() }).await.is_err());
+        assert_eq!(events.lock().unwrap().len(), 1, "没送到的不记");
+    }
 
     /// TRUST 卡片（v1.1.8）：发出去、等站主点；等的时候来的追加先收着、问完放回去；按停就是没答。
     #[tokio::test]

@@ -282,24 +282,29 @@ const App: React.FC = () => {
   const onAgentEvent = useCallback((ctx: { projectId: string; taskId: string; prompt: string }, runId: string, event: AgentEvent) => {
     queueAgentEvent(runId, event);
     const s = settingsRef.current;
-    if ((event.type === "approval.requested" || event.type === "user_input.requested") && s.notifyDone && !document.hasFocus()) {
-      void ipc.notify(event.type === "approval.requested" ? "Peck · 等你批" : "Peck · 等你回答", event.type === "approval.requested" ? event.title : event.question).catch(() => {});
+    if ((event.type === "approval.requested" || event.type === "user_input.requested" || event.type === "trust.prompt") && s.notifyDone && !document.hasFocus()) {
+      void ipc.notify(event.type === "user_input.requested" ? "Peck · 等你回答" : "Peck · 等你批", event.type === "approval.requested" ? event.title : event.type === "trust.prompt" ? `让 ${event.label} 信任这个项目文件夹？` : event.question).catch(() => {});
     }
+    // 批了 TRUST（v1.1.8）：项目设置里那个开关跟着亮。
+    if (event.type === "trust.resolved" && event.trusted) void refreshProjects();
     if (event.type === "turn.completed") {
       // 收尾（快照、改动、任务记录）在后台，记录写好了再重读。大仓库拍快照慢：越等越久地看，最多三分多钟。
       void (async () => {
+        let settled = false;
         for (let i = 0, wait = 200; i < 120; i++, wait = Math.min(2000, Math.round(wait * 1.25))) {
           const loaded = await ipc.sessionGetRuns(ctx.taskId).catch(() => null);
           const record = loaded?.find((r) => r.id === runId);
           if (loaded && (!record || record.status !== "running")) {
             setRunsByTask((prev) => ({ ...prev, [ctx.taskId]: loaded }));
+            settled = true;
             break;
           }
           await new Promise((r) => setTimeout(r, wait));
         }
         setLive((prev) => { const next = { ...prev }; delete next[runId]; return next; });
         void refreshProjects();
-        if (s.notifyDone && !document.hasFocus()) {
+        // 回合说完了、任务记录还在跑（CLI 在等后台命令，跑完它会再开一回合，v1.1.9）：先不发「做完了」的通知。
+        if (settled && s.notifyDone && !document.hasFocus()) {
           const word = event.reason === "done" ? "做完了" : event.reason === "interrupted" ? "已停止" : "停下了";
           void ipc.notify(`Peck · ${word}`, plainLine(ctx.prompt).slice(0, 80)).catch(() => {});
         }
@@ -446,6 +451,45 @@ const App: React.FC = () => {
   const control = useCallback(async (runId: string, c: Control) => {
     await ipc.gatewayControl(runId, c);
   }, []);
+
+  // 任务跑着时接着发话（v1.1.9）：能中途插话的引擎（PLOOP、Codex、Claude Code、Muse）马上送进去，记在过程里；
+  // 插不了的（Grok）排着，这一轮做完自动接着发，没做完就放回输入框。排队只在内存里：任务号 → 那几句。
+  const [queued, setQueued] = useState<Record<string, string[]>>({});
+  const append = useCallback(async (text: string): Promise<boolean> => {
+    if (!taskId || !runningRunId || !runs.some((r) => r.id === runningRunId)) return false;
+    const record = runs.find((r) => r.id === runningRunId);
+    const started = (agentEvents[runningRunId] ?? []).find((e) => e.type === "session.started" && !e.subagentId);
+    const steer = started?.type === "session.started" ? started.caps.steer : record?.who?.startsWith("cli:") ? entries.find((e) => e.id === record.who)?.caps.steer ?? false : true;
+    try {
+      if (steer) await ipc.gatewayControl(runningRunId, { type: "append", text });
+      else setQueued((prev) => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), text] }));
+      setDraft("");
+      return true;
+    } catch (e) { say(e); return false; }
+  }, [taskId, runningRunId, runs, agentEvents, entries, say]);
+  const unqueue = useCallback((id: string, index: number) => setQueued((prev) => ({ ...prev, [id]: (prev[id] ?? []).filter((_, i) => i !== index) })), []);
+  // 排着的：这一轮做完了就照上一次的谁来干、哪一档接着发第一句；没做完（停了、失败）就都放回输入框。只在正看着这个任务时动。
+  const flushing = useRef(false);
+  useEffect(() => {
+    if (!taskId || busy || flushing.current) return;
+    const list = queued[taskId];
+    const last = runs[runs.length - 1];
+    if (!list?.length || !last || last.status === "running") return;
+    const entry = entries.find((e) => e.id === last.who) ?? null;
+    const back = (texts: string[]) => setDraft((d) => [d.trim(), ...texts].filter(Boolean).join("\n"));
+    if (last.status !== "succeeded" || !entry || !last.who) {
+      back(list);
+      setQueued((prev) => ({ ...prev, [taskId]: [] }));
+      return;
+    }
+    const [first, ...rest] = list;
+    flushing.current = true;
+    setQueued((prev) => ({ ...prev, [taskId]: rest }));
+    const s = settingsRef.current;
+    void send(first, last.who, last.permission ?? s.permission, sendEffort(entry, s), cliModelOf(entry, s))
+      .then((ok) => { if (!ok) back([first]); })
+      .finally(() => { flushing.current = false; });
+  }, [taskId, busy, queued, runs, entries, send]);
 
   const stop = useCallback(async () => {
     if (!runningRunId) return;
@@ -607,12 +651,12 @@ const App: React.FC = () => {
   };
   const selectTask = (pid: string, id: string | null) => { setPeek(null); setProjectId(pid); setTaskId(id); setPage(""); };
 
-  // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–5 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
+  // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–4 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
   // ⌘N、⌘[ ⌘] 只认左栏里的项目（看归档的任务时不在归档里翻）。
   const keysRef = useRef({ project: listed, taskId, page, wide, stop, selectTask, selectTab });
   keysRef.current = { project: listed, taskId, page, wide, stop, selectTask, selectTab };
   useEffect(() => {
-    const TABS: RightTab[] = ["files", "log", "oneshot", "preview", "term"];
+    const TABS: RightTab[] = ["files", "oneshot", "preview", "term"];
     const onKey = (e: KeyboardEvent) => {
       const k = keysRef.current;
       if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
@@ -629,7 +673,7 @@ const App: React.FC = () => {
       else if (key === "." && !e.shiftKey) { e.preventDefault(); void k.stop(); }
       else if (key === "," && !e.shiftKey) { e.preventDefault(); setSettingsAt(undefined); setPage((p) => (p === "settings" ? "" : "settings")); }
       else if (key === "l" && !e.shiftKey) { e.preventDefault(); setPage(""); window.setTimeout(() => document.querySelector<HTMLElement>(".md-editor .cm-content")?.focus(), 0); }
-      else if (/^[1-5]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); }
+      else if (/^[1-4]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); }
       else if ((key === "[" || key === "]") && k.project) {
         const list = k.project.tasks;
         if (!list.length) return;
@@ -742,6 +786,9 @@ const App: React.FC = () => {
                 draft={draft}
                 onDraft={setDraft}
                 onSend={send}
+                onAppend={append}
+                queued={taskId ? queued[taskId] ?? [] : []}
+                onUnqueue={(i) => { if (taskId) unqueue(taskId, i); }}
                 onCompact={compact}
                 onAppendEvent={(runId, event) => {
                   setAgentEvents((prev) => {
@@ -768,8 +815,9 @@ const App: React.FC = () => {
                   onDismiss: () => { setQuotaDismissed(`${hint.from}|${hint.text}`); setSwapOnce(null); },
                 } : null}
                 onNewTask={() => { if (project) selectTask(project.workspace.id, null); }}
+                clients={clients}
                 shownRunId={run?.id ?? null}
-                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab(path ? "files" : "log"); }}
+                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("files"); }}
                 onRunUpdated={(record) => { setRunsByTask((prev) => ({ ...prev, [record.sessionId]: (prev[record.sessionId] ?? []).map((r) => (r.id === record.id ? { ...r, ...record } : r)) })); void refreshProjects(); }}
                 missed={(schedules ?? []).filter((x) => x.workspaceId === project.workspace.id && !!x.missedAt)}
                 onMissed={onMissed}
@@ -778,7 +826,6 @@ const App: React.FC = () => {
             <RightColumn
               project={project}
               run={run}
-              events={run ? agentEvents[run.id] ?? [] : []}
               tab={tab}
               onTab={selectTab}
               wide={wide}

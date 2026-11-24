@@ -159,6 +159,9 @@ export interface AgentCaps {
 
 // ── 事件（event.rs 的 EventBody）──
 
+/** 一次问几个问题时的一个（v1.1.9）。 */
+export interface AskQuestion { header?: string | null; question: string; options: string[]; multi?: boolean }
+
 export type EventBody =
   | {
       type: "session.started";
@@ -222,8 +225,12 @@ export type EventBody =
       question: string;
       options: string[];
       freeText: boolean;
+      /** 一次问了几个问题、或者有能多选的（v1.1.9）：每个问题自己的选项。只有一个单选的问题时没有。 */
+      questions?: AskQuestion[];
     }
   | { type: "user_input.resolved"; requestId: string; answer: string }
+  /** 任务跑着时站主追加的一句（v1.1.9）。 */
+  | { type: "user.appended"; text: string }
   | { type: "subagent.started"; subagentId: string; parentCallId?: string | null; title: string; model?: string | null; kind?: string | null }
   | { type: "agents.roster"; members: RosterMember[] }
   | { type: "board.updated"; items: BoardItem[] }
@@ -261,7 +268,8 @@ export type AgentEvent = EventBody & {
 /** 控制通道：界面 → 引擎（mod.rs 的 Control）。 */
 export type Control =
   | { type: "approve"; requestId: string; decision: ApprovalDecision }
-  | { type: "answer"; requestId: string; answer: string }
+  /** `answers`（v1.1.9）：一次问了几个问题时每个问题各自的答案（照 `questions` 的顺序，一个问题一组）。 */
+  | { type: "answer"; requestId: string; answer: string; answers?: string[][] }
   | { type: "append"; text: string }
   | { type: "interrupt" };
 

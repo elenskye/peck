@@ -120,6 +120,10 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck Loop 同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **脚本 Hook**（v1.1.4，`cli_hooks.rs`）：Peck 替 CLI 跑开场时、发话时、收尾时三个（见「脚本 Hook」）。
 - **信任文件夹**（`trust.rs`，v1.1.8）：CLI 没信任项目文件夹时会悄悄少干事（Muse 不连 Peck 挂给它的工具，Grok、Codex 不读项目里的配置，Claude Code 不连 `.mcp.json` 里没批过的服务器）。起 CLI 之前只读地看一眼（Muse 读它的 `trust.json`、Grok 跑 `grok inspect --json`、Codex 读 `config.toml` 的 `[projects]` 且项目里有 `.codex/`、Claude Code 看项目有没有 `.mcp.json`）；没信任、站主也没批过，发 `trust.prompt` 等回答（`Control::Approve`，编号 `trust-<任务 id>`）。批了记进项目设置 `trusted`（Peck 自己记，`project_trust` 能关），之后每次起 CLI 带官方的开关：Muse `serve --trust-workspace`、Codex `-c projects={"<文件夹>"={trust_level="trusted"}}`（点分的写法它不认）、Claude Code `--settings {"enableAllProjectMcpServers":true}`，都只对这一次进程；Grok 没有只这一次的，用 `grok --trust mcp list` 让它自己记进信任表。Peck 不直接写任何 CLI 的文件。NOT NOW 记在内存里，这次打开不再问；转发 `/compact` 不问。
+- **提问**（v1.1.9，`convert::ask_event`）：三家的提问都是 `questions: [{header, question, options}]`。只有一个单选的问题照旧（`question` + `options`）；一次问几个、或者能多选的，每个问题自己的选项放进 `user_input.requested` 的 `questions`，卡片一个个画，`Control::Answer.answers` 照顺序带每个问题的答案，各家照它的格式回（Muse 每个问题一条 `freeText`，Codex 按问题 id 一组 `answers`，Claude Code `answers[问题原文]`、多选用「, 」连）。以前只画第一个问题的选项、一个回答填给全部。
+- **任务跑着时追加一句**（v1.1.9）：界面发 `Control::Append`，`gateway_control` 先交给引擎、再往过程里记一条 `user.appended`（任务的事件出口登记在 `runner::sinks`）。Codex、Muse 发 `turn/steer`，Claude Code 往 stdin 写一行 `user`，Peck Loop 攒着、下一次请求带上（「（站主追加）…」）；Grok 的 ACP 一轮里插不了话（`caps.steer` 是假），界面把这句排着，这一轮做完自动当下一句发。
+- **CLI 不报花费的按价格表估**（v1.1.9，`log::estimate_cli_cost`）：事件出口记着这个会话的模型（`session.started`），Muse、Codex 的 `usage.updated` 没有花费时按价格表折成 API 价、标 `estimated`；读旧任务的事件时也照现在的价格表补上。Claude Code、Grok 自己报的不动。
+- **Muse 的后台命令**（v1.1.9，`engines/muse.rs` 的 `Linger`）：Muse 的命令工具等久了会把命令放到后台、回合照常结束，后台命令跑完它自己再开一回合汇报。回合说完时先问一次 `task/list`：有后台命令在跑就写一行「等 Muse 的 N 条后台命令跑完」、不关进程，等到它开下一回合接着收（每 3 秒再问一次；最多等 30 分钟；都跑完 4 秒还没开回合就收）；这时按 STOP 是不等了、照做完收。没有后台命令的任务只多一次本地问询。Claude Code 的后台子代理 v0.9 起就这样等。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`。任务开头查一次，配了却没读到的写一行提示（TRUST 卡片问过、或者批过的项目不写）。
 - **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌，只对这一次进程挂上、不改 CLI 的配置。工具：`create_skill`、`restore_snapshot`、定时任务那三个（四家都给；项目里关掉的自带插件的不列、调了也不收）、`load_skill`（读自带插件的 Skill 全文：给了哪个自带插件的工具就能读它的）、`git_commit`（项目里装着 Git Plan、这一段不是只读的才给）、`ask_user`（Grok）。Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
 - **`/compact` 转给 CLI**（v1.1.7，`gateway_compact`）：续上这个任务里它的会话（没有就说没什么可压的），落成一次新记录；不带引用、记忆、文件夹说明，Peck 替它跑的 Hook 也不跑。各家怎么发见上表；用量和压缩事件转成 `context.updated`（带 `managedBy`：压缩由这一家自己管）和 `context.compacted`（`engine` 这一步）。不改 CLI 的配置（自动压缩阈值、压缩提示都不碰）。
@@ -290,7 +294,7 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
   - **主角色**：用文件工具改正划给 worker / member 的地方（在跑或排着队）直接拒，告诉它归谁、等报告回来再改；它的命令不拦。
 - **任务板**（v1.1.3，`agents::Board`，事件 `board.updated` 整份）：主角色派的 worker、member 一项一个（做什么、谁、第几个、划的文件、模型）。模型只写派给谁、做什么，进度由 Peck 照子代理的事件填：排队 → 在跑（排完队、拿到名额）→ 等你批（它的审批卡片没答）→ 做完 / 没做完 / 停了，带开始、做完的时刻。只管这一个任务回合，不做跨任务的。主角色自己那几步还是 `update_plan`，界面上和任务板放在一起。
 - **子代理**：同一个项目（独立工作区里就是那个工作区）、同一组 MCP；不问站主、不写清单和记忆、不碰快照和定时任务；只有 member 能再派（只派 explorer、searcher）。审批照样弹给站主（编号带 `agent-<n>-` 前缀，member 派的是 `agent-<n>-agent-<m>-`，按最长的前缀转给它的控制通道）。事件带 `subagentId`（= 派的那一步的调用 id），挂在那一步下面；`subagent.started` / `completed` 一律从主线发（它们自己就带 `subagentId`）。派的那一步等它做完才算完。用量带它的模型、算进任务和花费上限。停下、出错时一起叫停；member 收尾时它派的没回来就只叫停它下面的。
-- **缓存**：系统提示和工具说明只写怎么派、有哪几类，不写是哪个模型；名单（`agents.roster`，开头发一次）放在 LOG 里。换了设置，下一个任务的提示也不变。
+- **缓存**：系统提示和工具说明只写怎么派、有哪几类，不写是哪个模型；名单（`agents.roster`，开头发一次）只进事件日志（右栏的 LOG v1.1.9 去掉了）。换了设置，下一个任务的提示也不变。
 - **换引擎接着发**（`history::fork_context`）：Peck Loop 所有模型算一家，每个 CLI 一家。这一家上次以后别家做的几次做成 `<peck-fork>` 放在这句前面；原来的会话留着，换回去接得上。
 
 ## 脚本 Hook（`harness/script_hooks.rs`）
@@ -317,7 +321,7 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
 - **菜单栏和通知**（`tray.rs`）：空闲、在跑、等你；做完、失败、停下、等你批或答发通知（Peck 在最前面时不发）。
 - **图标**：`scripts/menubar-icons.mjs`、`scripts/app-icons.sh` 从 `src/vendor/peck/marks/` 出图到 `src-tauri/icons/`。
 - **贴图、拖图**：`tauri.conf.json` 设 `dragDropEnabled: false`，HTML5 拖放才能把图拖进输入框。
-- **键盘**（`src/App.tsx`）：⌘N、⌘L、⌘.、⌘[ ⌘]（上一个 / 下一个任务）、⌘1–⌘5、⌘,、Esc。
+- **键盘**（`src/App.tsx`）：⌘N、⌘L、⌘.、⌘[ ⌘]（上一个 / 下一个任务）、⌘1–⌘4、⌘,、Esc。
 
 ## Key 和模拟 / 真实（`src-tauri/src/api/`）
 
@@ -328,8 +332,9 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 顶栏 QUOTA（`usage.rs`、`spend.rs`、`UsagePage.tsx`）。官方来源见 [testing.md](./testing.md#额度与花费的真实来源)。
 
 - **Claude 订阅额度**：Claude 桌面 App 或 Claude Code 在跑时，定时在 `cli-probe/` 里跑 `claude -p /usage`（本地命令，不进模型、不花额度）。要 Claude Code 命令行按订阅登录；status line 的数据作补充（`integrations/statusline.py`）。
-- **别家**：CLI 报的 `quota.updated` 写进额度卡，缺数据不填 0；Muse 用 `muse usage --json`，Grok 用 `grok usage --json`——这两家现在都读不到（2026-11-24 核实：Muse 的服务器对站主的订阅回 `server_sent_no_usage`，会话里的 `usage/read` 也是空的；Grok 的 `grok usage` 只在它的 daemon 线路上给套餐数据，这台机器是 shell 线路，只能在它里面 `/usage` 看），卡片上写原因，手工记一笔还在；DeepSeek 余额只在真实模式下、有在跑的任务用到 DeepSeek（Peck Loop 直接用，或 PLOOP 里有一段是它）时查（`Store::deepseek_running`）。
+- **别家**：CLI 报的 `quota.updated` 写进额度卡，缺数据不填 0；Muse 两条路：任务里每回合末尾的 `usage/changed`（转成 `quota.updated`，写进额度卡）和 `muse usage --json`；它的服务器没有在计的窗口时两边都不给（`allowance: null`、`reason: server_sent_no_usage`，2026-11-16 到 11-24 下午一直这样，11-24 晚上又有了），卡片上写原因、留着上一次的读数。Grok 的 `grok usage` 只在它的 daemon 线路上给套餐数据，这台机器是 shell 线路，只能在它里面 `/usage` 看，任务里也不报；手工记一笔还在。DeepSeek 余额只在真实模式下、有在跑的任务用到 DeepSeek（Peck Loop 直接用，或 PLOOP 里有一段是它）时查（`Store::deepseek_running`）。
 - **图**（`spend_overview`）：事件日志里的 `usage.updated`，按模型记。CLI 按它会话的模型用价格表折成 API 价、标「估」（订阅不真花）。
+- **额度环**（v1.1.9，`QuotaRing.tsx`）：输入框右下角。CLI 用额度卡里这家的几个窗口（环取没过重置时间的里面用得最多的）；读不到时点开算 `spend_overview(7)` 里这家近 5 小时、近 7 天的用量。PLOOP 用 `harness_spend` 的本月花费比每月花费上限。
 - **额度提醒**（`src/lib/quota.ts`）：发任务前看这次要用到的 CLI 的 5 小时 / 每周窗口，用到阈值（默认 85%，能关）就提示换成另一家还够的 CLI。不自动换、不拦着发；读不到的不提示。
 
 ## 视觉、打包和签名

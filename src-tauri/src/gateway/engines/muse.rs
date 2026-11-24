@@ -103,11 +103,32 @@ pub(crate) struct Session {
     session_id: Option<String>,
     turn_id: Option<String>,
     approvals: HashMap<String, PendingApproval>,
-    questions: HashMap<String, (String, Vec<String>)>,
+    questions: HashMap<String, (String, Vec<Value>)>,
     finished: Option<TurnEndReason>,
     /// 转发 `/compact`（v1.1.7）：压缩那一条做完就算这一次完了。
     compacting: bool,
+    /// 回合说完了、还没收（v1.1.9）：Muse 的后台命令跑完它会自己再开一回合汇报，以前回合一完就关进程，
+    /// 后台命令跟着没了、也没人叫醒它（站主 2026-11-24 碰到的：「全量测试在跑，测完我就写 HANDOFF」然后就没了）。
+    /// 现在先问 `task/list`：有后台命令在跑就等，等到它开下一回合接着收事件；没有就照常收。
+    lingering: Option<Linger>,
 }
+
+/// 回合说完以后在等后台命令。
+struct Linger {
+    /// 正等着回应的那次 `task/list`。
+    asked: Option<u64>,
+    /// 头一次看到有后台命令在跑的时候（提示只写一次；最多等 [`BACKGROUND_WAIT`]）。
+    since: Option<tokio::time::Instant>,
+    /// 后台命令都没了的时候：Muse 该马上开下一回合，过了 [`WAKE_WAIT`] 还没开就收。
+    clear: Option<tokio::time::Instant>,
+}
+
+/// 后台命令最多等多久（和 Claude Code 的后台子代理一样）。
+const BACKGROUND_WAIT: Duration = Duration::from_secs(30 * 60);
+/// 后台命令跑完以后等 Muse 开下一回合的时间。
+const WAKE_WAIT: Duration = Duration::from_secs(4);
+/// 等的时候隔多久再问一次 `task/list`。
+const LINGER_TICK: Duration = Duration::from_secs(3);
 
 impl Session {
     pub(crate) fn new(pipe: Pipe, task: &AgentTask, sink: EventSink) -> Self {
@@ -122,6 +143,7 @@ impl Session {
             questions: HashMap::new(),
             finished: None,
             compacting: task.compact,
+            lingering: None,
         }
     }
 
@@ -157,9 +179,20 @@ impl Session {
                     None => std::future::pending().await,
                 }
             };
+            // 等后台命令时隔几秒醒一下：再问一次、看等够了没有。
+            let lingering = self.lingering.is_some();
+            let tick = async move {
+                if lingering {
+                    tokio::time::sleep(LINGER_TICK).await
+                } else {
+                    std::future::pending().await
+                }
+            };
             tokio::select! {
                 line = self.pipe.next() => match line {
                     Some(line) => self.handle(line).await,
+                    // 回合已经说完、只是在等后台：进程没了就照做完收。
+                    None if self.lingering.is_some() => self.finished = Some(TurnEndReason::Done),
                     None => {
                         let turn = self.turn_id.clone().unwrap_or_default();
                         emit_engine_died(&self.sink, "Muse", &turn, &self.pipe.stderr_tail());
@@ -167,11 +200,17 @@ impl Session {
                     }
                 },
                 Some(c) = control.recv() => {
+                    // 回合已经说完、在等后台时按 STOP：不等了，照做完收（关进程时后台命令一起停）。
+                    if matches!(c, Control::Interrupt) && self.lingering.is_some() {
+                        self.finished = Some(TurnEndReason::Done);
+                        continue;
+                    }
                     if matches!(c, Control::Interrupt) && interrupt_deadline.is_none() {
                         interrupt_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(10));
                     }
                     self.control(c).await;
                 }
+                _ = tick => self.linger_tick().await,
                 _ = deadline => {
                     self.sink.emit(EventBody::TurnCompleted {
                         turn_id: self.turn_id.clone().unwrap_or_default(),
@@ -306,6 +345,11 @@ impl Session {
                 return;
             }
         };
+        // 等后台时问的 `task/list` 回来了（v1.1.9）。
+        if is_rpc_response(&raw) && self.lingering.as_ref().is_some_and(|l| l.asked.is_some_and(|id| raw["id"] == json!(id))) {
+            self.linger_answer(&raw["result"]["tasks"]);
+            return;
+        }
         // Muse 发来的请求：先回「收到」（它只当展示回执），决定另外发。
         if let (Some(_), Some(id)) = (raw["method"].as_str(), raw.get("id")) {
             let _ = self.pipe.send(&json!({"jsonrpc": "2.0", "id": id, "result": {}})).await;
@@ -334,11 +378,9 @@ impl Session {
             }
             Some("userInput/request") => {
                 if let Some(input) = p["userInputId"].as_str() {
-                    let ids = p["questions"]
-                        .as_array()
-                        .map(|q| q.iter().filter_map(|x| x["id"].as_str().map(str::to_string)).collect())
-                        .unwrap_or_default();
-                    self.questions.insert(MuseConverter::input_id(input), (input.into(), ids));
+                    // 问题原样留着：回答时照顺序一个个对上（v1.1.9）。
+                    let asked = p["questions"].as_array().cloned().unwrap_or_default();
+                    self.questions.insert(MuseConverter::input_id(input), (input.into(), asked));
                 }
             }
             _ => {}
@@ -348,8 +390,19 @@ impl Session {
             match body {
                 EventBody::TurnCompleted { turn_id, reason, .. } => {
                     if self.compacting || self.turn_id.as_deref().is_none_or(|t| t == turn_id) {
-                        self.finished = Some(reason);
+                        if reason == TurnEndReason::Done && !self.compacting {
+                            // 说完了：先看有没有后台命令还在跑。
+                            self.lingering = Some(Linger { asked: None, since: None, clear: None });
+                            self.ask_tasks().await;
+                        } else {
+                            self.finished = Some(reason);
+                        }
                     }
+                }
+                // 等后台时 Muse 自己开了下一回合（后台命令跑完，它来汇报）：接着收这一回合。
+                EventBody::TurnStarted { turn_id } if self.lingering.is_some() => {
+                    self.turn_id = Some(turn_id);
+                    self.lingering = None;
                 }
                 // 转发的 `/compact`：压缩那一条做完了就收（Muse 不一定另发回合结束）。
                 EventBody::ContextCompacted { .. } if self.compacting && self.finished.is_none() => {
@@ -359,6 +412,61 @@ impl Session {
                     self.finished = Some(reason);
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// 问一次这个会话还有哪些活在跑（`task/list`，只读、不进模型）。发不出去就不等了。
+    async fn ask_tasks(&mut self) {
+        let Some(session) = self.session_id.clone() else {
+            self.finished = Some(TurnEndReason::Done);
+            return;
+        };
+        let id = self.next_id;
+        if self.command("task/list", json!({"sessionId": session})).await.is_err() {
+            self.finished = Some(TurnEndReason::Done);
+            return;
+        }
+        if let Some(l) = self.lingering.as_mut() {
+            l.asked = Some(id);
+        }
+    }
+
+    /// `task/list` 的回应：还有后台命令在跑就接着等（头一次写一行），都没了就等 Muse 开下一回合。
+    fn linger_answer(&mut self, tasks: &Value) {
+        let running = tasks
+            .as_array()
+            .map(|t| t.iter().filter(|x| x["status"] == "inProgress" && x["executionMode"].as_str().unwrap_or("background") == "background").count())
+            .unwrap_or(0);
+        let Some(l) = self.lingering.as_mut() else { return };
+        l.asked = None;
+        if running > 0 {
+            l.clear = None;
+            if l.since.is_none() {
+                l.since = Some(tokio::time::Instant::now());
+                self.sink.emit(EventBody::Notice { level: NoticeLevel::Info, text: format!("等 Muse 的 {running} 条后台命令跑完") });
+            }
+        } else if l.since.is_none() {
+            // 本来就没有后台命令：照常收。
+            self.finished = Some(TurnEndReason::Done);
+        } else if l.clear.is_none() {
+            l.clear = Some(tokio::time::Instant::now());
+        }
+    }
+
+    /// 等后台时隔几秒看一眼：等够了、或者后台都跑完了 Muse 也没再开回合，就收；不然再问一次。
+    async fn linger_tick(&mut self) {
+        let Some(l) = self.lingering.as_ref() else { return };
+        let waited_out = l.since.is_some_and(|t| t.elapsed() >= BACKGROUND_WAIT);
+        let no_wake = l.clear.is_some_and(|t| t.elapsed() >= WAKE_WAIT);
+        if waited_out || no_wake {
+            self.finished = Some(TurnEndReason::Done);
+        } else if l.asked.is_none() || l.since.is_none() {
+            // 上一次问的还没回（或者一直没回）：头一次都没回就别干等。
+            if l.asked.is_some() && l.since.is_none() {
+                self.finished = Some(TurnEndReason::Done);
+            } else {
+                self.ask_tasks().await;
             }
         }
     }
@@ -393,17 +501,23 @@ impl Session {
             }
             // with_origin 已经换成了 Approve。
             Control::ApproveByRule { .. } => {}
-            Control::Answer { request_id, answer } => {
+            Control::Answer { request_id, answer, answers: each } => {
                 if crate::gateway::mcp::try_answer(&request_id, &answer, &self.sink).await {
                     return;
                 }
                 let Some((input, questions)) = self.questions.remove(&request_id) else {
                     return self.unknown(&request_id);
                 };
+                // 每个问题自己的答案（v1.1.9）。都按 `freeText` 给（Muse 最多收 500 字；多选的几项连成一句）。
                 let answers: Vec<Value> = questions
                     .iter()
-                    .map(|q| json!({"questionId": q, "freeText": answer}))
+                    .enumerate()
+                    .filter_map(|(i, q)| {
+                        let text: String = Control::picks(&answer, &each, i).join("、").chars().take(500).collect();
+                        Some(json!({"questionId": q["id"].as_str()?, "freeText": text}))
+                    })
                     .collect();
+                let answer = crate::gateway::convert::ask_summary(&questions, &answer, &each);
                 let sent = self
                     .command(
                         "userInput/answer",
@@ -413,6 +527,12 @@ impl Session {
                 if sent.is_ok() {
                     self.sink.emit(EventBody::UserInputResolved { request_id, answer });
                 }
+            }
+            // 回合已经说完、在等后台命令时追加的一句（v1.1.9）：没有在跑的回合可插，直接开下一回合。
+            Control::Append { text } if self.lingering.is_some() => {
+                let _ = self
+                    .command("turn/start", json!({"commandId": uuid_v7(), "sessionId": session, "input": [{"type": "text", "text": text}]}))
+                    .await;
             }
             Control::Append { text } => {
                 let Some(turn) = self.turn_id.clone() else { return };
@@ -503,7 +623,71 @@ mod tests {
             .map(|e| Emitted { subagent_id: e.subagent_id.clone(), body: e.body.clone() })
             .collect();
         let want = crate::gateway::mock::parse_events_jsonl(&fixtures::read("muse-small-task", "events.jsonl")).unwrap();
-        assert_eq!(got, want);
+        assert_eq!(crate::gateway::engines::testing::without_estimates(got), want);
+    }
+
+    /// 回合说完了还有后台命令在跑（v1.1.9）：不收，等它跑完、Muse 自己再开一回合，接着收到那一回合结束。
+    #[tokio::test]
+    async fn a_turn_with_a_background_command_is_kept_until_muse_comes_back() {
+        let lines = [
+            json!({"id": 1, "result": {"serverInfo": {"name": "muse"}}}),
+            json!({"method": "session/started", "params": {"session": {"sessionId": "s1", "modelId": "muse-spark-1.3"}}}),
+            json!({"id": 2, "result": {"session": {"sessionId": "s1"}}}),
+            json!({"id": 3, "result": {"turnId": "t1", "status": "accepted"}}),
+            json!({"method": "turn/started", "params": {"turnId": "t1"}}),
+            json!({"method": "turn/completed", "params": {"turnId": "t1", "terminal": "completed"}}),
+            // 第 4 个请求是 Peck 问的 task/list：还有一条后台命令。
+            json!({"id": 4, "result": {"tasks": [{"taskId": "k1", "kind": "tool", "status": "inProgress", "tool": "bash", "executionMode": "background", "command": "cargo test"}]}}),
+            // 后台命令跑完，Muse 自己开了下一回合来汇报。
+            json!({"method": "turn/started", "params": {"turnId": "t2"}}),
+            json!({"method": "turn/completed", "params": {"turnId": "t2", "terminal": "completed"}}),
+            json!({"id": 5, "result": {"tasks": []}}),
+        ];
+        let pipe = Pipe::script(&lines.iter().map(|l| l.to_string() + "\n").collect::<String>());
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sink, events) = auto_answer("muse", tx, |_| ApprovalDecision::AllowOnce, "");
+        let t = task();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), Session::new(pipe, &t, sink).run(t, rx)).await.expect("回放卡住了").unwrap();
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        let events = events.lock().unwrap();
+        let kinds: Vec<&str> = events.iter().map(|e| e.body.type_name()).filter(|k| k.starts_with("turn.") || *k == "notice").collect();
+        assert_eq!(kinds, ["turn.started", "turn.completed", "notice", "turn.started", "turn.completed"]);
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::Notice { text, .. } if text == "等 Muse 的 1 条后台命令跑完")));
+    }
+
+    /// 等后台时按 STOP：不等了，照做完收（回合本来就说完了）。
+    #[tokio::test]
+    async fn stop_while_waiting_for_a_background_command_ends_the_task_as_done() {
+        let lines = [
+            json!({"id": 1, "result": {"serverInfo": {"name": "muse"}}}),
+            json!({"id": 2, "result": {"session": {"sessionId": "s1"}}}),
+            json!({"id": 3, "result": {"turnId": "t1", "status": "accepted"}}),
+            json!({"method": "turn/started", "params": {"turnId": "t1"}}),
+            json!({"method": "turn/completed", "params": {"turnId": "t1", "terminal": "completed"}}),
+            json!({"id": 4, "result": {"tasks": [{"taskId": "k1", "kind": "tool", "status": "inProgress", "executionMode": "background"}]}}),
+            // 之后 Muse 一直没动静；这一行要等 Peck 发第 99 个请求才放出来（永远不会）。
+            json!({"id": 99, "result": {}}),
+        ];
+        let pipe = Pipe::script(&lines.iter().map(|l| l.to_string() + "\n").collect::<String>());
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sink, events) = EventSink::memory("muse");
+        let stopper = tx.clone();
+        let seen = events.clone();
+        tokio::spawn(async move {
+            // 看到「等后台」那一行再按停。
+            loop {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                if seen.lock().unwrap().iter().any(|e| matches!(e.body, EventBody::Notice { .. })) {
+                    let _ = stopper.send(Control::Interrupt);
+                    break;
+                }
+            }
+        });
+        let t = task();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), Session::new(pipe, &t, sink).run(t, rx)).await.expect("回放卡住了").unwrap();
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        // 没有另发「已停止」的回合结束。
+        assert_eq!(events.lock().unwrap().iter().filter(|e| e.body.type_name() == "turn.completed").count(), 1);
     }
 
     #[tokio::test]

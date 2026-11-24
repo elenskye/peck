@@ -300,8 +300,14 @@ pub enum Control {
     },
     /// Peck 按自己的规则替站主批了（v0.9：CLI 的普通命令在 EDIT、AUTO 里不弹卡片）。引擎当成「批准一次」，记成规则批的。
     ApproveByRule { request_id: String },
-    /// 回答 `user_input.requested`。
-    Answer { request_id: String, answer: String },
+    /// 回答 `user_input.requested`。`answer` 是给人看的那一句；一次问了几个问题时（v1.1.9）`answers` 是每个问题
+    /// 各自的答案（照 `questions` 的顺序，一个问题一组：选的那几项，或者自己写的一句）。
+    Answer {
+        request_id: String,
+        answer: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        answers: Vec<Vec<String>>,
+    },
     /// 引擎干活时追加一句（`caps.steer` 为真才发）。
     Append { text: String },
     /// 停下当前回合（先发中断、等它收尾，超时再结束进程组）。
@@ -309,6 +315,20 @@ pub enum Control {
 }
 
 impl Control {
+    /// 只有一句的回答（一个问题）。
+    #[cfg(test)]
+    pub fn answer(request_id: impl Into<String>, answer: impl Into<String>) -> Self {
+        Control::Answer { request_id: request_id.into(), answer: answer.into(), answers: vec![] }
+    }
+
+    /// 第 `i` 个问题的答案：分开答了就用那一组，不然每个问题都是那一句。
+    pub fn picks(answer: &str, answers: &[Vec<String>], i: usize) -> Vec<String> {
+        match answers.get(i).filter(|a| !a.is_empty()) {
+            Some(a) => a.clone(),
+            None => vec![answer.to_string()],
+        }
+    }
+
     /// 引擎处理审批时用：规则批的换成「批准一次」，并告诉它是谁批的。
     pub fn with_origin(self) -> (Control, event::ResolvedBy) {
         match self {

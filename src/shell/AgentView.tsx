@@ -1,6 +1,6 @@
 // 一次任务的过程（Peck Loop 和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
-import type { AgentEvent, ApprovalDecision, BoardItem, BoardStatus, Control, PlanStep } from "@/lib/agentEvents";
+import type { AgentEvent, ApprovalDecision, AskQuestion, BoardItem, BoardStatus, Control, PlanStep } from "@/lib/agentEvents";
 import { COMPACT_STEP, englishTitle, findCall, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
@@ -67,6 +67,8 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
       return <p className={cn("agent-line", item.approval.decision?.startsWith("deny") && "is-bad")}><Icon name={item.approval.decision?.startsWith("deny") ? "x" : "check"} size={12} />{decisionWord(item.approval.decision, item.approval.by)} · {item.approval.title}</p>;
     case "notice":
       return <p className={cn("agent-line", item.level === "warn" && "is-warn")}><Icon name="bang" size={12} />{item.text}</p>;
+    case "appended":
+      return <div className="you you--mid sel"><span className="t-label">YOU</span><span className="you-text">{item.text}</span></div>;
     case "trusted":
       return <p className="agent-line"><Icon name="shield" size={12} />信任了这个文件夹 · {item.label}</p>;
     case "error":
@@ -566,43 +568,67 @@ const TrustCard: React.FC<{ trust: { requestId: string; label: string }; onContr
   );
 };
 
+/** 一个问题：选项（单选或多选）加一格自己写的。`value` 是选的那几项（自己写了就是那一句）。 */
+const AskFields: React.FC<{ q: AskQuestion; freeText: boolean; value: string[]; own: string; keys?: boolean; onPick: (option: string) => void; onOwn: (text: string) => void; onEnter: () => void }> = ({ q, freeText, value, own, keys, onPick, onOwn, onEnter }) => (
+  <>
+    {q.options.length > 0 && (
+      <div className="pk-ask-opts" role={q.multi ? "group" : "radiogroup"} aria-label={q.multi ? "选几个" : "选一个"}>
+        {q.options.map((o, i) => {
+          const on = !own.trim() && value.includes(o);
+          return (
+            <button key={o} type="button" className="pk-opt" role={q.multi ? "checkbox" : "radio"} aria-checked={on}
+              onClick={() => { onOwn(""); onPick(o); }}>
+              <span className={q.multi ? "pk-check" : "pk-radio"}>{q.multi && on && <Icon name="check" size={12} />}</span>
+              <span><b className="pk-opt-name">{o}</b></span>
+              <span className="pk-opt-key">{keys ? i + 1 : ""}</span>
+            </button>
+          );
+        })}
+      </div>
+    )}
+    {freeText && (
+      <label className="pk-field agent-own">
+        <span className="pk-prompt">›</span>
+        <input value={own} placeholder={q.options.length ? "或者自己写…" : "写你的回答…"} spellCheck={false} autoCorrect="off" autoCapitalize="off"
+          onChange={(e) => onOwn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) onEnter(); }} />
+      </label>
+    )}
+  </>
+);
+
+/** ASK 卡片。一次问了几个问题（v1.1.9）：一个个排下来，各选各的，都答了才能 SUBMIT。 */
 const AskCard: React.FC<{ ask: AskView; who: string; onControl: Props["onControl"]; say: Props["say"] }> = ({ ask, who, onControl, say }) => {
-  const [pick, setPick] = useState<string | null>(ask.options[0] ?? null);
-  const [own, setOwn] = useState("");
+  const several = ask.questions.length > 0;
+  const list: AskQuestion[] = several ? ask.questions : [{ question: ask.question, options: ask.options }];
+  // 单选的先选上第一个（推荐的排在前面）；多选的空着。
+  const [picks, setPicks] = useState<string[][]>(() => list.map((q) => (q.multi || !q.options.length ? [] : [q.options[0]])));
+  const [owns, setOwns] = useState<string[]>(() => list.map(() => ""));
   const [sent, setSent] = useState(false);
-  const answer = own.trim() || pick || "";
+  const each = list.map((_, i) => (owns[i].trim() ? [owns[i].trim()] : picks[i]));
+  const ready = each.every((a) => a.length > 0);
   const submit = async () => {
-    if (!answer) return;
+    if (!ready || sent) return;
     setSent(true);
-    try { await onControl({ type: "answer", requestId: ask.requestId, answer }); } catch (e) { setSent(false); say(e); }
+    const answer = several ? list.map((q, i) => `${q.header || q.question}：${each[i].join("、")}`).join("\n") : each[0].join("、");
+    try { await onControl({ type: "answer", requestId: ask.requestId, answer, ...(several ? { answers: each } : {}) }); } catch (e) { setSent(false); say(e); }
   };
+  const set = <T,>(arr: T[], i: number, v: T) => arr.map((x, j) => (j === i ? v : x));
   return (
     <section className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="停下来问你">
       <Edge />
       <div className="pk-anim-reveal">
-        <ModHead label="ASK" note={<span className="pk-who">{who}</span>} />
-        <p className="pk-ask-q">{ask.question}</p>
-        {ask.options.length > 0 && (
-          <div className="pk-ask-opts" role="radiogroup" aria-label="选一个">
-            {ask.options.map((o, i) => (
-              <button key={o} type="button" className="pk-opt" role="radio" aria-checked={!own.trim() && pick === o} onClick={() => { setPick(o); setOwn(""); }}>
-                <span className="pk-radio" />
-                <span><b className="pk-opt-name">{o}</b></span>
-                <span className="pk-opt-key">{i + 1}</span>
-              </button>
-            ))}
+        <ModHead label="ASK" note={<span className="pk-who">{who}</span>} count={several ? `${each.filter((a) => a.length > 0).length}/${list.length}` : undefined} />
+        {list.map((q, i) => (
+          <div key={i} className={several ? "ask-q" : undefined}>
+            <p className="pk-ask-q">{several && q.header && <b className="t-label ask-q-head">{q.header}</b>}{q.question}</p>
+            <AskFields q={q} freeText={ask.freeText} value={picks[i]} own={owns[i]} keys={!several}
+              onPick={(o) => setPicks((p) => set(p, i, q.multi ? (p[i].includes(o) ? p[i].filter((v) => v !== o) : [...p[i], o]) : [o]))}
+              onOwn={(t) => setOwns((o) => set(o, i, t))} onEnter={() => void submit()} />
           </div>
-        )}
-        {ask.freeText && (
-          <label className="pk-field agent-own">
-            <span className="pk-prompt">›</span>
-            <input value={own} placeholder={ask.options.length ? "或者自己写…" : "写你的回答…"} spellCheck={false} autoCorrect="off" autoCapitalize="off"
-              onChange={(e) => setOwn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) void submit(); }} />
-          </label>
-        )}
+        ))}
         <div className="pk-ask-foot">
           <span className="grow" />
-          <Btn v="primary" disabled={sent || !answer} onClick={() => void submit()}>SUBMIT</Btn>
+          <Btn v="primary" disabled={sent || !ready} onClick={() => void submit()}>SUBMIT</Btn>
         </div>
       </div>
     </section>

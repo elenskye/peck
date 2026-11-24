@@ -396,19 +396,8 @@ impl CodexConverter {
                 "item/tool/requestUserInput" => {
                     let questions = params["questions"].as_array().cloned().unwrap_or_default();
                     let first = questions.first().cloned().unwrap_or(Value::Null);
-                    vec![EventBody::UserInputRequested {
-                        request_id,
-                        question: questions
-                            .iter()
-                            .filter_map(|q| q["question"].as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        options: first["options"]
-                            .as_array()
-                            .map(|o| o.iter().filter_map(|x| x["label"].as_str().map(str::to_string)).collect())
-                            .unwrap_or_default(),
-                        free_text: first["isOther"].as_bool().unwrap_or(true) || first["options"].is_null(),
-                    }]
+                    let free_text = first["isOther"].as_bool().unwrap_or(true) || first["options"].is_null();
+                    vec![super::ask_event(request_id, &questions, free_text, |_| false)]
                 }
                 _ => vec![EventBody::Raw {
                     source: "codex".into(),

@@ -6,7 +6,7 @@ import { ipc, isMockMode, type BgInfo } from "@/lib/ipc";
 import PREVIEW_SCRIPT from "../../src-tauri/src/preview.js?raw";
 import type { AppSettings } from "@/lib/settings";
 import type { FileChangeItem, FileListing, FilePreview, IgnoredEntry, ProjectOverview, RunRecord } from "@/lib/types";
-import { clock, cn, copyText, fileSize, runState, shortenHomePath, span, stepName } from "@/lib/utils";
+import { cn, copyText, fileSize, runState, shortenHomePath, span } from "@/lib/utils";
 import { Btn, Icon, Info, ModHead, Twinkle, type IconName } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { parseDiff } from "@/lib/diff";
@@ -15,13 +15,11 @@ import { highlight, type Token } from "@/lib/highlight";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { EffortPicker, WhoPicker, cliModelOf, defaultEffort, sendEffort } from "@/shell/ModelPicker";
 
-export type RightTab = "log" | "oneshot" | "files" | "preview" | "term";
+export type RightTab = "oneshot" | "files" | "preview" | "term";
 
 interface Props {
   project: ProjectOverview | null;
   run: RunRecord | null;
-  /** 这次任务的事件日志（LOG 里的成员名单、子代理）。 */
-  events: AgentEvent[];
   tab: RightTab;
   onTab: (tab: RightTab) => void;
   wide: boolean;
@@ -57,7 +55,6 @@ export const RightColumn: React.FC<Props> = (props) => {
   // 页签只有图标，选中的那个带名字（站主 2026-11-13 定）；悬停看名字。
   const tabs: Array<{ id: RightTab; label: string; icon: IconName; extra?: React.ReactNode }> = [
     { id: "files", label: "FILES", icon: "files", extra: run && run.files.length > 0 && !run.undoneAt ? <em>{run.files.length}</em> : null },
-    { id: "log", label: "LOG", icon: "log" },
     { id: "oneshot", label: "ONE SHOT", icon: "oneshot" },
     { id: "preview", label: "PREVIEW", icon: "globe" },
     {
@@ -91,7 +88,6 @@ export const RightColumn: React.FC<Props> = (props) => {
           </button>
         ))}
       </div>
-      {tab === "log" && <TaskLog run={props.run} events={props.events} entries={props.entries} />}
       {/* ONE SHOT 一直挂着，只是藏起来：切去别的页签再回来，问到一半的、答完的都还在，STOP 也还能点。 */}
       <OneShot key={props.project?.workspace.id ?? "none"} {...props} shown={tab === "oneshot"} />
       {tab === "files" && <Files {...props} />}
@@ -252,72 +248,6 @@ const Preview: React.FC<Props> = ({ project, onToTask, wide, onWide, say }) => {
 function mockPreviewPage(url: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>notebook</title><style>html,body{overflow-x:hidden}*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;margin:0;background:#f6f7f9;color:#1d2433}header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:#fff;border-bottom:1px solid #e3e6ec}h1{font-size:18px;margin:0}input{flex:1;min-width:0;padding:6px 10px;border:1px solid #cfd5df;border-radius:6px}ul{list-style:none;margin:16px 20px;padding:0}li{background:#fff;margin-bottom:8px;padding:10px 14px;border-radius:8px;border:1px solid #e3e6ec}small{color:#7a8496}button{padding:6px 12px;border:0;border-radius:6px;background:#2f6fec;color:#fff}</style><script>${PREVIEW_SCRIPT}</script></head><body><header><h1>Notes</h1><input placeholder="Search notes"><button>New</button></header><ul><li><b>周会记录</b><br><small>2026-11-12</small></li><li><b>读书笔记：Designing Data-Intensive Applications</b><br><small>2026-11-10</small></li><li><b>Peck 的待办</b><br><small>2026-11-09</small></li></ul><p style="margin:0 20px;color:#7a8496;font-size:12px">演示页（${url || "没有地址"}）：?mock 里没有真的 dev server。</p></body></html>`;
 }
-
-// ---------- LOG ----------
-
-/** 这个任务的记录：存快照、每一步、做完、撤销（原来在左栏，站主 2026-11-13 挪到右栏）。
- *  PLOOP 的任务（v1.1.2）上面多一块成员名单（主角色和能派的几类子代理各用哪个模型），时间线里有派出去的子代理。 */
-const TaskLog: React.FC<{ run: RunRecord | null; events: AgentEvent[]; entries: ModelEntry[] }> = ({ run, events, entries }) => {
-  const items: Array<{ t: number; title: string; note: string }> = [];
-  const label = (model: string) => entries.find((e) => e.id === `api:${model}`)?.label ?? model.replace(/^[a-z-]+\//, "");
-  const roster = events.find((e): e is Extract<AgentEvent, { type: "agents.roster" }> => e.type === "agents.roster")?.members ?? [];
-  for (const e of events) {
-    if (e.type === "subagent.started" && e.kind) {
-      // 要做什么写在派的那一步的标题里（「派 explorer：…」）。
-      const step = events.find((x) => x.type === "tool_call.started" && x.callId === e.parentCallId);
-      const task = step?.type === "tool_call.started" ? step.title.replace(/^派 \w+[：:]\s*/, "") : "";
-      items.push({ t: e.at, title: `派了 ${e.kind}`, note: [e.model ? label(e.model) : "", task].filter(Boolean).join(" · ") });
-    }
-    if (e.type === "subagent.completed") {
-      const started = events.find((x) => x.type === "subagent.started" && x.subagentId === e.subagentId && x.kind);
-      if (started?.type === "subagent.started") items.push({ t: e.at, title: `${started.kind} ${e.status === "ok" ? "做完了" : e.status === "cancelled" ? "被停下了" : "没做完"}`, note: `用了 ${span(e.at - started.at)}` });
-    }
-  }
-  if (run) {
-    items.push({ t: run.startedAt, title: "存了任务前快照", note: "" });
-    for (const step of run.steps) {
-      if (step.status === "succeeded" && step.finishedAt) items.push({ t: step.finishedAt, title: `${stepName(step)} 做完`, note: `用了 ${span(step.durationMs)}` });
-      if (step.status === "failed" && step.finishedAt) items.push({ t: step.finishedAt, title: `${stepName(step)} 失败`, note: step.exitCode != null ? `退出码 ${step.exitCode}` : "没跑完" });
-    }
-    if (run.finishedAt && run.status === "succeeded") items.push({ t: run.finishedAt, title: "做完了", note: `${run.files.length} 个文件` });
-    if (run.finishedAt && run.status === "cancelled") items.push({ t: run.finishedAt, title: "已停止", note: "" });
-    if (run.undoneAt) items.push({ t: run.undoneAt, title: "撤销了", note: `回到 ${clock(run.startedAt)} 开始前的样子` });
-    items.sort((a, b) => a.t - b.t);
-  }
-  return (
-    <div className="pk-mod col-grow">
-      <ModHead label="LOG" note={run ? `任务 ${run.number}` : "这个任务"} />
-      {roster.length > 0 && (
-        <ul className="log log-roster" aria-label="成员名单">
-          {roster.map((m) => (
-            <li key={m.role}>
-              <span className="log-t">{m.role.toUpperCase()}</span>
-              <span>
-                <b className="t-name">{label(m.model)}</b>
-                <span className="log-n">{[m.effort && `思考 ${m.effort.toUpperCase()}`, m.rounds && `${m.rounds} 轮`, m.parallel && `同时 ${m.parallel} 个`].filter(Boolean).join(" · ")}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {items.length === 0 ? (
-        <p className="empty-line">还没有记录</p>
-      ) : (
-        <ul className="scroll log col-grow">
-          {items.map((item, i) => (
-            <li key={i}>
-              <span className="log-t">{clock(item.t)}</span>
-              <span>
-                <b className="t-name">{item.title}</b>
-                <span className="log-n">{item.note}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-};
 
 // ---------- ONE SHOT ----------
 

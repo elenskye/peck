@@ -197,6 +197,55 @@ pub trait WireStream: Send {
     fn finish(self: Box<Self>) -> Result<ModelResponse, String>;
 }
 
+/// CLI 的提问（Codex `requestUserInput`、Claude Code `AskUserQuestion`、Muse `userInput/request`）转成 ASK 卡片。
+/// 三家都是 `questions: [{header, question, options: [{label}]}]`。只有一个单选的问题照旧（`question` + `options`）；
+/// 一次问几个、或者能多选的（v1.1.9），每个问题自己的选项放进 `questions`，卡片一个个画——以前只画第一个问题的选项、
+/// 一个回答填给全部。`multi`：这一家怎么标「能多选」。
+pub(crate) fn ask_event(request_id: String, questions: &[Value], free_text: bool, multi: impl Fn(&Value) -> bool) -> EventBody {
+    let labels = |q: &Value| -> Vec<String> {
+        q["options"].as_array().map(|o| o.iter().filter_map(|x| x["label"].as_str().map(str::to_string)).collect()).unwrap_or_default()
+    };
+    let each: Vec<crate::gateway::event::AskQuestion> = questions
+        .iter()
+        .filter_map(|q| {
+            Some(crate::gateway::event::AskQuestion {
+                header: q["header"].as_str().map(str::trim).filter(|h| !h.is_empty()).map(str::to_string),
+                question: q["question"].as_str()?.to_string(),
+                options: labels(q),
+                multi: multi(q),
+            })
+        })
+        .collect();
+    let split = each.len() > 1 || each.iter().any(|q| q.multi);
+    EventBody::UserInputRequested {
+        request_id,
+        question: each.iter().map(|q| q.question.as_str()).collect::<Vec<_>>().join("\n"),
+        options: questions.first().map(labels).unwrap_or_default(),
+        free_text,
+        questions: if split { each } else { vec![] },
+    }
+}
+
+/// 几个问题分开答了以后给人看的那一句（`user_input.resolved`）：一个问题一行「短名：答案」。
+pub(crate) fn ask_summary(questions: &[Value], answer: &str, answers: &[Vec<String>]) -> String {
+    if answers.is_empty() || questions.len() < 2 {
+        return match answers.first().filter(|a| !a.is_empty()) {
+            Some(a) => a.join("、"),
+            None => answer.to_string(),
+        };
+    }
+    questions
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let name = q["header"].as_str().filter(|h| !h.trim().is_empty()).or_else(|| q["question"].as_str()).unwrap_or("?");
+            format!("{}：{}", short(name, 40), crate::gateway::Control::picks(answer, answers, i).join("、"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+
 /// 按目录里的价格算花费；没这个模型或没价格：未知。
 pub(crate) fn priced(catalog_id: Option<&str>, region: Option<&str>, usage: &TokenUsage) -> Cost {
     catalog_id
@@ -272,6 +321,33 @@ pub(crate) mod fixtures {
 mod tests {
     use super::*;
     use crate::gateway::event::FileChange;
+
+    /// 一次问三个问题（站主 2026-11-24 碰到的：Muse 问了 VER、TRUST、FILES，卡片只有第一个的选项）。
+    #[test]
+    fn several_questions_keep_their_own_options_and_answers() {
+        use serde_json::json;
+        let asked = vec![
+            json!({"id": "version", "header": "VER", "question": "立 v1.2.0 还是拆小步？", "options": [{"label": "立 v1.2.0"}, {"label": "拆小步"}], "selection": {"mode": "single"}}),
+            json!({"id": "trust", "header": "TRUST", "question": "没信任时怎么做？", "options": [{"label": "弹卡片"}, {"label": "保持一行"}], "selection": {"mode": "single"}}),
+            json!({"id": "files", "header": "FILES", "question": "留哪几样？", "options": [{"label": "开关"}, {"label": "全列"}], "selection": {"mode": "multiple"}}),
+        ];
+        let EventBody::UserInputRequested { question, options, questions, .. } = ask_event("r1".into(), &asked, true, |q| q["selection"]["mode"] == "multiple") else { panic!() };
+        assert_eq!(question.lines().count(), 3);
+        assert_eq!(options, ["立 v1.2.0", "拆小步"]);
+        assert_eq!(questions.len(), 3);
+        assert_eq!(questions[1].header.as_deref(), Some("TRUST"));
+        assert_eq!(questions[1].options, ["弹卡片", "保持一行"]);
+        assert!(questions[2].multi && !questions[0].multi);
+        // 只有一个单选的问题：照旧，不带 `questions`（旧界面、旧夹具一样）。
+        let EventBody::UserInputRequested { questions: one, options, .. } = ask_event("r2".into(), &asked[..1], true, |_| false) else { panic!() };
+        assert!(one.is_empty() && options.len() == 2);
+        // 分开答的：每个问题自己的那一组；没分开答（旧界面）每个都是那一句。
+        let each = vec![vec!["拆小步".to_string()], vec!["弹卡片".to_string()], vec!["开关".to_string(), "全列".to_string()]];
+        assert_eq!(crate::gateway::Control::picks("x", &each, 2), ["开关", "全列"]);
+        assert_eq!(crate::gateway::Control::picks("都行", &[], 1), ["都行"]);
+        assert_eq!(ask_summary(&asked, "x", &each), "VER：拆小步\nTRUST：弹卡片\nFILES：开关、全列");
+        assert_eq!(ask_summary(&asked, "都行", &[]), "都行");
+    }
 
     #[test]
     fn unified_diff_is_split_per_file_with_counts() {

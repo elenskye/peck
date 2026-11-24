@@ -25,6 +25,8 @@ struct Inner {
     out: Out,
     /// 存日志失败只报一次，事件照常发给界面。
     store_failed: std::sync::atomic::AtomicBool,
+    /// CLI 这个会话用的模型（`session.started` 报的）：它不报花费时按价格表估（v1.1.9）。
+    session_model: Mutex<Option<String>>,
 }
 
 impl EventSink {
@@ -50,6 +52,7 @@ impl EventSink {
                 store,
                 out: Box::new(out),
                 store_failed: Default::default(),
+                session_model: Default::default(),
             }),
             subagent_id: None,
         }
@@ -95,7 +98,13 @@ impl EventSink {
     }
 
     /// 带原件发：原件只进日志，不发给界面。
-    pub fn emit_raw(&self, body: EventBody, raw: Option<Value>) -> AgentEvent {
+    pub fn emit_raw(&self, mut body: EventBody, raw: Option<Value>) -> AgentEvent {
+        // CLI 的用量没带花费（Muse、Codex 不报）：按会话的模型查价格表折成 API 价，标「估」（v1.1.9）。
+        if self.subagent_id.is_none() && self.engine() != "peck" {
+            if let Ok(mut model) = self.inner.session_model.lock() {
+                estimate_cli_cost(&mut body, &mut model, now_ms());
+            }
+        }
         let event = AgentEvent {
             seq: self.inner.seq.fetch_add(1, Ordering::SeqCst),
             at: now_ms(),
@@ -130,6 +139,21 @@ impl EventSink {
         }
         (self.inner.out)(&event);
         event
+    }
+}
+
+/// CLI 报的一条用量没有花费时，按这个会话的模型查价格表估一个（订阅不真花，标「估」）。
+/// `model` 是到这一条为止会话报过的模型（`session.started`、换模型时更新）。Peck Loop 的用量自己带模型和花费，不碰。
+pub(crate) fn estimate_cli_cost(body: &mut EventBody, model: &mut Option<String>, at: i64) {
+    match body {
+        EventBody::SessionStarted { model: Some(m), .. } => *model = Some(m.clone()),
+        EventBody::SessionConfigChanged { model: Some(m), .. } => *model = Some(m.clone()),
+        EventBody::UsageUpdated { usage, cost, model: None, .. } if cost.usd.is_none() => {
+            if let Some(usd) = model.as_deref().and_then(|m| super::prices::book().usd_for(m, usage, false, at)) {
+                *cost = super::event::Cost { usd: Some(usd), source: super::event::CostSource::Estimated };
+            }
+        }
+        _ => {}
     }
 }
 
@@ -187,17 +211,23 @@ impl Store {
             ))
         })?;
         let mut out = Vec::new();
+        // 以前存下的 CLI 用量没有花费（v1.1.9 以前不估）：读的时候照现在的价格表补上，和新发的一样标「估」。
+        let mut session_model: Option<String> = None;
         for row in rows {
             let (seq, at, engine, kind, json) = row?;
-            out.push(serde_json::from_str(&json).unwrap_or(AgentEvent {
+            let mut event = serde_json::from_str(&json).unwrap_or(AgentEvent {
                 seq: seq as u64,
                 at,
                 subagent_id: None,
                 body: EventBody::Raw {
-                    source: engine,
+                    source: engine.clone(),
                     kind: Some(kind),
                 },
-            }));
+            });
+            if engine != "peck" && event.subagent_id.is_none() {
+                estimate_cli_cost(&mut event.body, &mut session_model, at);
+            }
+            out.push(event);
         }
         Ok(out)
     }
@@ -227,6 +257,48 @@ mod tests {
         let root = std::env::temp_dir().join(format!("peck-gw-log-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         Arc::new(Mutex::new(Store::open(&root.join("peck.db")).unwrap()))
+    }
+
+    /// CLI 不报花费（Muse、Codex）：按会话的模型估，存下的、发给界面的都带；以前存的没估过的，读的时候补上。
+    #[test]
+    fn cli_usage_without_a_cost_is_estimated_from_the_session_model() {
+        use crate::gateway::event::{Cost, CostSource, TokenUsage, UsageScope};
+        let usage = || EventBody::UsageUpdated {
+            usage: TokenUsage { input: Some(1_000_000), output: Some(100_000), cache_read: Some(5_000_000), ..Default::default() },
+            cost: Cost::unknown(),
+            scope: UsageScope::Cumulative,
+            model: None,
+        };
+        let started = |engine: &str| -> EventBody {
+            serde_json::from_value(json!({"type": "session.started", "engine": engine, "model": "muse-spark-1.3", "caps": crate::gateway::caps::AgentCaps::muse(), "sessionRef": "s1"})).unwrap()
+        };
+        let store = temp_store();
+        let sink = EventSink::new("run-cost", None, "muse", Some(store.clone()), |_| {});
+        // 还不知道模型：照旧是未知。
+        let early = sink.emit(usage());
+        assert!(matches!(early.body, EventBody::UsageUpdated { cost: Cost { usd: None, .. }, .. }));
+        sink.emit(started("muse"));
+        let later = sink.emit(usage());
+        let EventBody::UsageUpdated { cost, .. } = later.body else { panic!() };
+        assert!(cost.usd.is_some_and(|v| v > 0.0) && cost.source == CostSource::Estimated);
+        // 读回来：先前那条没估过的还是未知（那时没有模型），后面那条带着估的。
+        let read = store.lock().unwrap().agent_events("run-cost").unwrap();
+        assert!(matches!(&read[0].body, EventBody::UsageUpdated { cost: Cost { usd: None, .. }, .. }));
+        assert!(matches!(&read[2].body, EventBody::UsageUpdated { cost: Cost { usd: Some(_), source: CostSource::Estimated }, .. }));
+        // 以前的版本存下的（模型报过、花费是未知）：读的时候补上。
+        {
+            let db = store.lock().unwrap();
+            for (seq, body) in [(0, started("muse")), (1, usage())] {
+                db.append_agent_event("run-old", None, "muse", &AgentEvent { seq, at: 1, subagent_id: None, body }, None).unwrap();
+            }
+        }
+        let old = store.lock().unwrap().agent_events("run-old").unwrap();
+        assert!(matches!(&old[1].body, EventBody::UsageUpdated { cost: Cost { usd: Some(_), source: CostSource::Estimated }, .. }));
+        // Peck Loop 的不碰（它自己按价格表算）。
+        let (peck, seen) = EventSink::memory("peck");
+        peck.emit(started("peck"));
+        peck.emit(usage());
+        assert!(matches!(&seen.lock().unwrap()[1].body, EventBody::UsageUpdated { cost: Cost { usd: None, .. }, .. }));
     }
 
     #[test]

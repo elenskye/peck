@@ -2360,7 +2360,7 @@ impl Run {
             .unwrap_or_default();
         self.approvals += 1;
         let request_id = format!("{}ask-{}", self.config.subtask.as_deref().unwrap_or(""), self.approvals);
-        self.emit(EventBody::UserInputRequested { request_id: request_id.clone(), question: question.to_string(), options, free_text: true });
+        self.emit(EventBody::UserInputRequested { request_id: request_id.clone(), question: question.to_string(), options, free_text: true, questions: vec![] });
         match self.ctl.wait_for(&request_id).await {
             Some(Control::Answer { answer, .. }) => {
                 self.emit(EventBody::UserInputResolved { request_id, answer: answer.clone() });
@@ -3040,7 +3040,7 @@ mod tests {
         let requests = model.requests.clone();
         let backend = PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]);
         let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "把标题改成中文"), |e| match e {
-            EventBody::UserInputRequested { request_id, .. } => Some(Control::Answer { request_id: request_id.clone(), answer: "先不改".into() }),
+            EventBody::UserInputRequested { request_id, .. } => Some(Control::answer(request_id.clone(), "先不改")),
             _ => None,
         })
         .await;

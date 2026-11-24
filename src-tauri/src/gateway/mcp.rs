@@ -421,6 +421,7 @@ impl McpHub {
                     question,
                     options,
                     free_text: true,
+                    questions: vec![],
                 });
                 match rx.await {
                     Ok(answer) => ok(json!({"content": [{"type": "text", "text": answer}]})),

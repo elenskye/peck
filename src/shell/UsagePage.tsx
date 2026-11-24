@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, isMockMode, type QuotaPoint, type SpendOverview, type SpendPoint } from "@/lib/ipc";
 import { usageApi, type BalanceCard, type ClientCard } from "@/lib/usage";
+import { resetIn, windowName } from "@/lib/quota";
 import { agentName, cn } from "@/lib/utils";
 import { Btn, Field, Info, ModHead, Seg } from "@/ui";
 
@@ -319,31 +320,6 @@ function balanceText(amount: string, currency: string): string {
   if (c === "CNY" || c === "RMB") return "¥" + amount;
   if (c === "USD") return "$" + amount;
   return c ? `${amount} ${c}` : amount;
-}
-
-/** 窗口的名字：有时长就按时长叫（5 小时、每周），不然把客户端给的长名字收短。 */
-function windowName(label: string, mins: number | null | undefined): string {
-  // 已经是中文名字的（「5 小时」「每周」「每周 Sonnet」）照写。
-  if (/[一-鿿]/.test(label) && !label.includes("·")) return label;
-  if (mins) {
-    if (mins < 1440) return `${Math.round(mins / 60)} 小时`;
-    if (mins === 1440) return "每天";
-    if (mins === 10080) return "每周";
-    if (mins >= 40000 && mins <= 45000) return "每月";
-    return `${Math.round(mins / 1440)} 天`;
-  }
-  const parts = label.split("·").map((x) => x.trim()).filter(Boolean);
-  const name = parts.find((p) => /primary|secondary/i.test(p)) ?? parts.find((p) => /[一-鿿]/.test(p)) ?? parts[0] ?? label;
-  if (/primary/i.test(name)) return "短窗口";
-  if (/secondary/i.test(name)) return "长窗口";
-  return name.length > 6 ? `${name.slice(0, 6)}…` : name;
-}
-
-function resetIn(at: number): string {
-  const ms = at - Date.now();
-  if (ms <= 0) return "已经";
-  const h = ms / 3_600_000;
-  return h < 1 ? `${Math.ceil(ms / 60_000)} 分钟后` : h < 48 ? `${Math.round(h)} 小时后` : `${Math.round(h / 24)} 天后`;
 }
 
 /** 近 7 天还剩百分之几的折线（2 像素的线，0–100 固定刻度）。 */

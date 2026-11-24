@@ -69,14 +69,15 @@ impl ClaudeCodeConverter {
     }
 
     /// 回答 `AskUserQuestion`：允许这次调用，答案按问题原文放进 `answers`。
-    pub fn answer_reply(request_id: &str, input: &Value, answer: &str) -> Value {
+    pub fn answer_reply(request_id: &str, input: &Value, answer: &str, each: &[Vec<String>]) -> Value {
         let mut updated = input.clone();
+        // 每个问题自己的答案（v1.1.9；多选的几项用「, 」连起来，Claude Code 的答案是一句话）。
         let answers: serde_json::Map<String, Value> = input["questions"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|q| q["question"].as_str())
-            .map(|q| (q.to_string(), json!(answer)))
+            .enumerate()
+            .filter_map(|(i, q)| Some((q["question"].as_str()?.to_string(), json!(crate::gateway::Control::picks(answer, each, i).join(", ")))))
             .collect();
         updated["answers"] = Value::Object(answers);
         Self::approval_reply(request_id, ApprovalDecision::AllowOnce, &updated)
@@ -586,23 +587,7 @@ impl LineConverter for ClaudeCodeConverter {
                     Some("can_use_tool") if request["tool_name"] == "AskUserQuestion" => {
                         // 模型要问站主：ASK 卡片。回答由引擎那一层放进这次审批的 `updatedInput`。
                         let questions = request["input"]["questions"].as_array().cloned().unwrap_or_default();
-                        let first = questions.first().cloned().unwrap_or(Value::Null);
-                        out.push(
-                            EventBody::UserInputRequested {
-                                request_id: raw["request_id"].as_str().unwrap_or("").into(),
-                                question: questions
-                                    .iter()
-                                    .filter_map(|q| q["question"].as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n"),
-                                options: first["options"]
-                                    .as_array()
-                                    .map(|o| o.iter().filter_map(|x| x["label"].as_str().map(str::to_string)).collect())
-                                    .unwrap_or_default(),
-                                free_text: true,
-                            }
-                            .into(),
-                        );
+                        out.push(super::ask_event(raw["request_id"].as_str().unwrap_or("").into(), &questions, true, |q| q["multiSelect"] == true).into());
                     }
                     Some("can_use_tool") => {
                         let tool = request["tool_name"].as_str().unwrap_or("");

@@ -5,9 +5,11 @@ import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
 import { SUBAGENT_KINDS, type AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
+import type { ClientCard } from "@/lib/usage";
+import { QuotaRing } from "@/shell/QuotaRing";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
 import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath, type DotKind } from "@/lib/utils";
-import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, MenuChip, ModHead, Seg, useNow } from "@/ui";
+import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, Lightbox, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
@@ -31,6 +33,11 @@ interface Props {
   draft: string;
   onDraft: (text: string) => void;
   onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[], uploads?: string[]) => Promise<boolean>;
+  /** 任务跑着时接着发话（v1.1.9）：能中途插话的引擎马上送进去，不能的排着。 */
+  onAppend: (text: string) => Promise<boolean>;
+  /** 排着等这一轮做完再发的那几句（插不了话的引擎）。 */
+  queued: string[];
+  onUnqueue: (index: number) => void;
   /** `/compact [重点]`（v1.1.7）：压这个任务的对话（PLOOP）或转给 CLI。 */
   onCompact: (focus: string, who: string, permission: Permission) => Promise<boolean>;
   /** 往某一次的事件里追加一条（批完「想记住这几条」）。 */
@@ -47,6 +54,8 @@ interface Props {
   onRestoreTask: (taskId: string) => void;
   /** 额度提醒（v0.9 B3）：这次要用到的 CLI 快用完了，输入框上方一行。 */
   quota: QuotaBar | null;
+  /** 各家 CLI 的额度卡片（v1.1.9：输入框右下角的额度环）。 */
+  clients: ClientCard[];
   /** `/new`（v0.10 C2）：这个项目里新开一个任务。 */
   onNewTask: () => void;
   /** 右栏现在看的是哪一次记录 */
@@ -160,7 +169,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
       who={who}
       permission={permission}
       onPermission={setPermission}
-      placeholder={task ? (busy ? "下一句话…（这个任务跑完再发）" : "下一句话…") : "一句话说要做什么…"}
+      placeholder={task ? (busy && !runs.some((r) => r.id === props.runningRunId) ? "这个项目有别的任务在跑" : busy ? "接着说…" : "下一句话…") : busy ? "这个项目有任务在跑" : "一句话说要做什么…"}
     />
   );
 
@@ -326,12 +335,6 @@ const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
                 ))}
               </ul>
             )}
-            {context.stale && <p className="note">{cli ?? "它"} 刚压过一次，这个数是压之前的，等下一句的用量。</p>}
-            {cli ? (
-              <p className="note">上下文 {tokens(context.used)}{context.window ? ` / ${tokens(context.window)}` : "（窗口多大它没报）"} · 压缩由 {cli} 自己管{context.warn ? "，它说快满了" : ""}；/compact 让它现在压。</p>
-            ) : (
-              <p className="note">压缩线 {pct(line)}{context.compactAt ? `（${tokens(context.compactAt)}）` : ""}：到了先把长输出落盘、再清掉旧的工具输出，还不够就让模型写一份交接摘要接着做。/compact 现在就压（三步都做），后面可以写要重点留住什么。</p>
-            )}
           </div>
         </Float>
       )}
@@ -377,13 +380,16 @@ const Composer: React.FC<Props & {
   permission: Permission;
   onPermission: (p: Permission) => void;
   placeholder: string;
-}> = ({ draft, onDraft, onSend, onCompact, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, say, quota, onNewTask }) => {
+}> = ({ draft, onDraft, onSend, onCompact, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, say, quota, onNewTask, clients, onAppend, queued, onUnqueue, runningRunId }) => {
   // 独立工作区（v0.7）：git 项目、Peck Loop 或 CLI 引擎、不是 PLAN；发出去以后关掉（一次一选）。
   const [worktree, setWorktree] = useState(false);
   const worktreeable = !!project.workspace.gitBranch && !!who && (who.group === "peck" || who.group === "cli") && permission !== "plan";
   useEffect(() => { if (!worktreeable) setWorktree(false); }, [worktreeable]);
   const projectKey = project.workspace.id;
-  const ready = !!draft.trim() && !!who && !busy;
+  // 正看着的这个任务在跑（v1.1.9）：照样能打字，↵ 是接着说一句（追加）；别的任务在跑时这里锁着。
+  const here = busy && !!task && runs.some((r) => r.id === runningRunId);
+  const locked = busy && !here;
+  const ready = !!draft.trim() && !!who && !locked;
   // Esc 关掉的那一稿不再弹；接着打字又弹。
   const [dismissed, setDismissed] = useState<string | null>(null);
   const mention = dismissed === draft ? null : mentionAt(draft);
@@ -429,6 +435,12 @@ const Composer: React.FC<Props & {
   };
   const send = () => {
     if (!ready || !who) return;
+    if (here) {
+      if (parseSlash(draft)) { say("命令等这一轮做完再用"); return; }
+      if (shots.length || uploads.length) { say("接着说的这一句带不了附件"); return; }
+      void onAppend(draft.trim());
+      return;
+    }
     const slash = parseSlash(draft);
     if (slash) { void runSlash(slash.name, slash.args).catch(say); return; }
     void sendText(draft.trim(), permission);
@@ -488,6 +500,8 @@ const Composer: React.FC<Props & {
   };
   // 贴图、拖图进输入框（v0.8）：最多 6 张，每张 6MB 以内；发出去以后清掉。
   const [shots, setShots] = useState<Array<ImageInput & { url: string; name: string }>>([]);
+  // 点一张附图看大的（v1.1.9）。
+  const [zoom, setZoom] = useState<number | null>(null);
   const addFiles = (files: File[]) => {
     const images = files.filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
     if (!images.length) return false;
@@ -572,12 +586,13 @@ const Composer: React.FC<Props & {
         <div className="composer-shots" aria-label="附的图">
           {shots.map((s, i) => (
             <span key={i} className="composer-shot" title={s.name}>
-              <img src={s.url} alt={s.name} />
+              <img src={s.url} alt={s.name} onClick={() => setZoom(i)} />
               <button type="button" aria-label={`不要这张图：${s.name}`} onClick={() => setShots((prev) => prev.filter((_, j) => j !== i))}><Icon name="x" size={12} /></button>
             </span>
           ))}
         </div>
       )}
+      {zoom != null && shots[zoom] && <Lightbox src={shots[zoom].url} alt={shots[zoom].name} onClose={() => setZoom(null)} />}
       {uploads.length > 0 && (
         <div className="composer-shots" aria-label="附的文档和文件夹">
           {uploads.map((u) => (
@@ -589,12 +604,23 @@ const Composer: React.FC<Props & {
           ))}
         </div>
       )}
-      <div className={cn("composer-in", busy && "is-off")}
+      {queued.length > 0 && (
+        <div className="composer-shots" aria-label="排着的话">
+          {queued.map((q, i) => (
+            <span key={i} className="pk-chip pk-chip--sm composer-upload" title={q}>
+              <Icon name="clock" size={12} />
+              <span className="pk-chip-label">{q}</span>
+              <button type="button" aria-label="不发这一句" onClick={() => onUnqueue(i)}><Icon name="x" size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className={cn("composer-in", locked && "is-off")}
         onPasteCapture={(e) => { if (!e.clipboardData.getData("text/plain") && addFiles([...e.clipboardData.files])) e.preventDefault(); }}
         onDragOver={(e) => { if ([...e.dataTransfer.items].some((i) => i.type.startsWith("image/"))) e.preventDefault(); }}
         onDrop={(e) => { if (addFiles([...e.dataTransfer.files])) e.preventDefault(); }}>
         <span className="pk-prompt">›</span>
-        <MarkdownEditor value={draft} onChange={onDraft} onSubmit={submit} onKey={onKey} placeholder={placeholder} disabled={busy} ariaLabel="一句话说要做什么" />
+        <MarkdownEditor value={draft} onChange={onDraft} onSubmit={submit} onKey={onKey} placeholder={placeholder} disabled={locked} ariaLabel="一句话说要做什么" />
       </div>
       {/* 谁来干在左栏 AGENTS 里选；这里一行短的写现在是谁（用着预设就写预设名），悬停看全的，点它跳过去。 */}
       <button type="button" className="composer-who" title={`${whoText(who, settings, entries)}\n在左栏 AGENTS 里换`} onClick={onShowAgents}>
@@ -623,13 +649,11 @@ const Composer: React.FC<Props & {
           </button>
         )}
         <span className="grow" />
+        {spent && money != null && <span className="composer-cost t-code" title={usageText(spent)}>{spent.source === "estimated" ? "估 " : ""}{money}</span>}
         {context && <ContextRing context={context} />}
-        {spent && <span className="composer-cost t-code" title={`这个任务一共：${usageText(spent)}`}>{money == null ? "花费未知" : `${spent.source === "estimated" ? "估 " : ""}${money}`}</span>}
-        {busy ? (
-          <Btn v="danger" icon="stop" onClick={onStop}>STOP</Btn>
-        ) : (
-          <button type="button" className="kbd kbd-send" aria-label="发出去" title="↵ 发出去；⇧↵ 或 ⌘↵ 换行" disabled={!ready} onClick={send}>↵</button>
-        )}
+        {who && <QuotaRing who={who} clients={clients} settings={settings} stamp={`${runs.length}:${busy}`} />}
+        {!locked && <button type="button" className="kbd kbd-send" aria-label="发出去" title="↵ 发；⇧↵ 换行" disabled={!ready} onClick={send}>↵</button>}
+        {busy && <Btn v="danger" icon="stop" onClick={onStop}>STOP</Btn>}
       </div>
     </div>
   );
@@ -765,7 +789,7 @@ const TaskModule: React.FC<{
         count={plan && plan.length ? `${donePlan}/${plan.length}` : undefined}
       >
         {onShow && (
-          <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏看任务 ${run.number} 的记录`} onClick={onShow}>LOG</Btn>
+          <Btn v="ghost" sm className={cn(shown && "is-here")} aria-pressed={shown} aria-label={`在右栏 FILES 看任务 ${run.number} 改的文件`} onClick={onShow}>FILES</Btn>
         )}
       </ModHead>
       <div className="task-st">

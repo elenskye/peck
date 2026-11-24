@@ -75,7 +75,7 @@ pub(crate) struct Session {
     /// 里面哪些是 MCP 工具的审批（回答的格式不一样）。
     elicitations: std::collections::HashSet<String>,
     /// 等站主回答的提问：统一的 request id → (JSON-RPC id, 问题 id)。
-    questions: HashMap<String, (Value, Vec<String>)>,
+    questions: HashMap<String, (Value, Vec<Value>)>,
     finished: Option<(TurnEndReason, Option<String>)>,
 }
 
@@ -292,11 +292,9 @@ impl Session {
                         known = true;
                     }
                     EventBody::UserInputRequested { request_id, .. } => {
-                        let ids = raw["params"]["questions"]
-                            .as_array()
-                            .map(|q| q.iter().filter_map(|x| x["id"].as_str().map(str::to_string)).collect())
-                            .unwrap_or_default();
-                        self.questions.insert(request_id.clone(), (id.clone(), ids));
+                        // 问题原样留着：回答时照顺序一个个对上（v1.1.9）。
+                        let asked = raw["params"]["questions"].as_array().cloned().unwrap_or_default();
+                        self.questions.insert(request_id.clone(), (id.clone(), asked));
                         known = true;
                     }
                     _ => {}
@@ -342,19 +340,21 @@ impl Session {
             }
             // with_origin 已经换成了 Approve。
             Control::ApproveByRule { .. } => {}
-            Control::Answer { request_id, answer } => {
+            Control::Answer { request_id, answer, answers: each } => {
                 if crate::gateway::mcp::try_answer(&request_id, &answer, &self.sink).await {
                     return;
                 }
-                let Some((id, question_ids)) = self.questions.remove(&request_id) else {
+                let Some((id, asked)) = self.questions.remove(&request_id) else {
                     return self.unknown(&request_id);
                 };
-                let answers: serde_json::Map<String, Value> = question_ids
-                    .into_iter()
-                    .map(|q| (q, json!({"answers": [answer.clone()]})))
+                let answers: serde_json::Map<String, Value> = asked
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, q)| Some((q["id"].as_str()?.to_string(), json!({"answers": Control::picks(&answer, &each, i)}))))
                     .collect();
                 let reply = json!({"jsonrpc": "2.0", "id": id, "result": {"answers": answers}});
                 if self.pipe.send(&reply).await.is_ok() {
+                    let answer = crate::gateway::convert::ask_summary(&asked, &answer, &each);
                     self.sink.emit(EventBody::UserInputResolved { request_id, answer });
                 }
             }
@@ -459,7 +459,7 @@ mod tests {
             .map(|e| Emitted { subagent_id: e.subagent_id, body: e.body })
             .collect();
         let want = crate::gateway::mock::parse_events_jsonl(&fixtures::read("codex-small-task", "events.jsonl")).unwrap();
-        assert_eq!(got, want);
+        assert_eq!(crate::gateway::engines::testing::without_estimates(got), want);
     }
 
     #[tokio::test]

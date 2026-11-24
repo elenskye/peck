@@ -24,7 +24,8 @@ const peckMarkdown = HighlightStyle.define([
 ]);
 
 const theme = EditorView.theme({
-  "&": { backgroundColor: "transparent", color: "var(--color-text)", fontSize: "inherit", maxHeight: "132px" },
+  // 最高多高外面定（`--md-max`）：中栏的输入框放到半个窗口（v1.1.9，学 Claude Code Desktop），ONE SHOT 的矮一点。
+  "&": { backgroundColor: "transparent", color: "var(--color-text)", fontSize: "inherit", maxHeight: "var(--md-max, 132px)" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "inherit", lineHeight: "20px", overflow: "auto" },
   ".cm-content": { padding: "5px 0", caretColor: "var(--color-cyan)" },

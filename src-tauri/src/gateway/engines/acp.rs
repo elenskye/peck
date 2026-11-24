@@ -325,14 +325,14 @@ impl Session {
             }
             // with_origin 已经换成了 Approve。
             Control::ApproveByRule { .. } => {}
-            Control::Answer { request_id, answer } => {
+            Control::Answer { request_id, answer, .. } => {
                 // ACP 自己不问站主；提问都来自 Peck 的本机 MCP（ask_user）。
                 if !crate::gateway::mcp::try_answer(&request_id, &answer, &self.sink).await {
                     self.notice(format!("这件事（{request_id}）已经不用回答了。"));
                 }
             }
             Control::Append { .. } => {
-                self.notice(format!("{} 干活时不能追加，等这一轮完了再说。", self.flavor.label));
+                self.notice(format!("{} 这一轮里插不了话。", self.flavor.label));
             }
             Control::Interrupt => {
                 // 还没回答的审批先回「取消」，再发 session/cancel。

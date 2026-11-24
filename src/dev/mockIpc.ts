@@ -691,6 +691,8 @@ export const mockIpc = {
   async gatewayControl(runId: string, control: Control): Promise<void> {
     const run = agentRuns.get(runId);
     if (!run) throw new Error("这个任务已经结束了。");
+    // 任务跑着时追加的一句（v1.1.9）：记进过程；剧本照旧往下演。
+    if (control.type === "append") { run.emit?.({ type: "user.appended", text: control.text }); return; }
     if (control.type === "interrupt") run.stopped = true;
     run.waiting?.(control);
   },

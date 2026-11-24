@@ -350,15 +350,16 @@ impl Session {
             }
             // with_origin 已经换成了 Approve。
             Control::ApproveByRule { .. } => {}
-            Control::Answer { request_id, answer } => {
+            Control::Answer { request_id, answer, answers } => {
                 if crate::gateway::mcp::try_answer(&request_id, &answer, &self.sink).await {
                     return;
                 }
                 let Some((_, input)) = self.pending.remove(&request_id) else {
                     return self.unknown(&request_id);
                 };
-                let reply = ClaudeCodeConverter::answer_reply(&request_id, &input, &answer);
+                let reply = ClaudeCodeConverter::answer_reply(&request_id, &input, &answer, &answers);
                 if self.pipe.send(&reply).await.is_ok() {
+                    let answer = crate::gateway::convert::ask_summary(input["questions"].as_array().map(Vec::as_slice).unwrap_or_default(), &answer, &answers);
                     self.sink.emit(EventBody::UserInputResolved { request_id, answer });
                 }
             }
@@ -470,11 +471,16 @@ mod tests {
         assert_eq!(deny["response"]["request_id"], "r1");
         assert_eq!(deny["response"]["response"]["behavior"], "deny");
         let input = json!({"questions": [{"question": "用哪个名字？", "options": [{"label": "甲"}]}]});
-        let answer = ClaudeCodeConverter::answer_reply("r2", &input, "甲");
+        let answer = ClaudeCodeConverter::answer_reply("r2", &input, "甲", &[]);
         let updated = &answer["response"]["response"]["updatedInput"];
         assert_eq!(answer["response"]["response"]["behavior"], "allow");
         assert_eq!(updated["answers"]["用哪个名字？"], "甲");
         assert_eq!(updated["questions"], input["questions"]);
+        // 一次问两个（v1.1.9）：每个问题自己的答案；多选的几项连成一句。
+        let two = json!({"questions": [{"question": "用哪个名字？", "options": [{"label": "甲"}]}, {"question": "要哪几样？", "multiSelect": true, "options": [{"label": "一"}, {"label": "二"}]}]});
+        let each = vec![vec!["甲".to_string()], vec!["一".to_string(), "二".to_string()]];
+        let both = ClaudeCodeConverter::answer_reply("r3", &two, "x", &each);
+        assert_eq!(both["response"]["response"]["updatedInput"]["answers"], json!({"用哪个名字？": "甲", "要哪几样？": "一, 二"}));
         let args = ClaudeCodeBackend::args(&AgentTask { resume: Some("s1".into()), permission: PermissionLevel::Plan, ..task() });
         let joined = args.join(" ");
         assert!(joined.contains("--permission-prompt-tool stdio"));

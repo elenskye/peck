@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.1.8**（2026-11-24）：输入框 `+`（附文档、文件夹）；CLI 没信任项目文件夹时任务开头一张 TRUST 卡片，点了以后每次起 CLI 带各家官方的信任开关（四家都管）；FILES 头上的 ALL 把照 `.gitignore` 藏着的也列出来；Muse、Grok 的订阅额度现在读不到，卡片上写明原因；「说明文字能不写就不写」进了 CLAUDE.md。v1.1.7 是 `/compact [重点]`、CLI 用量小环、读网页 `web_fetch`。
+**v1.1.9**（2026-11-24）：任务跑着时照样能发话（PLOOP、Codex、Claude Code、Muse 中途插进去，Grok 排到这一轮做完）；输入框右下角两个环（上下文、额度）；一次问几个问题的卡片各自作答；CLI 不报花费的按价格表估；Muse 回合说完还有后台命令在跑就等它回来；输入框长到半个窗口、附图点开放大；右栏 LOG 去掉。v1.1.8 是输入框 `+`、TRUST 卡片、FILES 的 ALL、「说明文字能不写就不写」。
 
 ## 定位
 
@@ -61,5 +61,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.8 | Muse | — | 0 / 3 | 没花额度：`muse serve`（带 / 不带 `--trust-workspace`）只建会话、不发回合，用本地假 MCP 看它连不连（带了才连）；`usage/read` 是空的 |
-| v1.1.8 | Codex | — | 0 / 3 | 没花额度：`codex -c projects={…} mcp list --json` 看项目 `.codex/config.toml` 读没读进来（内联表的写法才认） |
+| v1.1.9 | Muse | 默认、muse-spark-1.3 | 3 / 3 | 两次直接走协议看后台命令：回合结束时 `task/list` 还有一条在跑，跑完它自己开下一回合；一次走 Peck 的引擎（Spark、带 `--trust-workspace`）：等到了那一回合，`quota.updated` 也到了（5 小时 14%、每周 10%） |
+| v1.1.9 | Codex | gpt-6-luna low | 1 / 3（估 $0.002） | 带信任开关起 app-server；第一步工具开始时追加一句（`turn/steer`），最后的回答照追加的那句做了 |
+| v1.1.9 | Claude Code、Grok | — | 0 / 3 | 没跑：Claude Code 登录过期；Grok 的 `--trust` 会往它的信任表里写一条，没替站主试 |
+| v1.1.8 | Muse、Codex | — | 0 / 3 | 没花额度：`muse serve [--trust-workspace]` 只建会话，用本地假 MCP 看它连不连（带了才连）；`codex -c projects={…} mcp list` 看项目 `.codex/config.toml` 读没读进来（内联表的写法才认） |

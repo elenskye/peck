@@ -37,7 +37,7 @@
 | 花费上限 | 设置里上限设得比 0.42 低 | 发出去就停、写明原因 |
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
 | 任务板（`agentsMock.ts`） | PLOOP 下句子带「任务板」或「member」（在没有任务在跑的项目里，比如 peck） | 过程最上面「任务板」：worker 1、2 和 member 1 在跑、worker 3（和 worker 1 划的同一个文件）排队，worker 1 做完它才跑；点 member 1 展开它的几步，它派的 explorer 再挂一层；设置 → AGENTS 五块、member 默认 40 轮同时 2 个 |
-| 子代理（`agentsMock.ts`） | PLOOP 下句子带「派」「子代理」 | 两步「Spawn explorer: …」同时在跑，各自的几步挂在下面（头上「explorer · 模型名」），两个都完了主线才接着改；右栏 LOG 上面成员名单（MAIN 和四类）、时间线「派了 explorer」「explorer 做完了」 |
+| 子代理（`agentsMock.ts`） | PLOOP 下句子带「派」「子代理」 | 两步「Spawn explorer: …」同时在跑，各自的几步挂在下面（头上「explorer · 模型名」），两个都完了主线才接着改 |
 | 联网搜索、读网页 | 句子带「搜一下」「上网」「最新版」 | 「Searched the web 2 times, fetched 2 pages」一组：两步「Search the web: …」带来源，两步「Fetch …」（一步读到正文，点开头上的网址能用浏览器打开；一步跳到别的网站、失败）；回答写出处；花费行「搜 2 次」 |
 | 额度提醒 | 选一个 CLI；QUOTA 卡片里 Claude Code 每周 90% | 输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
 | 换引擎接着发 | PLOOP 做完的任务里换成 CLI 再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
@@ -46,6 +46,10 @@
 | `+` 附文档 | 输入框 `+` → 文件 / 文件夹（浏览器里给演示路径） | 上面排出小片（文件、文件夹图标不同）、能叉掉；发出去清掉 |
 | TRUST 卡片 | peck 项目里选一个 CLI 发一句（刷新后头一次） | 任务开头 `[ TRUST ]`：点 TRUST 留一行「信任了这个文件夹」再接着回放，项目设置里「CLI 信任这个文件夹」亮了；点 NOT NOW 直接回放，这次打开不再问 |
 | FILES 的 ALL | 右栏 FILES 头上点 ALL | 藏着的 `dist`、`node_modules` 变暗列出来，点开 `node_modules` 读出一层 |
+| 一次问几个问题 | PLOOP 下句子带「几个问题」 | `[ ASK ]` 里三段（VER、TRUST 单选，FILES 多选），头上 2/3；都答了 SUBMIT，过程里一个问题一行 |
+| 跑着时发话 | 任务在跑（比如停在卡片上）时在输入框打一句 ↵ | PLOOP、Codex、Claude Code、Muse：过程里多一行 YOU；Grok：输入框上面排一片，这一轮做完自动发成下一句 |
+| 两个环 | 输入框右下角 | 左边 12 个点是上下文，右边实心弧是额度：PLOOP 点开「本月 $0.42 / $20」；Claude Code、Codex 点开两个窗口；Muse、Grok 读不到，虚线、点开原因加近 5 小时 / 7 天 |
+| 附图放大 | 输入框贴一张图，点小图 | 盖住窗口的大图，点一下或 Esc 关 |
 | 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
 | 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页两组卡片 + MCP SERVERS，点卡片开小窗（每个项目都装、按项目装和开关、它带的东西）；三个项目三种状态：notebook 装着旧版（卡片上青色版本号、小窗里 UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后项目设置的 SKILLS 多一行。在装着 Git Plan 的 peck 项目里发一个任务，做完后 recap 里多一行「Git Plan 提交了 …」 |
 
@@ -118,7 +122,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
   - Mathpix（`ocr_pdf`）：`gateway::mathpix` 的 `live_mathpix`，`PECK_MATHPIX_ID`、`PECK_MATHPIX_KEY`（Key 目录的 `mathpix` 第一行、第二行）、`PECK_LIVE_PDF`（一两页的 PDF，按页收费）：识别一次、确认它那边删掉了。
   - 划文件（v1.1.3）：同一个模块的 `live_ploop_workers_split_files`，参数同下（`PECK_LIVE_SUB_MODEL` 是 worker）：主角色派两个 worker 各建一个文件，主角色最多 5 轮、worker 各 2 轮。
   - PLOOP 子代理：`harness::r#loop` 的 `live_ploop_spawns_explorers`。`PECK_LIVE_KEYS`、`PECK_LIVE_MODEL`（主角色）、`PECK_LIVE_SUB_MODEL`（explorer）：在临时项目里让主角色一次派两个 explorer、等报告、收尾（主角色约 3 次请求，explorer 各 2–3 次）。
-  - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`。审批一律批准一次，提问答「好」。
+  - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`、`PECK_LIVE_TRUST=1`（带信任开关）、`PECK_LIVE_APPEND=<一句话>`（第一步工具开始时追加这一句，验中途插话）。审批一律批准一次，提问答「好」。
   - 收尾 Hook（Codex，花一个小任务、两轮）：`gateway::engines::codex` 的 `live_stop_hook_commits_the_round`，`PECK_LIVE_CODEX`、`PECK_LIVE_CWD=<一个 git 仓库>`（用仓库外的 `projects/git-plan-smoke`）。
   - CLI 的模型列表（不花额度）：`PECK_LIVE_CLI_DIR=<cli/bin> PECK_LIVE_ENGINE=codex cargo test --manifest-path src-tauri/Cargo.toml live_list_models -- --ignored --nocapture`。
   - 跑法：`cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture <测试路径>`，`PECK_DATA_DIR` 照样指到新的临时目录。
@@ -129,7 +133,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 |---|---|---|
 | Codex | [App Server](https://learn.chatgpt.com/docs/app-server)：`account/rateLimits/read`、`account/rateLimits/updated` | 不用 API Key 推订阅额度；credits 不当 USD |
 | Claude Code | [status line JSON](https://code.claude.com/docs/en/statusline)：`rate_limits`；Peck 现在跑 `claude -p /usage` | 空闲不刷新；缺字段不是 0；`cli/bin` 的 Claude Code 要先登录 |
-| Muse CLI | `muse usage --json`（[更新记录](https://dev.meta.ai/docs/muse-code/changelog)）；会话里是 `usage/read`、`usage/changed` | 用 `allowance.asOfMs` 作数据时间；`allowance: null`、`reason: server_sent_no_usage` 是服务器没给（站主的订阅 2026-11-16 以后一直这样） |
+| Muse CLI | `muse usage --json`（[更新记录](https://dev.meta.ai/docs/muse-code/changelog)）；会话里是 `usage/read`、`usage/changed` | 用 `allowance.asOfMs` 作数据时间；`allowance: null`、`reason: server_sent_no_usage` 是服务器没有在计的窗口、不给（2026-11-16 到 11-24 下午一直这样，11-24 晚上又有了） |
 | Grok CLI | [`/usage`](https://docs.x.ai/build/modes-and-commands) | `grok usage` 只在 daemon 线路上给套餐数据，shell 线路报「Run /usage inside grok」 |
 | DeepSeek API | [GET `/user/balance`](https://api-docs.deepseek.com/api/get-user-balance/) | 用已配置的 Key；换 Key 清旧余额 |
 | Anthropic API | [Usage/Cost Analytics](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api) | 要 Admin 权限，普通 Key 显示未知 |

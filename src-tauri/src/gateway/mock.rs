@@ -429,6 +429,7 @@ impl AgentBackend for ReplayBackend {
                                 Some(Control::Answer {
                                     request_id: id,
                                     answer,
+                                    ..
                                 }) if id == request_id => break answer,
                                 Some(Control::Interrupt) | None => {
                                     return Ok(RunOutcome {

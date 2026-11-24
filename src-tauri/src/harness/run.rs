@@ -570,6 +570,7 @@ pub(crate) fn start_peck_run(
             }
             out(e);
         });
+        runner::register_sink(&id, &sink);
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text });
         }
@@ -603,6 +604,7 @@ pub(crate) fn start_peck_run(
         };
         watcher.abort();
         runner::unregister_control(&id);
+        runner::unregister_sink(&id);
         if let (Ok(conversation), Ok(db)) = (backend.conversation.lock(), store.lock()) {
             let _ = db.save_harness_conversation(&session_id, &model_id, &super::r#loop::without_images(&conversation));
         }
@@ -1247,7 +1249,7 @@ mod tests {
             let e = tokio::time::timeout_at(deadline, rx.recv()).await.expect("跑太久了").expect("事件断了");
             match &e.body {
                 EventBody::UserInputRequested { request_id, .. } => {
-                    crate::gateway::runner::gateway_control(run_id.clone(), Control::Answer { request_id: request_id.clone(), answer: "先不改".into() })
+                    crate::gateway::runner::gateway_control(run_id.clone(), Control::answer(request_id.clone(), "先不改"))
                         .await
                         .unwrap();
                 }
