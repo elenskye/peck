@@ -104,6 +104,8 @@ pub(crate) struct Session {
     approvals: HashMap<String, PendingApproval>,
     questions: HashMap<String, (String, Vec<String>)>,
     finished: Option<TurnEndReason>,
+    /// 转发 `/compact`（v1.1.7）：压缩那一条做完就算这一次完了。
+    compacting: bool,
 }
 
 impl Session {
@@ -118,6 +120,7 @@ impl Session {
             approvals: HashMap::new(),
             questions: HashMap::new(),
             finished: None,
+            compacting: task.compact,
         }
     }
 
@@ -224,6 +227,26 @@ impl Session {
         let Some(session_id) = self.session_id.clone() else {
             return Err(GatewayError::new(ErrorKind::Engine, "Muse 没给会话号。"));
         };
+        // 转发 `/compact`（v1.1.7）：`session/compact`（异步：accepted 以后看压缩那一条的结果；noop 就是没什么可压的）。不收重点。
+        if task.compact {
+            if task.resume.is_none() {
+                return Err(GatewayError::new(ErrorKind::Engine, "这个任务还没有 Muse 的会话，没什么可压的。"));
+            }
+            if task.prompt.trim().trim_start_matches("/compact").trim() != "" {
+                self.sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text: "Muse 不接收重点，按它自己的方式压。".into() });
+            }
+            let turn_id = format!("compact-{}", task.run_id);
+            self.turn_id = Some(turn_id.clone());
+            self.sink.emit(EventBody::TurnStarted { turn_id: turn_id.clone() });
+            let r = self.request("session/compact", json!({"commandId": uuid_v7(), "sessionId": session_id})).await?;
+            if r["status"] == "noop" {
+                let why = r["reason"].as_str().map(|w| format!("：{w}")).unwrap_or_default();
+                self.sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text: format!("Muse 说没什么可压的{why}") });
+                self.sink.emit(EventBody::TurnCompleted { turn_id, reason: TurnEndReason::Done, error: None });
+                self.finished = Some(TurnEndReason::Done);
+            }
+            return Ok(());
+        }
         let mut params = json!({
             "commandId": uuid_v7(),
             "sessionId": session_id,
@@ -321,10 +344,20 @@ impl Session {
         }
         let emitted = self.converter.feed(&raw);
         for body in emit_all(&self.sink, emitted, Some(&raw)) {
-            if let EventBody::TurnCompleted { turn_id, reason, .. } = body {
-                if self.turn_id.as_deref().is_none_or(|t| t == turn_id) {
+            match body {
+                EventBody::TurnCompleted { turn_id, reason, .. } => {
+                    if self.compacting || self.turn_id.as_deref().is_none_or(|t| t == turn_id) {
+                        self.finished = Some(reason);
+                    }
+                }
+                // 转发的 `/compact`：压缩那一条做完了就收（Muse 不一定另发回合结束）。
+                EventBody::ContextCompacted { .. } if self.compacting && self.finished.is_none() => {
+                    let failed = matches!(raw["params"]["item"]["outcome"].as_str(), Some("failed" | "cancelled"));
+                    let (reason, error) = if failed { (TurnEndReason::Error, Some("Muse 没压成。".to_string())) } else { (TurnEndReason::Done, None) };
+                    self.sink.emit(EventBody::TurnCompleted { turn_id: self.turn_id.clone().unwrap_or_default(), reason, error });
                     self.finished = Some(reason);
                 }
+                _ => {}
             }
         }
     }
@@ -428,6 +461,7 @@ mod tests {
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         }
     }
 
@@ -550,10 +584,11 @@ mod tests {
             permission: PermissionLevel::Edit,
             model: std::env::var("PECK_LIVE_MODEL").ok(),
             effort: Some("low".into()),
-            resume: None,
+            resume: std::env::var("PECK_LIVE_RESUME").ok(),
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
         };
         let outcome = MuseBackend::new(setup).run(t, sink, rx).await;
         for e in events.lock().unwrap().iter() {
@@ -561,4 +596,40 @@ mod tests {
         }
         println!("outcome: {outcome:?}");
     }
+
+    /// 转发 `/compact`（v1.1.7）：`session/compact`；accepted 以后压缩那一条做完就收；noop 直接说没什么可压的。
+    #[tokio::test]
+    async fn compact_is_forwarded_and_ends_with_the_compaction_item() {
+        let run = |status: &'static str, items: bool| async move {
+            let mut lines = vec![
+                json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
+                json!({"jsonrpc": "2.0", "id": 2, "result": {"session": {"sessionId": "s1"}}}),
+                json!({"jsonrpc": "2.0", "id": 3, "result": {"commandId": "x", "status": status, "reason": "上下文很小"}}),
+            ];
+            if items {
+                lines.push(json!({"jsonrpc": "2.0", "method": "item/started", "params": {"item": {"itemId": "k1", "kind": "compaction", "trigger": "manual"}}}));
+                lines.push(json!({"jsonrpc": "2.0", "method": "item/completed", "params": {"item": {"itemId": "k1", "kind": "compaction", "trigger": "manual", "outcome": "compacted", "tokensBefore": 120000, "tokensAfter": 20000}}}));
+                lines.push(json!({"jsonrpc": "2.0", "method": "session/contextUsage", "params": {"usedTokens": 21000, "windowTokens": 1000000, "pressure": "normal"}}));
+            }
+            let pipe = Pipe::script(&lines.iter().map(|l| l.to_string() + "\n").collect::<String>());
+            let (tx, rx) = mpsc::unbounded_channel();
+            let (sink, events) = auto_answer("muse", tx, |_| ApprovalDecision::AllowOnce, "");
+            let t = AgentTask { resume: Some("s1".into()), compact: true, prompt: "/compact".into(), ..task() };
+            let mut session = Session::new(pipe, &t, sink);
+            session.start(&t).await.unwrap();
+            let sent: Vec<String> = session.pipe.sent().iter().filter_map(|s| s["method"].as_str().map(str::to_string)).collect();
+            let outcome = session.drive(&mut { rx }).await.unwrap();
+            let bodies: Vec<EventBody> = events.lock().unwrap().iter().map(|e| e.body.clone()).collect();
+            (outcome, sent, bodies)
+        };
+        let (outcome, sent, bodies) = run("accepted", true).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        assert!(sent.contains(&"session/compact".to_string()) && !sent.contains(&"turn/start".to_string()), "{sent:?}");
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::ContextCompacted { before: 120000, after: 20000, .. })));
+        assert!(matches!(bodies.iter().rev().find(|b| matches!(b, EventBody::TurnCompleted { .. })), Some(EventBody::TurnCompleted { reason: TurnEndReason::Done, .. })));
+        let (outcome, _, bodies) = run("noop", false).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::Notice { text, .. } if text.contains("没什么可压的：上下文很小"))));
+    }
+
 }

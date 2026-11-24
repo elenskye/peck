@@ -194,6 +194,9 @@ body { overflow: hidden; }
 .task-stack { display: flex; flex-direction: column; gap: var(--space-5); overflow-x: hidden; }
 .you { flex: none; display: flex; align-items: baseline; gap: var(--space-5); padding: 0 var(--space-2); }
 .you .t-label { color: var(--color-text-3); }
+/* `/compact` 那一次（v1.1.7）：不画 YOU，一行「压缩上下文」。 */
+.you-compact { flex: none; display: flex; align-items: center; gap: var(--space-4); margin: 0; padding: 0 var(--space-2); font-size: var(--text-small); color: var(--color-text-2); }
+.you-compact .t-label, .you-compact .pk-i { color: var(--color-text-3); }
 .you-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .task { flex: none; overflow: hidden; }
 .task--latest { flex: 1 0 auto; }
@@ -212,7 +215,7 @@ body { overflow: hidden; }
 .out-lines { max-height: 260px; }
 .out-acts { display: flex; align-items: center; gap: var(--space-4); font-family: var(--font-body); }
 .fold { margin: 0 0 var(--space-4); }
-.fold-head { display: flex; align-items: center; gap: var(--space-4); height: var(--size-row); font-size: var(--text-small); color: var(--color-text-2); }
+.fold-head { display: flex; align-items: center; gap: var(--space-4); min-height: var(--size-row); font-size: var(--text-small); color: var(--color-text-2); text-align: left; }
 .fold-head .pk-i, .fold-head em { color: var(--color-text-3); }
 .fold-head:hover { color: var(--color-text); }
 .checklist { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3) var(--space-10); }
@@ -612,6 +615,11 @@ body { overflow: hidden; }
 .ctx-ring rect { fill: var(--color-block-off); }
 .ctx-ring rect.is-on { fill: var(--color-cyan-text); }
 .ctx-ring.is-warn rect.is-on { fill: var(--color-warn); }
+.ctx-ring.is-stale rect.is-on { opacity: .45; }
+/* 读网页那一步（v1.1.7）点开：头上一行最后的网址，点了用系统浏览器打开。 */
+.web-head { display: flex; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-3); min-width: 0; font-size: var(--text-small); color: var(--color-text-3); }
+.web-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; padding: 0; border: 0; background: none; font: inherit; color: var(--color-cyan-text); text-decoration: underline dotted; cursor: pointer; }
+.web-link:hover { color: var(--color-text); }
 .ctx-ring:hover rect:not(.is-on) { fill: var(--color-line-strong); }
 .ctx-ring:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
 .ctx-pop { min-width: 300px; max-width: 320px; }
@@ -629,6 +637,7 @@ body { overflow: hidden; }
 /* 自动压缩的一步、交接摘要 */
 .agent-compact { color: var(--color-text-3); }
 .agent-compact > .fold-head { color: var(--color-text-3); }
+.agent-compact > .fold-head > span { padding: var(--space-1) 0; }
 .agent-summary { margin: var(--space-2) 0 var(--space-3) var(--space-10); padding-left: var(--space-6); border-left: 1px dotted var(--color-line-strong); font-size: var(--text-small); color: var(--color-text-2); }
 
 /* 多行的文字框：Skill 正文、项目的环境变量。 */

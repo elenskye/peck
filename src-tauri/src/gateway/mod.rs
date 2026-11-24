@@ -270,6 +270,9 @@ pub struct AgentTask {
     /// 项目的其他文件夹（v0.10）：（路径，能改）。能改的用 CLI 自己的开关挂上（只对这一次进程），都在这一句后面写明。
     #[serde(default)]
     pub folders: Vec<(PathBuf, bool)>,
+    /// 转发 `/compact`（v1.1.7）：续上 `resume` 那个会话，让 CLI 自己压一次（`prompt` 是 `/compact [重点]`），不发站主的话。
+    #[serde(default)]
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

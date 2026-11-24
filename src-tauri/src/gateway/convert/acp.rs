@@ -27,6 +27,11 @@ pub struct AcpConverter {
     started_calls: HashSet<String>,
     finished_calls: HashSet<String>,
     model: Option<String>,
+    /// 上下文用量（v1.1.7）：最近报的用了多少（一样的不重复报）、窗口多大（模型列表或压缩通知里有才知道）。
+    context_used: Option<u64>,
+    context_window: Option<u64>,
+    /// 这一次是站主 `/compact` 转过来的：压缩那一行写「你让它压的」。
+    pub compacting: bool,
 }
 
 impl AcpConverter {
@@ -41,6 +46,44 @@ impl AcpConverter {
             started_calls: HashSet::new(),
             finished_calls: HashSet::new(),
             model: None,
+            context_used: None,
+            context_window: None,
+            compacting: false,
+        }
+    }
+
+    /// 界面上写的名字。
+    fn label(&self) -> String {
+        match self.engine.as_str() {
+            "grok" => "Grok".into(),
+            other => other.to_string(),
+        }
+    }
+
+    /// 报一次「用了 / 窗口」（和上次一样就不报）。
+    fn context(&mut self, used: u64) -> Vec<EventBody> {
+        if used == 0 || self.context_used == Some(used) {
+            return vec![];
+        }
+        self.context_used = Some(used);
+        vec![super::cli_context(&self.label(), used, self.context_window, false)]
+    }
+
+    /// Grok 的扩展通知（`_x.ai/session_notification`）：只认自动压缩那几条（v1.1.7），别的不出事件。
+    fn xai_notification(&mut self, u: &Value) -> Vec<EventBody> {
+        match u["sessionUpdate"].as_str().unwrap_or("") {
+            "auto_compact_started" => {
+                if let Some(w) = u["context_window"].as_u64() {
+                    self.context_window = Some(w);
+                }
+                vec![]
+            }
+            "auto_compact_completed" => {
+                self.context_used = None;
+                vec![super::cli_compacted(&self.label(), Some(self.compacting), u["tokens_before"].as_u64(), u["tokens_after"].as_u64(), "")]
+            }
+            "auto_compact_failed" | "auto_compact_cancelled" => vec![super::cli_compacted(&self.label(), Some(self.compacting), None, None, "：没压成")],
+            _ => vec![],
         }
     }
 
@@ -305,6 +348,22 @@ impl AcpConverter {
                 }
                 vec![]
             }
+            // 标准 ACP 的用量（v1.1.7）：`used` / `size`。
+            "usage_update" => {
+                if let Some(size) = u["size"].as_u64() {
+                    self.context_window = Some(size);
+                }
+                u["used"].as_u64().map(|used| self.context(used)).unwrap_or_default()
+            }
+            // 标准 ACP 的压缩进度（v1.1.7）。
+            "compaction_update" => match u["status"].as_str() {
+                Some("completed") => {
+                    self.context_used = None;
+                    vec![super::cli_compacted(&self.label(), Some(self.compacting), None, None, "")]
+                }
+                Some("failed") => vec![super::cli_compacted(&self.label(), Some(self.compacting), None, None, "：没压成")],
+                _ => vec![],
+            },
             // 用户自己那一句、可用命令、模式、标题：不出事件。
             _ => vec![],
         }
@@ -342,6 +401,9 @@ impl AcpConverter {
                 scope: UsageScope::Turn,
                 model: None,
             });
+        }
+        if let Some(total) = result["_meta"]["totalTokens"].as_u64() {
+            out.extend(self.context(total));
         }
         let reason = match result["stopReason"].as_str() {
             Some("end_turn") => TurnEndReason::Done,
@@ -422,7 +484,15 @@ impl AcpConverter {
             return vec![EventBody::Raw { source: self.engine.clone(), kind: Some(m.into()) }];
         }
         match method {
-            Some("session/update") => self.session_update(&raw["params"]["update"]),
+            Some("session/update") => {
+                let mut out = self.session_update(&raw["params"]["update"]);
+                // Grok 每条更新的 `_meta.totalTokens`：这一次请求的上下文多大（发话以前的那几条不算）。
+                if let Some(total) = raw["params"]["_meta"]["totalTokens"].as_u64().filter(|_| self.turn > 0) {
+                    out.extend(self.context(total));
+                }
+                out
+            }
+            Some("_x.ai/session_notification") => self.xai_notification(&raw["params"]["update"]),
             Some(m) if m.starts_with("_") => vec![],
             Some(m) => vec![EventBody::Raw { source: self.engine.clone(), kind: Some(m.into()) }],
             None => {
@@ -432,6 +502,12 @@ impl AcpConverter {
                 }
                 if let Some(session) = result["sessionId"].as_str() {
                     self.model = result["models"]["currentModelId"].as_str().map(str::to_string);
+                    // 窗口（v1.1.7）：模型列表里这个模型的 `_meta.totalContextTokens`（有的版本才带）。
+                    self.context_window = result["models"]["availableModels"]
+                        .as_array()
+                        .and_then(|m| m.iter().find(|x| x["modelId"].as_str() == self.model.as_deref()))
+                        .and_then(|m| m["_meta"]["totalContextTokens"].as_u64())
+                        .or(self.context_window);
                     return vec![EventBody::SessionStarted {
                         engine: self.engine.clone(),
                         model: self.model.clone(),

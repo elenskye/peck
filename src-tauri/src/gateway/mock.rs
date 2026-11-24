@@ -484,6 +484,7 @@ mod tests {
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         }
     }
 

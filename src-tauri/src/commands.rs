@@ -281,6 +281,18 @@ pub async fn shell_set_activity(activity: String, count: Option<u32>, app: tauri
     Ok(())
 }
 
+/// 用系统浏览器打开一个网址（v1.1.7：读网页那一步的网址）。只认 http / https。
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    let parsed = reqwest::Url::parse(url).map_err(|_| "不是一个网址。".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只打开 http / https 的网址。".into());
+    }
+    tokio::process::Command::new("/usr/bin/open").arg(parsed.as_str()).status().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 发一条 macOS 通知（任务做完、要回答）。开关在界面设置里，界面决定发不发。
 /// 用编辑器或访达打开项目里的文件（v0.8）：`how` 是 `finder`（在访达里选中）、`editor`（`app` 给了就用它，
 /// 没给用系统默认的 App）。只认项目里的、项目其他文件夹里的；`app` 只能是一个 App 的名字。

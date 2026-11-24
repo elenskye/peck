@@ -77,10 +77,12 @@ pub(crate) struct Session {
 
 impl Session {
     pub(crate) fn new(pipe: Pipe, task: &AgentTask, sink: EventSink) -> Self {
+        let mut converter = CodexConverter::new(Some(task.cwd.to_string_lossy().into_owned()));
+        converter.compacting = task.compact;
         Self {
             pipe,
             sink,
-            converter: CodexConverter::new(Some(task.cwd.to_string_lossy().into_owned())),
+            converter,
             next_id: 1,
             thread_id: None,
             turn_id: None,
@@ -178,6 +180,22 @@ impl Session {
             thread_params["model"] = json!(model);
         }
 
+        // 转发 `/compact`（v1.1.7）：续上会话、发 `thread/compact/start`（不收重点）；进度照常走 `turn/*`、`item/*`。
+        if task.compact {
+            let Some(id) = &task.resume else {
+                return Err(GatewayError::new(ErrorKind::Engine, "这个任务还没有 Codex 的会话，没什么可压的。"));
+            };
+            if task.prompt.trim().trim_start_matches("/compact").trim() != "" {
+                self.sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text: "Codex 不接收重点，按它自己的方式压。".into() });
+            }
+            thread_params["threadId"] = json!(id);
+            thread_params["excludeTurns"] = json!(true);
+            let thread = self.request("thread/resume", thread_params).await?;
+            self.thread_id = thread["thread"]["id"].as_str().map(str::to_string).or(Some(id.clone()));
+            let thread_id = self.thread_id.clone().unwrap_or_default();
+            self.request("thread/compact/start", json!({"threadId": thread_id})).await?;
+            return Ok(());
+        }
         let thread = match &task.resume {
             Some(id) => {
                 thread_params["threadId"] = json!(id);
@@ -405,6 +423,7 @@ mod tests {
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         }
     }
 
@@ -531,10 +550,11 @@ mod tests {
                 Ok(e) => Some(e.to_string()),
                 Err(_) => Some("low".into()),
             },
-            resume: None,
+            resume: std::env::var("PECK_LIVE_RESUME").ok(),
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
         };
         let outcome = CodexBackend::new(setup).run(t, sink, rx).await;
         for e in events.lock().unwrap().iter() {
@@ -565,6 +585,7 @@ mod tests {
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         };
         let backend = CodexBackend::new(setup);
         let outcome = backend.run(t.clone(), sink, rx).await.expect("第一轮");
@@ -582,4 +603,31 @@ mod tests {
         println!("{}", serde_json::to_string(&done).unwrap());
         println!("uncommitted now: {:?}", git::changed(&cwd).unwrap());
     }
+
+    /// 转发 `/compact`（v1.1.7）：续上会话、发 `thread/compact/start`（不发 `turn/start`、不带重点）；压缩那一条、用量照常转。
+    #[tokio::test]
+    async fn compact_is_forwarded_with_its_own_request() {
+        let lines = [
+            json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "result": {}}),
+            json!({"jsonrpc": "2.0", "method": "turn/started", "params": {"threadId": "thread-1", "turn": {"id": "turn-c"}}}),
+            json!({"jsonrpc": "2.0", "method": "item/started", "params": {"item": {"type": "contextCompaction", "id": "cc1"}}}),
+            json!({"jsonrpc": "2.0", "method": "item/completed", "params": {"item": {"type": "contextCompaction", "id": "cc1"}}}),
+            json!({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated", "params": {"tokenUsage": {"last": {"totalTokens": 9000, "inputTokens": 8000, "cachedInputTokens": 0, "outputTokens": 1000, "reasoningOutputTokens": 0}, "total": {"totalTokens": 90000, "inputTokens": 80000, "cachedInputTokens": 0, "outputTokens": 10000, "reasoningOutputTokens": 0}, "modelContextWindow": 400000}}}),
+            json!({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": "turn-c", "status": "completed"}}}),
+        ];
+        let pipe = Pipe::script(&lines.iter().map(|l| l.to_string() + "\n").collect::<String>());
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sink, events) = auto_answer("codex", tx, |_| ApprovalDecision::AllowOnce, "");
+        let t = AgentTask { resume: Some("thread-1".into()), compact: true, prompt: "/compact 留住数据库那段".into(), ..task(PermissionLevel::Edit) };
+        let outcome = Session::new(pipe, &t, sink).run(t, rx).await.unwrap();
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        assert_eq!(outcome.session_ref.as_deref(), Some("thread-1"));
+        let bodies: Vec<EventBody> = events.lock().unwrap().iter().map(|e| e.body.clone()).collect();
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::Notice { text, .. } if text.contains("不接收重点"))));
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::ContextCompacted { step: crate::gateway::event::CompactStep::Engine, text, .. } if text.contains("Codex") && text.contains("你让它压的"))));
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::ContextUpdated { used: 9000, window: Some(400000), managed_by: Some(m), .. } if m == "Codex")), "用量用 last.totalTokens");
+    }
+
 }

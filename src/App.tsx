@@ -410,6 +410,39 @@ const App: React.FC = () => {
     } catch (e) { say(e); void refreshProjects(); return false; }
   }, [project, busy, taskId, runs, agentEvents, entries, onAgentEvent, refreshProjects, say]);
 
+  /** `/compact [重点]`（v1.1.7）：PLOOP 压这个任务的 Peck Loop 对话（三步、叫一次模型）；CLI 续上它在这个任务里的会话、让它自己压。
+   *  落成这个任务的一次新记录。 */
+  const compact = useCallback(async (focus: string, who: string, permission: Permission): Promise<boolean> => {
+    if (!project || !taskId) { say("先选一个任务"); return false; }
+    if (busy) { say("任务在跑：跑完再压"); return false; }
+    const s = settingsRef.current;
+    const entry = entries.find((e) => e.id === who) ?? null;
+    const ploop = who === PLOOP_ID || who.startsWith("api:");
+    try {
+      const ctx = { projectId: project.workspace.id, taskId, prompt: focus ? `/compact ${focus}` : "/compact" };
+      let id: string | null = null;
+      const early: AgentEvent[] = [];
+      const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
+      if (ploop) {
+        id = await ipc.harnessCompact({ sessionId: taskId, focus: focus || undefined, permission, costCap: s.costCap }, onEvent);
+      } else {
+        const resume = lastSessionRef(runs, agentEvents, who);
+        if (!resume) { say(`这个任务还没有 ${entry?.label ?? who} 的会话，没什么可压的`); return false; }
+        id = await ipc.gatewayCompact({ sessionId: taskId, who, focus: focus || undefined, permission, model: cliModelOf(entry, s), effort: sendEffort(entry, s), resume }, onEvent);
+      }
+      const runId = id;
+      setLive((prev) => ({ ...prev, [runId]: { projectId: ctx.projectId, taskId: ctx.taskId } }));
+      setAgentEvents((prev) => ({ ...prev, [runId]: prev[runId] ?? [] }));
+      for (const event of early) onAgentEvent(ctx, runId, event);
+      const loaded = await ipc.sessionGetRuns(taskId);
+      setRunsByTask((prev) => ({ ...prev, [taskId]: loaded }));
+      setDraft("");
+      setShownRunId(null);
+      await refreshProjects();
+      return true;
+    } catch (e) { say(e); void refreshProjects(); return false; }
+  }, [project, busy, taskId, runs, agentEvents, entries, onAgentEvent, refreshProjects, say]);
+
   const control = useCallback(async (runId: string, c: Control) => {
     await ipc.gatewayControl(runId, c);
   }, []);
@@ -709,6 +742,7 @@ const App: React.FC = () => {
                 draft={draft}
                 onDraft={setDraft}
                 onSend={send}
+                onCompact={compact}
                 onAppendEvent={(runId, event) => {
                   setAgentEvents((prev) => {
                     const list = prev[runId] ?? [];

@@ -363,10 +363,19 @@ export const ipc = {
     if (isMockMode()) return mockIpc.slashExpand(workspaceId, name, args);
     return invoke<string>("slash_expand", { workspaceId, name, args });
   },
-  /** `/compact`：压一压这个任务存着的 Peck Loop 对话（不叫模型）。 */
-  async harnessCompact(sessionId: string): Promise<string> {
-    if (isMockMode()) return mockIpc.harnessCompact(sessionId);
-    return invoke<string>("harness_compact", { sessionId });
+  /** `/compact [重点]`（v1.1.7）：Peck Loop 的手动压缩，落成这个任务的一次新记录（叫一次模型写交接摘要）。返回任务 id。 */
+  async harnessCompact(args: CompactArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.harnessCompact(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("harness_compact", { ...args, channel });
+  },
+  /** `/compact [重点]` 转给 CLI（v1.1.7）：续上 `resume` 那个会话让它自己压。返回任务 id。 */
+  async gatewayCompact(args: CompactArgs & { who: string; model?: string; resume: string }, onEvent: (event: AgentEvent) => void): Promise<string> {
+    if (isMockMode()) return mockIpc.gatewayCompact(args, onEvent);
+    const channel = new Channel<AgentEvent>();
+    channel.onmessage = onEvent;
+    return invoke<string>("gateway_compact", { ...args, channel });
   },
   /** 项目设置：这个项目的 Peck Loop 会用到的 MCP（设置里的 + 项目 .mcp.json 里的）。 */
   async projectMcpList(workspaceId: string): Promise<ProjectMcpView> {
@@ -419,6 +428,11 @@ export const ipc = {
     return invoke<string>("harness_image_read", { path });
   },
   /** 用编辑器（app 空着用系统默认）或访达打开项目里的文件（v0.8）。 */
+  /** 用系统浏览器打开一个网址（v1.1.7，读网页那一步）。只认 http / https。 */
+  async openUrl(url: string): Promise<void> {
+    if (isMockMode()) { window.open(url, "_blank", "noopener"); return; }
+    return invoke<void>("open_url", { url });
+  },
   async openPath(workspaceId: string, path: string, how: "editor" | "finder", app?: string): Promise<void> {
     if (isMockMode()) return mockIpc.openPath(workspaceId, path, how, app);
     return invoke<void>("open_path", { workspaceId, path, how, app: app || null });
@@ -488,6 +502,15 @@ export const ipc = {
     return invoke<void>("app_icon_set", { icon });
   },
 };
+
+export interface CompactArgs {
+  sessionId: string;
+  /** 要重点留住什么（只有 Peck Loop、Claude Code 收）。 */
+  focus?: string;
+  permission?: Permission;
+  effort?: string;
+  costCap?: number | null;
+}
 
 export interface HarnessRunArgs {
   sessionId: string;

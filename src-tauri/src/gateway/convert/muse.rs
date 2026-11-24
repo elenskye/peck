@@ -185,7 +185,17 @@ impl MuseConverter {
                     duration_ms: item["durationMs"].as_u64(),
                 }]
             }
-            // 站主自己的那一句、Muse 内部的提醒子任务、压缩记录：不出事件。
+            // 压了一次上下文（v1.1.7）：前后多大它报了就写上。
+            "compaction" if completed => {
+                let note = match item["outcome"].as_str() {
+                    Some("noop") => "：没什么可压的",
+                    Some("failed") => "：没压成",
+                    Some("cancelled") => "：取消了",
+                    _ => "",
+                };
+                vec![super::cli_compacted("Muse", item["trigger"].as_str().map(|t| t == "manual"), item["tokensBefore"].as_u64(), item["tokensAfter"].as_u64(), note)]
+            }
+            // 站主自己的那一句、Muse 内部的提醒子任务、压缩开头：不出事件。
             "userMessage" | "reminderChild" | "compaction" | "agentMessage" | "reasoning" => vec![],
             other => {
                 if completed {
@@ -392,7 +402,11 @@ impl MuseConverter {
             }
             "session/contextUsage" => {
                 self.context = (p["usedTokens"].as_u64(), p["windowTokens"].as_u64());
-                vec![]
+                // 小环（v1.1.7）：`pressure` 是 warning / blocked 就变琥珀。
+                match self.context.0 {
+                    Some(used) => vec![super::cli_context("Muse", used, self.context.1, matches!(p["pressure"].as_str(), Some("warning" | "blocked")))],
+                    None => vec![],
+                }
             }
             "session/tokenUsage" => {
                 let c = &p["cumulative"];
@@ -515,4 +529,13 @@ mod tests {
         assert_eq!(c.tool_kind_and_title("mcp__dw__list", &serde_json::json!({})).1, "MCP dw · list");
         assert_eq!(c.tool_kind_and_title("write_file", &serde_json::json!({"path": "a.txt"})).0, ToolKind::Edit);
     }
+
+    /// `session/contextUsage`（v1.1.7）：报「用了 / 窗口」；`pressure` 是 warning 就标警告。
+    #[test]
+    fn context_pressure_warns() {
+        let mut c = MuseConverter::new(None);
+        let out = c.feed(&json!({"jsonrpc": "2.0", "method": "session/contextUsage", "params": {"usedTokens": 900000, "windowTokens": 1000000, "pressure": "warning"}}));
+        assert!(matches!(&out[0].body, EventBody::ContextUpdated { used: 900000, window: Some(1000000), warn: true, .. }));
+    }
+
 }

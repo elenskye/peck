@@ -76,6 +76,64 @@ pub async fn gateway_run_start(
             resume,
             worktree: worktree.unwrap_or(false),
             attachments,
+            compact: false,
+        },
+        backend,
+        move |e: &AgentEvent| {
+            let _ = channel.send(e.clone());
+        },
+    )
+}
+
+/// `/compact [重点]` 转给 CLI（v1.1.7）：续上这个任务里它的会话，让它自己压一次（Codex、Muse 用专用的请求，
+/// Claude Code、Grok 发文字命令）。落成这个任务的一次新记录。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn gateway_compact(
+    session_id: String,
+    who: String,
+    focus: Option<String>,
+    permission: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    resume: Option<String>,
+    channel: Channel<AgentEvent>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let level = permission_of(permission.as_deref())?;
+    let Some(engine) = who.strip_prefix("cli:").map(str::to_string) else {
+        return Err("这个入口只转给 CLI 引擎（cli:…）。".into());
+    };
+    let label = catalog::catalog().engines.iter().find(|e| e.id == engine).map(|e| e.label.clone()).ok_or_else(|| format!("不认识的引擎 {engine}。"))?;
+    let Some(resume) = resume.filter(|r| !r.trim().is_empty()) else {
+        return Err(format!("这个任务还没有 {label} 的会话，没什么可压的。"));
+    };
+    let backend = engines::from_state(&state, &engine).await.map_err(|e| e.message)?;
+    if !backend.caps().resume {
+        return Err(format!("{label} 续不了会话，压不了。"));
+    }
+    let focus = focus.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    let prompt = match &focus {
+        Some(f) => format!("/compact {f}"),
+        None => "/compact".into(),
+    };
+    start_engine_run(
+        EngineRun {
+            store: state.store.clone(),
+            active_runs: state.active_runs.clone(),
+            session_id,
+            prompt,
+            who,
+            permission,
+            level,
+            engine,
+            label,
+            model,
+            effort,
+            resume: Some(resume),
+            worktree: false,
+            attachments: vec![],
+            compact: true,
         },
         backend,
         move |e: &AgentEvent| {
@@ -102,6 +160,8 @@ pub(crate) struct EngineRun {
     pub worktree: bool,
     /// 附图存成的文件（v0.8）：路径写在引擎看到的这一句后面。
     pub attachments: Vec<PathBuf>,
+    /// 转发 `/compact`（v1.1.7）：续上 `resume`、让 CLI 自己压一次；不带引用、记忆、文件夹说明，Peck 替它跑的 Hook 也不跑。
+    pub compact: bool,
 }
 
 /// 占任务号、记任务、起引擎（后台跑），返回任务 id。
@@ -125,6 +185,7 @@ pub(crate) fn start_engine_run(
         resume,
         worktree,
         attachments,
+        compact,
     } = run;
     // 任务记录：占一个号、一个项目一次一个（和 Peck Loop 共用，`run.rs`）。
     let claimed = crate::run::claim_run(crate::run::ClaimSpec {
@@ -152,12 +213,14 @@ pub(crate) fn start_engine_run(
             crate::harness::mcp_client::hints_for(&db, &workspace_id),
         )
     };
-    if let Some(f) = &fork {
+    if compact {
+        refs.clear();
+    } else if let Some(f) = &fork {
         refs.insert(0, f.text.clone());
     }
-    let fork_note = fork.as_ref().map(|f| crate::harness::history::fork_notice(f, &label));
+    let fork_note = fork.as_ref().filter(|_| !compact).map(|f| crate::harness::history::fork_notice(f, &label));
     let engine_prompt = if refs.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", refs.join("\n\n")) };
-    let engine_prompt = format!("{engine_prompt}{}{}", crate::harness::run::attachment_note(&attachments), folders_note(&folders, level));
+    let engine_prompt = if compact { prompt.clone() } else { format!("{engine_prompt}{}{}", crate::harness::run::attachment_note(&attachments), folders_note(&folders, level)) };
     let project_env = settings.env_pairs();
     // 脚本 Hook（v1.1.4，`cli_hooks.rs`）的「总是允许」和 Peck Loop 共用；引擎的审批规则那一份要交给 sink。
     let hook_allowed = allowed.clone();
@@ -259,7 +322,7 @@ pub(crate) fn start_engine_run(
         // 脚本 Hook（v1.1.4）：Peck 替 CLI 跑开场时、发话时（这一句发出去之前，stdout 放在这句前面）和收尾时。
         // 有要跑的，控制通道先交给 `CliHooks`：Hook 卡片的回答归 Peck，别的转给正在跑的那一次引擎。
         let mut control_rx = Some(control_rx);
-        let mut hooks = super::cli_hooks::hooks_for(&engine, &cwd).map(|set| {
+        let mut hooks = super::cli_hooks::hooks_for(&engine, &cwd).filter(|_| !compact).map(|set| {
             let (remember_store, ws) = (store.clone(), workspace_id.clone());
             super::cli_hooks::CliHooks::new(
                 set,
@@ -281,7 +344,7 @@ pub(crate) fn start_engine_run(
         let mut held: Option<RunOutcomeOrStop> = None;
         // 项目记忆（v1.1.5）：新会话（不是续上的）的第一句前面带上，排在开场时的 Hook 前面。
         let mut contexts: Vec<String> = Vec::new();
-        if resume.is_none() {
+        if resume.is_none() && !compact {
             contexts.extend(crate::harness::context::memory_block(&crate::harness::run::memories_of(&store, &workspace_id)));
         }
         if let Some(h) = hooks.as_mut() {
@@ -315,6 +378,7 @@ pub(crate) fn start_engine_run(
             peck_mcp: peck_mcp.clone(),
             env: project_env.clone(),
             folders: folders.clone(),
+            compact,
         };
         let mut outcome = match held {
             // 发话时的 Hook 拦下了、卡片等着时按了停：这一句不发。
@@ -383,7 +447,7 @@ pub(crate) fn start_engine_run(
         interrupt_subs(&id);
         let (round_files, changeset) = life.snapshot_after();
         // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，续上这个 CLI 的会话问一行提交说明，Peck 自己提交。
-        let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
+        let stop_hook = if worktree || compact { None } else { crate::project_plugins::stop_hook(&workspace) };
         let ask_task = AgentTask {
             run_id: id.clone(),
             prompt: String::new(),
@@ -395,6 +459,7 @@ pub(crate) fn start_engine_run(
             peck_mcp: None,
             env: project_env.clone(),
             folders: vec![],
+            compact: false,
         };
         let (asker, ask, usage_to, asked_engine) = (backend.clone(), stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default(), sink.clone(), engine.clone());
         let hooked = crate::harness::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
@@ -410,6 +475,7 @@ pub(crate) fn start_engine_run(
         let text = last_text.lock().map(|t| t.clone()).unwrap_or_default();
         let summary = match (run_status, failure) {
             (RunStatus::Succeeded, _) if !text.trim().is_empty() => text,
+            (RunStatus::Succeeded, _) if compact => format!("{label} 压缩了上下文。"),
             (RunStatus::Succeeded, _) => format!("{label} 跑完了。"),
             (RunStatus::Cancelled, _) => "已停止。".into(),
             (_, Some(why)) => format!("{label} 没跑完：{why}"),
@@ -736,6 +802,7 @@ mod tests {
             resume: None,
             worktree: false,
             attachments: vec![],
+            compact: false,
         };
         let run_id = start_engine_run(run, backend.clone(), move |e| {
             let _ = tx.send(e.clone());
@@ -758,6 +825,7 @@ mod tests {
             resume: None,
             worktree: false,
             attachments: vec![],
+            compact: false,
         };
         assert!(start_engine_run(again, backend, |_| {}).unwrap_err().contains("一次跑一个"));
 
@@ -829,6 +897,69 @@ mod tests {
     }
 
     /// CLI 的脚本 Hook（v1.1.4）和项目记忆（v1.1.5）：新会话先带记忆；开场时、发话时的 stdout 放在这一句前面；收尾时拦下就续上它的会话、把原因发过去，
+    /// 转发 `/compact`（v1.1.7）：续上会话，引擎拿到的就是 `/compact 重点`（不带记忆、引用、文件夹说明），Peck 替它跑的 Hook 不跑。
+    #[tokio::test]
+    async fn compact_goes_to_the_cli_as_is_without_hooks_or_memory() {
+        let root = std::env::temp_dir().join(format!("peck-runner-compact-{}", uuid::Uuid::new_v4()));
+        let ws_dir = root.join("ws");
+        std::fs::create_dir_all(ws_dir.join(".claude")).unwrap();
+        let settings = serde_json::json!({"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo 发话补充"}]}]}});
+        std::fs::write(ws_dir.join(".claude/settings.json"), settings.to_string()).unwrap();
+        let store = crate::store::Store::open(&root.join("peck.db")).unwrap();
+        let ws = crate::workspace::Workspace { id: "w1".into(), path: ws_dir.to_string_lossy().into_owned(), name: "试".into(), last_opened_at: 0, git_branch: None, hidden: false, settings: Default::default() };
+        store.save_workspace(&ws).unwrap();
+        let session = store.create_session(&ws.id, None).unwrap();
+        store.add_memory(&ws.id, "测试用 pnpm test", None).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<AgentTask>>> = Arc::default();
+        let backend: Arc<dyn super::super::AgentBackend> = Arc::new(HookedCli { seen: seen.clone() });
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let run = EngineRun {
+            store: store.clone(),
+            active_runs: active_runs.clone(),
+            session_id: session.id.clone(),
+            prompt: "/compact 留住接口那段".into(),
+            who: "cli:codex".into(),
+            permission: Some("edit".into()),
+            level: PermissionLevel::Edit,
+            engine: "codex".into(),
+            label: "Codex".into(),
+            model: None,
+            effort: None,
+            resume: Some("s0".into()),
+            worktree: false,
+            attachments: vec![],
+            compact: true,
+        };
+        start_engine_run(run, backend, move |e| {
+            let _ = tx.send(e.clone());
+        })
+        .unwrap();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut cards = 0;
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(e)) => cards += matches!(e.body, EventBody::ApprovalRequested { .. }) as u32,
+                _ => break,
+            }
+            if active_runs.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+        for _ in 0..200 {
+            if active_runs.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(cards, 0, "Peck 替 CLI 跑的 Hook 不跑");
+        let tasks = seen.lock().unwrap().clone();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].compact && tasks[0].prompt == "/compact 留住接口那段" && tasks[0].resume.as_deref() == Some("s0"), "{:?}", tasks[0].prompt);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// 脚本拿得到这一轮改了的文件；每条命令问一次。
     #[tokio::test]
     async fn cli_hooks_wrap_the_sentence_and_keep_the_session_going() {
@@ -873,6 +1004,7 @@ mod tests {
             resume: None,
             worktree: false,
             attachments: vec![],
+            compact: false,
         };
         let run_id = start_engine_run(run, backend, move |e| {
             let _ = tx.send(e.clone());

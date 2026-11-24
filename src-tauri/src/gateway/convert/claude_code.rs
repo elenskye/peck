@@ -30,6 +30,10 @@ pub struct ClaudeCodeConverter {
     last_quota: Option<Value>,
     /// `TaskCreate` / `TaskUpdate` 拼出来的清单：（编号, 一项）。
     tasks: Vec<(String, PlanStep)>,
+    /// 上下文用量（v1.1.7）：主线最后一条回答的提示有多大（同一个消息 id 只算一次）、窗口多大（回合末的 `result` 才报）。
+    context_used: Option<u64>,
+    counted_message: Option<String>,
+    context_window: Option<u64>,
 }
 
 impl ClaudeCodeConverter {
@@ -43,6 +47,9 @@ impl ClaudeCodeConverter {
             streamed_blocks: HashMap::new(),
             last_quota: None,
             tasks: Vec::new(),
+            context_used: None,
+            counted_message: None,
+            context_window: None,
         }
     }
 
@@ -141,6 +148,17 @@ impl ClaudeCodeConverter {
         let line_id = raw["uuid"].as_str().unwrap_or("").to_string();
         let blocks = raw["message"]["content"].as_array().cloned().unwrap_or_default();
         let message_id = raw["message"]["id"].as_str().unwrap_or("").to_string();
+        // 上下文用量（v1.1.7）：主线（不是子代理里的）这一次请求的提示 = 输入 + 写缓存 + 读缓存；并行的几块是同一个消息 id，只算一次。
+        let u = &raw["message"]["usage"];
+        if sub.is_none() && u.is_object() && self.counted_message.as_deref() != Some(message_id.as_str()) {
+            let n = |k: &str| u[k].as_u64().unwrap_or(0);
+            let used = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+            if used > 0 {
+                self.counted_message = Some(message_id.clone());
+                self.context_used = Some(used);
+                out.push(super::cli_context("Claude Code", used, self.context_window, false).into());
+            }
+        }
         let streamed_from = self.streamed_blocks.get_mut(&message_id).map(|seen| {
             let from = *seen;
             *seen += blocks.len();
@@ -377,6 +395,13 @@ impl ClaudeCodeConverter {
         let context_window = raw["modelUsage"]
             .as_object()
             .and_then(|m| m.values().find_map(|v| v["contextWindow"].as_u64()));
+        // 窗口回合末才知道：补报一次「用了 / 窗口」。
+        if context_window.is_some() && context_window != self.context_window {
+            self.context_window = context_window;
+            if let Some(used) = self.context_used {
+                out.push(super::cli_context("Claude Code", used, context_window, false).into());
+            }
+        }
         out.push(
             EventBody::UsageUpdated {
                 usage: TokenUsage {
@@ -526,13 +551,13 @@ impl LineConverter for ClaudeCodeConverter {
                     }
                     self.turn_start(&mut out);
                 }
-                "compact_boundary" => out.push(
-                    EventBody::Notice {
-                        level: NoticeLevel::Info,
-                        text: "Claude Code 压缩了上下文".into(),
-                    }
-                    .into(),
-                ),
+                // 压了一次（v1.1.7）：`post_tokens` 只算对话，不拿来画环；用量等下一条回答再报。
+                "compact_boundary" => {
+                    let m = &raw["compact_metadata"];
+                    let focus = m["user_context"].as_str().map(str::trim).filter(|f| !f.is_empty()).map(|f| format!("，重点：{}", short(f, 60))).unwrap_or_default();
+                    out.push(super::cli_compacted("Claude Code", m["trigger"].as_str().map(|t| t == "manual"), m["pre_tokens"].as_u64(), None, &focus).into());
+                    self.context_used = None;
+                }
                 // 状态类：不出事件。
                 "commands_changed" | "task_summary" | "thinking_tokens" | "post_turn_summary" | "status"
                 | "hook_started" | "hook_response" | "hook_progress" => {}
@@ -782,4 +807,20 @@ mod tests {
         let inner = c.feed(&use_tool("w2", "TodoWrite", json!({"todos": [{"content": "子任务自己的", "status": "pending"}]}), json!("task1")));
         assert_eq!(plan(&inner), None);
     }
+
+    /// 上下文用量（v1.1.7）：主线每条回答报一次（同一个消息 id 只算一次、子代理里的不算），窗口回合末补上；压缩记一行。
+    #[test]
+    fn context_usage_and_compaction_are_reported() {
+        let mut c = ClaudeCodeConverter::new(None);
+        let msg = |id: &str, parent: Value, input: u64| json!({"type": "assistant", "uuid": format!("u-{id}-{input}"), "parent_tool_use_id": parent, "message": {"id": id, "content": [{"type": "text", "text": "x"}], "usage": {"input_tokens": input, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 1000}}});
+        let used = |out: &[Emitted]| out.iter().find_map(|e| match &e.body { EventBody::ContextUpdated { used, window, managed_by, .. } => Some((*used, *window, managed_by.clone())), _ => None });
+        assert_eq!(used(&c.feed(&msg("m1", Value::Null, 5))), Some((1105, None, Some("Claude Code".into()))));
+        assert_eq!(used(&c.feed(&msg("m1", Value::Null, 5))), None, "同一个消息 id 只算一次");
+        assert_eq!(used(&c.feed(&msg("m2", json!("task1"), 9))), None, "子代理里的不算");
+        let end = c.feed(&json!({"type": "result", "subtype": "success", "usage": {}, "modelUsage": {"claude": {"contextWindow": 200000}}}));
+        assert_eq!(used(&end), Some((1105, Some(200000), Some("Claude Code".into()))));
+        let boundary = c.feed(&json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "manual", "pre_tokens": 150000, "user_context": "数据库迁移"}}));
+        assert!(matches!(&boundary[0].body, EventBody::ContextCompacted { before: 150000, after: 0, text, .. } if text.contains("你让它压的") && text.contains("重点：数据库迁移")));
+    }
+
 }

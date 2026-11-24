@@ -16,6 +16,8 @@ pub struct CodexConverter {
     /// 「改文件」那一项要改哪些文件（itemId → 绝对路径）：Codex 的改文件审批只带 itemId，
     /// 卡片标题和 Peck 按规则批（EDIT 下项目里的不问）都要靠它（v0.10 验收发现）。
     file_changes: std::collections::HashMap<String, Vec<String>>,
+    /// 这一次是站主 `/compact` 转过来的（v1.1.7）：压缩那一行写「你让它压的」。
+    pub compacting: bool,
 }
 
 impl CodexConverter {
@@ -24,6 +26,7 @@ impl CodexConverter {
             cwd,
             last_quota: None,
             file_changes: Default::default(),
+            compacting: false,
         }
     }
 
@@ -191,8 +194,10 @@ impl CodexConverter {
                     }]
                 }
             }
-            // 自己发的话、开头的 agentMessage（等 delta）、开头的 reasoning：不出事件。
-            "userMessage" | "agentMessage" | "reasoning" | "hookPrompt" => vec![],
+            // 压了一次上下文（v1.1.7）：不报前后多大，用量等下一条 `thread/tokenUsage/updated`。
+            "contextCompaction" if completed => vec![super::cli_compacted("Codex", Some(self.compacting), None, None, "")],
+            // 自己发的话、开头的 agentMessage（等 delta）、开头的 reasoning、压缩开头：不出事件。
+            "userMessage" | "agentMessage" | "reasoning" | "hookPrompt" | "contextCompaction" => vec![],
             other => vec![EventBody::Raw {
                 source: "codex".into(),
                 kind: Some(format!("item/{other}")),
@@ -501,19 +506,23 @@ impl CodexConverter {
             }],
             "thread/tokenUsage/updated" => {
                 let t = &params["tokenUsage"];
-                let last = &t["last"];
-                let context_used = match (last["inputTokens"].as_u64(), last["outputTokens"].as_u64()) {
-                    (Some(i), Some(o)) => Some(i + o),
-                    _ => None,
-                };
-                vec![EventBody::UsageUpdated {
-                    usage: usage(&t["total"], t["modelContextWindow"].as_u64(), context_used),
+                // 上下文用了多少：最近一次请求的 `totalTokens`（缓存已含在输入里；`total` 是累计的，不能用）。
+                let context_used = t["last"]["totalTokens"].as_u64();
+                let window = t["modelContextWindow"].as_u64();
+                let mut out = vec![EventBody::UsageUpdated {
+                    usage: usage(&t["total"], window, context_used),
                     // 用的是站主的订阅，没有按次的美元。
                     cost: Cost::unknown(),
                     scope: UsageScope::Cumulative,
                     model: None,
-                }]
+                }];
+                if let Some(used) = context_used.filter(|u| *u > 0) {
+                    out.push(super::cli_context("Codex", used, window, false));
+                }
+                out
             }
+            // 旧的压缩通知（已弃用，压缩看 `contextCompaction` 条目）：不出事件。
+            "thread/compacted" => vec![],
             "account/rateLimits/updated" => self.quota(&params["rateLimits"]),
             "error" => vec![EventBody::Error {
                 message: params["error"]["message"]
@@ -553,7 +562,8 @@ impl CodexConverter {
             | "skills/changed"
             | "thread/readState/changed"
             | "rawResponseItem/completed"
-            | "rawResponse/completed" => vec![],
+            | "rawResponse/completed"
+            | "thread/goal/cleared" => vec![],
             _ => vec![EventBody::Raw {
                 source: "codex".into(),
                 kind: raw_kind(raw, &["method"]),

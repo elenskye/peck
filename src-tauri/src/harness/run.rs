@@ -223,6 +223,7 @@ pub async fn harness_run_start(
             team_notes,
             images,
             search: crate::gateway::search::Keys::from_state(&state),
+            compact: None,
         },
         provider,
         move |e: &AgentEvent| {
@@ -312,6 +313,8 @@ pub(crate) struct PeckRun {
     pub images: Vec<crate::gateway::ImageInput>,
     /// 联网搜索手上有什么（v1.1.1）。
     pub search: crate::gateway::search::Keys,
+    /// 手动压缩（v1.1.7，`/compact [重点]`）：`Some(重点)` 时不发话，只把存着的对话压一遍。
+    pub compact: Option<Option<String>>,
 }
 
 /// 命令的环境：站主 shell 的那份 + 这个项目自己的环境变量（同名的项目的算）。
@@ -363,7 +366,7 @@ pub(crate) fn start_peck_run(
     provider: Arc<dyn ModelProvider>,
     out: impl Fn(&AgentEvent) + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, team, team_notes, images, search } = run;
+    let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, team, team_notes, images, search, compact } = run;
     let label = model_label(&model_id);
     let claimed = crate::run::claim_run(crate::run::ClaimSpec {
         store: &store,
@@ -401,10 +404,12 @@ pub(crate) fn start_peck_run(
             super::history::fork_context(&db, &session_id, "peck", &run_id),
         )
     };
-    if let Some(f) = &fork {
+    if compact.is_some() {
+        refs.clear();
+    } else if let Some(f) = &fork {
         refs.insert(0, f.text.clone());
     }
-    let fork_note = fork.as_ref().map(|f| super::history::fork_notice(f, &label));
+    let fork_note = fork.as_ref().filter(|_| compact.is_none()).map(|f| super::history::fork_notice(f, &label));
     let context = ContextConfig {
         project: ProjectLayer::load(&workspace, memories_of(&store, &workspace_id)).with_skills(&workspace, &settings),
         environment: true,
@@ -422,10 +427,15 @@ pub(crate) fn start_peck_run(
         let ws = db.workspace(&workspace_id).map_err(|e| fail(e.to_string()))?;
         super::mcp_client::for_project(&db, &ws)
     };
-    let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
-    mcp_notes.extend(team_notes);
-    // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有；循环收尾时问一句，快照拍完以后提交。
-    let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
+    // 手动压缩不起 MCP 服务器（不调工具）。
+    let mcp_list = if compact.is_some() { vec![] } else { super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes) };
+    if compact.is_some() {
+        mcp_notes.clear();
+    } else {
+        mcp_notes.extend(team_notes);
+    }
+    // 插件的收尾 Hook（v1.1.0）：项目里装着带它的插件（Git Plan）才有；循环收尾时问一句，快照拍完以后提交。手动压缩没有。
+    let stop_hook = if worktree || compact.is_some() { None } else { crate::project_plugins::stop_hook(&workspace) };
     let stop_ask = super::hooks::StopAsk::of(&stop_hook);
     // 快照回退、定时任务（v1.0.2）：这个任务是谁在干，设定时任务时默认照它。
     let extras = Arc::new(super::extras::Extras {
@@ -505,8 +515,13 @@ pub(crate) fn start_peck_run(
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         };
-        let outcome = backend.run(task, sink.clone(), control_rx).await;
+        let compacting = compact.is_some();
+        let outcome = match compact {
+            Some(focus) => backend.compact(task, sink.clone(), control_rx, focus).await,
+            None => backend.run(task, sink.clone(), control_rx).await,
+        };
         watcher.abort();
         runner::unregister_control(&id);
         if let (Ok(conversation), Ok(db)) = (backend.conversation.lock(), store.lock()) {
@@ -519,7 +534,13 @@ pub(crate) fn start_peck_run(
                 TurnEndReason::Done => (
                     StepStatus::Succeeded,
                     RunStatus::Succeeded,
-                    if end_text.trim().is_empty() { format!("{label} 做完了。") } else { end_text },
+                    if compacting {
+                        "上下文压缩好了：前面的对话换成了一份交接摘要。".into()
+                    } else if end_text.trim().is_empty() {
+                        format!("{label} 做完了。")
+                    } else {
+                        end_text
+                    },
                 ),
                 TurnEndReason::Interrupted => (StepStatus::Cancelled, RunStatus::Cancelled, "已停止。".into()),
                 TurnEndReason::Limit => (StepStatus::Failed, RunStatus::Failed, end_error.unwrap_or_else(|| "到了上限，先停下。".into())),
@@ -637,6 +658,7 @@ pub(crate) fn start_oneshot(
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         };
         let _ = backend.run(task, sink, control_rx).await;
         runner::unregister_control(&id);
@@ -694,39 +716,59 @@ pub struct Spend {
 
 /// `/compact`（v0.10 C2）：把这个任务存着的 Peck Loop 对话压一压，不叫模型、不花钱——长的工具输出落盘、
 /// 最近两轮以外的工具输出换成一句「做过什么」、旧的思考和环境块去掉（自动压缩的前两步）。下一句发出去就小了。
+/// `/compact [重点]`（v1.1.7）：Peck Loop 的手动压缩。落成这个任务的一次新记录（事件、花费、停止都照常），
+/// 三步都做：落盘、清旧输出、叫一次模型写交接摘要（`focus` 接在要求后面）。用这个对话存的模型；它现在用不了就报原因，不换。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn harness_compact(session_id: String, state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let db = state.store.lock().map_err(|e| e.to_string())?;
-    let mut messages = db.harness_conversation(&session_id).map_err(|e| e.to_string())?;
-    if messages.is_empty() {
-        return Err("这个任务还没有 Peck Loop 的对话（CLI 的会话由它自己管）。".into());
+pub async fn harness_compact(
+    session_id: String,
+    focus: Option<String>,
+    permission: Option<String>,
+    effort: Option<String>,
+    cost_cap: Option<f64>,
+    channel: Channel<AgentEvent>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let (model_id, empty) = {
+        let db = state.store.lock().map_err(|e| e.to_string())?;
+        (db.harness_conversation_model(&session_id).map_err(|e| e.to_string())?, db.harness_conversation(&session_id).map_err(|e| e.to_string())?.is_empty())
+    };
+    if empty || model_id.is_empty() {
+        return Err("这个任务还没有 Peck Loop 的对话（CLI 的会话在 CLI 那边压）。".into());
     }
-    let size = |m: &[Message]| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0);
-    let before = size(&messages);
-    let counter = std::sync::atomic::AtomicU32::new(0);
-    let spilled = super::compact::spill_large(&mut messages, &spill_root().join(&session_id), &counter);
-    let cleared = super::compact::clear_old(&mut messages);
-    let after = size(&messages);
-    if after >= before {
-        return Ok("没什么可压的：对话里没有长的或旧的工具输出。".into());
-    }
-    let model = db.harness_conversation_model(&session_id).unwrap_or_default();
-    db.save_harness_conversation(&session_id, &model, &messages).map_err(|e| e.to_string())?;
-    Ok(format!(
-        "压好了：{spilled} 份长输出落了盘，{cleared} 份旧的工具输出换成了一句话；对话从约 {} 降到约 {} token。",
-        approx_tokens(before),
-        approx_tokens(after)
-    ))
-}
-
-/// 字节数粗估成 token（四个字节一个；只给站主看个大概）。
-fn approx_tokens(bytes: usize) -> String {
-    let t = bytes / 4;
-    if t >= 1000 {
-        format!("{:.1}k", t as f64 / 1000.0)
-    } else {
-        t.to_string()
-    }
+    let level = permission_of(permission.as_deref())?;
+    catalog::catalog().model(&model_id).ok_or_else(|| format!("这个对话用的 {model_id} 已经不在模型目录里了，压不了。"))?;
+    let provider = providers::for_model(&state, &model_id).await.map_err(|e| format!("这个对话用的 {} 现在用不了：{}", model_label(&model_id), e.message))?;
+    let focus = focus.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    let prompt = match &focus {
+        Some(f) => format!("/compact {f}"),
+        None => "/compact".into(),
+    };
+    start_peck_run(
+        PeckRun {
+            store: state.store.clone(),
+            active_runs: state.active_runs.clone(),
+            session_id,
+            prompt,
+            who: format!("api:{model_id}"),
+            permission,
+            level,
+            model_id,
+            effort,
+            cost_cap,
+            env: super::tools::bash::shell_env(),
+            worktree: false,
+            team: None,
+            team_notes: vec![],
+            images: vec![],
+            search: crate::gateway::search::Keys::from_state(&state),
+            compact: Some(focus),
+        },
+        provider,
+        move |e: &AgentEvent| {
+            let _ = channel.send(e.clone());
+        },
+    )
 }
 
 #[tauri::command]
@@ -942,6 +984,7 @@ mod tests {
                 team_notes: vec![],
                 images: vec![],
                 search: Default::default(),
+                compact: None,
             },
             model,
             move |e| {
@@ -1024,6 +1067,7 @@ mod tests {
                 team_notes: vec![],
                 images: vec![],
                 search: Default::default(),
+                compact: None,
             },
             model,
             move |e| {
@@ -1085,6 +1129,7 @@ mod tests {
             team_notes: vec![],
             images: vec![],
             search: Default::default(),
+            compact: None,
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         let run_id = start_peck_run(make("把标题改成中文"), Arc::new(ScriptedModel::peck_demo(Duration::ZERO)), move |e| {

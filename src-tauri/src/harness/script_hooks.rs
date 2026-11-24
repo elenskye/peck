@@ -79,6 +79,7 @@ pub fn claude_name(tool: &str) -> Option<&'static str> {
         FIND_FILES => "Glob",
         LIST_DIRECTORY => "LS",
         WEB_SEARCH => "WebSearch",
+        WEB_FETCH => "WebFetch",
         UPDATE_PLAN => "TodoWrite",
         TOOL_SEARCH => "ToolSearch",
         super::agents::SPAWN_AGENT => "Task",

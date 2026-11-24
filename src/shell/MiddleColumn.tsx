@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
-import { CONTEXT_PARTS, addUsage, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
+import { CONTEXT_PARTS, addUsage, compactRun, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
 import { SUBAGENT_KINDS, type AppSettings } from "@/lib/settings";
@@ -31,6 +31,8 @@ interface Props {
   draft: string;
   onDraft: (text: string) => void;
   onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[]) => Promise<boolean>;
+  /** `/compact [重点]`（v1.1.7）：压这个任务的对话（PLOOP）或转给 CLI。 */
+  onCompact: (focus: string, who: string, permission: Permission) => Promise<boolean>;
   /** 往某一次的事件里追加一条（批完「想记住这几条」）。 */
   onAppendEvent: (runId: string, event: AgentEvent) => void;
   onStop: () => void;
@@ -204,10 +206,14 @@ export const MiddleColumn: React.FC<Props> = (props) => {
         {runs.length === 0 && <div className="pk-mod"><p className="empty-line">在读这个任务…</p></div>}
         {runs.map((run, i) => (
           <React.Fragment key={run.id}>
-            <div className="you sel">
-              <span className="t-label">YOU</span>
-              <Md text={run.prompt} className="you-text" />
-            </div>
+            {compactRun(run.prompt) ? (
+              <p className="you-compact"><Icon name="collapse" size={12} /><span className="t-label">COMPACT</span>压缩上下文{compactRun(run.prompt)!.focus ? ` · 重点：${compactRun(run.prompt)!.focus}` : ""}</p>
+            ) : (
+              <div className="you sel">
+                <span className="t-label">YOU</span>
+                <Md text={run.prompt} className="you-text" />
+              </div>
+            )}
             <TaskModule
               run={run}
               // 归档的只能看：不给「继续」、下一步、RETRY，卡片也不能批（拿回左栏才能接着发；v0.10 收尾审查）。
@@ -262,17 +268,22 @@ function taskUsage(runs: RunRecord[], events: Record<string, AgentEvent[]>): Usa
   return total;
 }
 
-/** 这个任务最新的一份上下文大小（最后一次报的）。 */
+/** 这个任务最新的一份上下文大小（最后一次报的）。CLI 的（v1.1.7）：窗口回合末才报，没报就用这一家以前报过的；
+ *  报了以后它又压过一次，标成待更新（等下一条用量）。 */
 function taskContext(runs: RunRecord[], events: Record<string, AgentEvent[]>): ContextView | null {
-  for (let i = runs.length - 1; i >= 0; i--) {
-    const ev = events[runs[i].id];
-    if (!ev) continue;
-    for (let j = ev.length - 1; j >= 0; j--) {
-      const e = ev[j];
-      if (e.type === "context.updated") return { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [] };
-    }
+  const all = runs.flatMap((r) => events[r.id] ?? []);
+  let found: ContextView | null = null;
+  let stale = false;
+  for (let j = all.length - 1; j >= 0 && !found; j--) {
+    const e = all[j];
+    if (e.type === "context.compacted" && e.step === "engine") stale = true;
+    if (e.type === "context.updated") found = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [], managedBy: e.managedBy ?? null, warn: !!e.warn, stale };
   }
-  return null;
+  if (found?.managedBy && found.window == null) {
+    const earlier = all.find((e) => e.type === "context.updated" && e.managedBy === found!.managedBy && e.window);
+    if (earlier?.type === "context.updated") found.window = earlier.window ?? null;
+  }
+  return found;
 }
 
 /** 输入框旁的用量小环：12 个点，亮几个是用了窗口的几成；到了压缩线变琥珀。点开看分成哪几块、压缩线在哪。 */
@@ -280,8 +291,10 @@ const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
   const ratio = context.window ? Math.min(1, context.used / context.window) : 0;
-  const line = context.window && context.compactAt ? context.compactAt / context.window : 0.8;
-  const warn = ratio >= line;
+  // CLI 的（v1.1.7）：压缩由它自己管，不画 Peck 的压缩线；它说快满了才变琥珀。
+  const cli = context.managedBy ?? null;
+  const line = context.window && context.compactAt ? context.compactAt / context.window : cli ? 0 : 0.8;
+  const warn = cli ? !!context.warn : ratio >= line;
   const lit = Math.max(context.used > 0 ? 1 : 0, Math.round(ratio * 12));
   const pct = (n: number) => `${Math.round(n * 100)}%`;
   const total = context.parts.reduce((n, p) => n + p.tokens, 0) || 1;
@@ -292,7 +305,7 @@ const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
   });
   return (
     <>
-      <button ref={ref} type="button" className={cn("ctx-ring", warn && "is-warn")} aria-label={`上下文用了 ${pct(ratio)}`} title={`上下文 ${tokens(context.used)}${context.window ? ` / ${tokens(context.window)}` : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button ref={ref} type="button" className={cn("ctx-ring", warn && "is-warn", context.stale && "is-stale")} aria-label={context.window ? `上下文用了 ${pct(ratio)}` : `上下文 ${tokens(context.used)}`} title={`上下文 ${tokens(context.used)}${context.window ? ` / ${tokens(context.window)}` : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           {dots.map((d, i) => <rect key={i} x={d.x} y={d.y} width="2" height="2" className={d.on ? "is-on" : undefined} />)}
         </svg>
@@ -303,15 +316,22 @@ const ContextRing: React.FC<{ context: ContextView }> = ({ context }) => {
             <ModHead label="CONTEXT" note={context.window ? `${tokens(context.used)} / ${tokens(context.window)} · ${pct(ratio)}` : tokens(context.used)} />
             {context.window != null && (
               <div className="ctx-bar" aria-hidden="true">
-                {Array.from({ length: 20 }, (_, i) => <i key={i} className={cn(i < Math.round(ratio * 20) && (warn ? "is-warn" : "is-on"), i === Math.round(line * 20) - 1 && "is-line")} />)}
+                {Array.from({ length: 20 }, (_, i) => <i key={i} className={cn(i < Math.round(ratio * 20) && (warn ? "is-warn" : "is-on"), line > 0 && i === Math.round(line * 20) - 1 && "is-line")} />)}
               </div>
             )}
-            <ul className="ctx-parts">
-              {context.parts.map((p) => (
-                <li key={p.key}><span>{CONTEXT_PARTS[p.key] ?? p.key}</span><b className="t-code">{tokens(p.tokens)}</b><em>{pct(p.tokens / total)}</em></li>
-              ))}
-            </ul>
-            <p className="note">压缩线 {pct(line)}{context.compactAt ? `（${tokens(context.compactAt)}）` : ""}：到了先把长输出落盘、再清掉旧的工具输出，还不够就让模型写一份交接摘要接着做。</p>
+            {context.parts.length > 0 && (
+              <ul className="ctx-parts">
+                {context.parts.map((p) => (
+                  <li key={p.key}><span>{CONTEXT_PARTS[p.key] ?? p.key}</span><b className="t-code">{tokens(p.tokens)}</b><em>{pct(p.tokens / total)}</em></li>
+                ))}
+              </ul>
+            )}
+            {context.stale && <p className="note">{cli ?? "它"} 刚压过一次，这个数是压之前的，等下一句的用量。</p>}
+            {cli ? (
+              <p className="note">上下文 {tokens(context.used)}{context.window ? ` / ${tokens(context.window)}` : "（窗口多大它没报）"} · 压缩由 {cli} 自己管{context.warn ? "，它说快满了" : ""}；/compact 让它现在压。</p>
+            ) : (
+              <p className="note">压缩线 {pct(line)}{context.compactAt ? `（${tokens(context.compactAt)}）` : ""}：到了先把长输出落盘、再清掉旧的工具输出，还不够就让模型写一份交接摘要接着做。/compact 现在就压（三步都做），后面可以写要重点留住什么。</p>
+            )}
           </div>
         </Float>
       )}
@@ -357,7 +377,7 @@ const Composer: React.FC<Props & {
   permission: Permission;
   onPermission: (p: Permission) => void;
   placeholder: string;
-}> = ({ draft, onDraft, onSend, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, say, quota, onNewTask }) => {
+}> = ({ draft, onDraft, onSend, onCompact, onStop, busy, who, permission, onPermission, placeholder, settings, onShowAgents, entries, runs, agentEvents, task, project, say, quota, onNewTask }) => {
   // 独立工作区（v0.7）：git 项目、Peck Loop 或 CLI 引擎、不是 PLAN；发出去以后关掉（一次一选）。
   const [worktree, setWorktree] = useState(false);
   const worktreeable = !!project.workspace.gitBranch && !!who && (who.group === "peck" || who.group === "cli") && permission !== "plan";
@@ -437,8 +457,8 @@ const Composer: React.FC<Props & {
       }
       case "compact": {
         if (!task) { say("先选一个任务"); return; }
-        onDraft("");
-        setNote({ title: "COMPACT", text: await ipc.harnessCompact(task.id) });
+        if (!who) return;
+        await onCompact(args, who.id, permission);
         return;
       }
       case "undo": {

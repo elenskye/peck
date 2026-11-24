@@ -14,7 +14,7 @@
 1. 版本号四处一起改。
 2. `pnpm check`、`pnpm build`、全量 `cargo test`；`?mock` 明暗各看一遍这一版改的地方。
 3. 分 Phase 的版本另加：两个只读子代理分头审这一版的改动（Rust、前端各一个），真缺陷修掉；做一次「升级测试」。
-4. `pnpm app:install` 装进 /Applications（打包、校验签名，旧包自动备份一份）。
+4. `pnpm app:install` 装进 /Applications（打包、校验签名，旧包和以前的备份都挪进废纸篓）。
 5. 更新 HANDOFF，提交。
 
 ## 界面：`?mock`
@@ -28,7 +28,8 @@
 | 场景 | 怎么触发 | 看什么 |
 | --- | --- | --- |
 | Peck Loop 主线（`peckMock.ts`） | 任何一个 API 模型 | 看目录、读、搜、改（FILES 里标出来）、长输出命令、`rm -rf dist` 高危卡片、清单、ASK、recap 和下一步按钮、花费、「想记住这几条」 |
-| 上下文 | 「长任务」 | 自动压缩三步 |
+| 上下文 | 「长任务」；`/compact 重点`（PLOOP 做过的任务，比如 peck 的「设置面板加通知开关」） | 自动压缩三步；手动的那一次是一行「COMPACT 压缩上下文 · 重点：…」，下面三步、花费、「上下文压缩好了」 |
+| CLI 的用量和 `/compact` | 选一个 CLI 在 edge-gateway 的任务里发一句（回放带用量），再 `/compact 重点` | 输入框旁小环亮起，点开「压缩由 Codex 自己管」；`/compact` 那一次「Codex 不接收重点」一行、「CLI 自己压：Codex 自己压了一次上下文（你让它压的）」 |
 | 快照回退 | 「撤销」「撤掉」「回退」；`/undo` | 读 Skill → 列快照 → 复述 → `[ RISK ]`「回到任务 N 开始前（2 个文件）」→ ALLOW / DENY |
 | 定时任务 | 「定时」「每周」「每天」「每隔」 | 读 Skill → 复述、ASK 确认 → 设好，PROJECTS 头上的钟多一个 |
 | 错过的定时任务 | 打开就有两个（notebook） | 一打开跳到 notebook 的新任务页：`[ MISSED ]` RUN NOW / SKIP；另一张在「日期统一成 YYYY-MM-DD」那个对话末尾；钟里看详情、REMOVE |
@@ -37,7 +38,7 @@
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
 | 任务板（`agentsMock.ts`） | PLOOP 下句子带「任务板」或「member」（在没有任务在跑的项目里，比如 peck） | 过程最上面「任务板」：worker 1、2 和 member 1 在跑、worker 3（和 worker 1 划的同一个文件）排队，worker 1 做完它才跑；点 member 1 展开它的几步，它派的 explorer 再挂一层；设置 → AGENTS 五块、member 默认 40 轮同时 2 个 |
 | 子代理（`agentsMock.ts`） | PLOOP 下句子带「派」「子代理」 | 两步「Spawn explorer: …」同时在跑，各自的几步挂在下面（头上「explorer · 模型名」），两个都完了主线才接着改；右栏 LOG 上面成员名单（MAIN 和四类）、时间线「派了 explorer」「explorer 做完了」 |
-| 联网搜索 | 句子带「搜一下」「上网」「最新版」 | 「Searched the web 2 times」一组，点开两步「Search the web: …」带来源；回答写出处；花费行「搜 2 次」 |
+| 联网搜索、读网页 | 句子带「搜一下」「上网」「最新版」 | 「Searched the web 2 times, fetched 2 pages」一组：两步「Search the web: …」带来源，两步「Fetch …」（一步读到正文，点开头上的网址能用浏览器打开；一步跳到别的网站、失败）；回答写出处；花费行「搜 2 次」 |
 | 额度提醒 | 选一个 CLI；QUOTA 卡片里 Claude Code 每周 90% | 输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
 | 换引擎接着发 | PLOOP 做完的任务里换成 CLI 再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
 | 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |

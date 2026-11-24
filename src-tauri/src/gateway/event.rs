@@ -241,6 +241,12 @@ pub enum EventBody {
         compact_at: Option<u64>,
         #[serde(default)]
         parts: Vec<ContextPart>,
+        /// CLI 引擎报的（v1.1.7）：压缩由这一家自己管（界面写它的名字、不画 Peck 的压缩线）。Peck Loop 的为空。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        managed_by: Option<String>,
+        /// CLI 自己说快满了（Muse 的 `pressure: warning / blocked`）：小环变琥珀。
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        warn: bool,
     },
     /// 自动压缩的一步：落盘、清旧工具输出、交接摘要。
     #[serde(rename = "context.compacted")]
@@ -444,6 +450,8 @@ pub enum CompactStep {
     Clear,
     /// 模型写一份交接摘要，前面的对话换成它。
     Summary,
+    /// CLI 自己压了一次（v1.1.7：站主 `/compact` 转过去的，或者它自动压的）。前后多大不一定报（0 是没报）。
+    Engine,
 }
 
 /// 审查的结论。

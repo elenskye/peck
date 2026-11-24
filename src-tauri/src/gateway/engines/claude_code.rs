@@ -139,6 +139,8 @@ pub(crate) struct Session {
     woken_at: Option<(usize, tokio::time::Instant)>,
     /// 主线说完、开始等后台的时候（最多等 [`BACKGROUND_WAIT`]）。
     waiting_since: Option<tokio::time::Instant>,
+    /// 转发 `/compact`（v1.1.7）：开场时看它的斜杠命令里有没有 `compact`。
+    compacting: bool,
 }
 
 /// 主线说完以后最多等后台子代理多久。
@@ -161,6 +163,7 @@ impl Session {
             background: 0,
             woken_at: None,
             waiting_since: None,
+            compacting: task.compact,
         }
     }
 
@@ -286,8 +289,22 @@ impl Session {
                 self.pending.insert(id.into(), (tool, raw["request"]["input"].clone()));
             }
         }
+        // 真跑排查（只在测试构建里）：`PECK_LIVE_RAW=<文件>` 把原始的行一行一行记下来。
+        #[cfg(test)]
+        if let Ok(path) = std::env::var("PECK_LIVE_RAW") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "{raw}");
+            }
+        }
         if raw["type"] == "result" {
             self.results += 1;
+        }
+        if self.compacting && raw["type"] == "system" && raw["subtype"] == "init" {
+            let has = raw["slash_commands"].as_array().map(|c| c.iter().any(|x| x.as_str() == Some("compact")));
+            if has == Some(false) {
+                self.sink.emit(EventBody::Notice { level: NoticeLevel::Warn, text: "这个版本的 Claude Code 没有 /compact 命令，这句会当普通的话发过去。".into() });
+            }
         }
         if raw["type"] == "system" && raw["subtype"] == "background_tasks_changed" {
             let agents = raw["tasks"].as_array().map(|t| t.iter().filter(|x| x["task_type"] == "local_agent").count()).unwrap_or(0);
@@ -386,6 +403,7 @@ mod tests {
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         }
     }
 
@@ -530,10 +548,11 @@ mod tests {
             permission: PermissionLevel::Edit,
             model: Some("haiku".into()),
             effort: None,
-            resume: None,
+            resume: std::env::var("PECK_LIVE_RESUME").ok(),
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
         };
         let mut args = ClaudeCodeBackend::args(&t);
         if let Ok(mode) = std::env::var("PECK_LIVE_MODE") {

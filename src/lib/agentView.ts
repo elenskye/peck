@@ -53,6 +53,12 @@ export interface ContextView {
   window: number | null;
   compactAt: number | null;
   parts: ContextPart[];
+  /** CLI 报的（v1.1.7）：压缩由这一家自己管。Peck Loop 的为空。 */
+  managedBy?: string | null;
+  /** CLI 自己说快满了（Muse 的 pressure）。 */
+  warn?: boolean;
+  /** 报了以后又压过一次：数是压之前的，等下一条用量。 */
+  stale?: boolean;
 }
 
 export interface BackgroundView {
@@ -301,7 +307,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         break;
       case "context.updated":
         if (e.subagentId) break;
-        view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [] };
+        view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [], managedBy: e.managedBy ?? null, warn: !!e.warn };
         break;
       case "context.compacted":
         view.items.push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
@@ -532,6 +538,7 @@ const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/^供应商那边跑 (.*)$/s, "Run $1 on the provider"],
   [/^筛搜索结果$/, "Filter search results"],
   [/^取网页 (.*)$/s, "Fetch $1"],
+  [/^读网页 (.*)$/s, "Fetch $1"],
   [/^取 (.*)$/s, "Fetch $1"],
   [/^搜「(.*)」$/s, "Search “$1”"],
   [/^搜 (.*)$/s, "Search $1"],
@@ -634,7 +641,13 @@ export const CONTEXT_PARTS: Record<string, string> = {
 };
 
 /** 自动压缩三步叫什么。 */
-export const COMPACT_STEP: Record<string, string> = { spill: "落盘", clear: "清旧输出", summary: "交接摘要" };
+export const COMPACT_STEP: Record<string, string> = { spill: "落盘", clear: "清旧输出", summary: "交接摘要", engine: "CLI 自己压" };
+
+/** 是不是 `/compact` 那一次（v1.1.7）：界面上不画 YOU，画一行「压缩上下文」。 */
+export function compactRun(prompt: string): { focus: string } | null {
+  const m = prompt.match(/^\/compact(?:\s+([\s\S]*))?$/);
+  return m ? { focus: (m[1] ?? "").trim() } : null;
+}
 
 /** 「$0.0123」「< $0.0001」；不知道是 null。 */
 export function usd(v: number | null | undefined): string | null {

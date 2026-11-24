@@ -150,6 +150,27 @@ pub fn short(text: &str, max: usize) -> String {
     }
 }
 
+/// CLI 报的上下文用量（v1.1.7）→ `context.updated`：输入框旁的小环画「用了 / 窗口」，压缩由这一家自己管。
+pub fn cli_context(engine: &str, used: u64, window: Option<u64>, warn: bool) -> super::event::EventBody {
+    super::event::EventBody::ContextUpdated { used, window, compact_at: None, parts: vec![], managed_by: Some(engine.into()), warn }
+}
+
+/// CLI 自己压了一次（v1.1.7）→ `context.compacted`（`engine` 这一步）。`manual`：站主 `/compact` 转过去的；前后多大没报就是 0。
+pub fn cli_compacted(engine: &str, manual: Option<bool>, before: Option<u64>, after: Option<u64>, note: &str) -> super::event::EventBody {
+    let how = match manual {
+        Some(true) => "（你让它压的）",
+        Some(false) => "（自动）",
+        None => "",
+    };
+    super::event::EventBody::ContextCompacted {
+        step: super::event::CompactStep::Engine,
+        before: before.unwrap_or(0),
+        after: after.unwrap_or(0),
+        text: format!("{engine} 自己压了一次上下文{how}{note}"),
+        summary: None,
+    }
+}
+
 pub mod acp;
 pub mod anthropic;
 pub mod chat;

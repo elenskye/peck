@@ -128,7 +128,8 @@ export interface ContextPart {
 }
 
 /** 自动压缩三步：落盘、清旧工具输出、交接摘要。 */
-export type CompactStep = "spill" | "clear" | "summary";
+/** 压缩的一步：落盘、清旧输出、交接摘要（Peck Loop）；engine 是 CLI 自己压了一次（v1.1.7）。 */
+export type CompactStep = "spill" | "clear" | "summary" | "engine";
 
 export type BackgroundKind = "command" | "server";
 export type BackgroundStatus = "running" | "exited" | "stopped";
@@ -230,7 +231,7 @@ export type EventBody =
   | { type: "usage.updated"; usage: TokenUsage; cost: Cost; scope: UsageScope; model?: string | null }
   | { type: "quota.updated"; provider: string; windows: QuotaWindow[] }
   // ── 上下文（v0.6）──
-  | { type: "context.updated"; used: number; window?: number | null; compactAt?: number | null; parts: ContextPart[] }
+  | { type: "context.updated"; used: number; window?: number | null; compactAt?: number | null; parts: ContextPart[]; managedBy?: string | null; warn?: boolean }
   | { type: "context.compacted"; step: CompactStep; before: number; after: number; text: string; summary?: string | null }
   | { type: "memory.proposed"; notes: string[] }
   | { type: "memory.reviewed"; saved: string[]; skipped: string[] }

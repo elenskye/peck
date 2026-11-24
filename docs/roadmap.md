@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.1.6**（2026-11-24）：设置页统一排法（行一样高、控件一样宽、放不下做成两行的块，不自动换行）；PROVIDERS 只分 API KEYS、TOOL KEYS，Vertex AI 并进 API KEYS；MEMORY 改成项目一行 + 记忆小窗；PLUGINS 改成两栏卡片 + 小窗，能按项目装、开关。v1.1.5 是 CLI 新会话带项目记忆、去掉 Antigravity、清旧兼容和死代码、两条发任务的流程合并。
+**v1.1.7**（2026-11-24）：`/compact [重点]`（PLOOP 三步都做、叫一次模型；CLI 转给它自己压），压完放回环境块、加载过的 MCP 工具和最近的文件，交接摘要长度跟着窗口；CLI 报的上下文用量也画小环；Peck Loop 的读网页 `web_fetch`（所有模型都有）。v1.1.6 是设置页统一排法、PROVIDERS 两组、MEMORY 和 PLUGINS 的小窗。
 
 ## 定位
 
@@ -61,4 +61,8 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.6 | — | — | 0 | 没有真跑 |
+| v1.1.7 | DeepSeek | deepseek-flash | 3 / 5（≈ $0.0062） | 读 docs.rs 的 serde_json 页（web_fetch，正文干净、44 KB），再手动压缩带重点（摘要按重点写细了） |
+| v1.1.7 | Codex | gpt-6-luna low | 2 / 3 | 小任务建会话（上下文 19,953 / 258,400）→ `/compact`：`contextCompaction` 条目、回合正常结束 |
+| v1.1.7 | Muse | 默认 | 2 / 3 | 同上：`session/compact` accepted，压缩条目 26,240 → 26,127、`trigger: manual` |
+| v1.1.7 | Grok | 默认 | 2 / 3（估 $0.04） | 同上：窗口 500,000（模型列表的 `_meta.totalContextTokens` 有）；`/compact` 收到 `auto_compact_completed`；续上的会话不再报窗口 |
+| v1.1.7 | Claude Code | haiku | 1 / 3（站主批了一次核对） | `cli/bin` 的登录过期（OAuth 刷新不了），没花额度；开场的 `slash_commands` 里有 `compact`；重点生不生效没核对上 |

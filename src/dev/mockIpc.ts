@@ -13,7 +13,7 @@ import {
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
 import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
+import type { AllowRule, BgInfo, CompactArgs, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
 import { boardRound, rosterEvent, spawnRound } from "@/dev/agentsMock";
@@ -586,9 +586,56 @@ export const mockIpc = {
   async slashExpand(workspaceId: string, name: string, args: string): Promise<string> {
     return mockExpand(workspaceId, name, args);
   },
-  async harnessCompact(_sessionId: string): Promise<string> {
-    await new Promise((r) => setTimeout(r, 200));
-    return "压好了：2 份长输出落了盘，5 份旧的工具输出换成了一句话；对话从约 38.2k 降到约 9.6k token。";
+  /** `/compact [重点]`（v1.1.7）：这个任务里最近一次 Peck Loop 用的模型压一次：三步、叫一次模型。 */
+  async harnessCompact(args: CompactArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
+    const last = [...(runsState[args.sessionId] ?? [])].reverse().find((r) => r.who?.startsWith("api:"));
+    if (!last?.who) throw new Error("这个任务还没有 Peck Loop 的对话（CLI 的会话在 CLI 那边压）。");
+    const who = last.who;
+    const entry = MOCK_MODEL_ENTRIES.find((e) => e.id === who);
+    const label = `Peck · ${entry?.label ?? who.slice(4)}`;
+    const window = entry?.contextWindow ?? 1_000_000;
+    const focus = args.focus?.trim();
+    const { runId, record } = createAgentRecord(args.sessionId, focus ? `/compact ${focus}` : "/compact", who, args.permission ?? "edit", label);
+    const k = (r: number) => Math.round(window * r);
+    const header: ReplayEvent[] = [
+      { type: "session.started", engine: "peck", model: who.slice(4), caps: PECK_CAPS, tools: [], mcp: [], sessionRef: `peck-${args.sessionId}`, version: null },
+      { type: "turn.started", turnId: `turn-${runId}` },
+    ];
+    const rounds: Round[] = [[
+      { type: "context.compacted", step: "spill", before: k(0.34), after: k(0.27), text: "2 份长的工具输出落了盘，上下文里只留开头、结尾和路径", summary: null },
+      { type: "context.compacted", step: "clear", before: k(0.27), after: k(0.19), text: "清掉了 4 份旧的工具输出（最近两轮的留着）", summary: null },
+      { type: "usage.updated", usage: { input: 2100, output: 1300, cacheRead: k(0.18), cacheWrite: 0, reasoning: 400 }, cost: { usd: 0.0061, source: "priced" }, scope: "turn" } as ReplayEvent,
+      { type: "context.compacted", step: "summary", before: k(0.19), after: 16400, text: `前面的对话换成了一份交接摘要${focus ? `（重点：${focus}）` : ""}，带上你说过的话，放回了最近的 2 个文件`,
+        summary: `## 目标\n笔记列表加一个搜索框，按标题和正文过滤。\n\n## 做了什么\n- 改了 \`src/NoteList.tsx\`（加输入框和过滤）、\`src/search.ts\`（新建）\n- \`pnpm test\` 通过\n\n## 现在\n搜索框能用，空格分开的几个词要都对上才算。${focus ? `\n\n## ${focus}\n（照你说的写细）` : ""}\n\n## 下一步\n给 \`search.ts\` 补一个大小写的测试。` },
+      { type: "context.updated", used: 16400, window, compactAt: Math.round(window * 0.8), parts: [{ key: "system", tokens: 4300 }, { key: "tools", tokens: 7400 }, { key: "conversation", tokens: 4700 }] },
+    ]];
+    void replayAgent(runId, rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
+      finishAgentRecord(record, end, label);
+      if (end.reason === "done") record.summary = "上下文压缩好了：前面的对话换成了一份交接摘要。";
+    });
+    return runId;
+  },
+  /** `/compact` 转给 CLI（v1.1.7）：它自己压一次，用量再报一条。 */
+  async gatewayCompact(args: CompactArgs & { who: string; model?: string; resume: string }, onEvent: (event: AgentEvent) => void): Promise<string> {
+    const engine = args.who.replace(/^cli:/, "");
+    const label = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who)?.label ?? engine;
+    const focus = args.focus?.trim();
+    const { runId, record } = createAgentRecord(args.sessionId, focus ? `/compact ${focus}` : "/compact", args.who, args.permission ?? "edit", label);
+    const window: Record<string, number | null> = { "claude-code": 1_000_000, codex: 475_000, muse: 1_007_997, grok: null };
+    const header: ReplayEvent[] = [
+      { type: "session.started", engine, model: null, caps: PECK_CAPS, tools: [], mcp: [], sessionRef: args.resume, version: null },
+      { type: "turn.started", turnId: `turn-${runId}` },
+    ];
+    const rounds: Round[] = [[
+      ...(focus && engine !== "claude-code" ? [{ type: "notice", level: "info", text: `${label} 不接收重点，按它自己的方式压。` } as ReplayEvent] : []),
+      { type: "context.compacted", step: "engine", before: engine === "codex" ? 0 : 152_000, after: engine === "muse" ? 21_000 : 0, text: `${label} 自己压了一次上下文（你让它压的）${focus && engine === "claude-code" ? `，重点：${focus}` : ""}`, summary: null },
+      { type: "context.updated", used: 21_400, window: window[engine] ?? null, compactAt: null, parts: [], managedBy: label },
+    ]];
+    void replayAgent(runId, rounds, header, onEvent, { costCap: null, countSpend: false }).then((end) => {
+      finishAgentRecord(record, end, label);
+      if (end.reason === "done") record.summary = `${label} 压缩了上下文。`;
+    });
+    return runId;
   },
   async mcpSecretSet(server: string, name: string, value: string | null): Promise<McpServerConfig[]> {
     const s = mcpState.find((x) => x.name === server);

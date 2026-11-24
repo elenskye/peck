@@ -53,20 +53,23 @@ STAGING_DIR="$(mktemp -d "$INSTALL_DIR/.peck-install.XXXXXX")"
 trap 'rm -rf "$STAGING_DIR"' EXIT
 ditto "$BUNDLE_PATH" "$STAGING_DIR/Peck.app"
 codesign --verify --deep --strict "$STAGING_DIR/Peck.app"
+STAMP="$(date +%Y%m%d-%H%M%S)"
 if [ -e "$INSTALL_DIR/Peck.app" ]; then
-  BACKUP_PATH="$INSTALL_DIR/Peck.app.backup-$(date +%Y%m%d-%H%M%S)"
-  mv "$INSTALL_DIR/Peck.app" "$BACKUP_PATH"
-  echo "[Peck] 原版本已保留: $BACKUP_PATH"
+  OLD_PATH="$INSTALL_DIR/.peck-old-$STAMP.app"
+  mv "$INSTALL_DIR/Peck.app" "$OLD_PATH"
 fi
 mv "$STAGING_DIR/Peck.app" "$INSTALL_DIR/Peck.app"
 echo "[Peck] 已安装: $INSTALL_DIR/Peck.app"
-# 只留刚备份的这一份旧包：更早的挪进废纸篓（站主 2026-11-13 定，不在「应用程序」里攒；要找回去废纸篓里拖出来）。
-if [ -n "${BACKUP_PATH:-}" ]; then
-  for OLD in "$INSTALL_DIR"/Peck.app.backup-*; do
-    [ -e "$OLD" ] || continue
-    [ "$OLD" = "$BACKUP_PATH" ] && continue
-    TRASH_TO="$HOME/.Trash/$(basename "$OLD")"
-    [ -e "$TRASH_TO" ] && TRASH_TO="$TRASH_TO-$(date +%s)"
-    mv "$OLD" "$TRASH_TO" && echo "[Peck] 更早的旧包挪进了废纸篓: $(basename "$OLD")"
-  done
+# 旧包一个不留在「应用程序」里（站主 2026-11-24 定）：刚换下来的和以前留的备份都挪进废纸篓，要找回去废纸篓里拖出来。
+to_trash() {
+  local to="$HOME/.Trash/$2"
+  [ -e "$to" ] && to="$to-$(date +%s)"
+  mv "$1" "$to" && echo "[Peck] 旧包挪进了废纸篓: $(basename "$to")"
+}
+if [ -n "${OLD_PATH:-}" ] && [ -e "$OLD_PATH" ]; then
+  to_trash "$OLD_PATH" "Peck.app.backup-$STAMP"
 fi
+for OLD in "$INSTALL_DIR"/Peck.app.backup-*; do
+  [ -e "$OLD" ] || continue
+  to_trash "$OLD" "$(basename "$OLD")"
+done

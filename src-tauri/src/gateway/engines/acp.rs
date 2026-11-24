@@ -85,7 +85,8 @@ pub(crate) struct Session {
 
 impl Session {
     pub(crate) fn new(pipe: Pipe, flavor: Flavor, task: &AgentTask, sink: EventSink) -> Self {
-        let converter = AcpConverter::new(flavor.engine, Some(task.cwd.to_string_lossy().into_owned()));
+        let mut converter = AcpConverter::new(flavor.engine, Some(task.cwd.to_string_lossy().into_owned()));
+        converter.compacting = task.compact;
         Self {
             pipe,
             flavor,
@@ -221,12 +222,21 @@ impl Session {
         for e in self.converter.start_turn() {
             self.sink.emit(e);
         }
+        // 转发 `/compact`（v1.1.7）：它广告的 `compact` 命令不带参数，重点不传。
+        let text = if task.compact {
+            if task.prompt.trim().trim_start_matches("/compact").trim() != "" {
+                self.sink.emit(EventBody::Notice { level: NoticeLevel::Info, text: format!("{} 不接收重点，按它自己的方式压。", self.flavor.label) });
+            }
+            "/compact".to_string()
+        } else {
+            task.prompt.clone()
+        };
         let id = self.next_id;
         self.next_id += 1;
         self.prompt_id = Some(id);
         self.pipe
             .send(&json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt",
-                          "params": {"sessionId": session, "prompt": [{"type": "text", "text": task.prompt}]}}))
+                          "params": {"sessionId": session, "prompt": [{"type": "text", "text": text}]}}))
             .await
     }
 
@@ -373,6 +383,7 @@ mod tests {
             peck_mcp: None,
             env: vec![],
             folders: vec![],
+            compact: false,
         }
     }
 
@@ -440,10 +451,11 @@ mod tests {
             permission: PermissionLevel::Edit,
             model: std::env::var("PECK_LIVE_MODEL").ok(),
             effort: std::env::var("PECK_LIVE_EFFORT").ok(),
-            resume: None,
+            resume: std::env::var("PECK_LIVE_RESUME").ok(),
             peck_mcp,
             env: vec![],
             folders: vec![],
+            compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
         };
         let outcome = AcpBackend::new(setup, flavor).run(t, sink, rx).await;
         for e in events.lock().unwrap().iter() {
@@ -451,4 +463,29 @@ mod tests {
         }
         println!("outcome: {outcome:?}");
     }
+
+    /// 转发 `/compact`（v1.1.7）：发的是不带重点的 `/compact`，写了重点就说一声。
+    #[tokio::test]
+    async fn compact_sends_the_bare_command() {
+        let lines = [
+            json!({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {}}),
+            json!({"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": {"sessionId": "s1", "update": {"sessionUpdate": "auto_compact_completed", "tokens_before": 50000, "tokens_after": 9000}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}),
+        ];
+        let pipe = Pipe::script(&lines.iter().map(|l| l.to_string() + "\n").collect::<String>());
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sink, events) = auto_answer("grok", tx, |_| ApprovalDecision::AllowOnce, "");
+        let t = AgentTask { resume: Some("s1".into()), compact: true, prompt: "/compact 留住接口那段".into(), model: None, effort: None, ..task("grok-4.5", "low") };
+        let mut session = Session::new(pipe, GROK, &t, sink);
+        session.start(&t).await.unwrap();
+        let prompt = session.pipe.sent().iter().find(|s| s["method"] == "session/prompt").cloned().unwrap();
+        assert_eq!(prompt["params"]["prompt"][0]["text"], "/compact");
+        let outcome = session.drive(&mut { rx }).await.unwrap();
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        let bodies: Vec<EventBody> = events.lock().unwrap().iter().map(|e| e.body.clone()).collect();
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::Notice { text, .. } if text.contains("不接收重点"))));
+        assert!(bodies.iter().any(|b| matches!(b, EventBody::ContextCompacted { before: 50000, after: 9000, text, .. } if text.contains("Grok"))));
+    }
+
 }

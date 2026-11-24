@@ -21,7 +21,7 @@ export const PECK_COMMANDS: SlashItem[] = [
   { name: "auto", description: "切到 AUTO；后面写了话就用 AUTO 发出去", hint: "[这句话]", kind: "peck" },
   { name: "new", description: "这个项目里新开一个任务", kind: "peck", instant: true },
   { name: "review", description: "审查上一次的改动（AGENTS 里选的审查；没选就用现在这个），只读", kind: "peck", instant: true },
-  { name: "compact", description: "压一压这个任务的对话（Peck Loop；不叫模型、不花钱）", kind: "peck", instant: true },
+  { name: "compact", description: "压缩这个任务的对话：落盘、清旧输出、写交接摘要（叫一次模型）；后面可以写要重点留住什么。CLI 的转给它自己压", hint: "[重点]", kind: "peck" },
   { name: "undo", description: "撤销上一次的改动：交给模型用任务快照放回去，动之前等你批", kind: "peck", instant: true },
   { name: "cost", description: "这个任务、这个月花了多少", kind: "peck", instant: true },
 ];

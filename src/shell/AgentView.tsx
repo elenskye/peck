@@ -109,10 +109,24 @@ const ShotThumb: React.FC<{ output: string | null | undefined }> = ({ output }) 
   );
 };
 
+/** 读网页那一步（v1.1.7）点开：最后的网址（系统浏览器里打开）；标题、类型和大小、截断落盘在下面那份原文的头几行。 */
+const WebPageHead: React.FC<{ output: string; say: (m: unknown) => void }> = ({ output, say }) => {
+  const url = output.match(/^网址：(\S+)/m)?.[1];
+  if (!url) return null;
+  return (
+    <p className="web-head">
+      <Icon name="globe" size={12} />
+      <button type="button" className="web-link" title="用浏览器打开" onClick={() => void ipc.openUrl(url).catch(say)}>{url}</button>
+    </p>
+  );
+};
+
 /** 自动压缩的一步：一行；交接摘要能点开看原文。 */
 const Compacted: React.FC<{ item: Extract<ViewItem, { kind: "compacted" }> }> = ({ item }) => {
   const [open, setOpen] = useState(false);
-  const line = <>压缩上下文 · {COMPACT_STEP[item.step] ?? item.step}：{item.text} · {tokens(item.before)} → {tokens(item.after)}</>;
+  // CLI 自己压的：前后多大不一定报（0 是没报）。
+  const size = item.before && item.after ? ` · ${tokens(item.before)} → ${tokens(item.after)}` : item.before ? ` · 压之前 ${tokens(item.before)}` : item.after ? ` · 压完 ${tokens(item.after)}` : "";
+  const line = <>压缩上下文 · {COMPACT_STEP[item.step] ?? item.step}：{item.text}{size}</>;
   if (!item.summary) return <p className="agent-line agent-compact"><Icon name="collapse" size={12} />{line}</p>;
   return (
     <div className="fold agent-compact">
@@ -386,6 +400,7 @@ const ToolRow: React.FC<{ call: ToolView; now: number; onShowFile: (path: string
         )}
         {(open || (call.status === "running" && call.live)) && output && (
           <div className="pk-mod pk-mod--sunk out out--full sel">
+            {call.name === "web_fetch" && <WebPageHead output={output} say={say} />}
             <pre className="out-lines scroll t-code">{full ?? (call.status === "running" ? output.slice(-2000) : output)}</pre>
             {open && (
               <div className="out-acts">

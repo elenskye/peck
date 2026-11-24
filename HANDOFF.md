@@ -1,31 +1,41 @@
 # 当前交接
 
-更新：2026-11-24。**v1.1.6 做完了，已装进 /Applications**。站主写明了版本号、不分 Phase，只改界面（前端），后端只改了一句提示里的分组名（PDF → TOOL KEYS），数据库没动。规则在 [CLAUDE.md](./CLAUDE.md)，界面在 [docs/design.md](./docs/design.md)「设置」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-24。**v1.1.7 做完了，已装进 /Applications**。站主写明了版本号、不分 Phase，照两份 brief（上下文压缩、读网页）做，先压缩后读网页。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「上下文」「联网」「CLI 四家」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 这一版做了什么（1.1.6）
+## 这一版做了什么（1.1.7）
 
-1. **设置页统一排法**（站主给的三条准则，写进 design.md「设置 → 统一排法」）：每行一样高；右边的主控件一样宽、右边对齐，控件一样高，单位写进框里；小按钮一样宽，每行都有的放最右；放不下一行的做成一块两行（头一行 + 下面固定的格子，几块的格子对齐）；名字、状态不换行、放不下省略；一组的按钮挪到组头右边。窗口窄时 AGENTS 的格子换成两行两列，归档、MCP、价格表每行变成两行——整组一起变。设置、项目设置、小窗共用 `.set-scope`。「这个月花了」那一行不再特殊：「花了 / 上限」写在名字下面，进度和输入框一样大。
-2. **PROVIDERS 只分两组**：API KEYS（各家 + 最后一块 Vertex AI）、TOOL KEYS（Tavily、Mathpix 两样）。Vertex 和别的 Key 一样一块：头一行 Location 和一个状态方框（NO GCLOUD / NO PROJECT ID / SAVED，原来是两个方框）、下面 Project ID + SAVE + REMOVE（新加的：清掉 Project ID）。Aliyun 的地域挪到头一行、点了就存（原来要另点 SAVE）。
-3. **MEMORY**：一个项目一行 + EDIT，开那个项目的记忆小窗（字照原样换行，EDIT 就地变多行的框，⌘↵ 存、Esc 取消；DELETE 改成点两下；最下面多行的框记一条）。项目设置的 MEMORY 也改成一行 + 同一个小窗。
-4. **PLUGINS**：学 Claude Desktop，两栏卡片（图标、名字、两行简介），点开小窗看全部；小窗里 PROJECTS 列左栏的全部项目，**能一个个项目装、更新、移除（库里的）或开关（自带的）**，库里的还有「每个项目都装」。图标按名字算出 5×5 像素（插件青色、单独的 Skill 淡紫）。项目设置的 PLUGINS 也是卡片 + 同一个小窗（只列这个项目）。
-- 新零件（`ui.tsx`）：`Modal`（小窗）、`SetHead`（组头）、`Field` 的 `unit`。删了 `MemoryList`、`PluginRow`、旧的 `.set-keys`、`.set-num`、`.memory-*`、`.plugin-name` 这些样式。
-- 新加依赖：没有。数据库没动（schema 11）。
+1. **`/compact [重点]`**（站主在提问里定的：落成这个任务的一次新记录）：
+   - PLOOP：三步都做（落盘、清旧输出、叫一次模型写交接摘要），重点接在写摘要的要求后面、进 `PreCompact` Hook 的 `custom_instructions`（`trigger: manual`）。用这个对话存的模型，用不了报原因不换；花费照记、算进上限。原来那个免费、只做前两步的 `/compact` 去掉了。任务在跑时提示「跑完再压」。
+   - CLI：续上它在这个任务里的会话转过去（`gateway_compact`）：Claude Code、Grok 发文字命令，Codex `thread/compact/start`，Muse `session/compact`；Codex、Muse、Grok 不收重点，写一行说明。不带引用、记忆、文件夹说明，Peck 替它跑的 Hook 不跑。
+   - 界面：那一次不画 YOU，一行「COMPACT 压缩上下文 · 重点：…」。
+2. **压完放回**（第 3 步之后，自动、手动都做）：交接摘要 → 站主说过的每一句（超过窗口 3% 省中间）→ 新的环境块 → 加载过的 MCP 工具（`<peck-loaded-tools>`，下一句认回来、工具列表不变）→ 最近读过和改过的文件（最多 5 个、窗口的 10%，现读、带行号、放不下留头尾、登记成读过）→ 接着干。清旧输出时 `tool_search` 留着「已加载：…」那一行。
+3. **交接摘要长度跟窗口**：目标窗口 × 1.5%（1500–8000 tokens），输出上限 min(模型上限, max(16000, 目标 × 2))。
+4. **CLI 的用量小环和压缩那一行**：四家报的「用了 / 窗口」转成 `context.updated`（带 `managedBy`），CLI 任务也画小环（点开「压缩由 X 自己管」，不画压缩线，Muse 说快满了变琥珀，CLI 压过以后变暗等下一条）；它自己压了一次显示成「CLI 自己压」一行。Codex 的上下文用量改成 `last.totalTokens`。
+5. **读网页 `web_fetch`**（`harness/tools/web.rs`）：所有模型、哪一档、ONE SHOT 都有，不弹卡片、不花钱；searcher（替掉了 curl）、member 有。地址检查（本机、内网、钉 IP）、同站重定向最多 5 次（跨站停下）、HTML 抽正文转 Markdown（`dom_smoothie`）、文字原样、PDF 存下读前 20 页、只放开头 32 KB 其余落盘、15 分钟缓存（子代理共用）、能停。过程里一步「Fetch …」，点开头上的网址用系统浏览器打开（新命令 `open_url`，只认 http / https）。
+6. 顺手修的：压缩那几行、一组工具的摘要在窄栏里换成两行时会压住下一行（`.fold-head` 写死了高度），现在跟着变高；Codex 的 `thread/goal/cleared` 不再冒成一条 raw。
+7. **装新版不再留备份**（站主定的）：`install-app.sh` 把刚换下来的和以前留的 `Peck.app.backup-*` 都挪进废纸篓，「应用程序」里只有 Peck.app。
+- **新加依赖**：`dom_smoothie ^0.18.2`（Readability；故意用 0.18，和 tauri 共用 `dom_query 0.28`、`html5ever 0.39`，锁文件里没有第二份）、`dom_query ^0.28.0`（开 `markdown`，整个 `<body>` 转 Markdown 用）、`encoding_rs ^0.8.44`（锁文件里本来就有，改成直接依赖）。
+- 数据库没动（schema 11）。`AgentTask` 多了 `compact`，事件 `context.updated` 多了 `managedBy`、`warn`，`context.compacted` 的 `step` 多了 `engine`。
+- brief 里「接力每段都是新会话」那条没做：接力在 v1.1.1 就去掉了。ACP 初始化时声明 `session.compaction` 没做（字段名查不准，怕 Grok 拒）；收到 `compaction_update`、`usage_update` 照样认。
 
 ## 验证
 
-- **自动测试**：`pnpm check`、`tsc --noUnusedLocals --noUnusedParameters`、`pnpm build` 过；全量 `cargo test` 过（326 个）。
-- **`?mock`**（内置浏览器，1360×860 和 1024×768 两种窗口，明暗各一次）：十一组量过行高一样、主控件左右边一样、没有横向滚动；AGENTS 窄时两行两列；Aliyun 地域和 Vertex Location 对齐；记忆小窗改一条 ⌘↵ 存上、Esc 只关小窗不关设置页；Git Plan 小窗里给 edge-gateway INSTALL 装上、Snapshots 在 notebook 里关掉后项目设置的卡片变暗。
-- **真跑**：没有。
-- **正式版**：装好了（`pnpm app:install`）；窗口里没点过。
-- **没验的**：正式版窗口（WKWebView）里的样子——`cqw` 单位、小窗里的放大倍数、`-webkit-line-clamp` 都只在内置浏览器里看过。
+- **自动测试**：全量 `cargo test` 过（350 个，新加：摘要长度、站主的话省中间、放回文件的挑法和预算、`tool_search` 那一行、手动压缩三步和重点进 Hook、压缩后不用再读就能整个覆盖、四家 CLI 的转发和用量、runner 转发不带记忆和 Hook、读网页的地址 / 重定向 / 类型 / 截断落盘 / 缓存 / 停止 / PDF、`web_fetch` 和搜索一起跑）；四份 CLI 夹具重新生成（只多了 `context.updated`）；`pnpm check`、`pnpm build` 过。
+- **`?mock`**：PLOOP 任务 `/compact 数据库迁移` 一行 COMPACT 和三步、花费；Codex 任务小环 22.7k / 475k、`/compact` 一行「不接收重点」和「CLI 自己压」；「搜一下」两步 Search + 两步 Fetch（一步失败），点开网址那一行；明暗各看了一次。
+- **真跑**（账本在 roadmap）：DeepSeek 3 次（≈ $0.0062）读 docs.rs 一页正文干净、手动压缩的摘要照重点写细；Codex、Muse、Grok 各 2 个小任务，`/compact` 都正常结束、压缩那一行和用量都到了；Grok 的窗口在模型列表里有（500,000）。
+- **正式版**：装好了（`pnpm app:install`，旧包都进了废纸篓）；窗口里没点过。
+- **没验的**：
+  - **Claude Code**：`cli/bin` 的登录过期了（OAuth 刷新不了），没跑成，没花额度；`/compact 重点` 的重点在 stream-json 下生不生效还不知道。
+  - 正式版窗口：这一版和 1.1.6 的都没点过。
 
 ## 留给站主的
 
 - **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。
 - **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
 - **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.6 的全部提交。
-- 以前留下、还没验的：1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
+- **Claude Code 重新登录**：设置 → CLI → LOGIN 里的 Claude Code（`cli/bin` 那份）登录过期了。登好以后要核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.7 的全部提交。
+- 以前留下、还没验的：1.1.6 的设置页在正式版窗口里；1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
 ## 已知问题
 
@@ -66,10 +76,16 @@
 | 小窗打开的 0.2 秒动画里点下去会落到外面那层、把小窗关掉（动画用 clip-path，没露出来的部分点不中） | 记着 |
 | 设置 → PLUGINS 的小窗按项目一个个读状态（项目多了会慢一点）；点开时不在左栏的项目不列 | 记着 |
 | 窗口最窄（980）时设置页的名字会被省略得很短（「Vertex AI」只剩几个字） | 记着 |
+| 手动压缩不起外部 MCP 服务器：工具列表少了它们，写摘要那一次缓存可能不中 | 记着 |
+| 手动压缩是另一次 run：放回的文件登记成「读过」只在那一次里，下一句（新的 run）要整个覆盖还得先读（和平时一样）；`write_patch` 不受影响 | 记着 |
+| Grok 续上的会话不再报窗口：小环用这个任务里它以前报过的那个；从来没报过就只写用了多少 | 记着 |
+| Codex 压缩不报前后多大；Claude Code 的 `post_tokens` 只算对话，不拿来画 | 等下一条用量 |
+| 读网页：要 JavaScript 才出内容的页读不全（会写一句）；走系统代理时只按主机名查地址、不钉 IP | 记着 |
+| 读网页的 Markdown 会带转义（`pairs\.` 这类），模型看得懂 | 记着 |
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
 
 ## 留意
 

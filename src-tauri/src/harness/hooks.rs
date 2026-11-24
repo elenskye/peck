@@ -188,7 +188,7 @@ mod tests {
     }
 
     fn task(resume: Option<&str>) -> AgentTask {
-        AgentTask { run_id: "run-9".into(), prompt: "原来的话".into(), cwd: std::env::temp_dir(), permission: PermissionLevel::Auto, model: None, effort: None, resume: resume.map(str::to_string), peck_mcp: None, env: vec![], folders: vec![] }
+        AgentTask { run_id: "run-9".into(), prompt: "原来的话".into(), cwd: std::env::temp_dir(), permission: PermissionLevel::Auto, model: None, effort: None, resume: resume.map(str::to_string), peck_mcp: None, env: vec![], folders: vec![], compact: false }
     }
 
     #[tokio::test]
