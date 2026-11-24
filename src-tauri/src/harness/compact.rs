@@ -120,7 +120,7 @@ pub fn clear_old(messages: &mut [Message]) -> usize {
     cleared
 }
 
-/// 站主自己写的几句（不算环境块、引用、验证结果、交接摘要、工具输出），最近的 `n` 句，旧的在前。
+/// 站主自己写的几句（不算环境块、引用、验证结果、交接摘要、Hook 补充的话、工具输出），最近的 `n` 句，旧的在前。
 pub fn user_requests(messages: &[Message], n: usize) -> Vec<String> {
     let mut out: Vec<String> = messages
         .iter()
@@ -130,6 +130,7 @@ pub fn user_requests(messages: &[Message], n: usize) -> Vec<String> {
             Part::Text { text }
                 if !text.starts_with(CONTEXT_TAG)
                     && !text.starts_with(REF_TAG)
+                    && !text.starts_with("<hook-")
                     && !text.starts_with(VERIFY_TAG)
                     && !text.starts_with(HANDOFF_TAG) =>
             {

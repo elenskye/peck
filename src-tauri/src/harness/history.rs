@@ -61,6 +61,20 @@ impl Store {
         Ok(true)
     }
 
+    /// 改一条的字（v1.1.4，设置 → MEMORY）。改成和别的一条一字不差的不改（返回 false）。
+    pub fn update_memory(&self, workspace_id: &str, id: &str, text: &str) -> StoreResult<bool> {
+        let text = text.trim();
+        let clash: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memories WHERE workspace_id = ?1 AND text = ?2 AND id <> ?3)",
+            params![workspace_id, text, id],
+            |r| r.get(0),
+        )?;
+        if text.is_empty() || clash {
+            return Ok(false);
+        }
+        Ok(self.conn.execute("UPDATE memories SET text = ?3 WHERE workspace_id = ?1 AND id = ?2", params![workspace_id, id, text])? > 0)
+    }
+
     pub fn delete_memory(&self, workspace_id: &str, id: &str) -> StoreResult<()> {
         self.conn.execute("DELETE FROM memories WHERE workspace_id = ?1 AND id = ?2", params![workspace_id, id])?;
         Ok(())
@@ -343,6 +357,59 @@ pub fn memory_list(workspace_id: String, state: tauri::State<'_, AppState>) -> R
     db.memories(&workspace_id).map_err(|e| e.to_string())
 }
 
+/// 设置 → MEMORY（v1.1.4）的一块：一个项目和它的记忆。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGroup {
+    pub workspace_id: String,
+    pub name: String,
+    pub path: String,
+    /// 移出了列表的项目（有记忆才列出来）。
+    pub hidden: bool,
+    pub notes: Vec<MemoryNote>,
+}
+
+/// 全部项目的记忆：列表里的项目都列（没有记忆的也列，能加）；移出列表的有记忆才列。
+pub(crate) fn overview(db: &Store) -> Result<Vec<MemoryGroup>, String> {
+    let mut out = Vec::new();
+    for ws in db.workspaces().map_err(|e| e.to_string())? {
+        let notes = db.memories(&ws.id).map_err(|e| e.to_string())?;
+        if ws.hidden && notes.is_empty() {
+            continue;
+        }
+        out.push(MemoryGroup { workspace_id: ws.id, name: ws.name, path: ws.path, hidden: ws.hidden, notes });
+    }
+    out.sort_by(|a, b| a.hidden.cmp(&b.hidden).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn memory_overview(state: tauri::State<'_, AppState>) -> Result<Vec<MemoryGroup>, String> {
+    let db = state.store.lock().map_err(|_| "读不到记忆。")?;
+    overview(&db)
+}
+
+/// 站主自己记一条（v1.1.4）：和「想记住这几条」批的一样清理（并成一行、去掉开头的列表符号）。
+#[tauri::command]
+pub fn memory_add(workspace_id: String, text: String, state: tauri::State<'_, AppState>) -> Result<Vec<MemoryNote>, String> {
+    let db = state.store.lock().map_err(|_| "读不到记忆。")?;
+    let note = clean_note(&text).ok_or("先写一句。")?;
+    if !db.add_memory(&workspace_id, &note, None).map_err(|e| e.to_string())? {
+        return Err("这一条已经记着了。".into());
+    }
+    db.memories(&workspace_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn memory_update(workspace_id: String, id: String, text: String, state: tauri::State<'_, AppState>) -> Result<Vec<MemoryNote>, String> {
+    let db = state.store.lock().map_err(|_| "读不到记忆。")?;
+    let note = clean_note(&text).ok_or("先写一句。")?;
+    if !db.update_memory(&workspace_id, &id, &note).map_err(|e| e.to_string())? {
+        return Err("没改成：这一条不在了，或者和另一条一模一样。".into());
+    }
+    db.memories(&workspace_id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn memory_delete(workspace_id: String, id: String, state: tauri::State<'_, AppState>) -> Result<Vec<MemoryNote>, String> {
     let db = state.store.lock().map_err(|_| "读不到记忆。")?;
@@ -425,7 +492,18 @@ mod tests {
         assert!(store.add_memory("w2", "测试用 pnpm test", None).unwrap());
         let list = store.memories(&ws.id).unwrap();
         assert_eq!(list.len(), 1);
-        store.delete_memory(&ws.id, &list[0].id).unwrap();
+        // 改字（v1.1.4）：改成和另一条一样的不改。
+        assert!(store.add_memory(&ws.id, "提交说明用英文", None).unwrap());
+        assert!(store.update_memory(&ws.id, &list[0].id, "测试用 pnpm test:unit").unwrap());
+        assert!(!store.update_memory(&ws.id, &list[0].id, "提交说明用英文").unwrap());
+        assert!(!store.update_memory(&ws.id, "nope", "x").unwrap());
+        assert_eq!(store.memories(&ws.id).unwrap()[0].text, "测试用 pnpm test:unit");
+        let groups = overview(&store).unwrap();
+        assert!(groups.iter().any(|g| g.workspace_id == ws.id && g.notes.len() == 2), "列表里的项目都列");
+        assert!(!groups.iter().any(|g| g.workspace_id == "w2"), "不认识的项目不列");
+        for m in store.memories(&ws.id).unwrap() {
+            store.delete_memory(&ws.id, &m.id).unwrap();
+        }
         assert!(store.memories(&ws.id).unwrap().is_empty());
         assert_eq!(clean_note(" - 用  pnpm\n跑测试 "), Some("用 pnpm 跑测试".into()));
         assert_eq!(clean_note("  "), None);

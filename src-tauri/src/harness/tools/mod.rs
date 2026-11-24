@@ -6,7 +6,9 @@
 
 pub mod bash;
 pub mod fs;
+pub mod notebook;
 pub mod patch;
+pub mod pdf;
 pub mod search;
 pub mod shot;
 pub mod v4a;
@@ -42,11 +44,19 @@ pub const CREATE_SKILL: &str = "create_skill";
 /// 联网搜索（v1.1.1）：没有原生搜索的模型用（DeepSeek 的 Search API、Tavily，见 `gateway/search.rs`）；有原生的、
 /// 两样都没配的不给。只读，哪一档、ONE SHOT 都有。
 pub const WEB_SEARCH: &str = "web_search";
+/// 读 PDF（v1.1.4，`pdf.rs`）：PDFKit 在本机抽文字，哪一档、ONE SHOT 都有。
+pub const READ_PDF: &str = "read_pdf";
+/// Mathpix 识别 PDF（v1.1.4）：填了 Mathpix 的 Key 才给（模拟模式也给），按页收费。
+pub const OCR_PDF: &str = "ocr_pdf";
+/// 读 Jupyter Notebook（v1.1.4，`notebook.rs`）。
+pub const READ_NOTEBOOK: &str = "read_notebook";
+/// 按需加载 MCP 工具（v1.1.4）：外部 MCP 服务器的工具开头只给名单，用它搜出来、加进工具列表才能调。循环自己处理。
+pub const TOOL_SEARCH: &str = "tool_search";
 
 /// 一次回答里要的工具全是这些（加上派子代理）就同时跑（v1.1.2）：都只读、不弹卡片。混进别的就按顺序。
-pub const PARALLEL_SAFE: [&str; 7] = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, LOAD_SKILL, SEARCH_TASKS, WEB_SEARCH];
+pub const PARALLEL_SAFE: [&str; 10] = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, LOAD_SKILL, SEARCH_TASKS, WEB_SEARCH, READ_PDF, OCR_PDF, READ_NOTEBOOK];
 
-pub const ALL: [&str; 15] = [
+pub const ALL: [&str; 18] = [
     LIST_DIRECTORY,
     READ_FILE,
     SEARCH_TEXT,
@@ -62,6 +72,9 @@ pub const ALL: [&str; 15] = [
     APPLY_PATCH,
     SCREENSHOT_APP,
     WEB_SEARCH,
+    READ_PDF,
+    OCR_PDF,
+    READ_NOTEBOOK,
 ];
 
 /// 一个文件读到时的样子：覆盖前要它没变过。
@@ -343,8 +356,8 @@ pub fn tail_bytes(text: &str, limit: usize) -> &str {
 
 pub fn kind_of(name: &str) -> ToolKind {
     match name {
-        LIST_DIRECTORY | READ_FILE | SCREENSHOT_APP | LOAD_SKILL | super::extras::LIST_SCHEDULES => ToolKind::Read,
-        SEARCH_TEXT | FIND_FILES | SEARCH_TASKS => ToolKind::Search,
+        LIST_DIRECTORY | READ_FILE | SCREENSHOT_APP | LOAD_SKILL | READ_PDF | OCR_PDF | READ_NOTEBOOK | super::extras::LIST_SCHEDULES => ToolKind::Read,
+        SEARCH_TEXT | FIND_FILES | SEARCH_TASKS | TOOL_SEARCH => ToolKind::Search,
         WRITE_FILE | WRITE_PATCH | APPLY_PATCH => ToolKind::Edit,
         BASH_RUN | BASH_BACKGROUND => ToolKind::Run,
         WEB_SEARCH => ToolKind::Fetch,
@@ -373,6 +386,19 @@ pub fn title_of(name: &str, input: &Value) -> String {
             format!("看 {}", if p.is_empty() || p == "." { "项目根目录".into() } else { p })
         }
         READ_FILE => format!("读 {}", s("path")),
+        READ_PDF | OCR_PDF => {
+            let pages = s("pages");
+            let what = if name == OCR_PDF { "用 Mathpix 识别" } else { "读" };
+            if pages.is_empty() { format!("{what} {}", s("path")) } else { format!("{what} {}（第 {pages} 页）", s("path")) }
+        }
+        TOOL_SEARCH => match s("query") {
+            q if q.starts_with("select:") => format!("加载 MCP 工具 {}", short(q["select:".len()..].to_string())),
+            q => format!("找 MCP 工具「{}」", short(q)),
+        },
+        READ_NOTEBOOK => match s("cells") {
+            c if c.is_empty() => format!("读 {}", s("path")),
+            c => format!("读 {}（单元 {c}）", s("path")),
+        },
         SEARCH_TEXT => format!("搜「{}」", short(s("pattern"))),
         FIND_FILES => format!("找 {}", s("pattern")),
         WRITE_FILE => format!("写 {}", s("path")),
@@ -444,7 +470,7 @@ pub fn title_of(name: &str, input: &Value) -> String {
 
 /// 这一档能用哪些工具。ONE SHOT 只读、不弹卡片，去掉清单、提问、记忆和后台命令。
 pub fn names_for(level: PermissionLevel, oneshot: bool) -> Vec<&'static str> {
-    let read_only = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, BASH_RUN, SEARCH_TASKS, WEB_SEARCH];
+    let read_only = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, BASH_RUN, SEARCH_TASKS, WEB_SEARCH, READ_PDF, OCR_PDF, READ_NOTEBOOK];
     if oneshot {
         return read_only.to_vec();
     }
@@ -509,6 +535,27 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "path":{"type":"string"},
                 "start_line":{"type":"integer","minimum":1,"description":"1-based. Default 1."},
                 "line_count":{"type":"integer","minimum":1,"maximum":2000,"description":"Default 2000."}
+            },"required":["path"]}),
+        ),
+        READ_PDF => (
+            "Read a PDF in the project: extracts each page's text locally with macOS PDFKit (free, instant). Layout, formulas and tables may come out jumbled. Pages without a text layer (scans) are attached as images if you can see images. Up to 20 pages per call. Use read_file for text files.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "pages":{"type":"string","description":"Which pages, 1-based: \"3\", \"1-5\", \"1,3-4\", \"8-\". Default: from page 1 (up to 20)."}
+            },"required":["path"]}),
+        ),
+        OCR_PDF => (
+            "Recognize PDF pages with Mathpix OCR: much better than read_pdf for scanned pages, math (returns LaTeX in $…$ / $$…$$) and tables (returns LaTeX tabular). Costs $0.005 per page and uploads only the requested pages to Mathpix (deleted there after reading); takes seconds to a minute. Prefer read_pdf first; use this when read_pdf shows no text layer, or garbled formulas or tables you need. Up to 20 pages per call.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "pages":{"type":"string","description":"Which pages, 1-based: \"3\", \"1-5\", \"1,3-4\". Default: from page 1 (up to 20). Ask only for the pages you need."}
+            },"required":["path"]}),
+        ),
+        READ_NOTEBOOK => (
+            "Read a Jupyter notebook (.ipynb): each cell's type, source and outputs (text, errors, and images attached if you can see images). To edit a notebook, read the raw JSON with read_file and change it with the edit tools.",
+            json!({"type":"object","properties":{
+                "path":{"type":"string"},
+                "cells":{"type":"string","description":"Which cells, 1-based: \"3\", \"1-10\", \"5-\". Default: all."}
             },"required":["path"]}),
         ),
         SEARCH_TEXT => (
@@ -772,8 +819,9 @@ mod tests {
         assert!(!names_for(PermissionLevel::Plan, false).contains(&WRITE_PATCH));
         assert!(names_for(PermissionLevel::Plan, false).contains(&ASK_USER));
         assert!(names_for(PermissionLevel::Plan, false).contains(&MEMORY));
-        assert_eq!(names_for(PermissionLevel::Edit, false).len(), 14);
-        assert_eq!(names_for(PermissionLevel::Auto, false).len(), 14);
+        assert_eq!(names_for(PermissionLevel::Edit, false).len(), 17);
+        assert_eq!(names_for(PermissionLevel::Auto, false).len(), 17);
+        assert!(names_for(PermissionLevel::Plan, true).contains(&READ_PDF) && names_for(PermissionLevel::Plan, true).contains(&READ_NOTEBOOK), "读 PDF、Notebook 只读，ONE SHOT 也有");
         let oneshot = names_for(PermissionLevel::Plan, true);
         assert!(!oneshot.contains(&ASK_USER) && !oneshot.contains(&WRITE_PATCH) && !oneshot.contains(&MEMORY) && !oneshot.contains(&BASH_BACKGROUND));
         assert!(oneshot.contains(&SEARCH_TASKS) && oneshot.contains(&WEB_SEARCH), "联网搜索只读，ONE SHOT 也有");

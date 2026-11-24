@@ -34,7 +34,10 @@ const gitPlan = (version: string): PluginInfo => ({
     ...(version === "1.0.0" ? [] : [{ name: "git-plan:commits", description: "汇报还没推的提交：短哈希、说明、一句话做了什么", hint: null }]),
   ],
   tools: [{ name: "git_commit", description: "提交这一轮改过的文件。只会 commit，不 push、不改历史、不署名；说明不合格式的拒绝。", known: true }],
-  hooks: [{ event: "Stop", kind: "peck", ask: "用一行概括这轮改了什么，按 Git Plan 的格式", run: "git_commit" }],
+  hooks: [
+    ...(version === "1.0.0" ? [] : [{ event: "Stop", kind: "command", ask: null, run: 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/handoff.sh"' }]),
+    { event: "Stop", kind: "peck", ask: "用一行概括这轮改了什么，按 Git Plan 的格式", run: "git_commit" },
+  ],
   mcp: [],
 });
 

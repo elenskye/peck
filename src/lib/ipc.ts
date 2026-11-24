@@ -449,6 +449,19 @@ export const ipc = {
     if (isMockMode()) return mockIpc.memoryList(workspaceId);
     return invoke<MemoryNote[]>("memory_list", { workspaceId });
   },
+  async memoryOverview(): Promise<MemoryGroup[]> {
+    if (isMockMode()) return mockIpc.memoryOverview();
+    return invoke<MemoryGroup[]>("memory_overview");
+  },
+  /** 自己记一条；返回这个项目的记忆。 */
+  async memoryAdd(workspaceId: string, text: string): Promise<MemoryNote[]> {
+    if (isMockMode()) return mockIpc.memoryAdd(workspaceId, text);
+    return invoke<MemoryNote[]>("memory_add", { workspaceId, text });
+  },
+  async memoryUpdate(workspaceId: string, id: string, text: string): Promise<MemoryNote[]> {
+    if (isMockMode()) return mockIpc.memoryUpdate(workspaceId, id, text);
+    return invoke<MemoryNote[]>("memory_update", { workspaceId, id, text });
+  },
   async memoryDelete(workspaceId: string, id: string): Promise<MemoryNote[]> {
     if (isMockMode()) return mockIpc.memoryDelete(workspaceId, id);
     return invoke<MemoryNote[]>("memory_delete", { workspaceId, id });
@@ -619,6 +632,8 @@ export interface WorktreeApply { applied: string[]; conflicts: string[]; record:
 
 /** 站主批过的一条记忆（harness/history.rs）。 */
 export interface MemoryNote { id: string; text: string; sourceRun?: string | null; createdAt: number }
+/** 设置 → MEMORY（v1.1.4）的一块：一个项目和它的记忆（移出列表的项目有记忆才列）。 */
+export interface MemoryGroup { workspaceId: string; name: string; path: string; hidden: boolean; notes: MemoryNote[] }
 
 /** 后台命令（harness/background.rs）。 */
 export interface BgInfo {

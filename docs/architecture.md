@@ -121,6 +121,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 - **任务清单**：五家的清单都转成 `plan.updated`（过程最上面那一块）。Codex `turn/plan/updated`、Muse `session/todoListChanged`、Grok / Antigravity 的 ACP `plan`；Claude Code 旧的 `TodoWrite` 每次整份，2.1 起默认的 `TaskCreate` / `TaskUpdate` 一次一项（编号在结果「Task #N created」里），Peck 拼成整份（v1.1.3）。子任务里的清单不转。
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck Loop 同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
+- **脚本 Hook**（v1.1.4，`cli_hooks.rs`）：Peck 替 CLI 跑开场时、发话时、收尾时三个（见「脚本 Hook」）。
 - **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示；Antigravity 不查。
 - **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌，只对这一次进程挂上、不改 CLI 的配置。工具：`create_skill`、`restore_snapshot`、定时任务那三个（五家都给；项目里关掉的自带插件的不列、调了也不收）、`load_skill`（读自带插件的 Skill 全文：给了哪个自带插件的工具就能读它的）、`git_commit`（项目里装着 Git Plan、这一段不是只读的才给）、`ask_user`（Grok、Antigravity）。Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
 - **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。
@@ -129,9 +130,9 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 - **循环**（`loop.rs`，`PeckBackend`，引擎 id `peck`）：问模型 → 跑工具 → 结果放回，直到不再要工具。对话存 `harness_conversations`。
 - **上限**：设置 → GENERAL 能调，5–400 轮：每个任务默认 40（主角色、定时任务都按它）、ONE SHOT 默认 12；子代理每类各自的（设置 → AGENTS，默认 24）。存在 `app_settings` 的 `ui` 那一行（`maxRounds`、`oneshotRounds`、`subagents`），`harness/run.rs` 每次发任务时读。
-- **一批工具**：一次回答里要的全是只读的（`list_directory`、`read_file`、`search_text`、`find_files`、`load_skill`、`search_tasks`、`web_search`；`spawn_agent` 也算，它马上回）就同时跑（`tools::PARALLEL_SAFE`），谁先完先报，结果按调用的顺序放回对话；混进改文件、跑命令、MCP 的就按顺序一个一个来。
+- **一批工具**：一次回答里要的全是只读的（`list_directory`、`read_file`、`search_text`、`find_files`、`load_skill`、`search_tasks`、`web_search`、`read_pdf`、`ocr_pdf`、`read_notebook`；`spawn_agent` 也算，它马上回）就同时跑（`tools::PARALLEL_SAFE`），谁先完先报，结果按调用的顺序放回对话；混进改文件、跑命令、MCP 的就按顺序一个一个来。
 - **原地打转**：同一个工具、同样的参数、同样的结果（`ask_user`、`spawn_agent`、`update_plan` 不算），第 3 次在结果后面提醒它换办法（界面一行琥珀提示），第 5 次要它收尾、别再调工具；下一次回答还要工具就不跑，停下写明原因（`limit`）。
-- **花费上限**：这个月（UTC）事件日志里 Peck Loop 和 ONE SHOT 的 `usage.updated` 合计（联网搜索按次的费用也在里面），每次请求前现算；设了上限时没价格的模型不发，供应商没报用量也停；CLI 估的不算。停下是 `turn.completed` 的 `limit` + 原因。
+- **花费上限**：这个月（UTC）事件日志里 Peck Loop 和 ONE SHOT 的 `usage.updated` 合计（联网搜索按次、Mathpix 按页的费用也在里面），每次请求前现算；设了上限时没价格的模型不发，供应商没报用量也停；CLI 估的不算。停下是 `turn.completed` 的 `limit` + 原因。
 
 ### 工具（`tools/`）
 
@@ -146,7 +147,11 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | `update_plan`、`ask_user` | 任务清单；停下来问站主 |
 | `screenshot_app`（`shot.rs`） | Mac、能看图的模型，PLAN 也有：截这个 App 最前面的窗口 |
 | `web_search` | 没有原生搜索的模型才有，PLAN、ONE SHOT 也有（见「联网搜索」） |
+| `read_pdf`（`pdf.rs`，v1.1.4） | macOS 自带的 PDFKit（经 `osascript -l JavaScript`，不加依赖）在本机一页页抽文字；`pages` 写 `3`、`1-5`、`1,3-4`，一次最多 20 页。没文字层的页（扫描件）给能看图的模型附这一页的 JPEG（最长边 1568，一次最多 6 张，存在本任务的输出目录） |
+| `ocr_pdf`（v1.1.4） | Mathpix（`gateway/mathpix.rs`）：先用 PDFKit 把要的几页拆成一份小 PDF，只送这几页（`POST /v3/pdf`，轮询到 `completed` 取 `.mmd`：公式 LaTeX、表格 tabular），读完 `DELETE` 掉它那边的（删不掉的结果里写一句）；每页 $0.005 按送去的页数记在 `mathpix` 名下。两样 Key 都填了才给（模拟模式也给、不联网、不记费用）。两个读 PDF 的工具模型看说明自己挑 |
+| `read_notebook`（`notebook.rs`，v1.1.4） | `.ipynb`：每个单元的类型、代码或文字和输出（文字、出错去掉颜色、图给能看图的模型附上）；`cells` 选范围。改 Notebook 照旧 `read_file` 读原文、改文件的工具改 JSON |
 | `spawn_agent`（`agents.rs`） | PLOOP 的主角色派子代理，worker、member 要写 `paths`（见「PLOOP」） |
+| `tool_search`（v1.1.4） | 有外部 MCP 工具时才有：按需加载（见「外部 MCP 服务器」） |
 
 其余（`bash_run`、`bash_background`、`memory`、`search_tasks`、`load_skill`、`create_skill`、`restore_snapshot`、`schedule_task` 等、`git_commit`、`mcp__*`）见下面各节。
 
@@ -183,7 +188,8 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 ### 外部 MCP 服务器（`mcp_client.rs`）
 
-- stdio，设置里最多 8 台；要保密的变量只记名字，值在钥匙串。 Peck Loop 发任务时起（ONE SHOT 不起），任务结束停；起不来的写一行、照常干活。在沙箱外跑。CLI 引擎用自己配的 MCP。
+- stdio，设置里最多 8 台；要保密的变量只记名字，值在钥匙串。 Peck Loop 发任务时起（ONE SHOT 不起），任务结束停；起不来的写一行、照常干活。在沙箱外跑。CLI 引擎用自己配的 MCP，怎么给模型看是 CLI 自己的事（Claude Code 自己就按需加载）。
+- **按需加载**（v1.1.4，`loop.rs` 的 `request_specs`）：MCP 工具的定义开头不发，只给一个 `tool_search`，说明里按服务器列出这一档能用的工具名字。`select:<名字>,…` 按名字加载（全名或只写工具那一段），别的按关键词搜名字和说明（默认 5 个）；搜到的从下一次请求起加进工具列表（加在最后，每加一批缓存重写一次）。加载过的一个对话里一直留着：下一句话开头从记录里认回来（调过的、`tool_search` 结果头一行「已加载：…」），工具列表不来回变。没加载就直接调的也照样跑（权限照旧）。member 自己加载自己的。
 - **项目的 `.mcp.json`**：Claude Code 的格式，只接 stdio 的，和设置里的合并（同名以项目的为准，项目设置里能关）。第一次起之前弹一张卡片，「总是允许」按这一项原文的指纹记，配置改了再问。
 - **权限**：PLAN 只给 `readOnlyHint` 的；EDIT 用其他的前问一次（能总是允许这台）；AUTO 不问；会删改的（标了 `destructiveHint`，或只读、删改都没标）哪档都当高危。
 - **工具标注**（`mcp_hints`）：Peck 起过或 TEST 过的服务器记下每个工具是只读、会改还是会删改。CLI 经 ACP 问要不要调 MCP 工具时照它替 CLI 批（`runner::mcp_hint`）：只读的批；会改的 AUTO 批、EDIT 下这台「总是允许」过才批；会删改的、查不到的给站主。
@@ -193,7 +199,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 - **系统提示**两块，都打缓存断点：Peck 的说明 + 工具定义；项目层 = 项目根的 `AGENTS.md`（没有就 `CLAUDE.md`）+ 站主批过的记忆 + Skills 的名字和描述。
 - **环境块** `<peck-context>` 放在这一句前面：系统和项目根、本机时间（带星期几和时区）、git、任务清单、之前几次改过的文件、在跑的后台命令。
 - **自动压缩**：到窗口 80% 时，下一次请求前依次做，降到 60% 以下就停：① 长的工具输出落盘；② 最近两轮以外的输出换成一句「做过什么」；③ 让模型写交接摘要，对话换成「摘要 + 站主最近三句」。压完还满就停下写明原因。
-- **记忆**：`memory` 工具只提议；站主 SAVE 才存 `memories`（按项目）。
+- **记忆**：`memory` 工具只提议；站主 SAVE 才存 `memories`（按项目）。站主也能自己记、改字、删（v1.1.4）：设置 → MEMORY 按项目列全部的，项目设置 → MEMORY 只列这一个（同一个组件 `src/shell/Memory.tsx`；IPC `memory_overview`、`memory_add`、`memory_update`、`memory_delete`）。
 - **Skills**（`skills.rs`）：项目的 `.claude/skills/`、`.agents/skills/`（一般一边是另一边的软链接）、和 `AGENTS.md` 同级的 `skills/` 里的 `SKILL.md`，加上开着的自带插件的（嵌在程序里；同名的以项目的为准）。项目设置里能一个个关；`load_skill` 按需读全文。CLI 原厂会读的自己读。没有全局 Skill。
 - **自己写 Skill**（`skill_propose.rs`）：模型用 `create_skill` 提议，站主 SAVE 才写，**只写这个项目**的 Skill 文件夹（传 `global` 被拒；和自带插件的 Skill 同名的也拒）。像 Key 的存不进去，同名的是替换那一份（旧版留着能退回）。任务还在跑时批的排到收尾快照之后再写，所以不算进这次的改动、撤销也撤不掉。
 - **@ 旧任务**：`[@标题](peck:task/<任务 id>)`，`history::task_refs` 把那个任务最近几次的请求、结果、改的文件放在这句前面（只认本项目），CLI 也带。`search_tasks` 让模型自己按关键词或任务号查。
@@ -242,12 +248,13 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 ### Git Plan（`src-tauri/defaults/library/plugins/git-plan/`）
 
-库里的第一个插件，默认每个项目都装：一份 Skill（版本号怎么升、什么时候分 Phase、提交说明 `v<版本>: <description>`、不署名、不 push、开工前先问程度）、三个命令（`/git-plan:plan` 写 Phase 计划、`/git-plan:release` 改版本号、`/git-plan:commits` 汇报还没推的提交）、工具 `git_commit`、一条收尾 Hook。
+库里的第一个插件（现在 1.1.0），默认每个项目都装：一份 Skill（版本号怎么升、什么时候分 Phase、提交说明 `v<版本>: <description>`、不署名、不 push、开工前先问程度、有 HANDOFF.md 就一起更新）、三个命令（`/git-plan:plan` 写 Phase 计划、`/git-plan:release` 改版本号、`/git-plan:commits` 汇报还没推的提交）、工具 `git_commit`、两条收尾 Hook（先查 HANDOFF.md，再提交）。
 
 - **`git_commit`**（`harness/git.rs`）：只会提交——`git add` 点名的文件、`git commit --only`（不点名就是全部没提交的改动；被忽略的不进去；站主先前 `git add` 过、这次没点名的不带上）。碰不到 push、amend、改历史，不改 git 配置，不署名。说明必须是一行 `v<x.y.z>: <description>`，带署名行的拒绝。不是 git 项目、不在任何分支上（独立工作区）、合并 / cherry-pick / revert 到一半不提交，而且在 `git add` 之前就拦下。路径按字面算；用站主 shell 的 PATH（仓库自己的 pre-commit 钩子找得到工具）；一条 git 最多等 3 分钟。PLAN 不给；EDIT 问一次（能「这个项目总是允许」，规则 `git-commit`）；AUTO 不问。Peck Loop 直接调，CLI 经本机 MCP 调（EDIT 的卡片走子通道，和回退同一条路）。
 - **收尾 Hook**（`harness/hooks.rs`）：任务做完了（失败、打断、到上限的不跑）、不是 PLAN、不是独立工作区、项目是 git 仓库、这一轮改过的文件里还有没提交的，就问刚干完的那个模型要一行提交说明，Peck 校验后只提交这一轮改过的文件。不弹卡片、不 push。
   - **怎么问**：Peck Loop 在原对话末尾多问一轮（同样的系统提示、工具和对话，走缓存；不显示成回答、不进存下的对话，用量照记）；只在这一次确实动了东西时问（没提交的改动和任务开头不一样了，或者自己的工具改过文件），问的那一轮里站主又追加了话就接着干、做完再问。CLI 续上它刚才的会话、只读地问（事件不进这个任务的记录，用量照记；它要审批就打断，最多等 3 分钟）；续不了的、直接调用的引擎（Antigravity）不问。PLOOP 问主角色。
   - **结果**：一条 `hook.ran` 事件（提交了哪一笔，或者为什么没提交：没答、格式不对、git 报错），界面写在这一轮的 recap 里。
+- **HANDOFF 检查**（1.1.0，`hooks/handoff.sh`，`type: command` 的收尾 Hook，排在提交之前）：项目根有 `HANDOFF.md`、stdin 的 `peck_changed_files` 里有别的文件、没有 `HANDOFF.md`，就退出码 2 让模型先更新它；一回合只提醒一次（`stop_hook_active` 为真放行），没有 `jq`、读不懂都放行。插件库自带、一字没改的 Hook 不弹卡片（`plugins::library_hooks_intact`）。已经装了 1.0.0 的项目要在项目设置里点 UPDATE 才有。
 
 ## PLOOP（`harness/agents.rs`）
 
@@ -274,12 +281,13 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
 
 ## 脚本 Hook（`harness/script_hooks.rs`）
 
-借鉴 Claude Code：在 Peck Loop 的几个时刻跑项目里配的命令（CLI 用它们自己的 Hook）。
+借鉴 Claude Code：在 Peck Loop 的几个时刻跑项目里配的命令；CLI 引擎 Peck 只替它跑控制得了的三个（见下）。
 
 - **从哪读**：项目的 `.claude/settings.json`、`.claude/settings.local.json` 里的 `hooks`，加上装进项目的插件的 `hooks/hooks.json`；格式照 Claude Code，只认 `type: "command"`（命令里的 `${CLAUDE_PLUGIN_ROOT}` 换成插件的文件夹）。
-- **时刻**：`UserPromptSubmit`（发话时）、`PreToolUse` / `PostToolUse`（调工具前后，`matcher` 是工具名的正则，Peck 的名字和 Claude Code 的叫法都认：`Bash` 对 `bash_run`、`Edit` 对 `write_patch` / `apply_patch` …）、`PreCompact`（自动压缩前）、`Stop`（主角色要收尾时）。子代理调工具前后也跑；ONE SHOT 不跑。
-- **怎么跑**：`/bin/sh -c`，在项目根、站主 shell 的环境里（去掉像 Key 的变量），不进沙箱；stdin 是 JSON（`hook_event_name`、`tool_name` 用 Claude Code 的叫法、`peck_tool_name`、`tool_input`、`tool_response`、`prompt` …），带 `CLAUDE_PROJECT_DIR`；默认 60 秒、最长 600 秒，超时停掉整组进程。每条命令第一次跑之前弹卡片（ALWAYS 按时刻、matcher、命令原文的指纹记进「总是允许」，规则 `hook:<指纹>`）；拒了这一回合不再问、不跑。
-- **退出码**（和 Claude Code 一样）：0 照常（stdout 是 JSON 就读 `decision: block` + `reason`、`hookSpecificOutput.permissionDecision: deny`、`additionalContext`；`UserPromptSubmit` 的纯文字 stdout 当补充上下文）；2 拦下，stderr 是原因——发话时这句话不发、调工具前这一步不跑、调工具后原因接在结果后面给模型、收尾时交给它接着干（一回合最多拦 3 次）；`PreCompact` 拦不住。别的码、超时只记一笔、照常往下。
+- **时刻**：`SessionStart`（v1.1.4：对话的第一句发出去之前跑一次，source `startup`；压成交接摘要之后再跑一次，source `compact`——只有这一步会把开头那份换掉；`matcher` 对 source）、`UserPromptSubmit`（发话时）、`PreToolUse` / `PostToolUse`（调工具前后，`matcher` 是工具名的正则，Peck 的名字和 Claude Code 的叫法都认：`Bash` 对 `bash_run`、`Edit` 对 `write_patch` / `apply_patch`、`Read` 对 `read_file` / `read_pdf` / `ocr_pdf` / `read_notebook` …）、`PreCompact`（自动压缩前）、`Stop`（主角色要收尾时）。子代理调工具前后也跑，`SessionStart`、发话时、收尾时不跑；ONE SHOT 不跑。
+- **怎么跑**：`/bin/sh -c`，在项目根、站主 shell 的环境里（去掉像 Key 的变量），不进沙箱；stdin 是 JSON（`hook_event_name`、`tool_name` 用 Claude Code 的叫法、`peck_tool_name`、`tool_input`、`tool_response`、`prompt`、`source`、`model` …；收尾时多一个 `peck_changed_files`：这一轮从任务开头的快照算起改了的文件，相对项目根，`snapshot::changed_since_base`），带 `CLAUDE_PROJECT_DIR`；默认 60 秒、最长 600 秒，超时停掉整组进程。每条命令第一次跑之前弹卡片（ALWAYS 按时刻、matcher、命令原文的指纹记进「总是允许」，规则 `hook:<指纹>`）；拒了这一回合不再问、不跑。插件库自带、一字没改的不问（v1.1.4）。
+- **退出码**（和 Claude Code 一样）：0 照常（stdout 是 JSON 就读 `decision: block` + `reason`、`hookSpecificOutput.permissionDecision: deny`、`additionalContext`；`SessionStart`、`UserPromptSubmit` 的纯文字 stdout 当补充上下文：开场时、发话时放在这句前面，压缩后接在交接摘要后面）；2 拦下，stderr 是原因——发话时这句话不发、调工具前这一步不跑、调工具后原因接在结果后面给模型、收尾时交给它接着干（一回合最多拦 3 次）；`SessionStart`、`PreCompact` 拦不住，只记一笔。别的码、超时只记一笔、照常往下。
+- **CLI 引擎**（v1.1.4，`gateway/cli_hooks.rs`）：Peck 只跑它控制得了的三个——开场时（新会话的第一句，不是续上的）、发话时在这一句发出去之前跑，stdout 放在这句前面，发话时退出码 2 就不发；收尾时在 CLI 做完以后跑（失败、停下的不跑），退出码 2 就续上它的会话、把原因当一句新话发过去让它接着干（事件照常进这个任务的记录），一回合最多 3 次，排在 Git Plan 的收尾提交之前；续不了会话的写一行。Claude Code 自己会跑项目 `.claude/settings.json` 里的，Peck 只替它跑插件带的，免得跑两遍；直接调用的引擎（Antigravity）一条都不跑。卡片的请求号 `hook-approve-<n>`：有要跑的 Hook 时控制通道先到 `CliHooks`，这些归 Peck（不按命令的规则替站主批），别的转给正在跑的那一次引擎（每次续上是新的一条通道），引擎没在跑时追加的话攒着给下一次。
 - **界面**：拦下的、出错的、有输出的发一条带时刻的 `hook.ran`，写在过程里当时那一处；静默成功的不显示。
 
 ## 审阅和预览
@@ -299,7 +307,7 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
 
 ## Key 和模拟 / 真实（`src-tauri/src/api/`）
 
-IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI 供应商；其他：Tavily、MCP 要保密的变量），一包一个钥匙串项。打开 App 在后台读，读完发 `keys-loaded`；拒了在设置里点 READ KEYS 再问。模拟模式的 Key 只在内存。`api_set_mode` 切模拟 / 真实。
+IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI 供应商；其他：Tavily、Mathpix 的 App ID 和 App Key、MCP 要保密的变量），一包一个钥匙串项。打开 App 在后台读，读完发 `keys-loaded`；拒了在设置里点 READ KEYS 再问。模拟模式的 Key 只在内存。`api_set_mode` 切模拟 / 真实。
 
 ## 额度与花费
 
@@ -329,4 +337,5 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 | `src/App.tsx`、`src/lib/` | 编排和状态；IPC（`ipc.ts`，浏览器里转给 `?mock`）、设置、事件 → 界面（`agentView.ts`） |
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳和各页；方案里还没有的样式和身份色 |
 | `src/shell/Plugins.tsx` | 插件的界面：设置 → PLUGINS 的两块、项目设置 → PLUGINS |
+| `src/shell/Memory.tsx` | 记忆：设置 → MEMORY、项目设置 → MEMORY 共用的列表（改字、删、自己记一条） |
 | `src/dev/`、`src/vendor/peck/` | `?mock` 的假数据和剧本；同步来的视觉 |

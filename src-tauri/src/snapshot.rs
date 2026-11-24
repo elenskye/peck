@@ -97,6 +97,19 @@ pub fn restore_snapshot(record: RunSnapshotRecord) {
     }
 }
 
+/// 这个任务开始到现在，项目里改了哪些文件（v1.1.4，收尾时的脚本 Hook 用）：相对项目根，照快照算（命令、子代理改的都算）。
+/// 不认识的任务、拍不了快照为空。只拍一棵树比一比，不留提交。
+pub fn changed_since_base(run_id: &str) -> Option<Vec<String>> {
+    let record = saved_snapshot(run_id)?;
+    let repo = ShadowRepo::with_shadow_dir(&record.workspace_path, &record.shadow_dir).ok()?;
+    let now = repo.tree_now().ok()?;
+    if now == record.base_tree {
+        return Some(vec![]);
+    }
+    let out = repo.git_cmd().args(["diff", "--no-renames", "--name-only", "-z", &record.base_tree, &now]).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).split('\0').filter(|p| !p.is_empty()).map(str::to_string).collect())
+}
+
 fn snapshot_registry() -> &'static Mutex<HashMap<String, RunSnapshotRecord>> {
     RUN_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -192,6 +205,20 @@ impl ShadowRepo {
     /// 1. `git add -A` (respecting `.gitignore` for `node_modules/`, `target/`, etc.)
     /// 2. `git write-tree` -> returns `<tree_id>`
     /// 3. `git commit-tree <tree_id> -m <label>` -> anchors the tree in the bare repo
+    /// 工作区现在的树（不留提交，只比较用）。
+    pub fn tree_now(&self) -> Result<String, String> {
+        let add = self.git_cmd().args(["add", "-A"]).output().map_err(|e| e.to_string())?;
+        if !add.status.success() {
+            return Err(String::from_utf8_lossy(&add.stderr).into_owned());
+        }
+        let out = self.git_cmd().arg("write-tree").output().map_err(|e| e.to_string())?;
+        let tree = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || tree.is_empty() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        Ok(tree)
+    }
+
     pub fn create_snapshot(&self, label: &str) -> Result<String, String> {
         // Remove stale index.lock if a previous process crashed mid-operation
         let lock_file = self.shadow_dir.join("index.lock");

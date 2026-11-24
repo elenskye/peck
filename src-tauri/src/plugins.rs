@@ -27,6 +27,20 @@ use std::sync::OnceLock;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_plugins.rs"));
 
+/// 装进项目的这个插件的 Hook 是不是插件库自带、一字没改的（v1.1.4）：`hooks/` 下打包进程序的每个文件，项目里那份都一样。
+/// 是的话 Peck 跑它的脚本 Hook 不弹卡片（装 Peck 时就认了）；改过一个字、库里没有这个插件都不算。
+pub fn library_hooks_intact(name: &str, dir: &std::path::Path) -> bool {
+    let prefix = format!("plugins/{name}/hooks/");
+    let mut any = false;
+    for (rel, bytes) in LIBRARY_FILES.iter().filter(|(rel, _)| rel.starts_with(&prefix)) {
+        any = true;
+        if std::fs::read(dir.join("hooks").join(&rel[prefix.len()..])).ok().as_deref() != Some(*bytes) {
+            return false;
+        }
+    }
+    any
+}
+
 /// 一个插件的文件：相对路径 → 内容。
 pub type Tree = BTreeMap<String, Vec<u8>>;
 
@@ -103,7 +117,7 @@ pub struct PluginTool {
 pub struct PluginHook {
     /// 什么时候（`Stop`：一轮做完）。
     pub event: String,
-    /// `peck`（问模型一句，再由 Peck 跑一个自己的动作）、`command`（任意脚本：Peck 不跑，只列出来）等。
+    /// `peck`（问模型一句，再由 Peck 跑一个自己的动作）、`command`（脚本：Peck 照「脚本 Hook」跑，见 `harness/script_hooks.rs`）。
     pub kind: String,
     /// `peck`：问刚干完的模型的那一句。
     pub ask: Option<String>,
@@ -734,11 +748,50 @@ mod tests {
                 assert_eq!(i.commands.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["git-plan:commits", "git-plan:plan", "git-plan:release"]);
                 assert!(i.commands.iter().all(|c| !c.description.is_empty()));
                 assert_eq!(i.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["git_commit"]);
-                assert_eq!(i.hooks.iter().map(|h| (h.event.as_str(), h.kind.as_str(), h.run.as_deref())).collect::<Vec<_>>(), vec![("Stop", "peck", Some("git_commit"))]);
-                assert!(i.hooks[0].ask.as_deref().is_some_and(|a| a.contains("v<版本>: <description>")));
+                // v1.1.0（Peck 1.1.4）：先查 HANDOFF.md（脚本），再提交。
+                assert_eq!(
+                    i.hooks.iter().map(|h| (h.event.as_str(), h.kind.as_str(), h.run.as_deref())).collect::<Vec<_>>(),
+                    vec![("Stop", "command", Some("sh \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff.sh\"")), ("Stop", "peck", Some("git_commit"))]
+                );
+                assert!(i.hooks[1].ask.as_deref().is_some_and(|a| a.contains("v<版本>: <description>")));
+                assert!(i.version.as_str() >= "1.1.0");
                 assert!(item.skills[0].text.contains("push 由站主做") && item.skills[0].text.contains("不署名"));
             }
         }
         assert!(names.contains(&"git-plan".to_string()));
+    }
+
+    /// Git Plan 的 HANDOFF 检查（v1.1.4）：装进项目的那份没改过就不弹卡片；改了一个字就要问。脚本照 peck_changed_files 拦。
+    #[tokio::test]
+    async fn git_plan_handoff_hook_is_trusted_until_edited_and_blocks_without_handoff() {
+        use crate::harness::script_hooks::{self, Event, HookSet};
+        let root = std::env::temp_dir().join(format!("peck-handoff-{}", uuid::Uuid::new_v4()));
+        let dir = root.join(".claude/plugins/git-plan");
+        for (rel, bytes) in LIBRARY_FILES.iter().filter(|(r, _)| r.starts_with("plugins/git-plan/")) {
+            let to = dir.join(&rel["plugins/git-plan/".len()..]);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, bytes).unwrap();
+        }
+        std::fs::create_dir_all(root.join(".claude/skills")).unwrap();
+        let set = HookSet::load(&root);
+        let stop = set.for_event(Event::Stop, None);
+        assert_eq!(stop.len(), 1, "peck 那条不是脚本");
+        assert!(stop[0].trusted, "库里自带、没改过");
+        let env = vec![("PATH".to_string(), std::env::var("PATH").unwrap_or_default())];
+        let input = |files: serde_json::Value| script_hooks::input(Event::Stop, "s", &root, crate::gateway::event::PermissionLevel::Auto, serde_json::json!({"stop_hook_active": false, "peck_changed_files": files}));
+        // 没有 HANDOFF.md：放行。
+        let (v, _) = script_hooks::run_and_judge(&stop[0], &input(serde_json::json!(["src/a.rs"])), &root, &env).await;
+        assert_eq!(v.block, None);
+        std::fs::write(root.join("HANDOFF.md"), "# 交接\n").unwrap();
+        let (v, note) = script_hooks::run_and_judge(&stop[0], &input(serde_json::json!(["src/a.rs"])), &root, &env).await;
+        if std::path::Path::new("/usr/bin/jq").exists() {
+            assert!(v.block.as_deref().is_some_and(|b| b.contains("HANDOFF.md")), "{v:?}");
+            assert!(note.is_some());
+        }
+        let (v, _) = script_hooks::run_and_judge(&stop[0], &input(serde_json::json!(["src/a.rs", "HANDOFF.md"])), &root, &env).await;
+        assert_eq!(v.block, None, "一起改了就放行");
+        std::fs::write(dir.join("hooks/handoff.sh"), "exit 0\n").unwrap();
+        assert!(!HookSet::load(&root).for_event(Event::Stop, None)[0].trusted, "改过就要问");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

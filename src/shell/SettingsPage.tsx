@@ -10,9 +10,10 @@ import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, Switch 
 import { ModelChip } from "@/shell/AgentsPanel";
 import { EffortPicker, defaultEffort, ploopMain, ploopable } from "@/shell/ModelPicker";
 import { PluginsSettings } from "@/shell/Plugins";
+import { MemorySettings } from "@/shell/Memory";
 
-/** 设置的分组（v0.10 Refine：只写英文；DEV、NOTIFY、LIMIT 并成 GENERAL，新加 AGENTS、QUOTA）。 */
-export const SETTINGS_NAV = ["GENERAL", "PROVIDERS", "AGENTS", "QUOTA", "ACCESS", "CLI", "LOOK", "PLUGINS", "ARCHIVE", "KEYS"] as const;
+/** 设置的分组（v0.10 Refine：只写英文；DEV、NOTIFY、LIMIT 并成 GENERAL，新加 AGENTS、QUOTA；v1.1.4 加 MEMORY）。 */
+export const SETTINGS_NAV = ["GENERAL", "PROVIDERS", "AGENTS", "MEMORY", "QUOTA", "ACCESS", "CLI", "LOOK", "PLUGINS", "ARCHIVE", "KEYS"] as const;
 export type SettingsSection = (typeof SETTINGS_NAV)[number];
 
 interface Props {
@@ -58,6 +59,7 @@ export const SettingsPage: React.FC<Props> = (props) => {
             {section === "GENERAL" && <General {...props} />}
             {section === "PROVIDERS" && <Providers {...props} />}
             {section === "AGENTS" && <AgentsSettings {...props} />}
+            {section === "MEMORY" && <MemorySettings say={props.say} />}
             {section === "QUOTA" && <QuotaSettings say={props.say} />}
             {section === "ACCESS" && <Access {...props} />}
             {section === "CLI" && <Cli {...props} />}
@@ -135,12 +137,14 @@ function useApiConfig(apiStatus: ApiStatus | null, onRefreshApi: Props["onRefres
 
 /** 不是 AI 供应商的 Key（v1.1.1，和后端 `OTHER_KEYS` 对应）：Tavily 是 Peck Loop 联网搜索的备用。 */
 const SEARCH_KEYS = [{ id: "tavily", name: "Tavily" }];
+/** Mathpix（v1.1.4）：Peck Loop 的 `ocr_pdf`，两样都填了才给模型这个工具。 */
+const PDF_KEYS = [{ id: "mathpix_id", name: "Mathpix App ID", hint: "粘贴 Mathpix 的 App ID" }, { id: "mathpix_key", name: "Mathpix App Key", hint: "粘贴 Mathpix 的 App Key" }];
 
 const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
   const { config, change, dirty, busy, act, save } = useApiConfig(apiStatus, onRefreshApi, say);
   const [keys, setKeys] = useState<Record<string, string>>({});
   if (!apiStatus || !config) return <p className="hint">在读设置…</p>;
-  const keyBlock = (p: { id: string; name: string }) => {
+  const keyBlock = (p: { id: string; name: string; hint?: string }) => {
     const state = apiStatus.keys.find((k) => k.providerId === p.id)?.state ?? "missing";
     return (
       <div key={p.id} className="set-block">
@@ -148,7 +152,7 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
           {state === "saved" ? <Tag v="ok">SAVED</Tag> : <Tag>{state === "unloaded" || state === "unavailable" ? "NOT READ" : "NO KEY"}</Tag>}
         </Row>
         <div className="set-keys">
-          <Field className="set-keys-wide" type="password" aria-label={`${p.name} 的 Key`} placeholder={`粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />
+          <Field className="set-keys-wide" type="password" aria-label={`${p.name} 的 Key`} placeholder={p.hint ?? `粘贴 ${p.name} 的 Key`} value={keys[p.id] ?? ""} off={busy} onChange={(e) => setKeys((k) => ({ ...k, [p.id]: e.target.value }))} />
           <Btn sm disabled={busy || !keys[p.id]?.trim()} onClick={() => void act(async () => { await api.setKey(p.id, keys[p.id]); setKeys((k) => ({ ...k, [p.id]: "" })); await onRefreshApi(); say(apiStatus.mode === "mock" ? "假 Key 只存在内存里，没进钥匙串" : "Key 已保存到钥匙串；认证通过要发一次请求才知道"); })}>SAVE</Btn>
           <Btn sm v="danger" disabled={busy || state !== "saved"} onClick={() => void act(async () => { await api.setKey(p.id, null); await onRefreshApi(); })}>REMOVE</Btn>
           {p.id === "aliyun" && (
@@ -168,6 +172,8 @@ const Providers: React.FC<Props> = ({ apiStatus, onRefreshApi, say }) => {
       <Vertex say={say} />
       <p className="lbl">SEARCH</p>
       <div className="set-rows">{SEARCH_KEYS.map(keyBlock)}</div>
+      <p className="lbl">PDF</p>
+      <div className="set-rows">{PDF_KEYS.map(keyBlock)}</div>
     </>
   );
 };

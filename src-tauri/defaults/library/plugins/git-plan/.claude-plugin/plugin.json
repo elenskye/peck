@@ -1,7 +1,7 @@
 {
   "name": "git-plan",
-  "version": "1.0.0",
-  "description": "版本和提交的规矩：版本号怎么升、什么时候分 Phase、提交说明怎么写。一轮做完 Peck 自动提交这一轮改过的文件，不 push。",
+  "version": "1.1.0",
+  "description": "版本和提交的规矩：版本号怎么升、什么时候分 Phase、提交说明怎么写。一轮做完 Peck 自动提交这一轮改过的文件，不 push；项目里有 HANDOFF.md 时，改了别的文件没更新它就先让模型更新。",
   "peck": {
     "title": "Git Plan",
     "everyProject": true,

@@ -13,7 +13,7 @@ import {
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
 import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
+import type { AllowRule, BgInfo, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
 import { boardRound, rosterEvent, spawnRound } from "@/dev/agentsMock";
@@ -777,6 +777,29 @@ export const mockIpc = {
   async memoryList(workspaceId: string): Promise<MemoryNote[]> {
     return structuredClone(memoryState[workspaceId] ?? []);
   },
+  async memoryOverview(): Promise<MemoryGroup[]> {
+    return workspacesState
+      .map((w) => ({ workspaceId: w.id, name: w.name, path: w.path, hidden: !!w.hidden, notes: structuredClone(memoryState[w.id] ?? []) }))
+      .filter((g) => !g.hidden || g.notes.length > 0)
+      .sort((a, b) => Number(a.hidden) - Number(b.hidden) || a.name.localeCompare(b.name));
+  },
+  async memoryAdd(workspaceId: string, text: string): Promise<MemoryNote[]> {
+    const note = cleanNote(text);
+    if (!note) throw new Error("先写一句。");
+    const list = (memoryState[workspaceId] ??= []);
+    if (list.some((m) => m.text === note)) throw new Error("这一条已经记着了。");
+    list.push({ id: `mem-${++memoryCounter}`, text: note, sourceRun: null, createdAt: Date.now() });
+    return structuredClone(list);
+  },
+  async memoryUpdate(workspaceId: string, id: string, text: string): Promise<MemoryNote[]> {
+    const note = cleanNote(text);
+    if (!note) throw new Error("先写一句。");
+    const list = memoryState[workspaceId] ?? [];
+    const target = list.find((m) => m.id === id);
+    if (!target || list.some((m) => m.id !== id && m.text === note)) throw new Error("没改成：这一条不在了，或者和另一条一模一样。");
+    target.text = note;
+    return structuredClone(list);
+  },
   async memoryDelete(workspaceId: string, id: string): Promise<MemoryNote[]> {
     memoryState[workspaceId] = (memoryState[workspaceId] ?? []).filter((m) => m.id !== id);
     return structuredClone(memoryState[workspaceId]);
@@ -825,6 +848,9 @@ function demoPicture(label: string, page = false): string {
 
 // ── 记忆、dev server（v0.6，演示）──
 let memoryCounter = 0;
+/** 和后端 `clean_note` 一样：并成一行、去掉开头的列表符号。 */
+const cleanNote = (raw: string): string | null => raw.split(/\s+/).filter(Boolean).join(" ").replace(/^[-*•\s]+/, "").trim() || null;
+
 const memoryState: Record<string, MemoryNote[]> = {
   "ws-peck": [
     { id: "mem-a", text: "提交说明照站主的写法：v<版本>: <一句小写英文>", sourceRun: "run-14", createdAt: Date.now() - 5 * 86_400_000 },

@@ -98,11 +98,12 @@ impl Kind {
     pub fn tools(self) -> Vec<&'static str> {
         use super::tools::*;
         match self {
-            Kind::Explorer | Kind::Auditor => vec![LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, BASH_RUN, SEARCH_TASKS],
-            Kind::Searcher => vec![WEB_SEARCH, BASH_RUN, READ_FILE],
-            Kind::Worker => vec![LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, WRITE_FILE, WRITE_PATCH, BASH_RUN, BASH_BACKGROUND, SEARCH_TASKS],
+            // 读 PDF、Notebook（v1.1.4）各类都有；`ocr_pdf` 没填 Mathpix 的 Key 时在循环里去掉。
+            Kind::Explorer | Kind::Auditor => vec![LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, BASH_RUN, SEARCH_TASKS, READ_PDF, OCR_PDF, READ_NOTEBOOK],
+            Kind::Searcher => vec![WEB_SEARCH, BASH_RUN, READ_FILE, READ_PDF, OCR_PDF],
+            Kind::Worker => vec![LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, WRITE_FILE, WRITE_PATCH, BASH_RUN, BASH_BACKGROUND, SEARCH_TASKS, READ_PDF, OCR_PDF, READ_NOTEBOOK],
             // 和主角色一样（联网搜索、读 Skill、派 explorer / searcher、MCP 在循环里按情况加）；不问站主、不写清单和记忆。
-            Kind::Member => vec![LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, WRITE_FILE, WRITE_PATCH, BASH_RUN, BASH_BACKGROUND, SEARCH_TASKS, SCREENSHOT_APP],
+            Kind::Member => vec![LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, WRITE_FILE, WRITE_PATCH, BASH_RUN, BASH_BACKGROUND, SEARCH_TASKS, SCREENSHOT_APP, READ_PDF, OCR_PDF, READ_NOTEBOOK],
         }
     }
 

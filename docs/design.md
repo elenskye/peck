@@ -82,7 +82,8 @@
 左边竖排十组，右边是内容，改了马上生效（Key、价格这类要点 SAVE）：
 
 - **GENERAL**：API 请求发到哪（MOCK / REAL）、发通知、每月上限（`$` + 数字框）、这个月花了（20 格的进度条，左边写「花了 / 上限」；到 80% 琥珀、到上限红）、每个任务最多几轮（默认 40）、ONE SHOT 最多几轮（12）、额度提醒（开关在数字框左边，关了框变灰）。数字框一样宽、左右对齐，单位在框外占固定的宽。
-- **PROVIDERS**：每家一块：Key 框 + SAVE + REMOVE；Aliyun 下面一行选地域（BEIJING / SINGAPORE）和 SAVE；Vertex 一行两个方框（GCLOUD、PROJECT ID 的状态）；最下面 SEARCH 一块是 Tavily 的 Key（联网搜索的备用）。
+- **PROVIDERS**：每家一块：Key 框 + SAVE + REMOVE；Aliyun 下面一行选地域（BEIJING / SINGAPORE）和 SAVE；Vertex 一行两个方框（GCLOUD、PROJECT ID 的状态）；最下面 SEARCH 一块是 Tavily 的 Key（联网搜索的备用），PDF 一块是 Mathpix 的 App ID、App Key（两样都填了 Peck Loop 才有 `ocr_pdf`）。
+- **MEMORY**（v1.1.4）：一个项目一块，头上项目名和路径（移出列表的项目有记忆才列，排在最后、写「不在列表里」）；每条一行：字、谁提的和时间、EDIT（就地变输入框，SAVE / CANCEL，回车存、Esc 取消）、DELETE；最下面一行输入框「记一条：以后每次发任务都带上」+ ADD。项目设置里的 MEMORY 是同一块，只列这个项目。
 - **AGENTS**：「主角色」一行（下拉只列 API 模型 + 思考强度）；SUBAGENTS 五块，每块头上名字、一句做什么、开关，下面一行：模型（空着写「跟主角色」）、思考强度、最多几轮（24，member 40）、除了 auditor 都多一格「同时 N 个」（3，member 2）。思考强度按模型记，这里调的和 AGENTS 面板里的是同一档；关了的整块变暗。
 - **QUOTA**：汇率；价格表 REFRESH；按家分组，一行一个模型（进、出、缓存命中、缓存写入、分档、高峰倍数），EDIT 就地改，改过的标 EDITED、能 RESET，ADD MODEL 加自己的。
 - **ACCESS**：默认档、五类高危、「总是允许」能撤。**CLI**：CLI 目录，五家的色点 / 版本 / 位置（FOUND / NOT FOUND），Claude Code、Codex 的 LOGIN / RELOGIN。**LOOK**：明暗、编辑器（能打字的下拉）、App 图标 J2 / A3。

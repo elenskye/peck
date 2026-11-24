@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.1.3**（2026-11-23）：逐步优化 Peck Loop 的第三轮。加子代理 member（复杂的活，权限和主角色一样，能再派 explorer、searcher）；worker、member 派的时候要划文件，不重叠的同时跑、重叠的自动排队，Peck 强制它只改自己那块；任务板显示派出去的 worker、member 和进度（Peck 照事件填，点开看它的步骤）；Claude Code 的 `TodoWrite` / `TaskCreate` 转成任务清单。设计见 [architecture「PLOOP」](./architecture.md)。v1.1.2 是主角色 + 子代理、并行读、原地打转、脚本 Hook、百炼 Responses。
+**v1.1.4**（2026-11-24）：逐步优化 Peck Loop 的第四轮。设置里加 MEMORY（全部项目的记忆，能自己记、改、删）；Peck Loop 读 PDF（本机 PDFKit 的 `read_pdf`、Mathpix 的 `ocr_pdf`，模型自己挑）、读 Notebook；外部 MCP 工具按需加载（开头只给名单，`tool_search` 加载）；脚本 Hook 加 `SessionStart`；Peck 替 CLI 跑开场时、发话时、收尾时三个 Hook；Git Plan 1.1.0 加 HANDOFF.md 检查。设计见 [architecture「脚本 Hook」「工具」「外部 MCP 服务器」](./architecture.md)。v1.1.3 是 member、划文件并行、任务板。
 
 ## 定位
 
@@ -29,7 +29,6 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - 用 Peck 开发 Peck 一整轮；Peck 接手站主的其他项目。
 - 多家 CLI 和 Peck Loop 的 Benchmark（Atelier MCP 那一轮没跑满的一起补）。
 - xAI 直连、GitHub Copilot CLI、Amp、Qwen Code。
-- 会话树和分叉浏览。
 - 快照回退、定时任务在真 CLI 上各走一遍（现在只有假模型和假 MCP 客户端的测试）。
 - 插件：带自己的 MCP 服务器（现在只列出来）；联网的插件市场、在界面里编辑库都没做，要做再定。
 - 收尾提交在 Claude Code、Muse、Grok 上各真跑一遍（现在只有 Codex 真跑过）；定时任务在从没点开过的老项目里跑之前先认结构。
@@ -42,6 +41,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - 通用的 ACP 接入层：每家 CLI 用它官方的原生接口（Grok、Antigravity 官方给的就是 ACP，照它们的来）。
 - CLI 进工作流（接力、CLI 审查、CLI 委派）：v1.1.1 删了。
 - 跨任务的任务板：任务板只管这一个任务（v1.1.3 定的）。
+- 改完代码自动拿到编译错误（LSP 诊断）、会话树和分叉浏览、轨迹记录（v1.1.4 定的）：改完跑什么写在项目说明里由模型自己跑；换引擎接着发、`@` 旧任务、事件日志已经够用。
 
 ## 现行授权
 
@@ -55,10 +55,11 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - 一律用这家最便宜、又测得到要测功能的模型，做无关紧要的小任务；测试项目放仓库外的 `personal-cli-studio/projects/`。
 - 用之前和之后都记账；失败不静默重试；用完先停下问站主。
 - 站主另给的额度（比如某一周按钱算）以站主当时说的为准，记在下面。
+- v1.1.4：Mathpix（站主的付费 Key）最多 3 次、每次 1–2 页（站主 2026-11-24 在提问里批的）。
 
 **账本**（只留当前版本）：
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.3 | OpenAI | gpt-6-luna（low） | 3 次尝试 | PLOOP 主角色（`live_ploop_workers_split_files`）：给两个 worker 各划了一个文件（`paths` 写对了），分两次回答派、两个有一段同时在跑；测试把主角色卡在 3 轮，等报告回来后的收尾那一轮没发（测试已改成 5 轮） |
-| v1.1.3 | DeepSeek | deepseek-flash | 4 次尝试 | 同上那次的两个 worker：各用 write_file 建好自己那个文件、交报告，任务板两项都做完 |
+| v1.1.4 | Mathpix | v3/pdf | 1 次 · 1 页（$0.005） | `live_mathpix`：一页带公式和表格的测试 PDF，4.6 秒，公式出 LaTeX、表格出 tabular |
+| v1.1.4 | Mathpix | v3/pdf | 1 次 · 1 页（$0.005） | 同一页再跑一次：DELETE 返回成功，它那边的删掉了 |

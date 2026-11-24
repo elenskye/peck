@@ -206,6 +206,9 @@ pub(crate) fn start_engine_run(
     let engine_prompt = if refs.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", refs.join("\n\n")) };
     let engine_prompt = format!("{engine_prompt}{}{}", crate::harness::run::attachment_note(&attachments), folders_note(&folders, level));
     let project_env = settings.env_pairs();
+    // 脚本 Hook（v1.1.4，`cli_hooks.rs`）的「总是允许」和 Peck Loop 共用；引擎的审批规则那一份要交给 sink。
+    let hook_allowed = allowed.clone();
+    let original_prompt = prompt.clone();
     // 独立工作区：先建好；建不了这个任务就算失败。
     let cwd = crate::harness::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
     // 这个任务是谁在干（对话里设定时任务时默认照它）。
@@ -238,7 +241,8 @@ pub(crate) fn start_engine_run(
             // Peck 替 CLI 审批（站主 2026-11-16 Phase 13）：CLI 自己的审批比 Peck 的档位严（Codex 的 EDIT 连 cat 都问），
             // 要跑的命令先按 Peck 这一档的规则看，用不着问的直接批掉、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。
             // 委派出去的子任务（v0.9 B1，事件带 subagent_id）是 Peck Loop 自己按档位问的，不替它批、不改卡片。
-            if e.subagent_id.is_none() {
+            // Peck 自己的 Hook 卡片（v1.1.4，`cli_hooks.rs`）原样给站主，不按命令的规则替他批。
+            if e.subagent_id.is_none() && !super::cli_hooks::is_hook_card(&e.body) {
                 if let Some(request_id) = rule_allows(level, &e.body, &rule_root, &allowed) {
                     let _ = rule_tx.send(Control::ApproveByRule { request_id });
                     return;
@@ -341,7 +345,50 @@ pub(crate) fn start_engine_run(
         if engine == "muse" && super::project_mcp::muse_trusted(&cwd) == Some(false) {
             sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: super::project_mcp::muse_untrusted_notice() });
         }
-        // 控制通道直接交给引擎；按停在引擎起来之前也收得到（通道里先放着）。
+        // 脚本 Hook（v1.1.4）：Peck 替 CLI 跑开场时、发话时（这一句发出去之前，stdout 放在这句前面）和收尾时。
+        // 有要跑的，控制通道先交给 `CliHooks`：Hook 卡片的回答归 Peck，别的转给正在跑的那一次引擎。
+        let mut control_rx = Some(control_rx);
+        let mut hooks = super::cli_hooks::hooks_for(&engine, &backend.caps(), &cwd).map(|set| {
+            let (remember_store, ws) = (store.clone(), workspace_id.clone());
+            super::cli_hooks::CliHooks::new(
+                set,
+                control_rx.take().expect("控制通道还在"),
+                sink.clone(),
+                &cwd,
+                crate::harness::run::with_project_env(crate::harness::tools::bash::shell_env(), &project_env),
+                level,
+                format!("peck-{session_id}"),
+                hook_allowed,
+                Arc::new(move |rule: &str| {
+                    if let Ok(db) = remember_store.lock() {
+                        let _ = db.harness_allow(&ws, rule);
+                    }
+                }),
+            )
+        });
+        let mut engine_prompt = engine_prompt;
+        let mut held: Option<RunOutcomeOrStop> = None;
+        if let Some(h) = hooks.as_mut() {
+            use crate::harness::script_hooks::{context_block, Event};
+            let mut contexts = Vec::new();
+            if resume.is_none() {
+                let input = serde_json::json!({"source": "startup", "model": model});
+                if let (_, Some(c)) = h.run(Event::SessionStart, Some("startup"), input).await {
+                    contexts.push(context_block(Event::SessionStart, &c));
+                }
+            }
+            let (blocked, context) = h.run(Event::UserPromptSubmit, None, serde_json::json!({"prompt": original_prompt})).await;
+            contexts.extend(context.map(|c| context_block(Event::UserPromptSubmit, &c)));
+            if h.interrupted() {
+                held = Some(RunOutcomeOrStop::Interrupted);
+            } else if let Some(why) = blocked {
+                held = Some(RunOutcomeOrStop::Blocked(format!("项目的 Hook 拦下了这句话：{why}")));
+            }
+            if !contexts.is_empty() {
+                engine_prompt = format!("{}\n\n{engine_prompt}", contexts.join("\n\n"));
+            }
+        }
+        // 控制通道交给引擎（有 Hook 时是 `CliHooks` 转过去的那一条）；按停在引擎起来之前也收得到（通道里先放着）。
         let task = AgentTask {
             run_id: id.clone(),
             prompt: engine_prompt,
@@ -354,16 +401,49 @@ pub(crate) fn start_engine_run(
             env: project_env.clone(),
             folders: folders.clone(),
         };
-        let outcome = backend.run(task, sink.clone(), control_rx).await;
-        // 引擎起都没起来（找不到程序、起不了进程）时一条事件都没有：补一条出错的收尾，
-        // 界面和别的结束一样收掉「在跑」，不然这个项目一直占着。
-        if let Err(e) = &outcome {
-            sink.emit(EventBody::Error { message: e.message.clone(), fatal: true });
-            sink.emit(EventBody::TurnCompleted {
-                turn_id: "turn-1".into(),
-                reason: TurnEndReason::Error,
-                error: Some(e.message.clone()),
-            });
+        let mut outcome = match held {
+            // 发话时的 Hook 拦下了、卡片等着时按了停：这一句不发。
+            Some(stop) => {
+                let (reason, error) = match stop {
+                    RunOutcomeOrStop::Blocked(why) => (TurnEndReason::Limit, Some(why)),
+                    RunOutcomeOrStop::Interrupted => (TurnEndReason::Interrupted, None),
+                };
+                sink.emit(EventBody::TurnCompleted { turn_id: "turn-1".into(), reason, error });
+                Ok(super::RunOutcome { reason, session_ref: task.resume.clone() })
+            }
+            None => {
+                let rx = match hooks.as_ref() {
+                    Some(h) => h.engine_channel(),
+                    None => control_rx.take().expect("控制通道还在"),
+                };
+                run_engine(backend.as_ref(), task.clone(), &sink, rx).await
+            }
+        };
+        // 收尾时的 Hook（v1.1.4）：CLI 做完了再跑；退出码 2 就续上它的会话把原因发过去，让它接着干（一回合最多 3 次）。
+        // 排在下面 Git Plan 的收尾提交之前。
+        if let Some(h) = hooks.as_mut() {
+            use crate::harness::script_hooks::{stop_feedback, Event, MAX_STOP_BLOCKS};
+            h.engine_done();
+            let caps = backend.caps();
+            while h.stop_blocks < MAX_STOP_BLOCKS && h.has(Event::Stop) && !h.interrupted() {
+                let Ok(done) = &outcome else { break };
+                if done.reason != TurnEndReason::Done {
+                    break;
+                }
+                let at = id.clone();
+                let changed = tokio::task::spawn_blocking(move || crate::snapshot::changed_since_base(&at)).await.ok().flatten().unwrap_or_default();
+                let input = serde_json::json!({"stop_hook_active": h.stop_blocks > 0, "peck_changed_files": changed});
+                let (blocked, _) = h.run(Event::Stop, None, input).await;
+                let Some(why) = blocked else { break };
+                h.stop_blocks += 1;
+                let Some(session) = done.session_ref.clone().filter(|_| caps.resume) else {
+                    sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: format!("收尾时的 Hook 拦下了，但 {label} 续不了会话，没能接着干：{why}") });
+                    break;
+                };
+                let next = AgentTask { prompt: stop_feedback(&why), resume: Some(session), ..task.clone() };
+                outcome = run_engine(backend.as_ref(), next, &sink, h.engine_channel()).await;
+                h.engine_done();
+            }
         }
         watcher.abort();
         if let (Some(token), Ok(h)) = (token, mcp::hub().await) {
@@ -447,6 +527,23 @@ pub(crate) fn start_engine_run(
         }
     });
     Ok(run_id)
+}
+
+/// 发话时的 Hook 没让这一句发出去：拦下了（原因），或者卡片等着时站主按了停。
+enum RunOutcomeOrStop {
+    Blocked(String),
+    Interrupted,
+}
+
+/// 跑一次引擎。起都没起来（找不到程序、起不了进程）时一条事件都没有：补一条出错的收尾，
+/// 界面和别的结束一样收掉「在跑」，不然这个项目一直占着。
+async fn run_engine(backend: &dyn super::AgentBackend, task: AgentTask, sink: &EventSink, control: mpsc::UnboundedReceiver<Control>) -> Result<super::RunOutcome, super::GatewayError> {
+    let outcome = backend.run(task, sink.clone(), control).await;
+    if let Err(e) = &outcome {
+        sink.emit(EventBody::Error { message: e.message.clone(), fatal: true });
+        sink.emit(EventBody::TurnCompleted { turn_id: "turn-1".into(), reason: TurnEndReason::Error, error: Some(e.message.clone()) });
+    }
+    outcome
 }
 
 /// 项目的其他文件夹（v0.10）：写在这一句后面，告诉 CLI 能读哪些、能改哪些（PLAN 一律只读）。
@@ -816,6 +913,116 @@ mod tests {
         assert_eq!(logged.iter().filter(|e| matches!(e.body, EventBody::ApprovalResolved { .. })).count(), 3, "三次都批了");
         drop(db);
         assert!(gateway_control(run_id, Control::Interrupt).await.is_err(), "结束了就收不到控制");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 假 CLI（v1.1.4 的 Hook 测试用）：记下每次收到的任务；第一次在项目里写一个文件。
+    struct HookedCli {
+        seen: Arc<Mutex<Vec<AgentTask>>>,
+    }
+
+    impl super::super::AgentBackend for HookedCli {
+        fn caps(&self) -> super::super::caps::AgentCaps {
+            super::super::caps::AgentCaps { resume: true, direct_only: false, ..super::super::caps::AgentCaps::peck_loop() }
+        }
+
+        fn run(&self, task: AgentTask, sink: EventSink, _control: mpsc::UnboundedReceiver<Control>) -> super::super::BoxFuture<Result<super::super::RunOutcome, super::super::GatewayError>> {
+            let n = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.push(task.clone());
+                seen.len()
+            };
+            Box::pin(async move {
+                if n == 1 {
+                    std::fs::write(task.cwd.join("a.txt"), "改了\n").unwrap();
+                }
+                sink.emit(EventBody::MessageCompleted { item_id: format!("m{n}"), text: format!("第 {n} 次做完了") });
+                sink.emit(EventBody::TurnCompleted { turn_id: format!("turn-{n}"), reason: TurnEndReason::Done, error: None });
+                Ok(super::super::RunOutcome { reason: TurnEndReason::Done, session_ref: Some(format!("s{n}")) })
+            })
+        }
+    }
+
+    /// CLI 的脚本 Hook（v1.1.4）：开场时、发话时的 stdout 放在这一句前面；收尾时拦下就续上它的会话、把原因发过去，
+    /// 脚本拿得到这一轮改了的文件；每条命令问一次。
+    #[tokio::test]
+    async fn cli_hooks_wrap_the_sentence_and_keep_the_session_going() {
+        let root = std::env::temp_dir().join(format!("peck-runner-hooks-{}", uuid::Uuid::new_v4()));
+        let ws_dir = root.join("ws");
+        std::fs::create_dir_all(ws_dir.join(".claude")).unwrap();
+        let stop = format!(
+            "cat > {input}; if [ -f {flag} ]; then exit 0; fi; touch {flag}; echo 先补上测试 >&2; exit 2",
+            input = root.join("stop-input.json").display(),
+            flag = root.join("done.flag").display()
+        );
+        let settings = serde_json::json!({"hooks": {
+            "SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "echo 开场补充"}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo 发话补充"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": stop}]}]
+        }});
+        std::fs::write(ws_dir.join(".claude/settings.json"), settings.to_string()).unwrap();
+        let store = crate::store::Store::open(&root.join("peck.db")).unwrap();
+        let ws = crate::workspace::Workspace { id: "w1".into(), path: ws_dir.to_string_lossy().into_owned(), name: "试".into(), last_opened_at: 0, git_branch: None, hidden: false, settings: Default::default() };
+        store.save_workspace(&ws).unwrap();
+        let session = store.create_session(&ws.id, None).unwrap();
+        let mut store = store;
+        store.create_run(&session.id, "占号", 970_001, &DispatchPlan { steps: vec![] }).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let seen: Arc<Mutex<Vec<AgentTask>>> = Arc::default();
+        let backend: Arc<dyn super::super::AgentBackend> = Arc::new(HookedCli { seen: seen.clone() });
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let run = EngineRun {
+            store: store.clone(),
+            active_runs: active_runs.clone(),
+            session_id: session.id.clone(),
+            prompt: "改一下".into(),
+            who: "cli:codex".into(),
+            permission: Some("auto".into()),
+            level: PermissionLevel::Auto,
+            engine: "codex".into(),
+            label: "Codex".into(),
+            model: None,
+            effort: None,
+            resume: None,
+            default_account: true,
+            worktree: false,
+            attachments: vec![],
+        };
+        let run_id = start_engine_run(run, backend, move |e| {
+            let _ = tx.send(e.clone());
+        })
+        .unwrap();
+        let mut cards = 0;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !active_runs.lock().unwrap().is_empty() || cards == 0 {
+            let Ok(Some(e)) = tokio::time::timeout_at(deadline, rx.recv()).await else { break };
+            if let EventBody::ApprovalRequested { request_id, .. } = &e.body {
+                assert!(request_id.starts_with("hook-approve-"));
+                cards += 1;
+                gateway_control(run_id.clone(), Control::Approve { request_id: request_id.clone(), decision: super::super::event::ApprovalDecision::AllowOnce }).await.unwrap();
+            }
+        }
+        for _ in 0..200 {
+            if active_runs.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(cards, 3, "三条命令各问一次，收尾那条第二次不再问");
+        let tasks = seen.lock().unwrap().clone();
+        assert_eq!(tasks.len(), 2, "收尾拦了一次：续上会话接着干");
+        let first = &tasks[0].prompt;
+        assert!(first.starts_with("<hook-context event=\"SessionStart\">\n开场补充"), "{first}");
+        assert!(first.find("发话补充").unwrap() < first.find("改一下").unwrap());
+        assert_eq!(tasks[1].resume.as_deref(), Some("s1"));
+        assert!(tasks[1].prompt.contains("先补上测试") && tasks[1].prompt.contains("<hook-feedback event=\"Stop\">"));
+        let input = std::fs::read_to_string(root.join("stop-input.json")).unwrap();
+        assert!(input.contains("\"peck_changed_files\":[\"a.txt\"]"), "{input}");
+        let db = store.lock().unwrap();
+        let record = db.runs(&session.id).unwrap().into_iter().find(|r| r.id == run_id).unwrap();
+        assert_eq!(record.status, RunStatus::Succeeded);
+        drop(db);
         let _ = std::fs::remove_dir_all(&root);
     }
 

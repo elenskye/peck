@@ -6,6 +6,7 @@ import { ago, cn, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
 import { Btn, Field, Icon, Info, ModHead, Row, Seg, Switch } from "@/ui";
 import { WhoPicker, pickable } from "@/shell/ModelPicker";
 import { ProjectPluginsSection } from "@/shell/Plugins";
+import { MemoryList } from "@/shell/Memory";
 
 
 /** 项目设置（右键项目 → 项目设置）：名字、文件夹、在这个项目里默认谁来干和哪一档、MCP、Skills、记忆、「总是允许」过的、归档全部任务、移出列表。 */
@@ -138,18 +139,8 @@ export const ProjectPage: React.FC<{
 
           <ProjectMcp workspaceId={workspace.id} settings={settings} missing={!!missing} saving={saving} save={save} say={say} />
 
-          <p className="lbl">MEMORY<Info text="Peck Loop 觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；每次发任务都带上。" /></p>
-          {memories && memories.length > 0 ? (
-            <div className="set-rows">
-              {memories.map((m) => (
-                <Row key={m.id} name={<span className="memory-text">{m.text}</span>} desc={`${m.sourceRun ? `任务 ${m.sourceRun.replace(/^run-/, "")} 提的` : "手工记的"} · ${ago(m.createdAt)}`}>
-                  <Btn sm v="danger" onClick={() => void ipc.memoryDelete(workspace.id, m.id).then((next) => { setMemories(next); say("删掉了，以后不再带上"); }).catch(say)}>DELETE</Btn>
-                </Row>
-              ))}
-            </div>
-          ) : (
-            <p className="hint">{memories ? "还没有。" : "在读…"}</p>
-          )}
+          <p className="lbl">MEMORY<Info text="Peck Loop 觉得值得记的，任务结束时弹一张「想记住这几条」，你批了才记在这里；也能自己记、改。每次发任务都带上。全部项目的在设置 → MEMORY。" /></p>
+          {memories ? <MemoryList workspaceId={workspace.id} notes={memories} onChange={setMemories} say={say} /> : <p className="hint">在读…</p>}
 
           <p className="lbl">ALWAYS ALLOWED<Info text="EDIT 档装依赖、起常驻进程时弹卡，点 ALWAYS 就记在这里。" /></p>
           {rules && rules.length > 0 ? (

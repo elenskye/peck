@@ -327,6 +327,9 @@ struct Run {
     repeats: std::collections::HashMap<u64, u32>,
     /// 第 5 次以后要它收尾：下一次回答再要工具就不跑、停下。
     spin: bool,
+    /// 按需加载（v1.1.4）：用 `tool_search` 加载过的外部 MCP 工具（按加载的顺序），从下一次请求起放进工具列表。
+    /// 开头从这个对话的记录里认回来（调过的、加载过的），一个对话里一直留着，缓存不来回变。
+    loaded: Vec<String>,
     /// 划出去的文件（v1.1.3）：主角色和它派的子代理共用一份。
     locks: Arc<agents::Locks>,
     /// 划给这个子代理的几块（worker、member）：文件工具只能改这里（相对项目根）；主角色是 `None`。
@@ -481,6 +484,7 @@ impl Run {
             stop_blocks: 0,
             repeats: Default::default(),
             spin: false,
+            loaded: Vec::new(),
             locks: Arc::default(),
             scope: None,
             sandbox_scope: None,
@@ -559,6 +563,7 @@ impl Run {
             names.push(tools::LOAD_SKILL);
         }
         self.pick_search(&mut names);
+        self.pick_ocr(&mut names);
         // 子代理（v1.1.2）：这个任务能派的几类，开头定好。
         self.kinds = self.offered_kinds();
         if !self.kinds.is_empty() {
@@ -593,7 +598,11 @@ impl Run {
         if self.native_search {
             listed.push(tools::WEB_SEARCH.into());
         }
-        listed.extend(self.mcp_specs().into_iter().map(|t| t.name));
+        let mcp_names: Vec<String> = self.mcp_specs().into_iter().map(|t| t.name).collect();
+        if !mcp_names.is_empty() {
+            listed.push(tools::TOOL_SEARCH.into());
+        }
+        listed.extend(mcp_names);
         self.emit(EventBody::SessionStarted {
             engine: "peck".into(),
             model: Some(self.config.model_id.clone()),
@@ -613,6 +622,12 @@ impl Run {
             first.push(Part::Text { text: block });
         }
         first.extend(self.config.context.refs.iter().map(|r| Part::Text { text: r.clone() }));
+        // 脚本 Hook（v1.1.4）：开场时。这个对话的第一句发出去之前跑一次（source: startup）；拦不住，stdout 当补充上下文。
+        if self.config.subtask.is_none() && self.messages.is_empty() {
+            if let (_, Some(c)) = self.run_hooks(Event::SessionStart, "hook-start", Some("startup"), self.session_start_input("startup")).await {
+                first.push(Part::Text { text: super::script_hooks::context_block(Event::SessionStart, &c) });
+            }
+        }
         // 脚本 Hook（v1.1.2）：发话时。拦下就不发这句话；stdout 当补充上下文放在这句前面。
         let (blocked, context) = if self.config.subtask.is_none() {
             let prompt = self.task.prompt.clone();
@@ -621,7 +636,7 @@ impl Run {
             (None, None)
         };
         if let Some(c) = context {
-            first.push(Part::Text { text: format!("<hook-context event=\"UserPromptSubmit\">\n{c}\n</hook-context>") });
+            first.push(Part::Text { text: super::script_hooks::context_block(Event::UserPromptSubmit, &c) });
         }
         first.push(Part::Text { text: self.task.prompt.clone() });
         let attached = std::mem::take(&mut self.attached);
@@ -740,7 +755,7 @@ impl Run {
 
     /// 估现在的上下文多大（校准过），顺手发 `context.updated`。返回（估的总数，没校准的总数）。
     fn report_context(&mut self, names: &[&'static str], window: Option<u64>) -> (u64, u64) {
-        let specs = tools::specs_for(names);
+        let specs = self.request_specs(names);
         let base = system_prompt(&self.task, self.level, self.config.oneshot, &self.config);
         let project = self.config.context.project.text();
         let b = context::breakdown(&base, &specs, project.as_deref(), &self.messages);
@@ -819,6 +834,12 @@ impl Run {
         let requests = compact::user_requests(&self.messages, 3);
         self.messages = compact::rebuild(&summary, &requests);
         self.compacted_at_round = Some(round);
+        // 脚本 Hook（v1.1.4）：开场时（source: compact）。前面的对话（连开场时那份补充）换成了摘要，再跑一次补回来。
+        if self.config.subtask.is_none() {
+            if let (_, Some(c)) = self.run_hooks(Event::SessionStart, "hook-start", Some("compact"), self.session_start_input("compact")).await {
+                self.push_user(vec![Part::Text { text: super::script_hooks::context_block(Event::SessionStart, &c) }]);
+            }
+        }
         let after = self.estimate(names).0;
         self.emit(EventBody::ContextCompacted {
             step: CompactStep::Summary,
@@ -832,7 +853,7 @@ impl Run {
 
     /// 估的大小（校准过、没校准）。不发事件。
     fn estimate(&self, names: &[&'static str]) -> (u64, u64) {
-        let specs = tools::specs_for(names);
+        let specs = self.request_specs(names);
         let base = system_prompt(&self.task, self.level, self.config.oneshot, &self.config);
         let project = self.config.context.project.text();
         let raw = context::breakdown(&base, &specs, project.as_deref(), &self.messages).total();
@@ -933,11 +954,7 @@ impl Run {
             let cwd = self.task.cwd.clone();
             self.stop_baseline = tokio::task::spawn_blocking(move || super::hooks::baseline(&cwd)).await.ok().flatten();
         }
-        let mut specs = tools::specs_for(names);
-        if names.contains(&agents::SPAWN_AGENT) {
-            specs.push(agents::spawn_spec(&self.kinds));
-        }
-        specs.extend(self.mcp_specs());
+        self.loaded = self.loaded_from_history();
         let system = self.system_blocks();
         let spec = self.model_spec();
         let window = spec.and_then(|m| m.context_window);
@@ -980,12 +997,12 @@ impl Run {
                     ));
                 }
             }
-            // 上下文：估一遍；到了压缩线先压；压完还太满才停。
+            // 上下文：估一遍；到了压缩线先压；压完还太满才停。工具列表每次现拼（加载了 MCP 工具就多几个）。
             let base_request = ModelRequest {
                 model: self.config.model_id.clone(),
                 system: system.clone(),
                 messages: vec![],
-                tools: specs.clone(),
+                tools: self.request_specs(names),
                 thinking,
                 effort: effort.clone(),
                 max_output_tokens: max_output,
@@ -1092,12 +1109,15 @@ impl Run {
                     continue;
                 }
                 // 脚本 Hook（v1.1.2）：收尾时。拦下就把原因交给它接着干（一回合最多拦 3 次）。
-                if self.config.subtask.is_none() && self.stop_blocks < super::script_hooks::MAX_STOP_BLOCKS {
+                if self.config.subtask.is_none() && self.stop_blocks < super::script_hooks::MAX_STOP_BLOCKS && self.has_hooks(Event::Stop) {
                     let active = self.stop_blocks > 0;
-                    let (blocked, _) = self.run_hooks(Event::Stop, "hook-stop", None, serde_json::json!({"stop_hook_active": active})).await;
+                    // 这一轮改了哪些文件（v1.1.4，从任务开头的快照算；Git Plan 的 HANDOFF 检查用）。
+                    let run_id = self.task.run_id.clone();
+                    let changed = tokio::task::spawn_blocking(move || crate::snapshot::changed_since_base(&run_id)).await.ok().flatten().unwrap_or_default();
+                    let (blocked, _) = self.run_hooks(Event::Stop, "hook-stop", None, serde_json::json!({"stop_hook_active": active, "peck_changed_files": changed})).await;
                     if let Some(why) = blocked {
                         self.stop_blocks += 1;
-                        self.push_user(vec![Part::Text { text: format!("<hook-feedback event=\"Stop\">\n{why}\n</hook-feedback>\nA project hook asked you to keep going before you finish. Deal with it, then finish.") }]);
+                        self.push_user(vec![Part::Text { text: super::script_hooks::stop_feedback(&why) }]);
                         continue;
                     }
                 }
@@ -1249,6 +1269,39 @@ impl Run {
         (status, text, None, vec![])
     }
 
+    /// 只读工具按次的费用：联网搜索照 `charge_search`；Mathpix 记在 `mathpix` 名下（QUOTA 里单独一行），算进这个任务和花费上限。
+    fn charge(&mut self, fee: Option<Fee>) {
+        match fee {
+            Some(Fee::Search(f)) => self.charge_search(Some(f)),
+            Some(Fee::Ocr(f)) => {
+                self.cost_usd += f;
+                let cost = crate::gateway::event::Cost { usd: Some(f), source: crate::gateway::event::CostSource::Priced };
+                self.emit(EventBody::UsageUpdated { usage: Default::default(), cost, scope: UsageScope::Turn, model: Some("mathpix".into()) });
+            }
+            None => {}
+        }
+    }
+
+    /// 只读工具要的东西（同时跑的那一批也用）。
+    fn read_kit(&self) -> ReadKit {
+        ReadKit {
+            ctx: self.ctx.clone(),
+            skills: self.config.context.project.skills.clone(),
+            history: self.config.context.history.clone(),
+            web: self.web.clone(),
+            cancel: self.cancel_rx.clone(),
+            vision: self.model_spec().is_some_and(|m| m.vision),
+            ocr: self.config.search.mathpix(),
+        }
+    }
+
+    /// `ocr_pdf`（v1.1.4）：填了 Mathpix 的 Key 才给（模拟模式也给）。
+    fn pick_ocr(&self, names: &mut Vec<&'static str>) {
+        if self.config.search.mathpix().is_none() {
+            names.retain(|n| *n != tools::OCR_PDF);
+        }
+    }
+
     /// 搜成了一次：按次的费用算进这个任务，发一条只有次数和花费的用量。
     fn charge_search(&mut self, fee: Option<f64>) {
         let Some(fee) = fee else { return };
@@ -1297,7 +1350,7 @@ impl Run {
                 self.skip_spawn();
             }
             (ToolStatus::Denied, format!("项目的 Hook 拦下了这一步：{why}"), None, vec![])
-        } else if !names.contains(&name) && !self.mcp_offered(name) {
+        } else if !names.contains(&name) && !self.mcp_offered(name) && !(name == tools::TOOL_SEARCH && !self.mcp_specs().is_empty()) {
             if name == agents::SPAWN_AGENT {
                 self.skip_spawn();
             }
@@ -1321,7 +1374,7 @@ impl Run {
     async fn run_together(&mut self, calls: &[(String, String, Value)], names: &[&'static str]) -> Vec<Part> {
         let mut done: Vec<Option<(ToolStatus, String)>> = vec![None; calls.len()];
         let mut jobs = tokio::task::JoinSet::new();
-        let kit = ReadKit { ctx: self.ctx.clone(), skills: self.config.context.project.skills.clone(), history: self.config.context.history.clone(), web: self.web.clone(), cancel: self.cancel_rx.clone() };
+        let kit = self.read_kit();
         let started = Instant::now();
         for (i, (call_id, name, input)) in calls.iter().enumerate() {
             if self.ctl.interrupted {
@@ -1354,12 +1407,17 @@ impl Run {
             let (kit, name, input) = (kit.clone(), name.clone(), input.clone());
             jobs.spawn(async move { (i, read_job(kit, name, input).await) });
         }
+        let mut pictures: Vec<(usize, Vec<crate::gateway::ImageInput>)> = Vec::new();
         while let Some(joined) = jobs.join_next().await {
-            let Ok((i, (status, output, fee))) = joined else { continue };
-            self.charge_search(fee);
-            self.emit(EventBody::ToolCallCompleted { call_id: calls[i].0.clone(), status, output: Some(output.clone()), exit_code: None, diff: vec![], duration_ms: Some(started.elapsed().as_millis() as u64) });
-            done[i] = Some((status, output));
+            let Ok((i, out)) = joined else { continue };
+            self.charge(out.fee);
+            self.emit(EventBody::ToolCallCompleted { call_id: calls[i].0.clone(), status: out.status, output: Some(out.text.clone()), exit_code: None, diff: vec![], duration_ms: Some(started.elapsed().as_millis() as u64) });
+            pictures.push((i, out.images));
+            done[i] = Some((out.status, out.text));
         }
+        // 附的图按调用的顺序排在这一轮工具结果后面（各自的结果里写了第几张）。
+        pictures.sort_by_key(|(i, _)| *i);
+        self.shots.extend(pictures.into_iter().flat_map(|(_, images)| images));
         let mut out = Vec::new();
         for (i, (call_id, name, input)) in calls.iter().enumerate() {
             let (status, output) = done[i].take().unwrap_or((ToolStatus::Failed, "工具出错了。".into()));
@@ -1416,8 +1474,18 @@ impl Run {
         }
     }
 
+    /// 这个时刻有没有挂命令（ONE SHOT 没有）。
+    fn has_hooks(&self, event: Event) -> bool {
+        !self.config.oneshot && self.config.hooks.as_ref().is_some_and(|set| !set.for_event(event, None).is_empty())
+    }
+
+    /// 开场时交给脚本的（和 Claude Code 一样带 source、model）。
+    fn session_start_input(&self, source: &str) -> Value {
+        serde_json::json!({"source": source, "model": self.config.model_id})
+    }
+
     /// 跑这个时刻挂的脚本 Hook（v1.1.2）。每条命令第一次跑之前问站主；拒了的这一回合不再问、不跑。
-    /// 返回拦下的原因、补充的话（几条的合在一起）。ONE SHOT 不跑。
+    /// 返回拦下的原因、补充的话（几条的合在一起）。ONE SHOT 不跑。`tool` 是 matcher 要对的：工具名，开场时是 source。
     async fn run_hooks(&mut self, event: Event, call_id: &str, tool: Option<&str>, extra: Value) -> (Option<String>, Option<String>) {
         let Some(set) = self.config.hooks.clone().filter(|_| !self.config.oneshot) else { return (None, None) };
         let hooks = set.for_event(event, tool);
@@ -1432,7 +1500,7 @@ impl Run {
             let known = self.hook_ok.lock().ok().and_then(|m| m.get(&rule).copied());
             let ok = match known {
                 Some(ok) => ok,
-                None if self.allowed.contains(&rule) => true,
+                None if hook.trusted || self.allowed.contains(&rule) => true,
                 None => {
                     let decision = self.approve_as(ToolKind::Run, call_id, format!("跑项目的 Hook：{}", hook.title()), format!("来自 {}\n{}", hook.source, hook.command), false).await;
                     if decision == ApprovalDecision::AllowAlways {
@@ -1450,15 +1518,9 @@ impl Run {
             if !ok || self.ctl.interrupted {
                 continue;
             }
-            let ran = super::script_hooks::run(&hook, &input, &self.task.cwd, &self.config.env).await;
-            let v = super::script_hooks::verdict(event, &ran);
-            if v.block.is_some() || v.error.is_some() || !v.shown.is_empty() {
-                let text = match (&v.block, &v.error) {
-                    (Some(why), _) => format!("拦下了：{why}"),
-                    (_, Some(e)) => format!("出错了：{e}"),
-                    _ => v.shown.clone(),
-                };
-                self.emit(EventBody::HookRan { plugin: hook.source.clone(), action: hook.title(), ok: v.error.is_none() && v.block.is_none(), text, event: Some(event.key().into()) });
+            let (v, note) = super::script_hooks::run_and_judge(&hook, &input, &self.task.cwd, &self.config.env).await;
+            if let Some(body) = note {
+                self.emit(body);
             }
             blocks.extend(v.block);
             contexts.extend(v.context);
@@ -1540,7 +1602,14 @@ impl Run {
                 Err(e) => (ToolStatus::Failed, e, None, vec![]),
             },
             tools::ASK_USER => self.ask_user(input).await,
+            tools::TOOL_SEARCH => self.tool_search(input),
             tools::WEB_SEARCH => self.web_search(input).await,
+            tools::READ_PDF | tools::OCR_PDF | tools::READ_NOTEBOOK => {
+                let out = read_job(self.read_kit(), name.to_string(), input.clone()).await;
+                self.charge(out.fee);
+                self.shots.extend(out.images);
+                (out.status, out.text, None, vec![])
+            }
             agents::SPAWN_AGENT => self.spawn_agent(call_id, input).await,
             n if n.starts_with("mcp__") => self.mcp_call(call_id, n, input).await,
             tools::SCREENSHOT_APP => {
@@ -1955,6 +2024,7 @@ impl Run {
             names.push(tools::LOAD_SKILL);
         }
         names.retain(|n| !self.config.context.project.tools_off.iter().any(|t| t == n));
+        child.pick_ocr(&mut names);
         if matches!(kind, Kind::Searcher | Kind::Member) {
             if kind == Kind::Member {
                 names.push(tools::WEB_SEARCH);
@@ -2069,6 +2139,82 @@ impl Run {
                 input_schema: t.input_schema.clone(),
             })
             .collect()
+    }
+
+    /// 这次请求的工具列表：这一档的工具、派子代理、有外部 MCP 工具时的 `tool_search`，再加上加载过的 MCP 工具（v1.1.4：
+    /// MCP 工具开头只在 `tool_search` 的说明里列名字，不发一大段定义）。
+    fn request_specs(&self, names: &[&'static str]) -> Vec<crate::gateway::ToolSpec> {
+        let mut specs = tools::specs_for(names);
+        if names.contains(&agents::SPAWN_AGENT) {
+            specs.push(agents::spawn_spec(&self.kinds));
+        }
+        let mcp = self.mcp_specs();
+        if mcp.is_empty() {
+            return specs;
+        }
+        specs.push(tool_search_spec(&mcp));
+        specs.extend(self.loaded.iter().filter_map(|name| mcp.iter().find(|t| &t.name == name).cloned()));
+        specs
+    }
+
+    /// 这个对话里加载过、调过的 MCP 工具（现在还在、这一档能用的）：调过的按记录里的名字，加载过的按 `tool_search` 结果的头一行。
+    fn loaded_from_history(&self) -> Vec<String> {
+        let offered: Vec<String> = self.mcp_specs().into_iter().map(|t| t.name).collect();
+        if offered.is_empty() {
+            return vec![];
+        }
+        let searches: HashSet<&str> = self
+            .messages
+            .iter()
+            .flat_map(|m| m.parts.iter())
+            .filter_map(|p| match p {
+                Part::ToolCall { call_id, name, .. } if name == tools::TOOL_SEARCH => Some(call_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let mut out: Vec<String> = Vec::new();
+        for p in self.messages.iter().flat_map(|m| m.parts.iter()) {
+            let names: Vec<String> = match p {
+                Part::ToolCall { name, .. } if name.starts_with("mcp__") => vec![name.clone()],
+                Part::ToolResult { call_id, output, .. } if searches.contains(call_id.as_str()) => loaded_line(output),
+                _ => vec![],
+            };
+            for n in names {
+                if offered.contains(&n) && !out.contains(&n) {
+                    out.push(n);
+                }
+            }
+        }
+        out
+    }
+
+    /// `tool_search`（v1.1.4）：`select:<名字>,…` 按名字加载；别的按关键词搜名字和说明，最多 `max_results` 个（默认 5）。
+    /// 搜到的从下一次请求起放进工具列表。结果头一行是「已加载：…」（下一句话开头从记录里认回来用）。
+    fn tool_search(&mut self, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
+        let query = input.get("query").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let max = tools::u64_arg(input, "max_results").unwrap_or(5).clamp(1, 20) as usize;
+        let mcp = self.mcp_specs();
+        if mcp.is_empty() {
+            return (ToolStatus::Failed, "这个任务没有外部 MCP 工具。".into(), None, vec![]);
+        }
+        let found = search_mcp(&mcp, &query, max);
+        if found.is_empty() {
+            return (ToolStatus::Ok, format!("没有和「{query}」对得上的 MCP 工具。全部的名字在 tool_search 的说明里；换个关键词，或者用 select:<名字>。"), None, vec![]);
+        }
+        let mut fresh = Vec::new();
+        for t in &found {
+            if !self.loaded.contains(&t.name) {
+                self.loaded.push(t.name.clone());
+                fresh.push(t.name.clone());
+            }
+        }
+        let names: Vec<&str> = found.iter().map(|t| t.name.as_str()).collect();
+        let mut out = format!("{LOADED}{}\n", names.join("、"));
+        out.push_str(if fresh.is_empty() { "这几个之前就加载了，直接调。\n" } else { "从下一步起可以直接调（参数照工具定义）。\n" });
+        for t in &found {
+            out.push_str(&format!("\n- {}：{}", t.name, tools::clip_bytes(t.description.lines().next().unwrap_or(""), 300)));
+        }
+        (ToolStatus::Ok, out, None, vec![])
     }
 
     fn mcp_offered(&self, name: &str) -> bool {
@@ -2281,6 +2427,69 @@ impl Run {
 
 /// 存对话前把图换成一句话（图很大，下一句也不用再看一遍）。
 /// 能和别的只读工具同时跑的一个要的东西（v1.1.2）：都带着，不碰 `Run`。
+/// `tool_search` 结果的头一行。
+const LOADED: &str = "已加载：";
+
+/// `tool_search` 结果头一行里的名字。
+fn loaded_line(output: &str) -> Vec<String> {
+    output.lines().next().and_then(|l| l.strip_prefix(LOADED)).map(|l| l.split('、').map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect()).unwrap_or_default()
+}
+
+/// `tool_search` 的定义：说明里列出这个任务全部的 MCP 工具名字（按服务器分组）。
+fn tool_search_spec(mcp: &[crate::gateway::ToolSpec]) -> crate::gateway::ToolSpec {
+    let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
+    for t in mcp {
+        let server = t.name.trim_start_matches("mcp__").split("__").next().unwrap_or("").to_string();
+        match groups.iter_mut().find(|(s, _)| *s == server) {
+            Some((_, names)) => names.push(&t.name),
+            None => groups.push((server, vec![&t.name])),
+        }
+    }
+    let list: Vec<String> = groups.iter().map(|(s, names)| format!("{s}: {}", names.join(", "))).collect();
+    crate::gateway::ToolSpec {
+        name: tools::TOOL_SEARCH.into(),
+        description: format!(
+            "Load MCP tools before you use them. This task's MCP servers offer the tools below, but their definitions are not loaded, so you cannot call them yet. Query \"select:<name>[,<name>...]\" loads those tools; any other query searches tool names and descriptions by keywords. Loaded tools become callable from your next step on and stay loaded for the rest of the conversation. Load only what you need.\n\nMCP tools by server:\n{}",
+            list.join("\n")
+        ),
+        input_schema: serde_json::json!({"type": "object", "properties": {
+            "query": {"type": "string", "description": "\"select:mcp__server__tool,…\" for exact tools, or keywords."},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 20, "description": "For keyword searches. Default 5."}
+        }, "required": ["query"]}),
+    }
+}
+
+/// 按名字（`select:`，全名或只写工具那一段都认）或关键词（名字、说明里有几个词就算几分）找 MCP 工具。
+fn search_mcp(mcp: &[crate::gateway::ToolSpec], query: &str, max: usize) -> Vec<crate::gateway::ToolSpec> {
+    if let Some(list) = query.strip_prefix("select:") {
+        let mut out: Vec<crate::gateway::ToolSpec> = Vec::new();
+        for want in list.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+            let hit = mcp.iter().find(|t| t.name == want).or_else(|| mcp.iter().find(|t| t.name.ends_with(&format!("__{want}"))));
+            if let Some(t) = hit {
+                if !out.iter().any(|o| o.name == t.name) {
+                    out.push(t.clone());
+                }
+            }
+        }
+        return out;
+    }
+    let terms: Vec<String> = query.split(|c: char| c.is_whitespace() || c == ',').map(str::to_lowercase).filter(|t| !t.is_empty()).collect();
+    if terms.is_empty() {
+        return vec![];
+    }
+    let mut scored: Vec<(usize, usize, &crate::gateway::ToolSpec)> = mcp
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| {
+            let (name, desc) = (t.name.to_lowercase(), t.description.to_lowercase());
+            let score: usize = terms.iter().map(|w| if name.contains(w.as_str()) { 2 } else if desc.contains(w.as_str()) { 1 } else { 0 }).sum();
+            (score > 0).then_some((score, i, t))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().take(max).map(|(_, _, t)| t.clone()).collect()
+}
+
 #[derive(Clone)]
 struct ReadKit {
     ctx: Arc<ToolContext>,
@@ -2288,35 +2497,121 @@ struct ReadKit {
     history: Option<HistoryProbe>,
     web: Vec<search::Backend>,
     cancel: watch::Receiver<bool>,
+    /// 这个模型能看图（读 PDF、Notebook 时附图）。
+    vision: bool,
+    /// `ocr_pdf` 找谁（没填 Mathpix 的 Key 是空的）。
+    ocr: Option<crate::gateway::mathpix::Mathpix>,
 }
 
-/// 跑一个只读工具（同时跑的那一批用）：结果和联网搜索的费用（主线记账）。
-async fn read_job(kit: ReadKit, name: String, input: Value) -> (ToolStatus, String, Option<f64>) {
+/// 只读工具按次的费用（主线记账）：联网搜索一次、Mathpix 识别几页。
+#[derive(Debug, Clone, Copy)]
+enum Fee {
+    Search(f64),
+    Ocr(f64),
+}
+
+/// 一个只读工具的结果：给模型的话、费用、附在这一轮工具结果后面的图。
+struct ReadOut {
+    status: ToolStatus,
+    text: String,
+    fee: Option<Fee>,
+    images: Vec<crate::gateway::ImageInput>,
+}
+
+impl ReadOut {
+    fn of(status: ToolStatus, text: String) -> Self {
+        Self { status, text, fee: None, images: vec![] }
+    }
+
+    fn from(r: Result<(String, Vec<crate::gateway::ImageInput>), String>) -> Self {
+        match r {
+            Ok((text, images)) => Self { status: ToolStatus::Ok, text, fee: None, images },
+            Err(e) => Self::of(ToolStatus::Failed, e),
+        }
+    }
+}
+
+/// 跑一个只读工具（同时跑的那一批、单独跑的读 PDF / Notebook 都用）。
+async fn read_job(kit: ReadKit, name: String, input: Value) -> ReadOut {
     match name.as_str() {
-        tools::WEB_SEARCH => web_search_job(kit.web, input, kit.cancel).await,
+        tools::WEB_SEARCH => {
+            let (status, text, fee) = web_search_job(kit.web, input, kit.cancel).await;
+            ReadOut { status, text, fee: fee.map(Fee::Search), images: vec![] }
+        }
         tools::LOAD_SKILL => {
             let skill = input.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
             let file = input.get("file").and_then(Value::as_str).map(str::to_string);
             match crate::skills::load(&kit.skills, &skill, file.as_deref()) {
-                Ok(text) => (ToolStatus::Ok, text, None),
-                Err(e) => (ToolStatus::Failed, e, None),
+                Ok(text) => ReadOut::of(ToolStatus::Ok, text),
+                Err(e) => ReadOut::of(ToolStatus::Failed, e),
             }
         }
         tools::SEARCH_TASKS => {
-            let Some(probe) = kit.history else { return (ToolStatus::Failed, "这里读不到任务记录。".into(), None) };
+            let Some(probe) = kit.history else { return ReadOut::of(ToolStatus::Failed, "这里读不到任务记录。".into()) };
             let query = input.get("query").and_then(Value::as_str).map(str::to_string).filter(|q| !q.trim().is_empty());
             let number = tools::u64_arg(&input, "number");
             match tokio::task::spawn_blocking(move || probe(query, number)).await {
-                Ok(Ok(text)) => (ToolStatus::Ok, text, None),
-                Ok(Err(e)) => (ToolStatus::Failed, e, None),
-                Err(_) => (ToolStatus::Failed, "读任务记录出错了。".into(), None),
+                Ok(Ok(text)) => ReadOut::of(ToolStatus::Ok, text),
+                Ok(Err(e)) => ReadOut::of(ToolStatus::Failed, e),
+                Err(_) => ReadOut::of(ToolStatus::Failed, "读任务记录出错了。".into()),
             }
         }
+        tools::READ_PDF => {
+            let (ctx, vision, ocr) = (kit.ctx.clone(), kit.vision, kit.ocr.is_some());
+            let r = tokio::task::spawn_blocking(move || tools::pdf::read_pdf(&ctx, &input, vision, ocr)).await.unwrap_or_else(|_| Err("读 PDF 出错了。".into()));
+            ReadOut::from(r)
+        }
+        tools::READ_NOTEBOOK => {
+            let (ctx, vision) = (kit.ctx.clone(), kit.vision);
+            let r = tokio::task::spawn_blocking(move || tools::notebook::read_notebook(&ctx, &input, vision)).await.unwrap_or_else(|_| Err("读 Notebook 出错了。".into()));
+            ReadOut::from(r)
+        }
+        tools::OCR_PDF => ocr_job(kit, input).await,
         _ => {
             let r = tokio::task::spawn_blocking(move || tools::run_sync(&kit.ctx, &name, &input)).await.unwrap_or_else(|_| tools::ToolResult::err("工具出错了。"));
-            (if r.ok { ToolStatus::Ok } else { ToolStatus::Failed }, r.text, None)
+            ReadOut::of(if r.ok { ToolStatus::Ok } else { ToolStatus::Failed }, r.text)
         }
     }
+}
+
+/// `ocr_pdf`（v1.1.4）：在本机把要读的几页拆成一份小 PDF，只把它送 Mathpix；识别成了按页记费用。
+async fn ocr_job(kit: ReadKit, input: Value) -> ReadOut {
+    let Some(mathpix) = kit.ocr.clone() else {
+        return ReadOut::of(ToolStatus::Denied, "这个任务没有 Mathpix（设置 → PROVIDERS → PDF 填 Key 才有）。用 read_pdf。".into());
+    };
+    let ctx = kit.ctx.clone();
+    let prepared = tokio::task::spawn_blocking(move || -> Result<(String, u32, Vec<u32>, PathBuf), String> {
+        let file = tools::pdf::resolve_pdf(&ctx, &input)?;
+        let total = tools::pdf::page_count(&file)?;
+        let pages = tools::pdf::parse_pages(tools::str_arg(&input, "pages"), total, tools::pdf::MAX_PAGES)?;
+        std::fs::create_dir_all(&ctx.spill_dir).map_err(|e| format!("拆不了页：{e}"))?;
+        let n = ctx.spill_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let part = ctx.spill_dir.join(format!("{n}-mathpix.pdf"));
+        tools::pdf::split(&file, &pages, &part)?;
+        Ok((ctx.rel(&file), total, pages, part))
+    })
+    .await
+    .unwrap_or_else(|_| Err("拆页出错了。".into()));
+    let (rel, total, pages, part) = match prepared {
+        Ok(p) => p,
+        Err(e) => return ReadOut::of(ToolStatus::Failed, e),
+    };
+    let result = mathpix.convert(&part, kit.cancel.clone()).await;
+    let _ = std::fs::remove_file(&part);
+    let (text, removed) = match result {
+        Ok(t) => t,
+        Err(e) => return ReadOut::of(ToolStatus::Failed, format!("Mathpix 没识别成：{e}")),
+    };
+    let removed = removed.map(|why| format!("\n（Mathpix 那边的这几页没删成：{why}；要删请站主到 Mathpix 的控制台）")).unwrap_or_default();
+    let real = matches!(mathpix, crate::gateway::mathpix::Mathpix::Real { .. });
+    let fee = real.then(|| pages.len() as f64 * crate::gateway::mathpix::PRICE_PER_PAGE);
+    let (first, last) = (pages[0], pages[pages.len() - 1]);
+    let shown = if first == last { format!("第 {first} 页") } else if pages.len() as u32 == last - first + 1 { format!("第 {first}–{last} 页") } else { format!("{} 页", pages.len()) };
+    let cost = fee.map(|f| format!("，${f:.3}")).unwrap_or_default();
+    let body = tools::clip_bytes(text.trim(), 100 * 1024);
+    let cut = if body.len() < text.trim().len() { "\n（超过 100KB，后面截掉了；少要几页再识别）" } else { "" };
+    let out = format!("{rel}：共 {total} 页，Mathpix 识别了{shown}（{} 页{cost}）。公式用 $…$ / $$…$$，表格是 LaTeX 的 tabular。\n\n{body}{cut}{removed}", pages.len());
+    ReadOut { status: ToolStatus::Ok, text: out, fee: fee.map(Fee::Ocr), images: vec![] }
 }
 
 /// Peck 的 `web_search` 搜一次：按顺序试，搜成了带上这一次的费用。
@@ -2660,12 +2955,14 @@ mod tests {
     async fn external_mcp_tools_are_offered_by_level_and_destructive_ones_ask() {
         let p = TempProject::new();
         let server = super::super::mcp_client::tests::fake_server(&p.dir.with_extension("mcp"));
-        // PLAN：只给只读的 echo；模型硬要 wipe 被拒。
+        // PLAN：只给只读的 echo；模型硬要 wipe 被拒。v1.1.4 起开头只给 tool_search（说明里列名字），加载了才进工具列表。
         let model = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
             vec![
+                turn("", vec![("tool_search", json!({"query": "select:echo,wipe"}))]),
                 turn("", vec![("mcp__fake__echo", json!({"text": "hi"})), ("mcp__fake__wipe", json!({}))]),
                 turn("看完了。", vec![]),
+                turn("又看了一眼。", vec![]),
             ],
             Duration::ZERO,
         ));
@@ -2675,8 +2972,13 @@ mod tests {
         let backend = PeckBackend::new(model, cfg, vec![]);
         let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Plan, "查一下"), |_| None).await;
         assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
-        let offered: Vec<String> = requests.lock().unwrap()[0].tools.iter().map(|t| t.name.clone()).collect();
-        assert!(offered.contains(&"mcp__fake__echo".to_string()) && !offered.contains(&"mcp__fake__wipe".to_string()));
+        let tools_of = |i: usize| -> Vec<(String, String)> { requests.lock().unwrap()[i].tools.iter().map(|t| (t.name.clone(), t.description.clone())).collect() };
+        let first = tools_of(0);
+        let search = first.iter().find(|(n, _)| n == "tool_search").expect("有 MCP 工具就给 tool_search");
+        assert!(search.1.contains("mcp__fake__echo") && !search.1.contains("wipe"), "说明里列这一档能用的名字：{}", search.1);
+        assert!(!first.iter().any(|(n, _)| n.starts_with("mcp__")), "开头不发 MCP 工具的定义");
+        let second = tools_of(1);
+        assert!(second.iter().any(|(n, _)| n == "mcp__fake__echo") && !second.iter().any(|(n, _)| n == "mcp__fake__wipe"), "加载了才有");
         let done: Vec<(ToolStatus, String)> = events
             .iter()
             .filter_map(|e| match &e.body {
@@ -2684,14 +2986,18 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(done[0], (ToolStatus::Ok, "echo: hi mint".into()));
-        assert_eq!(done[1].0, ToolStatus::Denied);
+        assert!(done[0].0 == ToolStatus::Ok && done[0].1.starts_with("已加载：mcp__fake__echo\n"), "{:?}", done[0]);
+        assert_eq!(done[1], (ToolStatus::Ok, "echo: hi mint".into()));
+        assert_eq!(done[2].0, ToolStatus::Denied);
+        // 同一个对话的下一句：加载过的一开头就在（从记录里认回来），工具列表不来回变。
+        drive(&backend, task(&p, PermissionLevel::Plan, "再看看"), |_| None).await;
+        assert!(tools_of(3).iter().any(|(n, _)| n == "mcp__fake__echo"));
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::SessionStarted { mcp, .. } if mcp.len() == 1)));
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallStarted { kind: ToolKind::Mcp, .. })));
         // AUTO：会破坏的照样当高危问；站主不批就不跑。
         let model = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
-            vec![turn("", vec![("mcp__fake__wipe", json!({}))]), turn("好。", vec![])],
+            vec![turn("", vec![("tool_search", json!({"query": "wipe everything"}))]), turn("", vec![("mcp__fake__wipe", json!({}))]), turn("好。", vec![])],
             Duration::ZERO,
         ));
         let mut cfg = config(&p, "deepseek/deepseek-flash");
@@ -3415,6 +3721,35 @@ mod tests {
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::HookRan { text, .. } if text.contains("拦下了"))));
     }
 
+    /// 开场时（v1.1.4）：只在对话的第一句跑；退出码 2 拦不住、只记一笔；子代理不跑；收尾时脚本拿得到这一轮改的文件。
+    #[tokio::test]
+    async fn session_start_runs_before_the_first_sentence_only() {
+        let p = TempProject::new();
+        p.write(
+            ".claude/settings.json",
+            &json!({"hooks": {
+                "SessionStart": [{"hooks": [{"type": "command", "command": "echo 项目约定：中文回答"}, {"type": "command", "command": "echo 坏了 >&2; exit 2"}]}]
+            }})
+            .to_string(),
+        );
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.hooks = Some(Arc::new(super::super::script_hooks::HookSet::load(&p.dir)));
+        cfg.allowed = cfg.hooks.as_ref().unwrap().hooks.iter().map(|h| h.rule()).collect();
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("好。", vec![]), turn("又好。", vec![])], Duration::ZERO));
+        let requests = model.requests.clone();
+        let backend = PeckBackend::new(model, cfg, vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Auto, "第一句"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "退出码 2 不拦");
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::HookRan { ok: false, text, event: Some(ev), .. } if ev == "SessionStart" && text.contains("退出码 2"))));
+        let (outcome, _) = drive(&backend, task(&p, PermissionLevel::Auto, "第二句"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done);
+        let reqs = requests.lock().unwrap();
+        let first = serde_json::to_string(&reqs[0].messages).unwrap();
+        assert!(first.contains("项目约定：中文回答") && first.contains("<hook-context event=\\\"SessionStart\\\">"), "{first}");
+        let second = serde_json::to_string(&reqs[1].messages).unwrap();
+        assert_eq!(second.matches("项目约定").count(), 1, "第二句不再跑（只有第一句那份）");
+    }
+
     #[tokio::test]
     async fn plan_level_hides_edit_tools_and_refuses_them() {
         let p = TempProject::new();
@@ -3583,11 +3918,33 @@ mod tests {
             Duration::ZERO,
         ));
         let requests = model.requests.clone();
-        let backend = PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]);
-        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Edit, "读 big.txt"), |_| None).await;
+        // 开场时的 Hook（v1.1.4）：startup 在第一句前面，compact 在交接摘要后面补回来。
+        p.write(
+            ".claude/settings.json",
+            &json!({"hooks": {"SessionStart": [
+                {"matcher": "startup", "hooks": [{"type": "command", "command": "echo 开场说明"}]},
+                {"matcher": "compact", "hooks": [{"type": "command", "command": "echo 压缩后补回"}]}
+            ]}})
+            .to_string(),
+        );
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.hooks = Some(Arc::new(super::super::script_hooks::HookSet::load(&p.dir)));
+        let backend = PeckBackend::new(model, cfg, vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Edit, "读 big.txt"), |e| match e {
+            EventBody::ApprovalRequested { request_id, title, .. } if title.contains("Hook") => Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::AllowOnce }),
+            _ => None,
+        })
+        .await;
         assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
         let steps = compactions(&events);
         assert!(steps.contains(&CompactStep::Summary), "{steps:?}");
+        {
+            let reqs = requests.lock().unwrap();
+            let first = serde_json::to_string(&reqs[0].messages).unwrap();
+            assert!(first.contains("开场说明") && !first.contains("压缩后补回"), "matcher 对 source");
+            let after = serde_json::to_string(&reqs.last().unwrap().messages).unwrap();
+            assert!(after.contains("压缩后补回") && !after.contains("开场说明"), "摘要换掉了开场那份，compact 再补一份");
+        }
         let summary_text = events.iter().find_map(|e| match &e.body {
             EventBody::ContextCompacted { summary: Some(s), .. } => Some(s.clone()),
             _ => None,
@@ -3801,8 +4158,50 @@ mod tests {
         let (outcome, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Auto, "a.txt 里是什么"), |_| None).await;
         assert_eq!(outcome.reason, TurnEndReason::Done);
         let names: Vec<String> = requests.lock().unwrap()[0].tools.iter().map(|t| t.name.clone()).collect();
-        assert_eq!(names, ["list_directory", "read_file", "search_text", "find_files", "bash_run", "search_tasks"]);
+        assert_eq!(names, ["list_directory", "read_file", "search_text", "find_files", "bash_run", "search_tasks", "read_pdf", "read_notebook"], "没有 Mathpix 的 Key 不给 ocr_pdf");
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::MessageCompleted { text, .. } if text.contains("hello"))));
+    }
+
+    /// 读 Notebook、PDF（v1.1.4）：一批同时跑，Notebook 里的图附在这一轮工具结果后面；模拟模式下 ocr_pdf 不联网、不记费用。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn notebooks_and_pdfs_are_read_with_images_after_the_results() {
+        let p = TempProject::new();
+        p.write(
+            "a.ipynb",
+            &json!({"cells": [{"cell_type": "code", "execution_count": 1, "source": "plot()", "outputs": [{"output_type": "display_data", "data": {"image/png": "iVBORw0KGgo=", "text/plain": "<Figure>"}}]}]}).to_string(),
+        );
+        p.write("long.txt", &"Hello PDF line for Peck, long enough to count as text.\n".repeat(3));
+        let pdf = std::process::Command::new("/usr/sbin/cupsfilter").arg(p.dir.join("long.txt")).output().unwrap();
+        if !pdf.stdout.starts_with(b"%PDF-") {
+            eprintln!("cupsfilter 出不了 PDF，跳过");
+            return;
+        }
+        std::fs::write(p.dir.join("doc.pdf"), &pdf.stdout).unwrap();
+        let model_id = "anthropic/claude-haiku-5-5";
+        let model = Arc::new(ScriptedModel::new(
+            model_id,
+            vec![
+                turn("", vec![("read_notebook", json!({"path": "a.ipynb"})), ("read_pdf", json!({"path": "doc.pdf"}))]),
+                turn("", vec![("ocr_pdf", json!({"path": "doc.pdf", "pages": "1"}))]),
+                turn("读完了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let requests = model.requests.clone();
+        let mut cfg = config(&p, model_id);
+        cfg.search = search::Keys { mock: true, ..Default::default() };
+        let (outcome, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Plan, "读一下"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        let reqs = requests.lock().unwrap();
+        assert!(reqs[0].tools.iter().any(|t| t.name == "ocr_pdf"), "模拟模式给 ocr_pdf");
+        let last = reqs[1].messages.last().unwrap();
+        assert!(matches!(&last.parts[0], Part::ToolResult { output, .. } if output.contains("单元 1 · code · [1]") && output.contains("[图 1（image/png）")));
+        assert!(matches!(&last.parts[1], Part::ToolResult { output, .. } if output.contains("doc.pdf：共 1 页") && output.contains("Hello PDF line")));
+        assert!(matches!(&last.parts[2], Part::Image { media_type, .. } if media_type == "image/png"), "图跟在工具结果后面");
+        let ocr = serde_json::to_string(&reqs[2].messages.last().unwrap()).unwrap();
+        assert!(ocr.contains("Mathpix 识别了第 1 页") && ocr.contains("模拟模式"), "{ocr}");
+        assert!(!events.iter().any(|e| matches!(&e.body, EventBody::UsageUpdated { model: Some(m), .. } if m == "mathpix")), "模拟的不记费用");
     }
 
     #[tokio::test]

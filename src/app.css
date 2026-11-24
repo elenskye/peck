@@ -653,6 +653,12 @@ body { overflow: hidden; }
 .plugin-detail dd span { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .plugin-detail dd p.is-warn span { color: var(--color-warn); }
 .memory-text { font-family: var(--font-body); font-size: var(--text-body); letter-spacing: 0; text-transform: none; }
+/* 记忆的改字、自己记一条（v1.1.4）：输入框占满左边，按钮在右。 */
+.memory-edit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); }
+.memory-edit .pk-field { min-width: 0; height: var(--size-button); }
+.memory-edit .pk-field input { width: 0; flex: 1; }
+.memory-group + .memory-group { margin-top: var(--space-6); }
+.memory-path { margin-left: var(--space-4); color: var(--color-text-3); text-transform: none; letter-spacing: 0; }
 
 /* ---------- 审阅和预览（v0.7 Phase 10，云端取了沉静一边，本地改方案时并进 tokens） ---------- */
 /* Peck 的代码配色：青只给关键字；字符串、数、类型、属性用压低的几种色（不和绿、红、琥珀的意思撞），注释退到暗字。 */

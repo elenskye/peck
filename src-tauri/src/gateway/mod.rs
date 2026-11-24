@@ -14,12 +14,14 @@
 pub mod accounts;
 pub mod caps;
 pub mod catalog;
+pub mod cli_hooks;
 pub mod cli_models;
 pub mod config;
 pub mod convert;
 pub mod engines;
 pub mod event;
 pub mod log;
+pub mod mathpix;
 pub mod mcp;
 pub mod mock;
 pub mod prices;

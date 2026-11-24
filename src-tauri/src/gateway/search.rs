@@ -112,6 +112,8 @@ impl Backend {
 pub struct Keys {
     pub deepseek: Option<Zeroizing<String>>,
     pub tavily: Option<Zeroizing<String>>,
+    /// Mathpix 的 app_id、app_key（v1.1.4，`ocr_pdf` 用；不是搜索，但一样是 Peck Loop 手上的外部服务）。
+    pub mathpix: Option<(Zeroizing<String>, Zeroizing<String>)>,
     pub mock: bool,
 }
 
@@ -134,7 +136,16 @@ impl Keys {
         let Ok(mut keys) = state.api.keys.lock() else {
             return Self::default();
         };
-        Self { deepseek: keys.get("deepseek").ok(), tavily: keys.get("tavily").ok(), mock: false }
+        let mathpix = keys.get("mathpix_id").ok().zip(keys.get("mathpix_key").ok());
+        Self { deepseek: keys.get("deepseek").ok(), tavily: keys.get("tavily").ok(), mathpix, mock: false }
+    }
+
+    /// `ocr_pdf` 找谁：模拟模式用假的；两样 Key 都填了才有。
+    pub fn mathpix(&self) -> Option<super::mathpix::Mathpix> {
+        if self.mock {
+            return Some(super::mathpix::Mathpix::Mock);
+        }
+        self.mathpix.as_ref().map(|(id, key)| super::mathpix::Mathpix::Real { app_id: id.clone(), app_key: key.clone() })
     }
 
     pub fn route(&self, model: Option<&ModelSpec>) -> Route {
@@ -414,7 +425,7 @@ mod tests {
         let none = Keys::default();
         assert!(matches!(none.route(Some(spec("deepseek/deepseek-flash"))), Route::Off), "没有 Key 就不给");
         let key = || Some(Zeroizing::new("k".to_string()));
-        let both = Keys { deepseek: key(), tavily: key(), mock: false };
+        let both = Keys { deepseek: key(), tavily: key(), mock: false, ..Default::default() };
         let ids = |r: Route| match r {
             Route::Tool(b) => b.iter().map(Backend::id).collect::<Vec<_>>(),
             _ => vec![],

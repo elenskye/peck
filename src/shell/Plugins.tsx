@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { Btn, Icon, Info, Row, Switch } from "@/ui";
 
 /** Hook 什么时候跑（给人看）。 */
-const HOOK_WHEN: Record<string, string> = { Stop: "一轮做完" };
+const HOOK_WHEN: Record<string, string> = { Stop: "一轮做完", SessionStart: "开场时", UserPromptSubmit: "发话时", PreToolUse: "调工具前", PostToolUse: "调工具后", PreCompact: "压缩前" };
 
 interface DetailItem { name: string; text: string; warn?: boolean }
 
@@ -20,8 +20,8 @@ function detailGroups(info: PluginInfo): Array<[string, DetailItem[]]> {
     ["TOOL", info.tools.map((t) => ({ name: t.name, text: t.known ? t.description : [t.description, "Peck 没有这个工具"].filter(Boolean).join(" · "), warn: !t.known }))],
     ["HOOK", info.hooks.map((h) => ({
       name: HOOK_WHEN[h.event] ?? h.event,
-      text: h.kind === "peck" ? `问刚干完的模型「${h.ask ?? ""}」，再由 Peck 跑 ${h.run ?? ""}` : [h.run, "任意脚本，Peck 不跑"].filter(Boolean).join(" · "),
-      warn: h.kind !== "peck",
+      text: h.kind === "peck" ? `问刚干完的模型「${h.ask ?? ""}」，再由 Peck 跑 ${h.run ?? ""}` : h.kind === "command" ? [h.run, "脚本"].filter(Boolean).join(" · ") : [h.run, "Peck 不认这种 Hook"].filter(Boolean).join(" · "),
+      warn: h.kind !== "peck" && h.kind !== "command",
     }))],
     ["MCP", info.mcp.map((m) => ({ name: m.name, text: m.command }))],
   ];
