@@ -12,9 +12,9 @@ const STATUS: Record<string, string> = { ok: "读到了", not_installed: "没装
 const when = (t: number | null | undefined) => (t ? new Date(t).toLocaleString("zh-CN", { hour12: false }) : "未知");
 
 /** 图里的系列：固定顺序（相邻两色色弱也分得开，校验过），颜色跟着引擎走，不跟名次。 */
-const SERIES = ["antigravity", "api", "grok", "muse", "claude-code", "codex"] as const;
+const SERIES = ["api", "grok", "muse", "claude-code", "codex"] as const;
 type Series = (typeof SERIES)[number];
-const SERIES_NAME: Record<Series, string> = { antigravity: "Antigravity", api: "Peck Loop", grok: "Grok", muse: "Muse", "claude-code": "Claude Code", codex: "Codex" };
+const SERIES_NAME: Record<Series, string> = { api: "Peck Loop", grok: "Grok", muse: "Muse", "claude-code": "Claude Code", codex: "Codex" };
 const seriesOf = (engine: string): Series => (engine === "peck" ? "api" : (SERIES as readonly string[]).includes(engine) ? (engine as Series) : "api");
 const fill = (s: Series) => `var(--chart-${s})`;
 
@@ -76,7 +76,7 @@ export const UsagePage: React.FC<{ onClose: () => void; say: (message: unknown) 
   const points = spend?.points ?? [];
   const cliUsd = points.filter((p) => p.engine !== "peck").reduce((n, p) => n + (p.usd ?? 0), 0);
   const deepseek = balances.find((b) => b.provider === "deepseek");
-  const label = (key: string, engine: string) => key === "oneshot" ? "ONE SHOT" : key === "team" ? "接力 / 审查（API）" : engine === "peck" ? entries.find((e) => e.id === `api:${key}`)?.label ?? key : agentName(engine);
+  const label = (key: string, engine: string) => key === "oneshot" ? "ONE SHOT" : key === "mathpix" ? "Mathpix" : engine === "peck" ? entries.find((e) => e.id === `api:${key}`)?.label ?? key : agentName(engine);
 
   return (
     <section className="col page" aria-label="额度与花费">

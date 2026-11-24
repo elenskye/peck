@@ -2,14 +2,14 @@
 
 ## 现在
 
-**v1.1.4**（2026-11-24）：逐步优化 Peck Loop 的第四轮。设置里加 MEMORY（全部项目的记忆，能自己记、改、删）；Peck Loop 读 PDF（本机 PDFKit 的 `read_pdf`、Mathpix 的 `ocr_pdf`，模型自己挑）、读 Notebook；外部 MCP 工具按需加载（开头只给名单，`tool_search` 加载）；脚本 Hook 加 `SessionStart`；Peck 替 CLI 跑开场时、发话时、收尾时三个 Hook；Git Plan 1.1.0 加 HANDOFF.md 检查。设计见 [architecture「脚本 Hook」「工具」「外部 MCP 服务器」](./architecture.md)。v1.1.3 是 member、划文件并行、任务板。
+**v1.1.5**（2026-11-24）：CLI 新会话的第一句前面带上项目记忆；Antigravity 整个去掉（Google 条款风险）；清掉旧记录兼容和死代码，Peck Loop 和 CLI 两条发任务的流程合并成一套（`run.rs`）。v1.1.4 是设置里的 MEMORY、读 PDF / Notebook（PDFKit、Mathpix）、MCP 按需加载、SessionStart 和替 CLI 跑三个 Hook、Git Plan 的 HANDOFF 检查。
 
 ## 定位
 
 Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包在模型外面的那一层——把各家模型和 CLI 接进来（Model Gateway）、给模型手脚（工具箱）、管它看到什么和记住什么（上下文）、每个任务前后存快照、把这一切摆给站主看（界面）。能在对话里说清楚的事不做成界面：反悔、定时任务、起 dev server、改完跑什么测试都交给模型。不考虑多用户、跨平台、团队，放开用 macOS 本机的能力。不跑本地模型、不做云同步。
 
 - **Peck Loop：Peck 深度参与**。通过 Gateway 调任何 API 模型，带自己的工具箱、上下文管理和联网搜索；PLOOP 是它的工作方式（主角色 + 子代理）。优化的重点在这里。
-- **CLI 引擎：Peck 只当外壳**。Claude Code、Codex、Muse、Grok、Antigravity 整包干，Peck 用它们官方的原生接口显示每一步、替它们审批、记花费，不把它们放进工作流；CLI 之间交接靠换引擎接着发一句或 `/review`。
+- **CLI 引擎：Peck 只当外壳**。Claude Code、Codex、Muse、Grok 整包干，Peck 用它们官方的原生接口显示每一步、替它们审批、记花费，不把它们放进工作流；CLI 之间交接靠换引擎接着发一句或 `/review`。
 - **视觉**照 `src/vendor/peck/`；新图标、新组件先在方案里画，同步办法见 architecture「视觉、打包和签名」。
 
 ## Phase
@@ -38,7 +38,8 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 站主定了不要的，不再当候选提：
 
 - GitHub PR 和 CI 回路；同一个项目里并行跑几个任务。
-- 通用的 ACP 接入层：每家 CLI 用它官方的原生接口（Grok、Antigravity 官方给的就是 ACP，照它们的来）。
+- 通用的 ACP 接入层：每家 CLI 用它官方的原生接口（Grok 官方给的就是 ACP，照它的来）。
+- Antigravity（Google）：条款风险，v1.1.5 整个去掉（引擎、额度卡片、夹具、`cli/` 里的安装），不再接。
 - CLI 进工作流（接力、CLI 审查、CLI 委派）：v1.1.1 删了。
 - 跨任务的任务板：任务板只管这一个任务（v1.1.3 定的）。
 - 改完代码自动拿到编译错误（LSP 诊断）、会话树和分叉浏览、轨迹记录（v1.1.4 定的）：改完跑什么写在项目说明里由模型自己跑；换引擎接着发、`@` 旧任务、事件日志已经够用。
@@ -50,16 +51,14 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | 对象 | 每个版本的上限 | 说明 |
 | --- | ---: | --- |
 | 每家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex 上的 Claude、Vertex 上的 Gemini） | 5 次尝试 | 一次 HTTP 发送尝试计一次，失败、取消、重试都计 |
-| 每家 CLI（Codex、Claude Code、Muse、Grok、Antigravity） | 3 个小任务 | 用站主已登录的订阅；每个任务不超过 12 轮；Claude Code 尽量不用（站主平时要用） |
+| 每家 CLI（Codex、Claude Code、Muse、Grok） | 3 个小任务 | 用站主已登录的订阅；每个任务不超过 12 轮；Claude Code 尽量不用（站主平时要用） |
 
 - 一律用这家最便宜、又测得到要测功能的模型，做无关紧要的小任务；测试项目放仓库外的 `personal-cli-studio/projects/`。
 - 用之前和之后都记账；失败不静默重试；用完先停下问站主。
 - 站主另给的额度（比如某一周按钱算）以站主当时说的为准，记在下面。
-- v1.1.4：Mathpix（站主的付费 Key）最多 3 次、每次 1–2 页（站主 2026-11-24 在提问里批的）。
 
 **账本**（只留当前版本）：
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.4 | Mathpix | v3/pdf | 1 次 · 1 页（$0.005） | `live_mathpix`：一页带公式和表格的测试 PDF，4.6 秒，公式出 LaTeX、表格出 tabular |
-| v1.1.4 | Mathpix | v3/pdf | 1 次 · 1 页（$0.005） | 同一页再跑一次：DELETE 返回成功，它那边的删掉了 |
+| v1.1.5 | — | — | 0 | 没有真跑 |

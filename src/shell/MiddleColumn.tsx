@@ -103,9 +103,7 @@ function describeOne(entry: ModelEntry): { name: string; dot: DotKind; does: str
   return {
     name: entry.label,
     dot: engineDot(entry.id.slice(4)),
-    does: entry.directOnly
-      ? "直接调用：你发一句话，它自己做完；Peck 显示每一步和改动，要批的事弹卡片。不进 ONE SHOT 和任何自动化。"
-      : `整包引擎：用它自己的工具和订阅额度；Peck 显示每一步、替它审批、记花费${entry.account ? `（账号：${entry.account}）` : ""}。`,
+    does: `整包引擎：用它自己的工具和订阅额度；Peck 显示每一步、替它审批、记花费${entry.account ? `（账号：${entry.account}）` : ""}。`,
   };
 }
 
@@ -630,7 +628,7 @@ const Recap: React.FC<{
   );
 };
 
-const ROLE_WORD: Record<CostRow["role"], string> = { spec: "SPEC", implement: "BUILD", review: "REVIEW", fix: "FIX", main: "MAIN", sub: "SUB" };
+const ROLE_WORD: Record<CostRow["role"], string> = { main: "MAIN", sub: "SUB" };
 
 /** 合作、委派的任务做完：每段谁做的、用了多少 tokens、花了多少、用了多久，最后一行合计（v0.9 B4）。 */
 const CostTable: React.FC<{ rows: CostRow[]; ms: number }> = ({ rows, ms }) => {
@@ -669,7 +667,7 @@ const TaskModule: React.FC<{
   onShow?: () => void;
   busy: boolean;
   onShowFile: (path: string) => void;
-  /** 统一事件（v0.8 以前的旧记录没有，过程那里写「这次没有记下过程」） */
+  /** 统一事件（引擎没起来时没有，过程那里写「这次没有记下过程」） */
   events?: AgentEvent[];
   /** 这次正在跑（这次打开 App 以后发的） */
   live: boolean;
@@ -717,7 +715,7 @@ const TaskModule: React.FC<{
         <b className={cn("pk-readout task-clock", state === "succeeded" && "pk-readout--done", !running && state !== "succeeded" && "task-clock--off")}>{timer(elapsed)}</b>
       </div>
       <Blocks lit={lit} still={!running} />
-      <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} nextSteps={latest && (isPeckRun(run) || !!run.who?.startsWith("team:"))} />
+      <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} nextSteps={latest && isPeckRun(run)} />
       {(state === "failed" || state === "cancelled") && run.summary && (
         <div className={cn("pk-bar", state === "failed" && "pk-bar--bad", "task-bar sel")}>
           <Icon name={state === "failed" ? "x" : "stop"} />

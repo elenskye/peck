@@ -9,7 +9,7 @@ import sys
 import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--client", choices=("claude-code", "antigravity"), required=True)
+parser.add_argument("--client", choices=("claude-code",), required=True)
 parser.add_argument("--data-dir", default=str(Path.home() / "Library/Application Support/Peck"))
 parser.add_argument("--forward-original")
 args = parser.parse_args()
@@ -17,20 +17,12 @@ raw = sys.stdin.read()
 
 try:
     data = json.loads(raw)
-    fields = {}
-    if args.client == "claude-code":
-        limits = data.get("rate_limits") or {}
-        fields["rate_limits"] = {
-            name: {key: value[key] for key in ("used_percentage", "resets_at") if isinstance(value.get(key), (int, float))}
-            for name, value in limits.items()
-            if name in ("five_hour", "seven_day") and isinstance(value, dict)
-        }
-    else:
-        fields["quota"] = {
-            name: {key: value[key] for key in ("remaining_fraction", "remaining_amount", "reset_time", "disabled") if key in value and isinstance(value[key], (str, int, float, bool))}
-            for name, value in (data.get("quota") or {}).items()
-            if isinstance(value, dict)
-        }
+    limits = data.get("rate_limits") or {}
+    fields = {"rate_limits": {
+        name: {key: value[key] for key in ("used_percentage", "resets_at") if isinstance(value.get(key), (int, float))}
+        for name, value in limits.items()
+        if name in ("five_hour", "seven_day") and isinstance(value, dict)
+    }}
     account = data.get("accountId") or data.get("email")
     if isinstance(account, str):
         fields["accountId"] = account
@@ -46,7 +38,7 @@ try:
     while cursor in procs:
         parent, command = procs[cursor]
         executable = Path(command).name.lower()
-        if (args.client == "claude-code" and (executable == "claude" or "/.local/share/claude/versions/" in command.lower()) and "claude.app/" not in command.lower()) or (args.client == "antigravity" and executable == "antigravity" and ".app/" not in command.lower()):
+        if (executable == "claude" or "/.local/share/claude/versions/" in command.lower()) and "claude.app/" not in command.lower():
             source_pid = cursor
             break
         if parent == cursor:

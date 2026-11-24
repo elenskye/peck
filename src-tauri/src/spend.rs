@@ -126,15 +126,11 @@ pub fn priced_points(rows: Vec<UsageRow>, book: Option<&Book>) -> Vec<SpendPoint
             }
             *prev = next;
         }
-        // v0.9 起 Peck Loop 的用量带模型 id（委派的子任务是子任务的模型，合作里是那一段的模型），按它记；
-        // 旧记录没有：任务的「谁」是 api: 的记那个模型，合作里分不出的记「合作」，不是任务的（ONE SHOT）记 oneshot。
+        // Peck Loop 的用量带模型 id（子代理是子代理的模型，Mathpix 记 `mathpix`），按它记；不是任务的（ONE SHOT）记 oneshot。
         let model = event["model"].as_str().filter(|m| !m.is_empty());
         let key = match (model, who.as_deref()) {
             (_, None) if engine == "peck" => "oneshot".to_string(),
             (Some(m), _) => m.to_string(),
-            (None, Some(w)) if w.starts_with("api:") && engine == "peck" => w["api:".len()..].to_string(),
-            (None, Some(w)) if w.starts_with("team:") && engine == "peck" => "team".to_string(),
-            (None, _) if engine == "peck" => "oneshot".to_string(),
             (None, _) => engine.clone(),
         };
         // 带模型 id 的都是 Peck Loop 花的（CLI 委派出去的子任务记在 CLI 的任务里，也算 Peck）。
@@ -236,29 +232,27 @@ mod tests {
 
     #[test]
     fn turns_add_up_and_cumulative_readings_become_deltas() {
-        let ev = |usd: f64, input: u64, scope: &str, source: &str| {
-            format!(r#"{{"type":"usage.updated","usage":{{"input":{input},"output":10}},"cost":{{"usd":{usd},"source":"{source}"}},"scope":"{scope}"}}"#)
+        let ev = |usd: f64, input: u64, scope: &str, source: &str, model: &str| {
+            let model = if model.is_empty() { String::new() } else { format!(r#","model":"{model}""#) };
+            format!(r#"{{"type":"usage.updated","usage":{{"input":{input},"output":10}},"cost":{{"usd":{usd},"source":"{source}"}},"scope":"{scope}"{model}}}"#)
         };
         let rows = vec![
-            ("r1".into(), "peck".into(), 1, ev(0.01, 100, "turn", "priced"), Some("api:deepseek/deepseek-flash".into())),
-            ("r1".into(), "peck".into(), 2, ev(0.02, 200, "turn", "priced"), Some("api:deepseek/deepseek-flash".into())),
-            ("r2".into(), "claude-code".into(), 3, ev(0.10, 1000, "cumulative", "estimated"), Some("cli:claude-code".into())),
-            ("r2".into(), "claude-code".into(), 4, ev(0.25, 1500, "cumulative", "estimated"), Some("cli:claude-code".into())),
-            ("o1".into(), "peck".into(), 5, ev(0.005, 50, "turn", "priced"), None),
-            ("t1".into(), "peck".into(), 6, ev(0.002, 20, "turn", "priced"), Some("team:cli:codex|api:deepseek/deepseek-flash|".into())),
+            ("r1".into(), "peck".into(), 1, ev(0.01, 100, "turn", "priced", "deepseek/deepseek-flash"), Some("api:deepseek/deepseek-flash".into())),
+            ("r1".into(), "peck".into(), 2, ev(0.02, 200, "turn", "priced", "deepseek/deepseek-flash"), Some("api:deepseek/deepseek-flash".into())),
+            ("r2".into(), "claude-code".into(), 3, ev(0.10, 1000, "cumulative", "estimated", ""), Some("cli:claude-code".into())),
+            ("r2".into(), "claude-code".into(), 4, ev(0.25, 1500, "cumulative", "estimated", ""), Some("cli:claude-code".into())),
+            ("o1".into(), "peck".into(), 5, ev(0.005, 50, "turn", "priced", "deepseek/deepseek-flash"), None),
         ];
         let points = spend_points(rows);
-        assert_eq!(points.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["deepseek/deepseek-flash", "deepseek/deepseek-flash", "claude-code", "claude-code", "oneshot", "team"]);
-        // v0.9：带模型 id 的按模型记——合作里那一段、Peck Loop 委派的子任务、CLI 委派出去的子任务（记成 Peck）。
+        assert_eq!(points.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["deepseek/deepseek-flash", "deepseek/deepseek-flash", "claude-code", "claude-code", "oneshot"]);
+        // 带模型 id 的按模型记：Peck Loop 派的子代理、CLI 委派出去的（记成 Peck）。
         let with = |model: &str| format!(r#"{{"type":"usage.updated","usage":{{"input":10}},"cost":{{"usd":0.001,"source":"priced"}},"scope":"turn","model":"{model}"}}"#);
         let newer = spend_points(vec![
-            ("t2".into(), "peck".into(), 7, with("anthropic/claude-sonnet-5-5"), Some("team:|api:anthropic/claude-sonnet-5-5|cli:codex".into())),
             ("p2".into(), "peck".into(), 8, with("deepseek/deepseek-flash"), Some("api:anthropic/claude-sonnet-5-5".into())),
             ("c2".into(), "claude-code".into(), 9, with("deepseek/deepseek-flash"), Some("cli:claude-code".into())),
             ("o2".into(), "peck".into(), 10, with("deepseek/deepseek-flash"), None),
         ]);
         assert_eq!(newer.iter().map(|p| (p.key.as_str(), p.engine.as_str())).collect::<Vec<_>>(), [
-            ("anthropic/claude-sonnet-5-5", "peck"),
             ("deepseek/deepseek-flash", "peck"),
             ("deepseek/deepseek-flash", "peck"),
             ("oneshot", "peck"),
@@ -267,7 +261,7 @@ mod tests {
         assert_eq!(points[3].input, Some(500));
         assert!(points[2].estimated && !points[0].estimated);
         let total: f64 = points.iter().filter_map(|p| p.usd).sum();
-        assert!((total - 0.287).abs() < 1e-9);
+        assert!((total - 0.285).abs() < 1e-9);
     }
 
     #[test]
@@ -302,7 +296,7 @@ mod tests {
             row("r1", "codex", ev(3_000_000, "cumulative", "null"), Some("gpt-6-luna")),
             // 模型没在价格表里：照旧算不出。
             row("r2", "muse", ev(10, "turn", "null"), Some("no-such-model")),
-            row("r3", "antigravity", ev(1_000_000, "turn", "null"), Some("gemini-4-argon-medium")),
+            row("r3", "grok", ev(1_000_000, "turn", "null"), Some("grok-4.7")),
         ], Some(&book));
         let luna = book.find("gpt-6-luna").unwrap();
         // 第二条取差：200 万进、0 出（累计的 output 没变）。

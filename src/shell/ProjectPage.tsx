@@ -48,8 +48,8 @@ export const ProjectPage: React.FC<{
     setSaving(true);
     try { await ipc.workspaceUpdate(workspace.id, patch); await onChanged(); say(message); } catch (e) { say(e); } finally { setSaving(false); }
   };
-  // 项目的默认谁来干：一个 API 模型或一个 CLI（接力、审查在 AGENTS 里搭）。
-  const options = pickable(entries).filter((e) => e.group !== "flow");
+  // 项目的默认谁来干：PLOOP 或一个 CLI（主角色和子代理照设置 → AGENTS）。
+  const options = pickable(entries).filter((e) => e.group !== "peck");
   const folders = settings.folders ?? [];
   const [folderPath, setFolderPath] = useState("");
   const envText = (settings.env ?? []).map((v) => `${v.name}=${v.value}`).join("\n");
@@ -199,7 +199,7 @@ const ProjectMcp: React.FC<{
   };
   return (
     <>
-      <p className="lbl">MCP<Info text="Peck Loop 在这个项目里起的 MCP 服务器：项目根 .mcp.json 里的（Claude Code 的写法，一份四家都用）和设置 → PLUGINS 里 MCP SERVERS 的，同名的以项目的为准。项目里的是项目里的程序，第一次起之前问你一次，.mcp.json 改了再问。TEST 起一次、记下每个工具是只读还是会改：Grok、Antigravity 问要不要调这些工具时，Peck 照这个替它们批只读的。CLI 引擎自己读 .mcp.json，这里关掉只管 Peck Loop。" /></p>
+      <p className="lbl">MCP<Info text="Peck Loop 在这个项目里起的 MCP 服务器：项目根 .mcp.json 里的（Claude Code 的写法，一份四家都用）和设置 → PLUGINS 里 MCP SERVERS 的，同名的以项目的为准。项目里的是项目里的程序，第一次起之前问你一次，.mcp.json 改了再问。TEST 起一次、记下每个工具是只读还是会改：Grok 问要不要调这些工具时，Peck 照这个替它批只读的。CLI 引擎自己读 .mcp.json，这里关掉只管 Peck Loop。" /></p>
       {view?.error && <p className="hint is-bad">{view.error}</p>}
       <div className="set-rows">
         {view?.rows.map((r) => (

@@ -21,7 +21,7 @@
 
 - `pnpm dev`（固定端口 1430），开 `http://localhost:1430/?mock`；内置浏览器里是 `personal-cli-studio/.claude/launch.json` 的 `peck-mock`。`&empty` 看没有项目的空状态。
 - 浏览器里 `src/lib/ipc.ts` 把调用转给 `src/dev/mockIpc.ts`（数据在 `mockData.ts`，只在内存，刷新重置）；原生窗口永远走 Rust。
-- 假数据有 3 个项目（notebook、peck、edge-gateway）加一个文件夹不在了的，开局的任务都带事件日志（`mockData.ts` 的 `MOCK_EVENTS`）：notebook 有一个一直在跑的任务（那个项目的 AGENTS 锁着）、Grok 和 DeepSeek 各做完一个；peck 有一个 PLOOP 做完（Opus 写规范 → DeepSeek 实施）、一个 Grok 没登录失败；edge-gateway 有一个以前的接力（Muse → Grok，旧记录照样显示）和一个归档的。**试新东西用 peck 项目**。
+- 假数据有 3 个项目（notebook、peck、edge-gateway）加一个文件夹不在了的，开局的任务都带事件日志（`mockData.ts` 的 `MOCK_EVENTS`）：notebook 有一个一直在跑的任务（那个项目的 AGENTS 锁着）、Grok 和 DeepSeek 各做完一个；peck 有一个 PLOOP 做完（DeepSeek 当主角色）、一个 Grok 没登录失败；edge-gateway 有一个 Grok 做完的和一个归档的。**试新东西用 peck 项目**。
 - 打开是全部项目页（中栏列项目，左栏只有 AGENTS）；点一个项目进去，PROJECTS 头上的放大图标回来。
 - 发任务：选项目 → NEW TASK → 左栏 AGENTS 选谁来干 → 一句话 → ↵。模型列表全部当能用。按这句话里的字挑场景：
 
@@ -101,7 +101,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 
 ## 夹具（Gateway）
 
-- `src-tauri/tests/fixtures/gateway/<名字>/`：`raw.jsonl`（原始输出，去掉了 Key、账号、邮箱，路径换成 `{{WORKSPACE}}`、`{{HOME}}`）和 `events.jsonl`（转成的统一事件）。五家 CLI 各一个小任务，四家 API 各一次带工具的请求和回放；`models-mock.json` 是 `?mock` 的模型列表。
+- `src-tauri/tests/fixtures/gateway/<名字>/`：`raw.jsonl`（原始输出，去掉了 Key、账号、邮箱，路径换成 `{{WORKSPACE}}`、`{{HOME}}`）和 `events.jsonl`（转成的统一事件）。四家 CLI 各一个小任务，四家 API 各一次带工具的请求和回放；`models-mock.json` 是 `?mock` 的模型列表。
 - 改了转换器、确认新结果对：`PECK_REGEN_FIXTURES=1 cargo test gateway` 重写期望文件，再看 `git diff`。
 
 ## 真 CLI、真 API
@@ -125,7 +125,6 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 |---|---|---|
 | Codex | [App Server](https://learn.chatgpt.com/docs/app-server)：`account/rateLimits/read`、`account/rateLimits/updated` | 不用 API Key 推订阅额度；credits 不当 USD |
 | Claude Code | [status line JSON](https://code.claude.com/docs/en/statusline)：`rate_limits`；Peck 现在跑 `claude -p /usage` | 空闲不刷新；缺字段不是 0；`cli/bin` 的 Claude Code 要先登录 |
-| Antigravity | [CLI statusline](https://antigravity.google/docs/cli/statusline)：`quota` | 只是 CLI 的路径，不代表桌面 App |
 | Muse CLI | `muse usage --json`（[更新记录](https://dev.meta.ai/docs/muse-code/changelog)） | 用 `allowance.asOfMs` 作数据时间 |
 | Grok CLI | [`/usage`](https://docs.x.ai/build/modes-and-commands) | `usage --json` 还不给套餐数据 |
 | DeepSeek API | [GET `/user/balance`](https://api-docs.deepseek.com/api/get-user-balance/) | 用已配置的 Key；换 Key 清旧余额 |

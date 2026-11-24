@@ -1,20 +1,16 @@
-//! Grok 和 Antigravity：ACP（Agent Client Protocol，stdio JSON-RPC）。
+//! Grok：ACP（Agent Client Protocol，stdio JSON-RPC，`grok agent stdio`）。
 //!
 //! 一个回合：`initialize` → `session/new`（续接用 `session/resume`，不回放历史）→ 按任务设模型、
 //! 强度、模式（`session/set_config_option`）→ `session/prompt`，它的回应就是这一轮的结束。
 //! 审批是 ACP 发来的 `session/request_permission`，回答就是这个请求的结果。打断发 `session/cancel`
 //! 通知，还没回答的审批一律回「取消」。ACP 一轮里不能再追加一句（不支持 `Control::Append`）。
-//!
-//! 差别：
-//! - Grok（`grok agent stdio`）：强度是 `reasoning_effort`；没有模式，权限靠 Peck 回答审批。
-//! - Antigravity（`agy acp`）：强度是 `thought_level`；模式 PLAN = `plan`、EDIT = `accept-edits`、
-//!   AUTO = `auto`。**只做直接调用**（模型列表里标了，不进任何自动化），Gateway 这一层照常能跑。
+//! 强度是 `reasoning_effort`；没有模式，权限靠 Peck 回答审批。
 
 use super::{emit_all, emit_engine_died, is_rpc_response, EngineSetup, Launch, Line, Pipe};
 use crate::gateway::caps::AgentCaps;
 use crate::gateway::convert::acp::AcpConverter;
 use crate::gateway::convert::LineConverter;
-use crate::gateway::event::{ApprovalDecision, EventBody, NoticeLevel, PermissionLevel, ResolvedBy, TurnEndReason};
+use crate::gateway::event::{ApprovalDecision, EventBody, NoticeLevel, ResolvedBy, TurnEndReason};
 use crate::gateway::log::EventSink;
 use crate::gateway::{AgentBackend, AgentTask, BoxFuture, Control, ErrorKind, GatewayError, RunOutcome};
 use serde_json::{json, Value};
@@ -22,32 +18,16 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// 两家的差别。
+/// 走 ACP 的引擎（现在只有 Grok）。
 #[derive(Debug, Clone)]
 pub struct Flavor {
     pub engine: &'static str,
     pub label: &'static str,
     pub args: &'static [&'static str],
     pub effort_option: &'static str,
-    /// 有模式的引擎：三档对应的模式。
-    pub modes: Option<[&'static str; 3]>,
 }
 
-pub const GROK: Flavor = Flavor {
-    engine: "grok",
-    label: "Grok",
-    args: &["agent", "stdio"],
-    effort_option: "reasoning_effort",
-    modes: None,
-};
-
-pub const ANTIGRAVITY: Flavor = Flavor {
-    engine: "antigravity",
-    label: "Antigravity",
-    args: &["acp"],
-    effort_option: "thought_level",
-    modes: Some(["plan", "accept-edits", "auto"]),
-};
+pub const GROK: Flavor = Flavor { engine: "grok", label: "Grok", args: &["agent", "stdio"], effort_option: "reasoning_effort" };
 
 pub struct AcpBackend {
     setup: EngineSetup,
@@ -226,14 +206,6 @@ impl Session {
         if let Some(effort) = &task.effort {
             options.push((self.flavor.effort_option, effort.clone()));
         }
-        if let Some(modes) = self.flavor.modes {
-            let mode = match task.permission {
-                PermissionLevel::Plan => modes[0],
-                PermissionLevel::Edit => modes[1],
-                PermissionLevel::Auto => modes[2],
-            };
-            options.push(("mode", mode.into()));
-        }
         for (id, value) in options {
             if let Err(e) = self
                 .request("session/set_config_option", json!({"sessionId": session, "configId": id, "value": value}))
@@ -386,6 +358,7 @@ mod tests {
     use super::*;
     use crate::gateway::convert::{fixtures, Emitted};
     use crate::gateway::engines::testing::auto_answer;
+    use crate::gateway::event::PermissionLevel;
     use std::path::PathBuf;
 
     fn task(model: &str, effort: &str) -> AgentTask {
@@ -403,29 +376,10 @@ mod tests {
         }
     }
 
-    /// 录的时候没设模式（请求 5 就是提示）。Antigravity 引擎会多设一次模式：回放时在第 4 个回应后面补一条
-    /// 空的回应当作设模式的，原来的 5 号回应挪成 6 号。
-    fn with_mode_reply(raw: &str) -> String {
-        let mut out = String::new();
-        for l in raw.lines().filter(|l| !l.trim().is_empty()) {
-            let mut v: Value = serde_json::from_str(l).unwrap();
-            let resp = is_rpc_response(&v);
-            if resp && v["id"] == json!(5) {
-                v["id"] = json!(6);
-            }
-            out.push_str(&(v.to_string() + "\n"));
-            if resp && v["id"] == json!(4) {
-                out.push_str("{\"id\": 5, \"result\": {}}\n");
-            }
-        }
-        out
-    }
-
     async fn replay(flavor: Flavor, name: &str, t: AgentTask) -> (RunOutcome, Vec<Emitted>, Vec<Value>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let (sink, events) = auto_answer(flavor.engine, tx, |_| ApprovalDecision::AllowOnce, "");
         let raw = fixtures::read(name, "raw.jsonl");
-        let raw = if flavor.modes.is_some() { with_mode_reply(&raw) } else { raw };
         let pipe = Pipe::script(&raw);
         let mut session = Session::new(pipe, flavor, &t, sink);
         session.start(&t).await.unwrap();
@@ -460,25 +414,12 @@ mod tests {
         assert_eq!(got.len() - want.len(), 1, "一次审批、一条 approval.resolved");
     }
 
-    #[tokio::test]
-    async fn antigravity_sets_mode_and_replays() {
-        let (outcome, got, sent) = replay(ANTIGRAVITY, "antigravity-small-task", task("gemini-3.8-flash", "low")).await;
-        assert_eq!(outcome.reason, TurnEndReason::Done);
-        assert_eq!(sent[3]["params"]["configId"], "thought_level");
-        assert_eq!(sent[4]["params"], json!({"sessionId": sent[4]["params"]["sessionId"], "configId": "mode", "value": "accept-edits"}));
-        let want = crate::gateway::mock::parse_events_jsonl(&fixtures::read("antigravity-small-task", "events.jsonl")).unwrap();
-        assert_eq!(without_resolved(got), want);
-    }
-
-    /// 真跑一个小任务（本地，平时不跑）：`PECK_LIVE_ACP=grok|antigravity PECK_LIVE_BIN=… PECK_LIVE_CWD=…
+    /// 真跑一个小任务（本地，平时不跑）：`PECK_LIVE_BIN=… PECK_LIVE_CWD=…
     /// PECK_LIVE_PROMPT=… PECK_LIVE_MODEL=… PECK_LIVE_EFFORT=…`。审批一律批准一次。
     #[tokio::test]
     #[ignore]
     async fn live_small_task() {
-        let flavor = match std::env::var("PECK_LIVE_ACP").as_deref() {
-            Ok("antigravity") => ANTIGRAVITY,
-            _ => GROK,
-        };
+        let flavor = GROK;
         let bin = PathBuf::from(std::env::var("PECK_LIVE_BIN").expect("PECK_LIVE_BIN"));
         let setup = EngineSetup {
             path: crate::agent::build_augmented_path(&[bin.parent().unwrap().to_string_lossy().into_owned()]),

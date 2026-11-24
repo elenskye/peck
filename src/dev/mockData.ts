@@ -38,7 +38,7 @@ export const MOCK_SESSIONS: Session[] = [
 
 const SEED_CAPS: AgentCaps = {
   streaming: true, reasoningReplay: true, tools: "peck", approvals: "live", askUser: true, steer: true, interrupt: true,
-  resume: true, mcpInject: false, usage: "per_turn", cost: "priced", quota: false, switchModel: true, needsTty: false, directOnly: false,
+  resume: true, mcpInject: false, usage: "per_turn", cost: "priced", quota: false, switchModel: true, needsTty: false,
 };
 
 const started = (engine: string, model: string | null = null): ReplayEvent => ({ type: "session.started", engine, model, caps: SEED_CAPS, tools: [], mcp: [] });
@@ -48,13 +48,6 @@ const ok = (callId: string, output: string, extra: { exitCode?: number; diff?: F
 const edited = (path: string, additions: number, deletions: number, created = false): FileDiff => ({ path, change: created ? "added" : "modified", additions, deletions });
 const usage = (usd: number, source: "priced" | "estimated" = "priced"): ReplayEvent => ({ type: "usage.updated", usage: { input: 9_200, output: 1_400, cacheRead: 4_100, cacheWrite: null, reasoning: null }, cost: { usd, source }, scope: "turn" });
 const turnEnd = (reason: "done" | "error" = "done", error: string | null = null): ReplayEvent => ({ type: "turn.completed", turnId: "turn-1", reason, error });
-const stage = (role: "spec" | "implement", engine: string, model: string | null, title: string, body: ReplayEvent[]): ReplayEvent[] => [
-  { type: "stage.started", stage: role, engine, model, title },
-  started(engine, model),
-  ...body,
-  { type: "stage.completed", stage: role, reason: "done", error: null, verdict: null },
-];
-
 /** 编上号、按时间排开（从 `from` 起，每条隔 `gap` 毫秒）。 */
 const stamp = (events: ReplayEvent[], from: number, gap: number): AgentEvent[] => events.map((e, i) => ({ ...(e as object), seq: i, at: from + i * gap }) as AgentEvent);
 
@@ -64,47 +57,6 @@ function step(runId: string, agentId: string, label: string, status: StepDescrip
 }
 const file = (path: string, kind: FileChangeKind, additions: number, deletions: number) => ({ path, kind, additions, deletions });
 
-const SPEC_9 = `## 目标
-设置里加一个「通知」开关，默认开；关了以后任务做完不发 macOS 通知。
-
-## 改哪些文件
-- \`src-tauri/src/settings.rs\`：加 \`notifications\` 字段，默认 true
-- \`src-tauri/src/notify.rs\`：发通知前读这个开关
-
-## 步骤
-1. 读两处现在的写法
-2. 加字段和默认值
-3. 发通知前判断
-4. 跑 \`cargo test\`
-
-## 验收标准
-1. 新装的设置里 \`notifications\` 是 true
-2. 关了以后 \`notify\` 直接返回
-3. \`cargo test\` 过
-
-## 不做什么
-不动通知的文案和样式。`;
-
-const SPEC_7 = `## 目标
-限流中间件支持按路由单独配置阈值，没配的用全局默认。
-
-## 改哪些文件
-- \`internal/ratelimit/config.go\`：加 \`PerRoute map[string]Limit\`
-- \`internal/ratelimit/middleware.go\`：先查路由，查不到用全局
-- \`internal/ratelimit/middleware_test.go\`：补两个用例
-
-## 步骤
-1. 配置加表
-2. 中间件改查找顺序
-3. 补用例，跑 \`go test ./...\`
-
-## 验收标准
-1. 配了的路由按自己的阈值
-2. 没配的回落全局
-3. \`go test ./...\` 过
-
-## 不做什么
-不改全局默认值。`;
 
 const run12: RunRecord = {
   id: "run-12", number: 12, sessionId: "task-12",
@@ -140,9 +92,9 @@ const run9: RunRecord = {
   prompt: "设置里加一个「通知」开关，默认开，关了以后任务完成不发 macOS 通知。",
   status: "succeeded", startedAt: NOW - 1 * HOUR - 30 * MIN + 2_000, finishedAt: NOW - 1 * HOUR,
   summary: "settings.rs 加了 notifications 字段（默认 true），notify.rs 发通知前读开关。cargo test 通过。",
-  steps: [step("run-9", "team", "Peck · Claude Opus 5.5 写规范 → Peck · DeepSeek V4.1 Flash 1017 实施", "succeeded", NOW - 1 * HOUR - 30 * MIN + 2_000, NOW - 1 * HOUR)],
+  steps: [step("run-9", "peck", "Peck · DeepSeek V4.1 Flash 1017", "succeeded", NOW - 1 * HOUR - 30 * MIN + 2_000, NOW - 1 * HOUR)],
   files: [file("src-tauri/src/settings.rs", "modify", 6, 0), file("src-tauri/src/notify.rs", "modify", 3, 1)],
-  who: "team:api:anthropic/claude-opus-5-5|api:deepseek/deepseek-flash|", permission: "edit",
+  who: "api:deepseek/deepseek-flash", permission: "edit",
 };
 
 const run8: RunRecord = {
@@ -159,10 +111,10 @@ const run7: RunRecord = {
   id: "run-7", number: 7, sessionId: "task-7",
   prompt: "限流中间件改成可以按路由单独配置阈值，没配的用全局默认。",
   status: "succeeded", startedAt: NOW - 2 * DAY + 2_000, finishedAt: NOW - 2 * DAY + 11 * MIN,
-  summary: "Muse 写了规范，Grok 改了 3 个文件。go test ./... 通过。",
-  steps: [step("run-7", "team", "Muse 写规范 → Grok 实施", "succeeded", NOW - 2 * DAY + 2_000, NOW - 2 * DAY + 11 * MIN)],
+  summary: "Grok 改了 3 个文件。go test ./... 通过。",
+  steps: [step("run-7", "grok", "Grok", "succeeded", NOW - 2 * DAY + 2_000, NOW - 2 * DAY + 11 * MIN)],
   files: [file("internal/ratelimit/config.go", "modify", 14, 2), file("internal/ratelimit/middleware.go", "modify", 9, 3), file("internal/ratelimit/middleware_test.go", "modify", 22, 0)],
-  who: "team:cli:muse|cli:grok|", permission: "edit",
+  who: "cli:grok", permission: "edit",
 };
 
 const run6: RunRecord = {
@@ -222,21 +174,18 @@ export const MOCK_EVENTS: Record<string, AgentEvent[]> = {
     turnEnd(),
   ], NOW - 1 * DAY + 2_000, 60_000),
   "run-9": stamp([
+    started("peck", "deepseek/deepseek-flash"),
     { type: "turn.started", turnId: "turn-1" },
-    ...stage("spec", "peck", "anthropic/claude-opus-5-5", "Peck · Claude Opus 5.5 写规范", [
+    ...[
       tool("s1", "read_file", "read", "读 src-tauri/src/settings.rs"), ok("s1", "pub struct Settings { … }"),
       tool("s2", "read_file", "read", "读 src-tauri/src/notify.rs"), ok("s2", "pub fn notify(title: &str) { … }"),
-      say("s-spec", SPEC_9),
-      usage(0.021),
-    ]),
-    ...stage("implement", "peck", "deepseek/deepseek-flash", "Peck · DeepSeek V4.1 Flash 1017 实施", [
-      say("b1", "照规范改两处。"),
+      say("b1", "改两处。"),
       tool("b2", "write_patch", "edit", "改 src-tauri/src/settings.rs"), ok("b2", "改好了", { diff: [edited("src-tauri/src/settings.rs", 6, 0)] }),
       tool("b3", "write_patch", "edit", "改 src-tauri/src/notify.rs"), ok("b3", "改好了", { diff: [edited("src-tauri/src/notify.rs", 3, 1)] }),
       tool("b4", "bash_run", "run", "跑 cargo test"), ok("b4", "test result: ok. 41 passed; 0 failed", { exitCode: 0 }),
       say("b5", "settings.rs 加了 notifications 字段（默认 true），notify.rs 发通知前读开关。cargo test 通过。"),
       usage(0.0036),
-    ]),
+    ],
     turnEnd(),
   ], NOW - 1 * HOUR - 30 * MIN + 2_000, 90_000),
   "run-8": stamp([
@@ -245,21 +194,16 @@ export const MOCK_EVENTS: Record<string, AgentEvent[]> = {
     turnEnd("error", "Grok 没登录：在终端跑 grok login 再试。"),
   ], NOW - 5 * HOUR + 2_000, 4_000),
   "run-7": stamp([
+    started("grok"),
     { type: "turn.started", turnId: "turn-1" },
-    ...stage("spec", "muse", null, "Muse 写规范", [
-      tool("s1", "read", "read", "读 internal/ratelimit/config.go"), ok("s1", "type Config struct { … }"),
-      tool("s2", "read", "read", "读 internal/ratelimit/middleware.go"), ok("s2", "func Middleware(cfg Config) … { … }"),
-      say("s-spec", SPEC_7),
-      usage(0.012, "estimated"),
-    ]),
-    ...stage("implement", "grok", null, "Grok 实施", [
+    ...[
       tool("b1", "edit", "edit", "改 internal/ratelimit/config.go"), ok("b1", "", { diff: [edited("internal/ratelimit/config.go", 14, 2)] }),
       tool("b2", "edit", "edit", "改 internal/ratelimit/middleware.go"), ok("b2", "", { diff: [edited("internal/ratelimit/middleware.go", 9, 3)] }),
       tool("b3", "edit", "edit", "改 internal/ratelimit/middleware_test.go"), ok("b3", "", { diff: [edited("internal/ratelimit/middleware_test.go", 22, 0)] }),
       tool("b4", "execute", "run", "跑 go test ./..."), ok("b4", "ok  edge-gateway/internal/ratelimit  0.41s", { exitCode: 0 }),
-      say("b5", "按规范改了 3 个文件：配置加 PerRoute，中间件先查路由再回落全局，补了两个用例。go test ./... 通过。"),
+      say("b5", "改了 3 个文件：配置加 PerRoute，中间件先查路由再回落全局，补了两个用例。go test ./... 通过。"),
       usage(0.024, "estimated"),
-    ]),
+    ],
     turnEnd(),
   ], NOW - 2 * DAY + 2_000, 50_000),
   "run-6": stamp([

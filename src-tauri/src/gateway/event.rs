@@ -48,7 +48,7 @@ pub enum EventBody {
     /// 引擎起来了：它是谁、能做什么、带了哪些工具和 MCP。
     #[serde(rename = "session.started")]
     SessionStarted {
-        /// 引擎 id：`peck`（Peck Loop）、`codex`、`claude-code`、`muse`、`grok`、`antigravity`。
+        /// 引擎 id：`peck`（Peck Loop）、`codex`、`claude-code`、`muse`、`grok`。
         engine: String,
         #[serde(default)]
         model: Option<String>,
@@ -323,33 +323,6 @@ pub enum EventBody {
         exit_code: Option<i32>,
     },
 
-    // ── 合作（v0.8）──
-    /// 接力、审查里的一段开始了：哪一段、谁来干。这一段的事件跟在后面，收尾是 `stage.completed`
-    /// （这一段引擎自己的 `turn.completed` 换成它；整个任务最后才有一条 `turn.completed`）。
-    #[serde(rename = "stage.started")]
-    StageStarted {
-        stage: StageRole,
-        /// 引擎 id（`peck`、`codex`……）。
-        engine: String,
-        #[serde(default)]
-        model: Option<String>,
-        /// 给人看的：「Codex 写规范」。
-        title: String,
-    },
-    #[serde(rename = "stage.completed")]
-    StageCompleted {
-        stage: StageRole,
-        reason: TurnEndReason,
-        #[serde(default)]
-        error: Option<String>,
-        /// 审查的结论（只有审查那一段有）。
-        #[serde(default)]
-        verdict: Option<ReviewVerdict>,
-        /// 审查按规范的验收标准逐条判的结果（v0.9，接力带了验收标准才有）。
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        checks: Vec<CriterionCheck>,
-    },
-
     // ── 其他 ──
     #[serde(rename = "notice")]
     Notice { level: NoticeLevel, text: String },
@@ -407,8 +380,6 @@ impl EventBody {
             Self::SkillReviewed { .. } => "skill.reviewed",
             Self::HookRan { .. } => "hook.ran",
             Self::BackgroundUpdated { .. } => "background.updated",
-            Self::StageStarted { .. } => "stage.started",
-            Self::StageCompleted { .. } => "stage.completed",
             Self::Notice { .. } => "notice",
             Self::Error { .. } => "error",
             Self::Raw { .. } => "raw",
@@ -417,7 +388,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 36] = [
+    pub const TYPE_NAMES: [&'static str; 34] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -449,8 +420,6 @@ impl EventBody {
         "skill.reviewed",
         "hook.ran",
         "background.updated",
-        "stage.started",
-        "stage.completed",
         "notice",
         "error",
         "raw",
@@ -477,41 +446,12 @@ pub enum CompactStep {
     Summary,
 }
 
-/// 接力、审查里的一段（v0.8）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StageRole {
-    /// 接力的前一个：只读，写一份实施规范。
-    Spec,
-    /// 动手的那一个。
-    Implement,
-    /// 审查：只读，看这次的改动。
-    Review,
-    /// 审查说要改：交回动手的那一个修一次。
-    Fix,
-}
-
 /// 审查的结论。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewVerdict {
     Pass,
     Changes,
-}
-
-/// 一条验收标准的审查结果（v0.9）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CriterionCheck {
-    /// 规范里的编号（从 1 起）。
-    pub n: u32,
-    pub criterion: String,
-    /// 通过、没过；审查没判这一条为空。
-    #[serde(default)]
-    pub pass: Option<bool>,
-    /// 审查写的理由（没过的写哪里不对、怎么改）。
-    #[serde(default)]
-    pub note: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -51,7 +51,7 @@ function context(o: DemoOptions, conversation: number, tools: number): ReplayEve
 
 export const PECK_CAPS: AgentCaps = {
   streaming: true, reasoningReplay: true, tools: "peck", approvals: "live", askUser: true, steer: true, interrupt: true,
-  resume: true, mcpInject: false, usage: "per_turn", cost: "priced", quota: false, switchModel: true, needsTty: false, directOnly: false,
+  resume: true, mcpInject: false, usage: "per_turn", cost: "priced", quota: false, switchModel: true, needsTty: false,
 };
 
 const chunks = (text: string, size = 6): string[] => {

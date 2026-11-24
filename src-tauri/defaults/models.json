@@ -674,12 +674,6 @@
       "label": "Grok",
       "command": "grok",
       "protocol": "acp"
-    },
-    {
-      "id": "antigravity",
-      "label": "Antigravity",
-      "command": "agy",
-      "protocol": "acp"
     }
   ]
 }

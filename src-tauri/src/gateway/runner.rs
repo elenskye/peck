@@ -1,28 +1,23 @@
-//! 发任务（Gateway 版）：「谁来干」是 CLI 引擎（模型列表里的 `cli:<引擎>`）的任务走这里。
-//! 旧的 `run_dispatch`（按清单起进程）照旧在，接力和规划 + 实施还走它；Peck Loop（`api:…`）
-//! 由 Phase 6 的 `harness/` 接。
+//! CLI 引擎的任务（「谁来干」是 `cli:<引擎>`）。Peck Loop（`api:…`）的在 `harness/run.rs`，两边共用 `run.rs` 的
+//! 占号、快照和收尾（`claim_run`、`Lifecycle`）。
 //!
-//! 和旧的一样的地方：任务记录（runs 表，多记一个 `engine`）、一个项目一次一个任务、影子仓库的快照
-//! （改动记录和按快照回退照旧能用）、`run_cancel` 能停。旧的任务事件（`RunEvent`）只发开始、结束这几条进
-//! 任务记录；过程是统一事件（`AgentEvent`），经 `channel` 发给界面、存进事件日志。
+//! 任务记录（runs 表，多记一个 `engine`）、一个项目一次一个任务、影子仓库的快照（改动记录和按快照回退）、
+//! `run_cancel` 能停。任务事件（`RunEvent`）只发开始、结束这几条进任务记录；过程是统一事件（`AgentEvent`），
+//! 经 `channel` 发给界面、存进事件日志。
 //!
-//! 审批和提问的回答：IPC `gateway_control(runId, control)`。Grok、Antigravity 跑的时候顺手开 Peck 的
+//! 审批和提问的回答：IPC `gateway_control(runId, control)`。Grok 跑的时候顺手开 Peck 的
 //! 本机 MCP（`ask_user`）。用非默认账号跑时，引擎报的额度不写进顶栏 QUOTA 的卡片。
 
 use super::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
 use super::log::EventSink;
 use super::{catalog, engines, mcp, AgentTask, Control};
-use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
-use crate::flow::{DispatchPlan, ResolvedStepPlan};
+use crate::events::{RunStatus, StepStatus};
 use crate::harness::run::permission_of;
-use crate::process::ProcessCancelHandle;
 use crate::run::ActiveRunContext;
-use crate::snapshot::{record_run_base, record_run_finish, ShadowRepo};
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
 use tauri::ipc::Channel;
 use tokio::sync::mpsc;
 
@@ -65,8 +60,6 @@ pub async fn gateway_run_start(
     let backend = engines::from_state(&state, &engine).await.map_err(|e| e.message)?;
     let images = crate::harness::run::checked_images(images)?;
     let attachments = crate::harness::run::save_attachments(&session_id, &images);
-    // 只有一个账号（和客户端同一个），额度照常记进 QUOTA。
-    let default_account = true;
     start_engine_run(
         EngineRun {
             store: state.store.clone(),
@@ -81,7 +74,6 @@ pub async fn gateway_run_start(
             model,
             effort,
             resume,
-            default_account,
             worktree: worktree.unwrap_or(false),
             attachments,
         },
@@ -106,7 +98,6 @@ pub(crate) struct EngineRun {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub resume: Option<String>,
-    pub default_account: bool,
     /// 在独立工作区（git worktree）里做。
     pub worktree: bool,
     /// 附图存成的文件（v0.8）：路径写在引擎看到的这一句后面。
@@ -132,72 +123,34 @@ pub(crate) fn start_engine_run(
         model,
         effort,
         resume,
-        default_account,
         worktree,
         attachments,
     } = run;
-    if worktree && level == PermissionLevel::Plan {
-        return Err("PLAN 只读，不用独立工作区。".into());
-    }
-
-    // 任务记录：和旧的发任务一样占一个号、一个项目一次一个。
-    let (run_id, step_id, workspace, workspace_id, cancel_rx, mut refs, fork, allowed, hints, settings, folders) = {
-        let mut active = active_runs.lock().map_err(|e| e.to_string())?;
-        let mut db = store.lock().map_err(|e| e.to_string())?;
-        let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
-        // `@` 进来的旧任务（v0.6）：引擎看到的这一句前面带上那几个任务的经过；任务记录里照旧是站主写的原话。
-        let refs = crate::harness::history::task_refs(&db, &ws.id, &prompt);
-        let workspace = PathBuf::from(&ws.path);
-        if !workspace.is_dir() {
-            return Err("项目文件夹不在了，重新打开一次。".into());
-        }
-        crate::worktree::pending_in_session(&db, &session_id)?;
-        // 项目的其他文件夹（v0.10，CLI 也认）：独立工作区里一律只读（和 Peck Loop 一样）；能改的也锁上。
-        let folders: Vec<(PathBuf, bool)> = if worktree { ws.settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { ws.settings.live_folders() };
-        let writable: Vec<PathBuf> = if level == PermissionLevel::Plan { vec![] } else { folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect() };
-        let mut touching = vec![workspace.clone()];
-        touching.extend(writable.iter().cloned());
-        if active.values().any(|r| r.touches(&touching)) {
-            return Err("同一个项目一次跑一个任务（项目的文件夹、能改的其他文件夹和在跑的任务重叠也算）。".into());
-        }
-        let number = db.next_run_number().map_err(|e| e.to_string())?;
-        let run_id = format!("run-{number}");
-        let step_id = format!("{run_id}-step-1");
-        let plan = DispatchPlan {
-            steps: vec![ResolvedStepPlan {
-                id: step_id.clone(),
-                step_index: 0,
-                agent_id: engine.clone(),
-                agent_name: label.clone(),
-                title: label.clone(),
-            }],
-        };
-        if worktree && !crate::worktree::available(&workspace) {
-            return Err("这个项目不是 git 仓库，开不了独立工作区。".into());
-        }
-        let mut record = db.create_run(&session_id, &prompt, number, &plan).map_err(|e| e.to_string())?;
-        record.who = Some(who.clone());
-        record.permission = permission.clone();
-        if worktree {
-            let at = crate::worktree::root_for(&workspace).join(&run_id);
-            record.worktree = Some(crate::worktree::WorktreeState { path: at.to_string_lossy().into_owned(), applied_at: None, discarded_at: None });
-        }
-        db.save_run(&record).map_err(|e| e.to_string())?;
-        db.set_run_engine(&run_id, &engine).map_err(|e| e.to_string())?;
-        let (cancel_handle, cancel_rx) = ProcessCancelHandle::new();
-        active.insert(
-            run_id.clone(),
-            ActiveRunContext {
-                workspace_path: workspace.clone(),
-                cancel_handle,
-                writable: writable.clone(),
-            },
-        );
-        // 换了引擎接着发（v0.8）：别家这期间做的带过来，原来那一家的会话留着。
-        let fork = crate::harness::history::fork_context(&db, &session_id, &format!("cli:{engine}"), &run_id);
-        let allowed = db.harness_allowed(&ws.id).unwrap_or_default();
-        let hints = crate::harness::mcp_client::hints_for(&db, &ws.id);
-        (run_id, step_id, workspace, ws.id.clone(), cancel_rx, refs, fork, allowed, hints, ws.settings.clone(), folders)
+    // 任务记录：占一个号、一个项目一次一个（和 Peck Loop 共用，`run.rs`）。
+    let claimed = crate::run::claim_run(crate::run::ClaimSpec {
+        store: &store,
+        active_runs: &active_runs,
+        session_id: &session_id,
+        prompt: &prompt,
+        who: &who,
+        permission: permission.clone(),
+        level,
+        worktree,
+        agent_id: &engine,
+        label: &label,
+    })?;
+    let (run_id, step_id, workspace, workspace_id, cwd) = (claimed.run_id.clone(), claimed.step_id.clone(), claimed.workspace.clone(), claimed.workspace_id.clone(), claimed.cwd.clone());
+    let (settings, folders) = (claimed.settings.clone(), claimed.folders.clone());
+    let (mut refs, fork, allowed, hints) = {
+        let db = store.lock().map_err(|e| crate::run::abandon(&store, &active_runs, &run_id, e.to_string()))?;
+        (
+            // `@` 进来的旧任务（v0.6）：引擎看到的这一句前面带上那几个任务的经过；任务记录里照旧是站主写的原话。
+            crate::harness::history::task_refs(&db, &workspace_id, &prompt),
+            // 换了引擎接着发（v0.8）：别家这期间做的带过来，原来那一家的会话留着。
+            crate::harness::history::fork_context(&db, &session_id, &format!("cli:{engine}"), &run_id),
+            db.harness_allowed(&workspace_id).unwrap_or_default(),
+            crate::harness::mcp_client::hints_for(&db, &workspace_id),
+        )
     };
     if let Some(f) = &fork {
         refs.insert(0, f.text.clone());
@@ -209,8 +162,6 @@ pub(crate) fn start_engine_run(
     // 脚本 Hook（v1.1.4，`cli_hooks.rs`）的「总是允许」和 Peck Loop 共用；引擎的审批规则那一份要交给 sink。
     let hook_allowed = allowed.clone();
     let original_prompt = prompt.clone();
-    // 独立工作区：先建好；建不了这个任务就算失败。
-    let cwd = crate::harness::run::worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
     // 这个任务是谁在干（对话里设定时任务时默认照它）。
     let setup = crate::schedule::Setup { who: who.clone(), model: model.clone(), effort: effort.clone() };
 
@@ -227,7 +178,7 @@ pub(crate) fn start_engine_run(
         // 引擎在收尾那一条里写的原因（「订阅额度用完了，几点重置」这类）：停下时的总结用它，不只写 Error。
         let last_error: Arc<Mutex<Option<String>>> = Arc::default();
         let seen_error = last_error.clone();
-        let mut sink = EventSink::new(id.clone(), Some(step_id.clone()), engine.clone(), Some(store.clone()), move |e: &AgentEvent| {
+        let sink = EventSink::new(id.clone(), Some(step_id.clone()), engine.clone(), Some(store.clone()), move |e: &AgentEvent| {
             if let EventBody::MessageCompleted { text, .. } = &e.body {
                 if let Ok(mut t) = seen.lock() {
                     *t = text.clone();
@@ -267,60 +218,20 @@ pub(crate) fn start_engine_run(
             }
             out(e);
         });
-        if !default_account {
-            sink = sink.without_quota_sync();
-        }
-        let run_sink = RunSink::new(store.clone());
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Info, text });
         }
-        let started = Instant::now();
-        let repo = if worktree { crate::worktree::shadow_repo(&cwd, &workspace).ok() } else { ShadowRepo::open_or_init(&workspace).ok() };
-        let before = repo.as_ref().and_then(|r| {
-            let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
-            record_run_base(&id, r, tree.clone());
-            Some(tree)
-        });
-        // 能改的其他文件夹（v0.10）也拍快照：改动记在任务上、跟着任务回退。
-        let extras = crate::harness::run::snapshot_extras(&id, &folders, level);
-        let descriptor = |status| {
-            ResolvedStepPlan {
-                id: step_id.clone(),
-                step_index: 0,
-                agent_id: engine.clone(),
-                agent_name: label.clone(),
-                title: label.clone(),
-            }
-            .to_descriptor(status)
-        };
-        run_sink.emit(RunEvent::RunStarted {
-            run_id: id.clone(),
-            steps: vec![descriptor(StepStatus::Pending)],
-        });
-        run_sink.emit(RunEvent::StepStarted {
-            run_id: id.clone(),
-            step_id: step_id.clone(),
-            step_index: 0,
-            agent_id: engine.clone(),
-        });
-
+        let life = crate::run::Lifecycle::begin(&store, &active_runs, &claimed, &engine, &label, level, worktree);
         // 停止：`run_cancel` 改成发打断（本机 MCP 里等着批的回退、提交也一起停）。
         let interrupt = control_tx.clone();
         let stop_id = id.clone();
-        let mut cancel_rx = cancel_rx;
-        let watcher = tokio::spawn(async move {
-            while cancel_rx.changed().await.is_ok() {
-                if *cancel_rx.borrow() {
-                    let _ = interrupt.send(Control::Interrupt);
-                    interrupt_subs(&stop_id);
-                    break;
-                }
-            }
+        let watcher = crate::run::watch_cancel(claimed.cancel_rx.clone(), move || {
+            let _ = interrupt.send(Control::Interrupt);
+            interrupt_subs(&stop_id);
         });
-        // Peck 的本机 MCP（v0.10 起每个 CLI 任务都挂）：`create_skill` 都给（C3），`ask_user` 只给自己没有问站主通道的
-        // Grok、Antigravity。
+        // Peck 的本机 MCP（v0.10 起每个 CLI 任务都挂）：`create_skill` 都给（C3），`ask_user` 只给自己没有问站主通道的 Grok。
         let offer = mcp::Offer {
-            ask_user: matches!(engine.as_str(), "grok" | "antigravity"),
+            ask_user: engine == "grok",
             skill_root: Some(workspace.clone()),
             extras: Some(Arc::new(crate::harness::extras::Extras {
                 store: store.clone(),
@@ -348,7 +259,7 @@ pub(crate) fn start_engine_run(
         // 脚本 Hook（v1.1.4）：Peck 替 CLI 跑开场时、发话时（这一句发出去之前，stdout 放在这句前面）和收尾时。
         // 有要跑的，控制通道先交给 `CliHooks`：Hook 卡片的回答归 Peck，别的转给正在跑的那一次引擎。
         let mut control_rx = Some(control_rx);
-        let mut hooks = super::cli_hooks::hooks_for(&engine, &backend.caps(), &cwd).map(|set| {
+        let mut hooks = super::cli_hooks::hooks_for(&engine, &cwd).map(|set| {
             let (remember_store, ws) = (store.clone(), workspace_id.clone());
             super::cli_hooks::CliHooks::new(
                 set,
@@ -368,9 +279,13 @@ pub(crate) fn start_engine_run(
         });
         let mut engine_prompt = engine_prompt;
         let mut held: Option<RunOutcomeOrStop> = None;
+        // 项目记忆（v1.1.5）：新会话（不是续上的）的第一句前面带上，排在开场时的 Hook 前面。
+        let mut contexts: Vec<String> = Vec::new();
+        if resume.is_none() {
+            contexts.extend(crate::harness::context::memory_block(&crate::harness::run::memories_of(&store, &workspace_id)));
+        }
         if let Some(h) = hooks.as_mut() {
             use crate::harness::script_hooks::{context_block, Event};
-            let mut contexts = Vec::new();
             if resume.is_none() {
                 let input = serde_json::json!({"source": "startup", "model": model});
                 if let (_, Some(c)) = h.run(Event::SessionStart, Some("startup"), input).await {
@@ -384,9 +299,9 @@ pub(crate) fn start_engine_run(
             } else if let Some(why) = blocked {
                 held = Some(RunOutcomeOrStop::Blocked(format!("项目的 Hook 拦下了这句话：{why}")));
             }
-            if !contexts.is_empty() {
-                engine_prompt = format!("{}\n\n{engine_prompt}", contexts.join("\n\n"));
-            }
+        }
+        if !contexts.is_empty() {
+            engine_prompt = format!("{}\n\n{engine_prompt}", contexts.join("\n\n"));
         }
         // 控制通道交给引擎（有 Hook 时是 `CliHooks` 转过去的那一条）；按停在引擎起来之前也收得到（通道里先放着）。
         let task = AgentTask {
@@ -466,17 +381,7 @@ pub(crate) fn start_engine_run(
         };
         // 引擎停了还没回来的委派子任务：先停掉再拍收尾快照。
         interrupt_subs(&id);
-        let mut changeset = ChangeSetSummary::default();
-        if let (Some(r), Some(before)) = (repo.as_ref(), before.as_ref()) {
-            if let Ok(after) = r.create_snapshot(&format!("{step_id}-after")) {
-                record_run_finish(&id, after.clone());
-                changeset = r.diff_changeset(before, &after).unwrap_or_default();
-            }
-        }
-        let round_files: Vec<String> = changeset.files.iter().map(|f| f.path.clone()).collect();
-        crate::harness::run::finish_extras(&id, &extras, &mut changeset);
-        // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
-        crate::skill_propose::flush(&id);
+        let (round_files, changeset) = life.snapshot_after();
         // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，续上这个 CLI 的会话问一行提交说明，Peck 自己提交。
         let stop_hook = if worktree { None } else { crate::project_plugins::stop_hook(&workspace) };
         let ask_task = AgentTask {
@@ -502,29 +407,15 @@ pub(crate) fn start_engine_run(
         if let Some(body) = hooked {
             sink.emit(body);
         }
-        run_sink.emit(RunEvent::StepFinished {
-            run_id: id.clone(),
-            step_id: step_id.clone(),
-            status: step_status,
-            exit_code: None,
-            duration_ms: started.elapsed().as_millis() as u64,
-            changeset,
-        });
         let text = last_text.lock().map(|t| t.clone()).unwrap_or_default();
-        run_sink.emit(RunEvent::RunFinished {
-            run_id: id.clone(),
-            status: run_status,
-            summary: match (run_status, failure) {
-                (RunStatus::Succeeded, _) if !text.trim().is_empty() => text,
-                (RunStatus::Succeeded, _) => format!("{label} 跑完了。"),
-                (RunStatus::Cancelled, _) => "已停止。".into(),
-                (_, Some(why)) => format!("{label} 没跑完：{why}"),
-                _ => format!("{label} 没跑完。"),
-            },
-        });
-        if let Ok(mut runs) = active_runs.lock() {
-            runs.remove(&id);
-        }
+        let summary = match (run_status, failure) {
+            (RunStatus::Succeeded, _) if !text.trim().is_empty() => text,
+            (RunStatus::Succeeded, _) => format!("{label} 跑完了。"),
+            (RunStatus::Cancelled, _) => "已停止。".into(),
+            (_, Some(why)) => format!("{label} 没跑完：{why}"),
+            _ => format!("{label} 没跑完。"),
+        };
+        life.finish(step_status, run_status, summary, changeset);
     });
     Ok(run_id)
 }
@@ -607,22 +498,17 @@ pub(crate) enum HintAction {
     Flag(EventBody),
 }
 
-/// CLI（主要是 Grok、Antigravity：ACP 不带工具标注，每调一次都问）问要不要调 MCP 工具：Peck 起过、TEST 过这台服务器、
+/// CLI（主要是 Grok：ACP 不带工具标注，每调一次都问）问要不要调 MCP 工具：Peck 起过、TEST 过这台服务器、
 /// 记得这个工具的标注，就照 Peck Loop 的规矩办（v0.10，roadmap A2）。认不得的照旧给站主。
-/// 卡片标题是转换器写的「MCP <服务器> · <工具>」；Antigravity 的服务器名是「插件_服务器」，按后半截认。
+/// 卡片标题是转换器写的「MCP <服务器> · <工具>」。
 pub(crate) fn mcp_hint(level: PermissionLevel, body: &EventBody, hints: &McpHints, allowed: &std::collections::HashSet<String>) -> Option<HintAction> {
     use super::event::{ApprovalDecision, ToolKind};
     use crate::harness::mcp_client::ToolHint;
     let EventBody::ApprovalRequested { request_id, call_id, kind: ToolKind::Mcp, title, detail, high_risk, options } = body else {
         return None;
     };
-    let (server_raw, tool) = title.strip_prefix("MCP ")?.split_once(" · ")?;
-    let server = if hints.contains_key(server_raw) {
-        server_raw.to_string()
-    } else {
-        hints.keys().find(|k| server_raw.ends_with(&format!("_{k}")))?.clone()
-    };
-    let hint = *hints.get(&server)?.get(tool)?;
+    let (server, tool) = title.strip_prefix("MCP ")?.split_once(" · ")?;
+    let hint = *hints.get(server)?.get(tool)?;
     match hint {
         ToolHint::Destructive if !*high_risk => Some(HintAction::Flag(EventBody::ApprovalRequested {
             request_id: request_id.clone(),
@@ -773,6 +659,7 @@ impl crate::store::Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow::DispatchPlan;
 
     /// member 派的 explorer 编号在 member 的前缀下面（v1.1.3）：审批按最长的前缀转；叫停 member 下面的不碰别人。
     #[test]
@@ -847,7 +734,6 @@ mod tests {
             model: None,
             effort: None,
             resume: None,
-            default_account: true,
             worktree: false,
             attachments: vec![],
         };
@@ -870,7 +756,6 @@ mod tests {
             model: None,
             effort: None,
             resume: None,
-            default_account: true,
             worktree: false,
             attachments: vec![],
         };
@@ -923,7 +808,7 @@ mod tests {
 
     impl super::super::AgentBackend for HookedCli {
         fn caps(&self) -> super::super::caps::AgentCaps {
-            super::super::caps::AgentCaps { resume: true, direct_only: false, ..super::super::caps::AgentCaps::peck_loop() }
+            super::super::caps::AgentCaps { resume: true, ..super::super::caps::AgentCaps::peck_loop() }
         }
 
         fn run(&self, task: AgentTask, sink: EventSink, _control: mpsc::UnboundedReceiver<Control>) -> super::super::BoxFuture<Result<super::super::RunOutcome, super::super::GatewayError>> {
@@ -943,7 +828,7 @@ mod tests {
         }
     }
 
-    /// CLI 的脚本 Hook（v1.1.4）：开场时、发话时的 stdout 放在这一句前面；收尾时拦下就续上它的会话、把原因发过去，
+    /// CLI 的脚本 Hook（v1.1.4）和项目记忆（v1.1.5）：新会话先带记忆；开场时、发话时的 stdout 放在这一句前面；收尾时拦下就续上它的会话、把原因发过去，
     /// 脚本拿得到这一轮改了的文件；每条命令问一次。
     #[tokio::test]
     async fn cli_hooks_wrap_the_sentence_and_keep_the_session_going() {
@@ -965,6 +850,7 @@ mod tests {
         let ws = crate::workspace::Workspace { id: "w1".into(), path: ws_dir.to_string_lossy().into_owned(), name: "试".into(), last_opened_at: 0, git_branch: None, hidden: false, settings: Default::default() };
         store.save_workspace(&ws).unwrap();
         let session = store.create_session(&ws.id, None).unwrap();
+        store.add_memory(&ws.id, "测试用 pnpm test", None).unwrap();
         let mut store = store;
         store.create_run(&session.id, "占号", 970_001, &DispatchPlan { steps: vec![] }).unwrap();
         let store = Arc::new(Mutex::new(store));
@@ -985,7 +871,6 @@ mod tests {
             model: None,
             effort: None,
             resume: None,
-            default_account: true,
             worktree: false,
             attachments: vec![],
         };
@@ -1013,10 +898,12 @@ mod tests {
         let tasks = seen.lock().unwrap().clone();
         assert_eq!(tasks.len(), 2, "收尾拦了一次：续上会话接着干");
         let first = &tasks[0].prompt;
-        assert!(first.starts_with("<hook-context event=\"SessionStart\">\n开场补充"), "{first}");
+        assert!(first.starts_with("<peck-memory>\nNotes about this project") && first.contains("- 测试用 pnpm test\n</peck-memory>"), "新会话先带项目记忆：{first}");
+        assert!(first.find("</peck-memory>").unwrap() < first.find("<hook-context event=\"SessionStart\">\n开场补充").unwrap(), "记忆在开场时的 Hook 前面");
         assert!(first.find("发话补充").unwrap() < first.find("改一下").unwrap());
         assert_eq!(tasks[1].resume.as_deref(), Some("s1"));
         assert!(tasks[1].prompt.contains("先补上测试") && tasks[1].prompt.contains("<hook-feedback event=\"Stop\">"));
+        assert!(!tasks[1].prompt.contains("peck-memory"), "续上的会话不再带");
         let input = std::fs::read_to_string(root.join("stop-input.json")).unwrap();
         assert!(input.contains("\"peck_changed_files\":[\"a.txt\"]"), "{input}");
         let db = store.lock().unwrap();
@@ -1166,10 +1053,8 @@ mod route_tests {
         };
         let all = vec![ApprovalDecision::AllowOnce, ApprovalDecision::AllowAlways, ApprovalDecision::DenyOnce];
         let none = std::collections::HashSet::new();
-        // 只读的哪一档都批（Grok 的「MCP dw · list」、Antigravity 的「MCP dw_dw · list」）。
-        for title in ["MCP dw · list", "MCP dw_dw · list"] {
-            assert_eq!(mcp_hint(PermissionLevel::Plan, &ask(title, all.clone()), &hints, &none), Some(HintAction::Approve("r1".into())));
-        }
+        // 只读的哪一档都批（Grok 的「MCP dw · list」）。
+        assert_eq!(mcp_hint(PermissionLevel::Plan, &ask("MCP dw · list", all.clone()), &hints, &none), Some(HintAction::Approve("r1".into())));
         // 会改的：AUTO 批；EDIT 要这台总是允许过；PLAN 不批。
         let write = ask("MCP dw · write_board", vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce]);
         assert_eq!(mcp_hint(PermissionLevel::Auto, &write, &hints, &none), Some(HintAction::Approve("r1".into())));

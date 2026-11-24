@@ -113,9 +113,7 @@ pub struct LoopConfig {
     /// 外部 MCP 服务器（v0.8 设置里配的，v0.10 加上项目 `.mcp.json` 里的）：发任务时起、任务完就停；ONE SHOT 不起。
     /// 项目里的（`project` 有指纹）第一次起之前问站主。
     pub mcp: Vec<super::mcp_client::McpServerConfig>,
-    /// 合作的几段共用一组 MCP 服务器（v0.10）：有它就从这里拿、没有才起，做完不停（合作做完一起停）。
-    pub mcp_slot: Option<super::mcp_client::McpSlot>,
-    /// 服务器起来以后（v0.10）：记下工具标注，Grok、Antigravity 的审批照它批。
+    /// 服务器起来以后（v0.10）：记下工具标注，Grok 的审批照它批。
     pub mcp_seen: Option<super::mcp_client::McpSeen>,
     /// 作为子代理跑：不给 ask_user、update_plan、memory、spawn_agent；审批、提问的编号带这个前缀，
     /// 控制通道按前缀把站主的回答转过来。
@@ -574,20 +572,9 @@ impl Run {
             self.board = Some(agents::Board::new(self.sink.clone()));
         }
         let turn_id = format!("turn-{}", self.task.run_id);
-        // 外部 MCP 服务器：起来、列工具；起不来的写一行，照常干活。合作里几段共用一组（第一段用到时起）。
-        let mut shared_mcp = false;
+        // 外部 MCP 服务器：起来、列工具；起不来的写一行，照常干活。子代理用主角色起的那一组。
         if !self.config.oneshot && self.config.mcp.iter().any(|c| c.enabled) {
-            match self.config.mcp_slot.clone() {
-                Some(slot) => {
-                    let mut held = slot.lock().await;
-                    if held.is_none() {
-                        *held = Some(Arc::new(self.start_mcp().await));
-                    }
-                    self.mcp = held.clone();
-                    shared_mcp = true;
-                }
-                None => self.mcp = Some(Arc::new(self.start_mcp().await)),
-            }
+            self.mcp = Some(Arc::new(self.start_mcp().await));
         }
         let mcp_servers: Vec<crate::gateway::event::McpServer> = self
             .mcp
@@ -664,9 +651,7 @@ impl Run {
         }
         background::stop_owned(&self.task.run_id);
         if let Some(hub) = self.mcp.take() {
-            if !shared_mcp {
-                hub.stop();
-            }
+            hub.stop();
         }
         // 收尾时再报一次大小：输入框旁的小环显示「下一句发出去大概多大」。
         self.report_context(&names, None);
@@ -2739,7 +2724,6 @@ mod tests {
             stop_ask: None,
             task_level: None,
             mcp: vec![],
-            mcp_slot: None,
             mcp_seen: None,
             subtask: None,
             search: Default::default(),
@@ -3241,31 +3225,6 @@ mod tests {
         one.oneshot = true;
         let _ = drive(&PeckBackend::new(model, one, vec![]), task(&p, PermissionLevel::Plan, "看看"), |_| None).await;
         assert!(!requests.lock().unwrap()[0].tools.iter().any(|t| t.name == "create_skill"));
-    }
-
-    #[tokio::test]
-    async fn stages_share_one_set_of_mcp_servers() {
-        let p = TempProject::new();
-        let server = super::super::mcp_client::tests::fake_server(&p.dir.with_extension("smcp"));
-        let slot: super::super::mcp_client::McpSlot = Default::default();
-        let seen = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        for _ in 0..2 {
-            let mut cfg = config(&p, "deepseek/deepseek-flash");
-            cfg.mcp = vec![server.clone()];
-            cfg.mcp_slot = Some(slot.clone());
-            let count = seen.clone();
-            cfg.mcp_seen = Some(Arc::new(move |_, _| {
-                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }));
-            let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("", vec![("mcp__fake__echo", json!({"text": "x"}))]), turn("好。", vec![])], Duration::ZERO));
-            let (_, events) = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, PermissionLevel::Auto, "查"), |_| None).await;
-            assert!(events.iter().any(|e| matches!(&e.body, EventBody::ToolCallCompleted { status: ToolStatus::Ok, .. })));
-        }
-        // 只起了一次；第一段做完没停，合作做完由调用方停。
-        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
-        let hub = slot.lock().await.take().unwrap();
-        assert!(hub.client("fake").is_some());
-        hub.stop();
     }
 
     #[tokio::test]

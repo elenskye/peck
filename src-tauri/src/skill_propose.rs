@@ -1,7 +1,7 @@
 //! 自己写 Skill（v0.10 Phase 15，roadmap C3）：模型在干活时把摸出来的、能复用的做法提成一条 Skill，站主批了才写盘。
 //!
 //! - **怎么提**：Peck Loop 的 `create_skill(name, description, body, scope)`；CLI 经 Peck 的本机 MCP 用同一个工具
-//!   （Claude Code、Codex、Grok、Antigravity、Muse，站主 2026-11-16 定）。只是提议：发 `skill.proposed`，模型接着干活。
+//!   （Claude Code、Codex、Grok、Muse，站主 2026-11-16 定）。只是提议：发 `skill.proposed`，模型接着干活。
 //! - **站主批**：过程里一张卡片（名字、描述、全文、放在项目的哪、替换时的 Diff），SAVE / EDIT / SKIP；不打断任务，
 //!   跑着、跑完都能批（`skill_review`）。没批的不写盘；没批的任务在左栏 NOW 里算「等你」。
 //! - **放哪**：只写这个项目（v1.1.0）：`.claude/skills/<名字>/SKILL.md`（Claude Code 也读）。同名的已经有了就是替换那一份

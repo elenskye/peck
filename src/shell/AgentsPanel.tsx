@@ -273,7 +273,7 @@ const CliBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
     });
   };
   // 版本号不放这里（站主 11-17：设置 → CLI 里看得到就行）。
-  const cliNote = (e: ModelEntry) => (!e.available ? "没检测到" : e.directOnly ? "直接调用" : "");
+  const cliNote = (e: ModelEntry) => (!e.available ? "没检测到" : "");
   return (
     <>
       <PickList items={entries.filter((e) => e.group === "cli")} value={value} choose={choose} disabled={disabled} note={cliNote} />

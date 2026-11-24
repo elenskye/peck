@@ -318,7 +318,7 @@ const Cli: React.FC<Props> = ({ onRefreshAgents, say }) => {
 /** 一家 CLI：色点、名字、版本；在哪找到的。版本和录夹具时不一样不再标 CHANGED（站主 11-17：没必要一直显示）。 */
 const EngineRow: React.FC<{ entry: ModelEntry }> = ({ entry: e }) => {
   const found = versionNumber(e.version);
-  const desc = !e.available ? undefined : [e.location ?? null, e.directOnly ? "只做直接调用" : null].filter(Boolean).join(" · ") || undefined;
+  const desc = !e.available ? undefined : e.location ?? undefined;
   return (
     <Row key={e.id} name={<><Dot kind={engineDot(e.provider)} />{e.label}{found && <span className="t-code set-ver">{found}</span>}</>} off={!e.available} desc={desc}>
       {e.available ? <Tag v="ok">FOUND</Tag> : <Tag>NOT FOUND</Tag>}

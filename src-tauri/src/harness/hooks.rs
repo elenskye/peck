@@ -3,7 +3,7 @@
 //! 现在只认一种：`Stop` 事件、`"type": "peck"`、`"run": "git_commit"`（Git Plan 的）。任意脚本的 Hook 不跑。
 //!
 //! 什么时候跑（[`pending`]）：任务做完了（失败、打断、到上限的不跑）、不是 PLAN、不是独立工作区、项目是 git 仓库且在某个
-//! 分支上、这一轮改过的文件里还有没提交的。直接调用的引擎（Antigravity）调用的人自己不叫。
+//! 分支上、这一轮改过的文件里还有没提交的。
 //!
 //! 怎么问：Peck Loop 在原对话末尾多问一轮（同样的系统提示和对话，走缓存，不显示成回答，见 `loop.rs`）；CLI 引擎续上它的会话、
 //! 只读地问一句。答回来的第一行当提交说明，过 `git::valid_message`；合格就只提交这一轮改过的文件（[`commit`]），
@@ -108,7 +108,7 @@ where
 /// 用量照样转给 `forward`（算进花费）。它要审批、要问站主就打断（不该再动手）；超时也打断。直接调用的引擎、续不了的不问。
 pub async fn ask_cli(backend: &dyn AgentBackend, engine: &str, mut task: AgentTask, ask: &str, forward: impl Fn(EventBody) + Send + Sync + 'static) -> Option<String> {
     let caps = backend.caps();
-    if caps.direct_only || !caps.resume || task.resume.is_none() {
+    if !caps.resume || task.resume.is_none() {
         return None;
     }
     task.prompt = question(ask);
@@ -214,12 +214,10 @@ mod tests {
         let wants = EventBody::ApprovalRequested { request_id: "a1".into(), call_id: None, kind: ToolKind::Run, title: "跑 git commit".into(), detail: None, high_risk: false, options: vec![] };
         let cli = FakeCli { caps: AgentCaps::codex(), events: vec![wants], seen: seen.clone(), waits: true };
         assert_eq!(ask_cli(&cli, "codex", task(Some("s1")), "一行", forward(forwarded.clone())).await, None);
-        // 没有会话号可续、直接调用的引擎（Antigravity）：不问，引擎都不起。
+        // 没有会话号可续：不问，引擎都不起。
         let before = seen.lock().unwrap().len();
         let cli = FakeCli { caps: AgentCaps::codex(), events: vec![reply("v1.0.1: x")], seen: seen.clone(), waits: false };
         assert_eq!(ask_cli(&cli, "codex", task(None), "一行", forward(forwarded.clone())).await, None);
-        let direct = FakeCli { caps: AgentCaps::antigravity(), events: vec![reply("v1.0.1: x")], seen: seen.clone(), waits: false };
-        assert_eq!(ask_cli(&direct, "antigravity", task(Some("s1")), "一行", forward(forwarded.clone())).await, None);
         assert_eq!(seen.lock().unwrap().len(), before);
     }
 

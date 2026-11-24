@@ -14,7 +14,7 @@ export function scheduleWhen(s: Schedule): string {
     case "interval": return `每隔 ${w.hours} 小时`;
     case "daily":
       if (w.days?.length) return `每${w.days.map((d) => WEEKDAY[d - 1] ?? d).join("、")} ${w.time}`;
-      return `${w.weekdays ? "工作日" : "每天"} ${w.time}`;
+      return `每天 ${w.time}`;
   }
 }
 

@@ -307,13 +307,13 @@ impl Extras {
         let time = || s("time").map(str::to_string).ok_or_else(|| "缺 time（HH:MM，24 小时制）。".to_string());
         let when = match s("repeat").unwrap_or("") {
             "once" => When::Once { date: s("date").ok_or("只跑一次要写 date（YYYY-MM-DD）。")?.to_string(), time: time()? },
-            "daily" => When::Daily { time: time()?, weekdays: false, days: vec![] },
+            "daily" => When::Daily { time: time()?, days: vec![] },
             "weekly" => {
                 let days: Vec<u8> = input.get("days").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|d| d.min(255) as u8).collect()).unwrap_or_default();
                 if days.is_empty() {
                     return Err("每周要写 days（1 是周一 … 7 是周日）。".into());
                 }
-                When::Daily { time: time()?, weekdays: false, days }
+                When::Daily { time: time()?, days }
             }
             "monthly" => When::Monthly { day: super::tools::u64_arg(input, "day_of_month").ok_or("每月要写 day_of_month（1–31）。")?.min(255) as u8, time: time()? },
             "interval" => When::Interval { hours: super::tools::u64_arg(input, "every_hours").ok_or("每隔几小时要写 every_hours（1–168）。")?.min(100_000) as u32 },
@@ -414,7 +414,7 @@ pub fn resolve_who(name: &str) -> Result<Setup, String> {
     let raw = name.trim();
     let key = norm(raw.strip_prefix("api:").or(raw.strip_prefix("cli:")).unwrap_or(raw));
     let one = |who: String| Ok(Setup { who, ..Default::default() });
-    let engines: Vec<&crate::gateway::catalog::EngineSpec> = cat.engines.iter().filter(|e| !crate::gateway::caps::AgentCaps::for_engine(&e.id).direct_only).collect();
+    let engines: Vec<&crate::gateway::catalog::EngineSpec> = cat.engines.iter().collect();
     if let Some(e) = engines.iter().find(|e| norm(&e.id) == key || norm(&e.label) == key) {
         return one(format!("cli:{}", e.id));
     }
@@ -582,7 +582,6 @@ mod tests {
         // 写错的
         assert!(x.schedule_task(&json!({"prompt": "x", "repeat": "weekly", "time": "09:00"})).unwrap_err().contains("days"));
         assert!(x.schedule_task(&json!({"prompt": "x", "repeat": "once", "date": "2020-01-01", "time": "09:00"})).unwrap_err().contains("已经过了"));
-        assert!(x.schedule_task(&json!({"prompt": "x", "repeat": "daily", "time": "09:00", "who": "antigravity"})).is_err(), "只做直接调用的不进定时任务");
         assert!(x.schedule_task(&json!({"prompt": "x", "repeat": "daily", "time": "09:00", "who": "没有这个模型"})).unwrap_err().contains("没认出"));
         assert!(x.schedule_task(&json!({"id": "nope", "prompt": "x", "repeat": "daily", "time": "09:00"})).is_err());
         assert!(x.list_schedules().unwrap().contains(&all[0].id));

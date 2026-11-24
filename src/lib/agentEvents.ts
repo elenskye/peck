@@ -133,12 +133,6 @@ export type CompactStep = "spill" | "clear" | "summary";
 export type BackgroundKind = "command" | "server";
 export type BackgroundStatus = "running" | "exited" | "stopped";
 
-/** 接力、审查里的一段（v0.8）：spec 写规范、implement 实施、review 审查、fix 按审查改。 */
-export type StageRole = "spec" | "implement" | "review" | "fix";
-export type ReviewVerdict = "pass" | "changes";
-/** 一条验收标准的审查结果（v0.9）：pass 为空是审查没判这一条。 */
-export interface CriterionCheck { n: number; criterion: string; pass?: boolean | null; note: string }
-
 // ── 能力标记（caps.rs）──
 
 export type ToolOwner = "peck" | "engine";
@@ -160,8 +154,6 @@ export interface AgentCaps {
   quota: boolean;
   switchModel: boolean;
   needsTty: boolean;
-  /** 只做直接调用（Antigravity）：不进 ONE SHOT、接力、委派、审查、定时任务、自动修。 */
-  directOnly: boolean;
 }
 
 // ── 事件（event.rs 的 EventBody）──
@@ -249,9 +241,6 @@ export type EventBody =
   | { type: "hook.ran"; plugin: string; action: string; ok: boolean; text: string; event?: string | null }
   // ── 后台命令（v0.6）──
   | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
-  // ── 合作（v0.8）──
-  | { type: "stage.started"; stage: StageRole; engine: string; model?: string | null; title: string }
-  | { type: "stage.completed"; stage: StageRole; reason: TurnEndReason; error?: string | null; verdict?: ReviewVerdict | null; checks?: CriterionCheck[] }
   | { type: "notice"; level: NoticeLevel; text: string }
   | { type: "error"; message: string; fatal: boolean }
   /** 不认识的事件：原件在事件日志里。 */
@@ -306,7 +295,6 @@ export interface ModelEntry {
   available: boolean;
   /** 没配 Key、没检测到、先跑 gcloud auth application-default login…… */
   unavailableReason?: string | null;
-  directOnly: boolean;
   thinking?: Thinking | null;
   efforts: string[];
   contextWindow?: number | null;
@@ -342,11 +330,6 @@ export interface GatewayConfig {
 export interface GatewaySettings {
   config: GatewayConfig;
   adc: boolean;
-}
-
-/** 列表里的「CLI 引擎」能不能进自动化（ONE SHOT、接力、委派……）。 */
-export function canAutomate(entry: Pick<ModelEntry, "directOnly">): boolean {
-  return !entry.directOnly;
 }
 
 // ── CLI 账号（accounts.rs，IPC cli_account_*）──
@@ -396,7 +379,7 @@ export interface CliLoginState {
 export interface GatewayRunArgs {
   sessionId: string;
   prompt: string;
-  /** 模型列表里的 id：cli:codex、cli:claude-code、cli:muse、cli:grok、cli:antigravity。 */
+  /** 模型列表里的 id：cli:codex、cli:claude-code、cli:muse、cli:grok。 */
   who: string;
   /** plan | edit | auto，不填是 edit。 */
   permission?: "plan" | "edit" | "auto";

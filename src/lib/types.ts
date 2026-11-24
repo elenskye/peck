@@ -73,7 +73,7 @@ export interface RunRecord {
   steps: StepDescriptor[];
   files: FileChangeItem[];
   summary?: string;
-  /** 谁来干：`api:<供应商>/<模型>`、`cli:<引擎>`、`team:<写规范>|<实施>|<审查>`；v0.8 以前的旧记录没有。 */
+  /** 谁来干：`api:<供应商>/<模型>`（PLOOP 的主角色）、`cli:<引擎>`。 */
   who?: string;
   permission?: Permission;
   /** 「撤销整个任务」的时间。 */

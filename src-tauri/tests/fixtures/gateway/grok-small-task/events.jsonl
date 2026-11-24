@@ -1,4 +1,4 @@
-{"type":"session.started","engine":"grok","model":"grok-4.7","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":false,"interrupt":true,"resume":true,"mcpInject":true,"usage":"cumulative","cost":"estimated","quota":true,"switchModel":true,"needsTty":false,"directOnly":false},"tools":[],"mcp":[],"sessionRef":"01a1ceb2-0668-7242-88f9-7cf66104da13","version":null}
+{"type":"session.started","engine":"grok","model":"grok-4.7","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":false,"interrupt":true,"resume":true,"mcpInject":true,"usage":"cumulative","cost":"estimated","quota":true,"switchModel":true,"needsTty":false},"tools":[],"mcp":[],"sessionRef":"01a1ceb2-0668-7242-88f9-7cf66104da13","version":null}
 {"type":"session.config_changed","model":"grok-4.5","permission":null,"effort":null}
 {"type":"turn.started","turnId":"turn-1"}
 {"type":"message.delta","itemId":"grok-msg-1","text":"I'll"}

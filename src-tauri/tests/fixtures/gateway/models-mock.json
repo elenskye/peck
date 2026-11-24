@@ -7,7 +7,6 @@
     "providerLabel": "Anthropic",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -37,8 +36,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -53,7 +51,6 @@
     "providerLabel": "Anthropic",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -83,8 +80,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -99,7 +95,6 @@
     "providerLabel": "Anthropic",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -129,8 +124,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -145,7 +139,6 @@
     "providerLabel": "Anthropic",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -184,8 +177,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -200,7 +192,6 @@
     "providerLabel": "OpenAI",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -239,8 +230,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -255,7 +245,6 @@
     "providerLabel": "OpenAI",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -294,8 +283,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -310,7 +298,6 @@
     "providerLabel": "OpenAI",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -349,8 +336,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -365,7 +351,6 @@
     "providerLabel": "OpenAI",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -404,8 +389,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -420,7 +404,6 @@
     "providerLabel": "DeepSeek",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -449,8 +432,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -465,7 +447,6 @@
     "providerLabel": "DeepSeek",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -494,8 +475,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -510,7 +490,6 @@
     "providerLabel": "Aliyun",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -539,8 +518,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -555,7 +533,6 @@
     "providerLabel": "Aliyun",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -584,8 +561,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -600,7 +576,6 @@
     "providerLabel": "Aliyun",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [],
     "contextWindow": 1000000,
@@ -634,8 +609,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -650,7 +624,6 @@
     "providerLabel": "Google Gemini",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -678,8 +651,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -694,7 +666,6 @@
     "providerLabel": "Google Gemini",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -722,8 +693,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -738,7 +708,6 @@
     "providerLabel": "Google Gemini",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -766,8 +735,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -782,7 +750,6 @@
     "providerLabel": "Google Gemini",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "minimal",
@@ -811,8 +778,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -827,7 +793,6 @@
     "providerLabel": "Vertex AI · Claude",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -857,8 +822,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -873,7 +837,6 @@
     "providerLabel": "Vertex AI · Claude",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -903,8 +866,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -919,7 +881,6 @@
     "providerLabel": "Vertex AI · Claude",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "switch",
     "efforts": [
       "low",
@@ -958,8 +919,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -974,7 +934,6 @@
     "providerLabel": "Vertex AI · Gemini",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -1002,8 +961,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -1018,7 +976,6 @@
     "providerLabel": "Vertex AI · Gemini",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": "always",
     "efforts": [
       "low",
@@ -1046,8 +1003,7 @@
       "cost": "priced",
       "quota": false,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -1062,7 +1018,6 @@
     "providerLabel": "Claude Code",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": null,
     "efforts": [],
     "contextWindow": null,
@@ -1081,8 +1036,7 @@
       "cost": "estimated",
       "quota": true,
       "switchModel": false,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -1097,7 +1051,6 @@
     "providerLabel": "Codex",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": null,
     "efforts": [],
     "contextWindow": null,
@@ -1116,8 +1069,7 @@
       "cost": "unknown",
       "quota": true,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -1132,7 +1084,6 @@
     "providerLabel": "Muse",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": null,
     "efforts": [],
     "contextWindow": null,
@@ -1151,8 +1102,7 @@
       "cost": "unknown",
       "quota": true,
       "switchModel": false,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
@@ -1167,7 +1117,6 @@
     "providerLabel": "Grok",
     "available": true,
     "unavailableReason": null,
-    "directOnly": false,
     "thinking": null,
     "efforts": [],
     "contextWindow": null,
@@ -1186,47 +1135,11 @@
       "cost": "estimated",
       "quota": true,
       "switchModel": true,
-      "needsTty": false,
-      "directOnly": false
+      "needsTty": false
     },
     "version": null,
     "account": null,
     "testedVersion": "1.0.77",
-    "location": null
-  },
-  {
-    "id": "cli:antigravity",
-    "group": "cli",
-    "label": "Antigravity",
-    "provider": "antigravity",
-    "providerLabel": "Antigravity",
-    "available": true,
-    "unavailableReason": null,
-    "directOnly": true,
-    "thinking": null,
-    "efforts": [],
-    "contextWindow": null,
-    "price": null,
-    "caps": {
-      "streaming": true,
-      "reasoningReplay": false,
-      "tools": "engine",
-      "approvals": "live",
-      "askUser": true,
-      "steer": false,
-      "interrupt": true,
-      "resume": false,
-      "mcpInject": true,
-      "usage": "cumulative",
-      "cost": "unknown",
-      "quota": false,
-      "switchModel": true,
-      "needsTty": true,
-      "directOnly": true
-    },
-    "version": null,
-    "account": null,
-    "testedVersion": "1.5.6",
     "location": null
   }
 ]

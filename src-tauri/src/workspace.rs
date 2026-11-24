@@ -383,9 +383,6 @@ mod tests {
         assert!(bad(ProjectSettings { env: vec![env("1X", "a")], ..Default::default() }).contains("变量名"));
         assert!(bad(ProjectSettings { env: vec![env("HOME", "a")], ..Default::default() }).contains("Peck 自己管"));
         assert!(bad(ProjectSettings { env: vec![env("PECK_API_MODE", "real")], ..Default::default() }).contains("Peck 自己管"));
-        // 旧数据（没有这两样）照样读得出来
-        let old: ProjectSettings = serde_json::from_str(r#"{"who":"api:x"}"#).unwrap();
-        assert!(old.folders.is_empty() && old.env.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

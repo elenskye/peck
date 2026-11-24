@@ -7,7 +7,7 @@ export interface ClientCard { client: string; label: string; status: string; sou
 export interface BalanceCard { provider: string; label: string; status: string; balances: { currency: string; totalBalance: string; grantedBalance: string | null; toppedUpBalance: string | null }[]; checkedAt: number | null; message: string; lastSuccessAt: number | null; lastFailureAt: number | null }
 
 const now = Date.now();
-export const mockClients: ClientCard[] = ["codex", "claude-code", "antigravity", "muse-code", "grok"].map((client) => ({ client, label: { codex: "Codex", "claude-code": "Claude Code", antigravity: "Antigravity", "muse-code": "Muse", grok: "Grok Build" }[client]!, status: "fields_missing", source: "浏览器演示，没有读真实的客户端", coverage: "演示数据", accountId: null, tier: null, windows: [], rawLabel: "", lastSuccessAt: null, lastFailureAt: now, failureReason: "浏览器演示里不读客户端，到 Peck.app 里看。", collectedAt: now, fresh: false, running: false, installed: false, manual: false, previous: null }));
+export const mockClients: ClientCard[] = ["codex", "claude-code", "muse-code", "grok"].map((client) => ({ client, label: { codex: "Codex", "claude-code": "Claude Code", "muse-code": "Muse", grok: "Grok Build" }[client]!, status: "fields_missing", source: "浏览器演示，没有读真实的客户端", coverage: "演示数据", accountId: null, tier: null, windows: [], rawLabel: "", lastSuccessAt: null, lastFailureAt: now, failureReason: "浏览器演示里不读客户端，到 Peck.app 里看。", collectedAt: now, fresh: false, running: false, installed: false, manual: false, previous: null }));
 
 // 演示额度提醒（v0.9 B3）：Claude Code 每周用到 90%，Codex 还多（验收点：某家调到 90%，发任务前提醒换另一家）。
 const demoWindows: Record<string, QuotaWindow[]> = {

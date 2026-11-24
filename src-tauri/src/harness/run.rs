@@ -5,18 +5,16 @@
 //! 多出来的：一个任务里的对话存着（下一句接着发）、「这个项目总是允许」存着、花费上限按这个月已花的算。
 //!
 //! ONE SHOT：只读回答（Peck Loop 按 PLAN 档、只给读的工具；CLI 引擎按 PLAN 档），不占任务号、不锁项目、
-//! 不锁终端、不存快照；事件照样进事件日志（花费算进这个月）。Antigravity 只做直接调用，不进 ONE SHOT。
+//! 不锁终端、不存快照；事件照样进事件日志（花费算进这个月）。
 
 use super::context::ProjectLayer;
 use super::r#loop::{Budget, ContextConfig, LoopConfig, PeckBackend, SpendProbe, DEFAULT_MAX_ROUNDS, DEFAULT_ONESHOT_ROUNDS};
-use crate::events::{ChangeSetSummary, EventSink as RunSink, RunEvent, RunStatus, StepStatus};
-use crate::flow::{DispatchPlan, ResolvedStepPlan};
+use crate::events::{ChangeSetSummary, RunStatus, StepStatus};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
 use crate::gateway::log::EventSink;
 use crate::gateway::{catalog, engines, providers, runner, AgentBackend, AgentTask, Control, Message, ModelProvider};
-use crate::process::ProcessCancelHandle;
 use crate::run::ActiveRunContext;
-use crate::snapshot::{record_run_base, record_run_finish, ShadowRepo};
+use crate::snapshot::ShadowRepo;
 use crate::state::AppState;
 use crate::store::{now_ms, Store, StoreResult};
 use rusqlite::{params, OptionalExtension};
@@ -24,7 +22,6 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use tauri::ipc::Channel;
 use tokio::sync::mpsc;
 
@@ -361,42 +358,6 @@ struct Ending {
     error: Option<String>,
 }
 
-/// 要独立工作区就建一个，返回任务在哪做；建不了把任务记成失败、从「在跑」里拿掉。
-pub(crate) fn worktree_for(
-    store: &Arc<Mutex<Store>>,
-    active_runs: &Arc<Mutex<HashMap<String, ActiveRunContext>>>,
-    run_id: &str,
-    workspace: &Path,
-    worktree: bool,
-) -> Result<PathBuf, String> {
-    if !worktree {
-        return Ok(workspace.to_path_buf());
-    }
-    let at = crate::worktree::root_for(workspace).join(run_id);
-    match crate::worktree::create(workspace, &at) {
-        Ok(()) => Ok(at.canonicalize().unwrap_or(at)),
-        Err(e) => {
-            // 建到一半（git 已经登记了）：删掉，不留在站主的仓库里。
-            if at.exists() {
-                crate::worktree::remove(workspace, &at);
-            }
-            if let Ok(mut db) = store.lock() {
-                if let Ok(mut record) = db.run(run_id) {
-                    record.status = RunStatus::Failed;
-                    record.finished_at = Some(now_ms());
-                    record.summary = Some(e.clone());
-                    record.worktree = None;
-                    let _ = db.save_run(&record);
-                }
-            }
-            if let Ok(mut a) = active_runs.lock() {
-                a.remove(run_id);
-            }
-            Err(e)
-        }
-    }
-}
-
 pub(crate) fn start_peck_run(
     run: PeckRun,
     provider: Arc<dyn ModelProvider>,
@@ -404,70 +365,25 @@ pub(crate) fn start_peck_run(
 ) -> Result<String, String> {
     let PeckRun { store, active_runs, session_id, prompt, who, permission, level, model_id, effort, cost_cap, env, worktree, team, team_notes, images, search } = run;
     let label = model_label(&model_id);
-    if worktree && level == PermissionLevel::Plan {
-        return Err("PLAN 只读，不用独立工作区。".into());
-    }
-    let settings = {
-        let db = store.lock().map_err(|e| e.to_string())?;
-        db.workspace_for_session(&session_id).map_err(|e| e.to_string())?.settings
-    };
+    let claimed = crate::run::claim_run(crate::run::ClaimSpec {
+        store: &store,
+        active_runs: &active_runs,
+        session_id: &session_id,
+        prompt: &prompt,
+        who: &who,
+        permission: permission.clone(),
+        level,
+        worktree,
+        agent_id: "peck",
+        label: &label,
+    })?;
+    let (run_id, workspace, workspace_id, cwd) = (claimed.run_id.clone(), claimed.workspace.clone(), claimed.workspace_id.clone(), claimed.cwd.clone());
+    let (settings, folders) = (claimed.settings.clone(), claimed.folders.clone());
     let env = with_project_env(env, &settings.env_pairs());
-    // 独立工作区的任务：其他文件夹只读（它们不在独立工作区里，改了就是真改，丢掉时撤不回来）。
-    let folders: Vec<(PathBuf, bool)> = if worktree { settings.live_folders().into_iter().map(|(p, _)| (p, false)).collect() } else { settings.live_folders() };
-    let writable: Vec<PathBuf> = if level == PermissionLevel::Plan { vec![] } else { folders.iter().filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect() };
-    let (run_id, step_id, workspace, workspace_id, cancel_rx) = {
-        let mut active = active_runs.lock().map_err(|e| e.to_string())?;
-        let mut db = store.lock().map_err(|e| e.to_string())?;
-        let ws = db.workspace_for_session(&session_id).map_err(|e| e.to_string())?;
-        let workspace = PathBuf::from(&ws.path);
-        if !workspace.is_dir() {
-            return Err("项目文件夹不在了，重新打开一次。".into());
-        }
-        crate::worktree::pending_in_session(&db, &session_id)?;
-        let mut touching = vec![workspace.clone()];
-        touching.extend(writable.iter().cloned());
-        if active.values().any(|r| r.touches(&touching)) {
-            return Err("同一个项目一次跑一个任务（项目的文件夹、能改的其他文件夹和在跑的任务重叠也算）。".into());
-        }
-        let number = db.next_run_number().map_err(|e| e.to_string())?;
-        let run_id = format!("run-{number}");
-        let step_id = format!("{run_id}-step-1");
-        let plan = DispatchPlan {
-            steps: vec![ResolvedStepPlan {
-                id: step_id.clone(),
-                step_index: 0,
-                agent_id: "peck".into(),
-                agent_name: label.clone(),
-                title: label.clone(),
-            }],
-        };
-        if worktree && !crate::worktree::available(&workspace) {
-            return Err("这个项目不是 git 仓库，开不了独立工作区。".into());
-        }
-        let mut record = db.create_run(&session_id, &prompt, number, &plan).map_err(|e| e.to_string())?;
-        record.who = Some(who.clone());
-        record.permission = permission.clone();
-        if worktree {
-            let at = crate::worktree::root_for(&workspace).join(&run_id);
-            record.worktree = Some(crate::worktree::WorktreeState { path: at.to_string_lossy().into_owned(), applied_at: None, discarded_at: None });
-        }
-        db.save_run(&record).map_err(|e| e.to_string())?;
-        db.set_run_engine(&run_id, "peck").map_err(|e| e.to_string())?;
-        let (cancel_handle, cancel_rx) = ProcessCancelHandle::new();
-        active.insert(
-            run_id.clone(),
-            ActiveRunContext {
-                workspace_path: workspace.clone(),
-                cancel_handle,
-                writable: writable.clone(),
-            },
-        );
-        (run_id, step_id, workspace, ws.id, cancel_rx)
-    };
-    // 独立工作区：先建好（建不了这个任务就算失败、写明原因）。任务在它里面做，主文件夹不动。
-    let cwd = worktree_for(&store, &active_runs, &run_id, &workspace, worktree)?;
+    // 占了号以后出错：记成失败、放开项目（不然一直占着）。
+    let fail = |why: String| crate::run::abandon(&store, &active_runs, &run_id, why);
     let (history, allowed, mut refs, prior_changed, fork) = {
-        let db = store.lock().map_err(|e| e.to_string())?;
+        let db = store.lock().map_err(|e| fail(e.to_string()))?;
         // 这个任务之前几次改过的文件（撤销了的不算）。
         let prior_changed: Vec<String> = db
             .runs(&session_id)
@@ -502,8 +418,8 @@ pub(crate) fn start_peck_run(
     };
     // MCP（v0.10 A2）：设置里的 + 项目 .mcp.json 里的；读不懂、钥匙串取不到的开头写一行。
     let (mcp_list, mut mcp_notes) = {
-        let db = store.lock().map_err(|e| e.to_string())?;
-        let ws = db.workspace(&workspace_id).map_err(|e| e.to_string())?;
+        let db = store.lock().map_err(|e| fail(e.to_string()))?;
+        let ws = db.workspace(&workspace_id).map_err(|e| fail(e.to_string()))?;
         super::mcp_client::for_project(&db, &ws)
     };
     let mcp_list = super::mcp_client::fill_secrets(mcp_list, &mut mcp_notes);
@@ -537,7 +453,6 @@ pub(crate) fn start_peck_run(
         stop_ask: stop_ask.clone(),
         task_level: None,
         mcp: mcp_list,
-        mcp_slot: None,
         mcp_seen: Some(super::mcp_client::seen_hook(store.clone(), workspace_id.clone())),
         subtask: None,
         search,
@@ -557,7 +472,7 @@ pub(crate) fn start_peck_run(
     tokio::spawn(async move {
         let ending = Arc::new(Mutex::new(Ending::default()));
         let seen = ending.clone();
-        let sink = EventSink::new(id.clone(), Some(step_id.clone()), "peck", Some(store.clone()), move |e: &AgentEvent| {
+        let sink = EventSink::new(id.clone(), Some(claimed.step_id.clone()), "peck", Some(store.clone()), move |e: &AgentEvent| {
             if let Ok(mut end) = seen.lock() {
                 match &e.body {
                     EventBody::MessageCompleted { text, .. } => end.text = text.clone(),
@@ -567,47 +482,17 @@ pub(crate) fn start_peck_run(
             }
             out(e);
         });
-        let run_sink = RunSink::new(store.clone());
         if let Some(text) = fork_note {
             sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Info, text });
         }
         for text in mcp_notes {
             sink.emit(EventBody::Notice { level: crate::gateway::event::NoticeLevel::Warn, text });
         }
-        let started = Instant::now();
-        // 独立工作区的快照也存在项目自己的影子仓库里（改动记录、回退照常）。
-        let repo = if worktree { crate::worktree::shadow_repo(&cwd, &workspace).ok() } else { ShadowRepo::open_or_init(&workspace).ok() };
-        let before = repo.as_ref().and_then(|r| {
-            let tree = r.create_snapshot(&format!("{id}-base")).ok()?;
-            record_run_base(&id, r, tree.clone());
-            Some(tree)
-        });
-        let extras = snapshot_extras(&id, &folders, level);
-        let descriptor = |status| {
-            ResolvedStepPlan {
-                id: step_id.clone(),
-                step_index: 0,
-                agent_id: "peck".into(),
-                agent_name: label.clone(),
-                title: label.clone(),
-            }
-            .to_descriptor(status)
-        };
-        run_sink.emit(RunEvent::RunStarted {
-            run_id: id.clone(),
-            steps: vec![descriptor(StepStatus::Pending)],
-        });
-        run_sink.emit(RunEvent::StepStarted { run_id: id.clone(), step_id: step_id.clone(), step_index: 0, agent_id: "peck".into() });
+        let life = crate::run::Lifecycle::begin(&store, &active_runs, &claimed, "peck", &label, level, worktree);
         // 停止：`run_cancel` 改成发打断。
         let interrupt = control_tx.clone();
-        let mut cancel_rx = cancel_rx;
-        let watcher = tokio::spawn(async move {
-            while cancel_rx.changed().await.is_ok() {
-                if *cancel_rx.borrow() {
-                    let _ = interrupt.send(Control::Interrupt);
-                    break;
-                }
-            }
+        let watcher = crate::run::watch_cancel(claimed.cancel_rx.clone(), move || {
+            let _ = interrupt.send(Control::Interrupt);
         });
         let task = AgentTask {
             run_id: id.clone(),
@@ -643,40 +528,19 @@ pub(crate) fn start_peck_run(
             },
             Err(e) => (StepStatus::Failed, RunStatus::Failed, format!("没做完：{}", e.message)),
         };
-        let mut changeset = ChangeSetSummary::default();
-        if let (Some(r), Some(before)) = (repo.as_ref(), before.as_ref()) {
-            if let Ok(after) = r.create_snapshot(&format!("{step_id}-after")) {
-                record_run_finish(&id, after.clone());
-                changeset = r.diff_changeset(before, &after).unwrap_or_default();
-            }
-        }
-        let round_files: Vec<String> = changeset.files.iter().map(|f| f.path.clone()).collect();
-        finish_extras(&id, &extras, &mut changeset);
-        // 任务还在跑时批的 Skill（v0.10 C3）：收尾快照拍完了再写，不算进这次的改动。
-        crate::skill_propose::flush(&id);
+        let (round_files, changeset) = life.snapshot_after();
         // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，用模型收尾时答的那一行提交。
         let answered = stop_ask.clone();
         let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move { answered.and_then(|a| a.take()) }).await;
         if let Some(body) = hooked {
             sink.emit(body);
         }
-        run_sink.emit(RunEvent::StepFinished {
-            run_id: id.clone(),
-            step_id: step_id.clone(),
-            status: step_status,
-            exit_code: None,
-            duration_ms: started.elapsed().as_millis() as u64,
-            changeset,
-        });
-        run_sink.emit(RunEvent::RunFinished { run_id: id.clone(), status: run_status, summary });
-        if let Ok(mut runs) = active_runs.lock() {
-            runs.remove(&id);
-        }
+        life.finish(step_status, run_status, summary, changeset);
     });
     Ok(run_id)
 }
 
-/// ONE SHOT：选一个引擎（API 模型或 CLI，Antigravity 除外）只读回答一句。返回 id（`oneshot-…`）。
+/// ONE SHOT：选一个引擎（API 模型或 CLI）只读回答一句。返回 id（`oneshot-…`）。
 #[tauri::command]
 pub async fn harness_oneshot(
     workspace_id: String,
@@ -731,7 +595,6 @@ pub async fn harness_oneshot(
             stop_ask: None,
             task_level: None,
             mcp: vec![],
-            mcp_slot: None,
             mcp_seen: None,
             subtask: None,
             search: crate::gateway::search::Keys::from_state(&state),
@@ -739,9 +602,6 @@ pub async fn harness_oneshot(
         };
         (Arc::new(PeckBackend::new(provider, config, vec![])), "peck".into())
     } else if let Some(engine) = who.strip_prefix("cli:") {
-        if crate::gateway::caps::AgentCaps::for_engine(engine).direct_only {
-            return Err("Antigravity 只做直接调用，不进 ONE SHOT。".into());
-        }
         (engines::from_state(&state, engine).await.map_err(|e| e.message)?, engine.to_string())
     } else {
         return Err("ONE SHOT 选一个 API 模型或 CLI 引擎。".into());
@@ -921,6 +781,7 @@ pub fn harness_allow_remove(workspace_id: String, rule: String, state: tauri::St
 
 #[cfg(test)]
 mod tests {
+    use crate::flow::DispatchPlan;
 
     #[test]
     fn max_rounds_follow_the_setting_within_bounds() {

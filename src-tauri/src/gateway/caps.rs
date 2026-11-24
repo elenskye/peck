@@ -36,8 +36,6 @@ pub struct AgentCaps {
     pub switch_model: bool,
     /// 要不要给它一个伪终端（有的 CLI 非终端下会挂起）。
     pub needs_tty: bool,
-    /// 只做直接调用：不进 ONE SHOT、接力、委派、审查、定时任务、自动修（Antigravity）。
-    pub direct_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,7 +79,6 @@ impl AgentCaps {
             quota: false,
             switch_model: true,
             needs_tty: false,
-            direct_only: false,
         }
     }
 
@@ -102,7 +99,6 @@ impl AgentCaps {
             quota: true,
             switch_model: true,
             needs_tty: false,
-            direct_only: false,
         }
     }
 
@@ -123,7 +119,6 @@ impl AgentCaps {
             quota: true,
             switch_model: false,
             needs_tty: false,
-            direct_only: false,
         }
     }
 
@@ -144,7 +139,6 @@ impl AgentCaps {
             quota: true,
             switch_model: false,
             needs_tty: false,
-            direct_only: false,
         }
     }
 
@@ -165,28 +159,6 @@ impl AgentCaps {
             quota: true,
             switch_model: true,
             needs_tty: false,
-            direct_only: false,
-        }
-    }
-
-    /// ACP（`agy acp`）。只做直接调用（站主 2026-11-12 定）。
-    pub fn antigravity() -> Self {
-        Self {
-            streaming: true,
-            reasoning_replay: false,
-            tools: ToolOwner::Engine,
-            approvals: ApprovalMode::Live,
-            ask_user: true,
-            steer: false,
-            interrupt: true,
-            resume: false,
-            mcp_inject: true,
-            usage: UsageGranularity::Cumulative,
-            cost: CostSource::Unknown,
-            quota: false,
-            switch_model: true,
-            needs_tty: true,
-            direct_only: true,
         }
     }
 
@@ -198,7 +170,6 @@ impl AgentCaps {
             "claude-code" => Self::claude_code(),
             "muse" => Self::muse(),
             "grok" => Self::grok(),
-            "antigravity" => Self::antigravity(),
             _ => Self {
                 streaming: false,
                 reasoning_replay: false,
@@ -214,7 +185,6 @@ impl AgentCaps {
                 quota: false,
                 switch_model: false,
                 needs_tty: false,
-                direct_only: false,
             },
         }
     }
@@ -223,14 +193,6 @@ impl AgentCaps {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_antigravity_is_direct_only() {
-        for engine in ["peck", "codex", "claude-code", "muse", "grok"] {
-            assert!(!AgentCaps::for_engine(engine).direct_only, "{engine}");
-        }
-        assert!(AgentCaps::for_engine("antigravity").direct_only);
-    }
 
     #[test]
     fn muse_approvals_reach_peck_through_its_session_protocol() {

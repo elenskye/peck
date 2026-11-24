@@ -6,7 +6,7 @@ import type { AppSettings } from "@/lib/settings";
 import type { ClientCard } from "@/lib/usage";
 
 /** CLI 引擎 id → QUOTA 页客户端卡片的 id。 */
-const CLIENT_OF: Record<string, string> = { "claude-code": "claude-code", codex: "codex", muse: "muse-code", grok: "grok", antigravity: "antigravity" };
+const CLIENT_OF: Record<string, string> = { "claude-code": "claude-code", codex: "codex", muse: "muse-code", grok: "grok" };
 
 /** 一家的窗口读数：已用百分比读得到的那几个。 */
 function windows(id: string, cards: ClientCard[]): Array<{ label: string; pct: number }> {
@@ -46,8 +46,8 @@ export function quotaHint(involved: string[], entries: ModelEntry[], cards: Clie
     if (!hot) continue;
     const from = entries.find((e) => e.id === id);
     const fromLabel = from?.label ?? id.slice(4);
-    const to = entries.find((e) => e.group === "cli" && e.available && !e.directOnly && e.id !== id && !involved.includes(e.id) && roomy(e.id, cards, threshold))
-      ?? entries.find((e) => e.group === "cli" && e.available && !e.directOnly && e.id !== id && roomy(e.id, cards, threshold))
+    const to = entries.find((e) => e.group === "cli" && e.available && e.id !== id && !involved.includes(e.id) && roomy(e.id, cards, threshold))
+      ?? entries.find((e) => e.group === "cli" && e.available && e.id !== id && roomy(e.id, cards, threshold))
       ?? null;
     const window = hot.label.trim();
     return { from: id, fromLabel, text: `${fromLabel} ${window}${/[一-龥]$/.test(window) ? "" : " "}已用 ${Math.round(hot.pct)}%`, to };

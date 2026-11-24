@@ -215,8 +215,6 @@ pub struct ModelEntry {
     /// 不能用时写原因：「没配 Key」「没检测到」「先跑 gcloud auth application-default login」。
     #[serde(default)]
     pub unavailable_reason: Option<String>,
-    /// 只做直接调用（Antigravity）：列表里标出来，不进 ONE SHOT 和自动化。
-    pub direct_only: bool,
     #[serde(default)]
     pub thinking: Option<Thinking>,
     #[serde(default)]
@@ -245,13 +243,12 @@ pub struct ModelEntry {
 }
 
 /// 录夹具时各家 CLI 的版本（2026-11-12）。升级 CLI 后重录夹具、确认转换器没问题再改这里。
-pub const TESTED_VERSIONS: [(&str, &str); 5] = [
+pub const TESTED_VERSIONS: [(&str, &str); 4] = [
     ("claude-code", "2.1.322"),
     ("codex", "0.167.2"),
     // 夹具是 1.4.15 录的；1.4.18 在 2026-11-13 真跑核对过，事件的格式没变。
     ("muse", "1.4.18"),
     ("grok", "1.0.77"),
-    ("antigravity", "1.5.6"),
 ];
 
 pub fn tested_version(engine: &str) -> Option<String> {
@@ -360,7 +357,6 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             provider_label: provider.label.clone(),
             available: reason.is_none(),
             unavailable_reason: reason,
-            direct_only: false,
             thinking: Some(model.thinking),
             efforts: model.efforts.clone(),
             context_window: model.context_window,
@@ -391,7 +387,6 @@ pub fn model_entries(catalog: &Catalog, available: &Availability) -> Vec<ModelEn
             provider_label: engine.label.clone(),
             available: found,
             unavailable_reason: (!found).then(|| "没检测到".to_string()),
-            direct_only: caps.direct_only,
             thinking: None,
             efforts: Vec::new(),
             context_window: None,
@@ -418,7 +413,7 @@ mod version_tests {
         assert_eq!(version_number("grok 1.0.77 (50ca579fa996)").as_deref(), Some("1.0.77"));
         assert_eq!(version_number("2.1.322 (Claude Code)").as_deref(), Some("2.1.322"));
         assert_eq!(version_number("no version"), None);
-        assert_eq!(tested_version("antigravity").as_deref(), Some("1.5.6"));
+        assert_eq!(tested_version("antigravity"), None);
     }
 }
 
@@ -439,7 +434,7 @@ mod tests {
             assert!(c.provider(id).is_some(), "少了供应商 {id}");
         }
         let engines: Vec<&str> = c.engines.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(engines, ["claude-code", "codex", "muse", "grok", "antigravity"]);
+        assert_eq!(engines, ["claude-code", "codex", "muse", "grok"]);
     }
 
     #[test]
@@ -523,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn entries_mark_missing_keys_adc_and_direct_only() {
+    fn entries_mark_missing_keys_and_adc() {
         let entries = model_entries(
             catalog(),
             &Availability {
@@ -533,7 +528,6 @@ mod tests {
                 vertex_adc: true,
                 engines: vec![
                     EngineProbe { id: "codex".into(), found: true, version: Some("0.167.2".into()), location: None },
-                    EngineProbe { id: "antigravity".into(), found: true, version: None, location: None },
                 ],
             },
         );
@@ -552,7 +546,6 @@ mod tests {
         assert_eq!(get("cli:codex").tested_version.as_deref(), Some("0.167.2"));
         assert_eq!(get("api:anthropic/claude-haiku-5-5").tested_version, None);
         assert!(!get("cli:grok").available);
-        assert!(get("cli:antigravity").direct_only);
         // v0.8 起接力、审查在 AGENTS 里任意两家搭，列表里不再有固定的「流程」。
         assert!(!entries.iter().any(|e| e.id.starts_with("flow:")));
     }

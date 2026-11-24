@@ -21,11 +21,10 @@ export const PLOOP_ENTRY: ModelEntry = {
   provider: "ploop",
   providerLabel: "Peck Loop",
   available: true,
-  directOnly: false,
   efforts: [],
   caps: {
     streaming: true, reasoningReplay: false, tools: "engine", approvals: "live", askUser: true, steer: false, interrupt: true,
-    resume: false, mcpInject: false, usage: "per_turn", cost: "estimated", quota: false, switchModel: false, needsTty: false, directOnly: false,
+    resume: false, mcpInject: false, usage: "per_turn", cost: "estimated", quota: false, switchModel: false, needsTty: false,
   },
 };
 
@@ -37,7 +36,7 @@ export function pickable(entries: ModelEntry[]): ModelEntry[] {
 
 /** PLOOP 里几格能选的：只有 API 模型（CLI 引擎 Peck 只当外壳，不进工作流）。 */
 export function ploopable(entries: ModelEntry[]): ModelEntry[] {
-  return entries.filter((e) => e.available && !e.directOnly && e.group === "peck");
+  return entries.filter((e) => e.available && e.group === "peck");
 }
 
 // ---------- FLOW ----------
@@ -67,7 +66,6 @@ export function firstOf(entries: ModelEntry[], flow: FlowKind, remembered?: Part
 const ChipText: React.FC<{ k: string; v: string }> = ({ k, v }) => <><i className="who-k">{k}</i>{v}</>;
 
 function cliNote(e: ModelEntry): string {
-  if (e.directOnly) return "直接调用";
   return [e.account, versionText(e.version) || null].filter(Boolean).join(" · ") || "订阅额度";
 }
 
@@ -250,12 +248,6 @@ export function sendEffort(e: ModelEntry | null, settings: { efforts: Record<str
     return v && v !== "default" ? v : undefined;
   }
   return effortFor(e, settings.efforts);
-}
-
-/** 一项的短名字。 */
-export function shortName(entries: ModelEntry[], id: string | undefined): string {
-  const e = id ? entries.find((x) => x.id === id) : undefined;
-  return e ? e.label.toUpperCase() : "没选";
 }
 
 /** PLOOP 的主角色（选的那个现在用不了就是列表里第一个 API 模型）。 */

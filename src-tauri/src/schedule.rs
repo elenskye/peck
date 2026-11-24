@@ -3,7 +3,7 @@
 //! 界面只在 PROJECTS 头上列出来看。
 //!
 //! - **谁来干**：设的时候 AGENTS 里选的那一套（接力、审查、委派都带着）；站主话里点了名的就用点名的那一个。
-//!   Antigravity 只做直接调用、不进来。默认 AUTO，高危照样等站主批。
+//!   默认 AUTO，高危照样等站主批。
 //! - **在哪跑**：默认每次开一个新任务（标题前 ⏰）；站主说了「接在这个对话里」的记着那个对话，到点在里面接着发
 //!   （那个对话不在了、归档了就开新的）。
 //! - **时间**按这台 Mac 现在的时区算（每次算下一次时现读，夏令时跟着走）。App 开着才跑：每 30 秒看一眼到点的。
@@ -28,11 +28,9 @@ pub const MAX_PER_PROJECT: usize = 12;
 pub enum When {
     /// 只跑一次：哪天（`YYYY-MM-DD`）几点（`HH:MM`）。
     Once { date: String, time: String },
-    /// 每天几点（`HH:MM`）；`days` 写了就只在那几天（1 是周一 … 7 是周日）；`weekdays` 是旧记录里的「周一到周五」。
+    /// 每天几点（`HH:MM`）；`days` 写了就只在那几天（1 是周一 … 7 是周日）。
     Daily {
         time: String,
-        #[serde(default)]
-        weekdays: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         days: Vec<u8>,
     },
@@ -43,7 +41,6 @@ pub enum When {
 }
 
 /// 谁来干的那一套：`api:…`（PLOOP 的主角色，子代理照设置 → AGENTS）或 `cli:…`、CLI 里的模型、思考强度。
-/// 以前记的接力、审查、委派（v1.1.2 前）读的时候丢掉。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Setup {
@@ -184,8 +181,8 @@ impl Schedule {
             return Err("定时任务选 PLOOP 的一个 API 模型或一个 CLI。".into());
         }
         if let Some(engine) = self.who.strip_prefix("cli:") {
-            if crate::gateway::caps::AgentCaps::for_engine(engine).direct_only {
-                return Err("Antigravity 只做直接调用，不进定时任务。".into());
+            if !crate::gateway::catalog::catalog().engines.iter().any(|e| e.id == engine) {
+                return Err(format!("不认识的 CLI {engine}。"));
             }
         }
         if !matches!(self.permission.as_str(), "plan" | "edit" | "auto") {
@@ -258,16 +255,9 @@ impl Schedule {
                 let at = days_from_civil(y, m, d) * DAY_MS + clock(time) - offset;
                 (at > now).then_some(at)
             }
-            When::Daily { time, weekdays, days } => {
+            When::Daily { time, days } => {
                 // 1970-01-01 是星期四：天数 + 3 对 7 取余，0 是星期一。
-                let allowed = |day: i64| {
-                    let wd = (day + 3).rem_euclid(7) as u8 + 1;
-                    if !days.is_empty() {
-                        days.contains(&wd)
-                    } else {
-                        !*weekdays || wd <= 5
-                    }
-                };
+                let allowed = |day: i64| days.is_empty() || days.contains(&((day + 3).rem_euclid(7) as u8 + 1));
                 (today..today + 8).map(|day| (day, day * DAY_MS + clock(time))).find(|(day, at)| *at > local_now && allowed(*day)).map(|(_, at)| at - offset)
             }
             When::Monthly { day, time } => {
@@ -310,7 +300,6 @@ impl Schedule {
         match &self.when {
             When::Once { date, time } => format!("{date} {time}（只一次）"),
             When::Daily { time, days, .. } if !days.is_empty() => format!("每{} {time}", days.iter().map(|d| WD[(*d as usize - 1).min(6)]).collect::<Vec<_>>().join("、")),
-            When::Daily { time, weekdays: true, .. } => format!("工作日 {time}"),
             When::Daily { time, .. } => format!("每天 {time}"),
             When::Monthly { day, time } => format!("每月 {day} 号 {time}"),
             When::Interval { hours } => format!("每隔 {hours} 小时"),
@@ -560,7 +549,6 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
             model: schedule.model.clone(),
             effort: schedule.effort.clone(),
             resume,
-            default_account: true,
             worktree: false,
             attachments: vec![],
         },
@@ -725,7 +713,8 @@ pub async fn schedule_missed(id: String, run: bool, app: tauri::AppHandle) -> Re
 mod tests {
     use super::*;
 
-    fn daily(time: &str, weekdays: bool, offset_min: i32) -> Schedule {
+    /// `workdays` 是周一到周五。
+    fn daily(time: &str, workdays: bool, offset_min: i32) -> Schedule {
         Schedule {
             id: "s".into(),
             workspace_id: "w".into(),
@@ -735,7 +724,7 @@ mod tests {
             model: None,
             effort: None,
             permission: "auto".into(),
-            when: When::Daily { time: time.into(), weekdays, days: vec![] },
+            when: When::Daily { time: time.into(), days: if workdays { vec![1, 2, 3, 4, 5] } else { vec![] } },
             offset_min,
             enabled: true,
             next_at: None,
@@ -765,7 +754,7 @@ mod tests {
         assert_eq!(s.next_after(at8(2026, 11, 13, 9, 1)), Some(at8(2026, 11, 16, 9, 0)));
         // 每周一：从星期五算是 16 号；周一 9 点过了是下周一。
         let mut s = daily("09:00", false, 480);
-        s.when = When::Daily { time: "09:00".into(), weekdays: false, days: vec![1] };
+        s.when = When::Daily { time: "09:00".into(), days: vec![1] };
         assert_eq!(s.next_after(now), Some(at8(2026, 11, 16, 9, 0)));
         assert_eq!(s.next_after(at8(2026, 11, 16, 9, 0)), Some(at8(2026, 11, 23, 9, 0)));
         assert_eq!(s.when_text(), "每周一 09:00");
@@ -814,12 +803,12 @@ mod tests {
     }
 
     #[test]
-    fn checks_reject_bad_input_and_antigravity() {
+    fn checks_reject_bad_input_and_unknown_clis() {
         assert!(daily("9:00", false, 480).checked().is_ok());
         assert!(daily("25:00", false, 480).checked().is_err());
         let mut s = daily("09:00", false, 480);
         s.who = "cli:antigravity".into();
-        assert!(s.checked().unwrap_err().contains("Antigravity"));
+        assert!(s.checked().unwrap_err().contains("不认识"), "v1.1.5 去掉了 Antigravity");
         let mut s = daily("09:00", false, 480);
         s.prompt = "  ".into();
         assert!(s.checked().is_err());
@@ -827,20 +816,13 @@ mod tests {
         s.when = When::Interval { hours: 0 };
         assert!(s.checked().is_err());
         let mut s = daily("09:00", false, 480);
-        s.when = When::Daily { time: "09:00".into(), weekdays: false, days: vec![3, 1, 3, 8] };
+        s.when = When::Daily { time: "09:00".into(), days: vec![3, 1, 3, 8] };
         assert!(s.clone().checked().is_err());
-        s.when = When::Daily { time: "09:00".into(), weekdays: false, days: vec![3, 1, 3] };
-        assert_eq!(s.checked().unwrap().when, When::Daily { time: "09:00".into(), weekdays: false, days: vec![1, 3] });
+        s.when = When::Daily { time: "09:00".into(), days: vec![3, 1, 3] };
+        assert_eq!(s.checked().unwrap().when, When::Daily { time: "09:00".into(), days: vec![1, 3] });
         let mut s = daily("09:00", false, 480);
         s.when = When::Once { date: "2026-02-30".into(), time: "09:00".into() };
         assert!(s.checked().is_err());
-        let mut s = daily("09:00", false, 480);
-        s.who = "cli:antigravity".into();
-        assert!(s.checked().unwrap_err().contains("Antigravity"));
-        // 旧记录（没有 days、session、missedAt）照样读得出来。
-        let old = r#"{"id":"a","workspaceId":"w","title":"t","prompt":"p","who":"cli:codex","permission":"edit","when":{"kind":"daily","time":"09:00","weekdays":true},"offsetMin":480,"enabled":true}"#;
-        let s: Schedule = serde_json::from_str(old).unwrap();
-        assert_eq!(s.when_text(), "工作日 09:00");
     }
 
     #[test]

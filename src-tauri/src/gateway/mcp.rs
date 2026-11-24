@@ -1,8 +1,8 @@
 //! Peck 给 CLI 的本机 MCP 入口：只听 `127.0.0.1`，streamable HTTP（只回 JSON，不开 SSE），
 //! 每个任务一个随机令牌（`Authorization: Bearer …`）。工具按这个任务给的（[`Offer`]）：
-//! - `ask_user`：引擎问站主一句，Peck 弹 ASK 卡片，站主答了把答案还给引擎。只给 Grok、Antigravity（ACP 自己没有
+//! - `ask_user`：引擎问站主一句，Peck 弹 ASK 卡片，站主答了把答案还给引擎。只给 Grok（ACP 自己没有
 //!   「问站主」）；Codex（`requestUserInput`）、Claude Code（`AskUserQuestion`）、Muse（`userInput/request`）有自己的通道。
-//! - `create_skill`：提议存一条 Skill（v0.10 C3，见 `skill_propose`），五家 CLI 都给（站主 2026-11-16 定）。
+//! - `create_skill`：提议存一条 Skill（v0.10 C3，见 `skill_propose`），四家 CLI 都给（站主 2026-11-16 定）。
 //! - `restore_snapshot`、`schedule_task`、`list_schedules`、`cancel_schedule`（v1.0.2，见 `harness/extras.rs`）：
 //!   快照回退和定时任务，和 Peck Loop 同一套；回退先弹高危卡片，站主批了才动。
 //!

@@ -5,12 +5,10 @@
 //! - **收尾时**（`Stop`）：CLI 做完了（失败、停下的不跑）再跑；退出码 2 就续上它的会话、把原因发过去让它接着干，一回合最多
 //!   3 次。排在 Git Plan 的收尾提交之前。续不了会话的写一行，照常收尾。
 //! - 调工具前后、压缩前是 CLI 自己的事，Peck 管不到，不跑。
-//! - **从哪读**：和 Peck Loop 一样。Claude Code 自己会跑项目 `.claude/settings.json` 里的，Peck 只替它跑插件带的，免得跑两遍；
-//!   直接调用的引擎（Antigravity）一条都不跑。
+//! - **从哪读**：和 Peck Loop 一样。Claude Code 自己会跑项目 `.claude/settings.json` 里的，Peck 只替它跑插件带的，免得跑两遍。
 //! - **卡片**：每条命令第一次跑之前弹卡片，「总是允许」和 Peck Loop 共用（`hook:<指纹>`）；拒了这一回合不再问、不跑。
 //!   请求号 `hook-approve-<n>`：控制通道里这些归 Peck（[`Router`]），别的转给正在跑的那一次引擎。
 
-use super::caps::AgentCaps;
 use super::event::{ApprovalDecision, EventBody, PermissionLevel, ResolvedBy, ToolKind};
 use super::log::EventSink;
 use super::Control;
@@ -31,10 +29,7 @@ pub fn is_hook_card(body: &EventBody) -> bool {
 }
 
 /// 这个引擎这次要 Peck 替它跑哪些（没有就是 `None`，照旧直接把控制通道交给引擎）。
-pub fn hooks_for(engine: &str, caps: &AgentCaps, cwd: &Path) -> Option<HookSet> {
-    if caps.direct_only {
-        return None;
-    }
+pub fn hooks_for(engine: &str, cwd: &Path) -> Option<HookSet> {
     let set = HookSet::load(cwd);
     let set = if engine == "claude-code" { set.only_plugins() } else { set };
     let wanted = [Event::SessionStart, Event::UserPromptSubmit, Event::Stop];
@@ -255,16 +250,13 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_only_gets_plugin_hooks_and_antigravity_none() {
-        let caps = AgentCaps { direct_only: false, ..AgentCaps::peck_loop() };
+    fn claude_code_only_gets_plugin_hooks() {
         let dir = project(r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo settings"}]}]}}"#, None);
-        assert!(hooks_for("codex", &caps, &dir).is_some(), "Codex 不读 .claude/settings.json，Peck 替它跑");
-        assert!(hooks_for("claude-code", &caps, &dir).is_none(), "Claude Code 自己跑 settings 里的");
-        let direct = AgentCaps { direct_only: true, ..AgentCaps::peck_loop() };
-        assert!(hooks_for("antigravity", &direct, &dir).is_none());
+        assert!(hooks_for("codex", &dir).is_some(), "Codex 不读 .claude/settings.json，Peck 替它跑");
+        assert!(hooks_for("claude-code", &dir).is_none(), "Claude Code 自己跑 settings 里的");
         // 只挂了调工具前后的：CLI 这边一条都不用跑。
         let tools_only = project(r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"x"}]}]}}"#, None);
-        assert!(hooks_for("codex", &caps, &tools_only).is_none());
+        assert!(hooks_for("codex", &tools_only).is_none());
         let _ = (std::fs::remove_dir_all(dir), std::fs::remove_dir_all(tools_only));
     }
 

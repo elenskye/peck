@@ -3,7 +3,7 @@
 //! 两个接口：
 //! - [`ModelProvider`]：裸模型。给对话和工具定义，流式回字、回思考、回要调用的工具；
 //!   工具由调用方（Peck Loop，`harness/`）执行。
-//! - [`AgentBackend`]：整包引擎（Codex、Claude Code、Muse、Grok、Antigravity）。给一句话，
+//! - [`AgentBackend`]：整包引擎（Codex、Claude Code、Muse、Grok）。给一句话，
 //!   引擎自己读写跑；过程转成统一事件（[`event`]），要批的事、要问的事走控制通道（[`Control`]）。
 //!
 //! Peck Loop（Phase 6 的 `harness/`）也实现 [`AgentBackend`]：里面用 [`ModelProvider`]
@@ -376,7 +376,7 @@ impl std::error::Error for GatewayError {}
 
 // ───────────────────────── IPC ─────────────────────────
 
-/// 模型列表：Peck（API 模型，按供应商）+ CLI 引擎 + 现有的接力和规划 + 实施。
+/// 模型列表：Peck（API 模型，按供应商）+ CLI 引擎。
 #[tauri::command]
 pub async fn gateway_models(
     state: tauri::State<'_, crate::state::AppState>,

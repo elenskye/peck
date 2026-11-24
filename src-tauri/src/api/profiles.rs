@@ -16,7 +16,7 @@ pub struct Provider {
     pub name: String,
 }
 
-/// 存在 `api_settings` 那一行的设置。旧版本存的 `models`、`agents`、`aliyunWorkspaceId` 读的时候忽略。
+/// 存在 `api_settings` 那一行的设置。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {

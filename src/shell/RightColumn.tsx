@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TermView } from "@/App";
-import { canAutomate, type AgentEvent, type ModelEntry } from "@/lib/agentEvents";
+import type { AgentEvent, ModelEntry } from "@/lib/agentEvents";
 import { foldEvents } from "@/lib/agentView";
 import { ipc, isMockMode, type BgInfo } from "@/lib/ipc";
 import PREVIEW_SCRIPT from "../../src-tauri/src/preview.js?raw";
@@ -321,10 +321,10 @@ const TaskLog: React.FC<{ run: RunRecord | null; events: AgentEvent[]; entries: 
 
 // ---------- ONE SHOT ----------
 
-/** 边干活边问：选一个引擎（API 模型和 CLI，Antigravity 除外），按 PLAN 档只读回答，不锁终端，答完一行花费。 */
+/** 边干活边问：选一个引擎（API 模型和 CLI），按 PLAN 档只读回答，不锁终端，答完一行花费。 */
 const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, settings, onSettings, onToTask, wide, onWide, say, shown }) => {
   const hide = shown ? undefined : { display: "none" };
-  const options = entries.filter((e) => e.available && canAutomate(e));
+  const options = entries.filter((e) => e.available);
   const pick = options.find((e) => e.id === settings.oneshotPick) ?? options.find((e) => e.id === settings.pick) ?? options.find((e) => e.group === "peck") ?? options[0] ?? null;
   const [question, setQuestion] = useState("");
   const [asked, setAsked] = useState("");
@@ -364,7 +364,7 @@ const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, setti
   }
   return (
     <div className="pk-mod col-grow oneshot" style={hide}>
-      <ModHead label="ONE SHOT" note={<>只读<Info text="边干活边问一句。它能读整个项目，但不改文件；任务进度和终端输出它看不到，要带上就贴进问题里。API 模型按次算钱，算进花费上限；CLI 用它们的订阅额度。Antigravity 只做直接调用，不在这里。" /></>}><Expand wide={wide} onWide={onWide} /></ModHead>
+      <ModHead label="ONE SHOT" note={<>只读<Info text="边干活边问一句。它能读整个项目，但不改文件；任务进度和终端输出它看不到，要带上就贴进问题里。API 模型按次算钱，算进花费上限；CLI 用它们的订阅额度。" /></>}><Expand wide={wide} onWide={onWide} /></ModHead>
       <div className="col-grow scroll oneshot-body">
         {!asked ? null : (
           <>

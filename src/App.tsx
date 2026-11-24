@@ -230,7 +230,7 @@ const App: React.FC = () => {
     try {
       const loadedRuns = await ipc.sessionGetRuns(id);
       setRunsByTask((prev) => ({ ...prev, [id]: loadedRuns }));
-      // 过程在事件日志里（这次打开 App 以后正在收的不重读；v0.8 以前的旧记录读回来是空的）。
+      // 过程在事件日志里（这次打开 App 以后正在收的不重读）。
       const agentRuns = loadedRuns.filter((r) => !liveRef.current[r.id]);
       const loaded = await Promise.all(agentRuns.map(async (r) => [r.id, await ipc.gatewayEvents(r.id).catch(() => [] as AgentEvent[])] as const));
       if (loaded.length) setAgentEvents((prev) => {
@@ -499,10 +499,7 @@ const App: React.FC = () => {
   const applyProjectDefaults = (id: string | null) => {
     const ws = projects.find((p) => p.workspace.id === id)?.workspace;
     const patch: Partial<AppSettings> = {};
-    // 以前存的「接力」、API 单干（api:…）是现在的 PLOOP（v1.1.2，单干的那个当主角色）；项目的默认预设去掉了，存着的不看。
-    const saved = ws?.settings?.who;
-    const who = saved === "relay" || saved?.startsWith("api:") ? PLOOP_ID : saved;
-    if (saved?.startsWith("api:") && saved !== settingsRef.current.ploop.main) patch.ploop = { ...settingsRef.current.ploop, main: saved };
+    const who = ws?.settings?.who;
     if (who && who !== settingsRef.current.pick) patch.pick = who;
     if (ws?.settings?.permission && ws.settings.permission !== settingsRef.current.permission) patch.permission = ws.settings.permission as Permission;
     if (Object.keys(patch).length) updateSettings(patch);

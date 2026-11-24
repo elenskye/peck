@@ -13,7 +13,7 @@
 //!   （`ProjectSettings.mcp_off`，设置里的也能对这个项目关）。项目里的是项目里的程序、在沙箱外跑：第一次起之前问一次站主，
 //!   「总是允许」按项目 + 名字 + 配置的指纹记（`mcp-project:<名字>:<指纹>`），配置改了再问。只接 stdio 的；`url` 那种跳过、写一句。
 //! - **工具标注记下来**（`mcp_hints`）：Peck 起过、TEST 过的服务器，每个工具是只读、会改、会删改，按项目记。
-//!   Grok、Antigravity 经 ACP 问要不要调 MCP 工具时不带标注，Peck 照这份替它们批（`gateway::runner`）。
+//!   Grok 经 ACP 问要不要调 MCP 工具时不带标注，Peck 照这份替它们批（`gateway::runner`）。
 
 use crate::store::{Store, StoreResult};
 use crate::workspace::EnvVar;
@@ -644,8 +644,6 @@ impl Drop for McpClient {
     }
 }
 
-/// 合作的几段共用一组服务器（v0.10）：第一段用到时起，整个任务做完才停（以前每一段都起一遍）。
-pub type McpSlot = Arc<tokio::sync::Mutex<Option<Arc<McpHub>>>>;
 /// 服务器起来、列完工具以后（记标注用）：起来的这组和它们的配置。
 pub type McpSeen = Arc<dyn Fn(&McpHub, &[McpServerConfig]) + Send + Sync>;
 

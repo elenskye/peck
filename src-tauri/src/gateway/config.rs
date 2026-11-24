@@ -240,7 +240,7 @@ mod tests {
             std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         std::fs::write(bin.join("grok"), "not executable").unwrap();
-        let commands = ["claude", "codex", "muse", "grok", "agy"];
+        let commands = ["claude", "codex", "muse", "grok"];
         let candidates = [other.clone(), bin.clone()];
         assert_eq!(discover_cli_dir(&candidates, &commands), Some(bin.clone()));
         // 只有一家的目录不算。

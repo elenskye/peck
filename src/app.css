@@ -461,12 +461,11 @@ body { overflow: hidden; }
 
 /* ---------- 身份色（v0.5 Refine，站主 2026-11-13 要五家 CLI 各有一色） ----------
    方案 peck 0.1.0 只有 Muse 紫、Grok 橙、API 蓝；这三色先放这里，本地改方案时并进 tokens（APCA 色点门槛 45，深浅两套都过：
-   Codex 51.6 / 68.1，Claude Code 56.6 / 62.1，Antigravity 77.2 / 62.5）。只用在 7 像素的色点上。 */
-:root, [data-theme="dark"] { --color-codex: #E879F9; --color-claude-code: #F0997A; --color-antigravity: #A3E635; }
-[data-theme="light"] { --color-codex: #A21CAF; --color-claude-code: #B4532A; --color-antigravity: #4D7C0F; }
+   Codex 51.6 / 68.1，Claude Code 56.6 / 62.1）。只用在 7 像素的色点上。 */
+:root, [data-theme="dark"] { --color-codex: #E879F9; --color-claude-code: #F0997A; }
+[data-theme="light"] { --color-codex: #A21CAF; --color-claude-code: #B4532A; }
 .pk-dot--codex { background: var(--color-codex); }
 .pk-dot--claude-code { background: var(--color-claude-code); }
-.pk-dot--antigravity { background: var(--color-antigravity); }
 
 /* ---------- 左栏：右键菜单、改名、拖动排顺序、文件夹不在了（v0.5 Refine 2） ---------- */
 .float.ctx-menu { z-index: 60; min-width: 232px; }
@@ -489,9 +488,9 @@ body { overflow: hidden; }
 
 /* ---------- QUOTA 页的图（v0.5 Refine 2） ----------
    系列色跟着引擎走：浅色就是身份色；深色用同一色相的深一级（大面积填色太亮刺眼），六色按图里的叠放顺序
-   （Antigravity、Peck Loop、Grok、Muse、Claude Code、Codex）跑过色弱和明暗校验，深浅都过。字一律用文字色，不用系列色。 */
-:root, [data-theme="dark"] { --chart-antigravity: #71A505; --chart-api: #4F94E8; --chart-grok: #C58131; --chart-muse: #987CE9; --chart-claude-code: #CD795B; --chart-codex: #CA5DDB; }
-[data-theme="light"] { --chart-antigravity: #4D7C0F; --chart-api: #2563EB; --chart-grok: #A35E00; --chart-muse: #6D4AE8; --chart-claude-code: #B4532A; --chart-codex: #A21CAF; }
+   （Peck Loop、Grok、Muse、Claude Code、Codex）跑过色弱和明暗校验，深浅都过。字一律用文字色，不用系列色。 */
+:root, [data-theme="dark"] { --chart-api: #4F94E8; --chart-grok: #C58131; --chart-muse: #987CE9; --chart-claude-code: #CD795B; --chart-codex: #CA5DDB; }
+[data-theme="light"] { --chart-api: #2563EB; --chart-grok: #A35E00; --chart-muse: #6D4AE8; --chart-claude-code: #B4532A; --chart-codex: #A21CAF; }
 .quota h2.t-title { margin-top: var(--space-11); }
 .q-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-5); margin-top: var(--space-2); }
 .q-tile { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-6) var(--space-7); }
@@ -720,38 +719,6 @@ body { overflow: hidden; }
 .float.info-pop { z-index: 70; width: 280px; overflow-y: auto; padding: var(--space-4) var(--space-6); background: var(--color-panel-2); box-shadow: 0 0 0 1px var(--color-cyan-line); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); white-space: normal; letter-spacing: 0; text-transform: none; user-select: text; }
 .lbl .info-btn, .pk-mod-head .info-btn { vertical-align: -2px; }
 
-/* ---------- 多引擎合作（v0.8 Phase 11） ---------- */
-.agents-row--team { grid-template-columns: 58px minmax(0, 1fr); }
-.agents-row--team .agents-k { display: flex; align-items: center; white-space: nowrap; }
-.agents-row--team .info-btn { margin-left: var(--space-2); }
-.agents-sep { height: 1px; margin: var(--space-2) 0; background: var(--color-line); }
-/* 接力、审查的一段：一行暗字分隔，前面一个身份色点。 */
-.agent-stage { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); margin: var(--space-6) 0 var(--space-2); padding-top: var(--space-4); border-top: 1px dashed var(--color-line); font-size: var(--text-small); color: var(--color-text-2); }
-.agent > .agent-stage:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-.agent-stage .t-label { color: var(--color-text-3); }
-.agent-stage em { margin-left: auto; font-style: normal; color: var(--color-text-3); display: inline-flex; align-items: center; gap: var(--space-2); }
-.agent-stage.is-bad em, .agent-stage-err { color: var(--color-bad); }
-.agent-stage-err { flex-basis: 100%; }
-/* 写规范那一段收成一行（v1.0.3）：整行能点，点开看规范全文和读过的文件。 */
-.agent-stage-fold { width: 100%; }
-.agent-stage-fold:hover, .agent-stage-fold:hover .t-label { color: var(--color-text); }
-.agent-stage-fold > .pk-i { color: var(--color-text-3); }
-.agent-spec { margin: var(--space-2) 0 var(--space-4); padding: var(--space-4) var(--space-6); box-shadow: inset 1px 0 0 var(--color-line); }
-.agent-spec-h { margin-top: var(--space-4); font-size: var(--text-small); color: var(--color-text-3); }
-.agent-spec-files { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--text-small); color: var(--color-text-2); overflow-wrap: anywhere; }
-.agent-verdict { font-style: normal; padding: 0 var(--space-3); box-shadow: inset 0 0 0 1px currentColor; }
-.agent-verdict.is-ok { color: var(--color-ok); }
-.agent-verdict.is-warn { color: var(--color-warn); }
-/* 审查逐条判的验收标准（v0.9）：一条一行，没过的红、没判的淡。 */
-.agent-checks { list-style: none; margin: var(--space-2) 0 var(--space-4); padding: 0; display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-small); }
-.agent-checks li { display: flex; align-items: baseline; gap: var(--space-3); line-height: 1.5; color: var(--color-text); }
-.agent-checks li > .pk-i { flex: none; transform: translateY(1px); }
-.agent-checks li.is-ok > .pk-i { color: var(--color-ok); }
-.agent-checks li.is-bad > .pk-i, .agent-checks li.is-bad .agent-check-n { color: var(--color-bad); }
-.agent-checks li.is-dim { color: var(--color-text-3); }
-.agent-check-n { flex: none; color: var(--color-text-3); }
-.agent-check-t { min-width: 0; }
-.agent-check-t em { display: block; font-style: normal; color: var(--color-text-2); }
 .app .set-env { width: 320px; max-width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-panel-2); clip-path: var(--pk-clip2); resize: vertical; }
 
 /* ---------- 本机（v0.8 Phase 12）：贴图、截图、复制、打开 ---------- */

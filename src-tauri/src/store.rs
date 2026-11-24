@@ -43,7 +43,7 @@ pub struct RunRecord {
     pub steps: Vec<StepDescriptor>,
     pub files: Vec<FileChangeItem>,
     pub summary: Option<String>,
-    /// 谁来干：`api:<供应商>/<模型>`、`cli:<引擎>`、`team:<写规范>|<实施>|<审查>`；v0.8 以前的旧记录没有。
+    /// 谁来干：`api:<供应商>/<模型>`（PLOOP 的主角色）、`cli:<引擎>`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub who: Option<String>,
     /// 发任务时选的权限档：`plan` / `edit` / `auto`。

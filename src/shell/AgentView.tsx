@@ -1,11 +1,11 @@
 // 一次任务的过程（Peck Loop 和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, BoardItem, BoardStatus, Control, PlanStep } from "@/lib/agentEvents";
-import { COMPACT_STEP, englishTitle, findCall, foldEvents, readFiles, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type StageView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, englishTitle, findCall, foldEvents, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
-import { cn, copyText, engineDot, span } from "@/lib/utils";
-import { Btn, Dot, Field, Icon, Info, ModHead, Twinkle, useNow } from "@/ui";
+import { cn, copyText, span } from "@/lib/utils";
+import { Btn, Field, Icon, Info, ModHead, Twinkle, useNow } from "@/ui";
 import { Md } from "@/shell/Markdown";
 
 interface Props {
@@ -40,7 +40,7 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
         : view.plan && view.plan.length > 0 && <Plan steps={view.plan} />}
       {view.items.map((item) => item.kind === "skill"
         ? <SkillCard key={item.id} skill={item.skill} runId={runId} running={running} onAppend={onAppend} say={say} />
-        : <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} hideSteps={!!nextSteps && ((!!view.ended && item.id === lastText) || (item.kind === "text" && !!item.stage && item.done))} />)}
+        : <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} hideSteps={!!nextSteps && !!view.ended && item.id === lastText} />)}
       {view.approvals.map((a) => <ApprovalCard key={a.requestId} approval={a} who={who} onControl={onControl} say={say} />)}
       {view.asks.map((a) => <AskCard key={a.requestId} ask={a} who={who} onControl={onControl} say={say} />)}
       {view.memory && view.ended && !running && runId && <MemoryCard runId={runId} notes={view.memory.notes} reviewed={view.memory.reviewed} onAppend={onAppend} say={say} />}
@@ -72,8 +72,6 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
       return <Compacted item={item} />;
     case "background":
       return <BackgroundLine bg={item.bg} />;
-    case "stage":
-      return item.info.items ? <SpecStage info={item.info} now={now} /> : <StageLine info={item.info} now={now} />;
   }
 };
 
@@ -110,85 +108,6 @@ const ShotThumb: React.FC<{ output: string | null | undefined }> = ({ output }) 
     </button>
   );
 };
-
-const STAGE_END: Partial<Record<string, string>> = { done: "做完了", interrupted: "停了", limit: "到了上限", refused: "拒绝了", error: "出错了" };
-
-/** 接力、审查的一段（v0.8）：谁做哪一段、用了多久；审查写结论。 */
-const StageLine: React.FC<{ info: StageView; now: number }> = ({ info, now }) => {
-  const running = info.endedAt == null;
-  const ms = (info.endedAt ?? now) - info.startedAt;
-  const checks = info.checks ?? [];
-  const failed = checks.filter((c) => c.pass === false).length;
-  const verdict = info.verdict === "changes"
-    ? { text: checks.length ? `${failed} 条没过 · 交回去修` : "要改 · 交回去修一次", cls: "is-warn" }
-    : info.verdict === "pass" ? { text: checks.length ? `验收标准都过了` : "通过", cls: "is-ok" } : null;
-  return (
-    <>
-    <div className={cn("agent-stage", `agent-stage--${info.stage}`, info.reason && info.reason !== "done" && "is-bad")}>
-      <Dot kind={info.engine === "peck" ? "api" : engineDot(info.engine)} />
-      <b className="t-label">{STAGE_WORD[info.stage]}</b>
-      <span>{info.title}</span>
-      <em className="t-code">{running ? <><span className="pk-run" />{span(ms)}</> : `${STAGE_END[info.reason ?? "done"] ?? "结束了"} · ${span(ms)}`}</em>
-      {verdict && <i className={cn("agent-verdict", verdict.cls)}>{verdict.text}</i>}
-      {info.error && <span className="agent-stage-err">{info.error}</span>}
-    </div>
-    {checks.length > 0 && (
-      <ol className="agent-checks sel" aria-label="验收标准逐条的结果">
-        {checks.map((c) => (
-          <li key={c.n} className={c.pass === true ? "is-ok" : c.pass === false ? "is-bad" : "is-dim"}>
-            <Icon name={c.pass === true ? "check" : c.pass === false ? "x" : "ask"} size={12} />
-            <span className="agent-check-n t-code">{c.n}</span>
-            <span className="agent-check-t">{c.criterion}{c.note && <em>{c.pass == null ? "" : c.note}</em>}{c.pass == null && <em>没判</em>}</span>
-          </li>
-        ))}
-      </ol>
-    )}
-    </>
-  );
-};
-
-/** 写规范那一段（v1.0.3）：收成一行「SPEC · Claude Code 写好了规范 · 1:20 ▸」，点开看规范全文和它读过的文件；
- *  在跑时下面只露一行：在调工具就是那一步，在想就是 Thinking。对话里只有实施那一个的输出。 */
-const SpecStage: React.FC<{ info: StageView; now: number }> = ({ info, now }) => {
-  const [open, setOpen] = useState(false);
-  const items = info.items ?? [];
-  const running = info.endedAt == null;
-  const ms = (info.endedAt ?? now) - info.startedAt;
-  const ok = !running && (info.reason ?? "done") === "done";
-  const title = ok ? info.title.replace(/写规范$/, "写好了规范").replace(/补验收标准$/, "补好了验收标准") : info.title;
-  const spec = [...items].reverse().find((i): i is Extract<ViewItem, { kind: "text" }> => i.kind === "text" && !!i.text.trim());
-  const files = readFiles(items);
-  const groups = items.filter((i): i is Extract<ViewItem, { kind: "tools" }> => i.kind === "tools");
-  const step = running ? groups.flatMap((g) => g.calls).reverse().find((c) => c.status === "running") : undefined;
-  const thought = running && !step ? groups.flatMap((g) => g.thoughts).find((t) => !t.done) : undefined;
-  return (
-    <>
-      <button type="button" className={cn("agent-stage agent-stage--spec agent-stage-fold", !running && !ok && "is-bad")} aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Dot kind={info.engine === "peck" ? "api" : engineDot(info.engine)} />
-        <b className="t-label">{STAGE_WORD.spec}</b>
-        <span>{title}</span>
-        <em className="t-code">{running ? <><span className="pk-run" />{span(ms)}</> : ok ? span(ms) : `${STAGE_END[info.reason ?? "done"] ?? "结束了"} · ${span(ms)}`}</em>
-        <Icon name={open ? "triD" : "triR"} size={12} />
-        {info.error && <span className="agent-stage-err">{info.error}</span>}
-      </button>
-      {open && (
-        <div className="agent-spec sel">
-          {spec ? <Md text={spec.text} className={cn("agent-text", !spec.done && "is-live")} /> : <p className="agent-line">{running ? "还在写…" : "没写出规范。"}</p>}
-          {files.length > 0 && (
-            <>
-              <p className="agent-spec-h">读过 {files.length} 个文件</p>
-              <ul className="agent-spec-files t-code">{files.map((f) => <li key={f}>{f}</li>)}</ul>
-            </>
-          )}
-        </div>
-      )}
-      {step && <p className="agent-thinking" role="status"><span className="pk-run" /><span>{englishTitle(step.title)}</span><em>{span(Math.max(now - step.startedAt, 0))}</em></p>}
-      {thought && <Thinking since={thought.startedAt} now={now} />}
-    </>
-  );
-};
-
-const STAGE_WORD: Record<StageView["stage"], string> = { spec: "SPEC", implement: "BUILD", review: "REVIEW", fix: "FIX" };
 
 /** 自动压缩的一步：一行；交接摘要能点开看原文。 */
 const Compacted: React.FC<{ item: Extract<ViewItem, { kind: "compacted" }> }> = ({ item }) => {

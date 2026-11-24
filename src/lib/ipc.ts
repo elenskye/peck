@@ -377,7 +377,7 @@ export const ipc = {
     if (isMockMode()) return mockIpc.projectMcpTest(workspaceId, name);
     return invoke<McpToolInfo[]>("project_mcp_test", { workspaceId, name });
   },
-  /** ONE SHOT：只读回答一句（API 模型或 CLI，Antigravity 除外）；不占任务、不锁终端。返回 id（oneshot-…）。 */
+  /** ONE SHOT：只读回答一句（API 模型或 CLI）；不占任务、不锁终端。返回 id（oneshot-…）。 */
   async harnessOneshot(args: OneshotArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
     if (isMockMode()) return mockIpc.harnessOneshot(args, onEvent);
     const channel = new Channel<AgentEvent>();
@@ -504,10 +504,10 @@ export interface HarnessRunArgs {
   images?: ImageInput[];
 }
 
-/** 定时任务（schedule.rs）。时间按本机时区。days：1 是周一 … 7 是周日；weekdays 是旧记录里的「周一到周五」。 */
+/** 定时任务（schedule.rs）。时间按本机时区。days：1 是周一 … 7 是周日。 */
 export type ScheduleWhen =
   | { kind: "once"; date: string; time: string }
-  | { kind: "daily"; time: string; weekdays?: boolean; days?: number[] }
+  | { kind: "daily"; time: string; days?: number[] }
   | { kind: "monthly"; day: number; time: string }
   | { kind: "interval"; hours: number };
 
@@ -655,7 +655,7 @@ export interface BgInfo {
 export interface OneshotArgs {
   workspaceId: string;
   prompt: string;
-  /** api:… 或 cli:…（Antigravity 不行） */
+  /** api:… 或 cli:… */
   who: string;
   /** CLI 引擎里的模型名（AGENTS 里选的；不填用 CLI 默认）。 */
   model?: string;
@@ -675,7 +675,6 @@ function mockCliModels(engine: string): Promise<CliModels> {
     codex: [m("gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], true), m("gpt-6-luna", ["low", "medium", "high"])],
     muse: [m("muse-wonder-1.0", ["minimal", "low", "medium", "high", "max"], true), m("muse-ember-1.0", ["low", "medium", "high"]), m("muse-spark-1.3", ["low", "medium", "high"])],
     grok: [m("grok-4.6", ["medium", "high", "xhigh"], true), m("grok-4.5", ["medium", "high", "xhigh"])],
-    antigravity: [m("gemini-4-argon", ["low", "medium", "high"], true), m("gemini-3.8-flash", ["low", "medium", "high"]), m("claude-opus-5-5", ["low", "medium", "high"])],
   };
   return Promise.resolve({ engine, models: list[engine] ?? [], source: "mock", readAt: Date.now(), error: null });
 }

@@ -153,14 +153,12 @@ fn run_detail(r: &RunRecord, title: &str) -> String {
     out
 }
 
-/// 这一次是哪一家做的（换引擎按它认）：Peck Loop（不管哪个模型，对话是同一份）、某个 CLI、接力和审查、旧的。
+/// 这一次是哪一家做的（换引擎按它认）：Peck Loop（不管哪个模型，对话是同一份）、某个 CLI。
 pub fn family_of(who: Option<&str>) -> String {
     match who {
         Some(w) if w.starts_with("api:") => "peck".into(),
-        Some(w) if w.starts_with("team:") => "team".into(),
-        Some(w) if w.starts_with("cli:") => w.to_string(),
-        Some(w) => format!("old:{w}"),
-        None => "old".into(),
+        Some(w) => w.to_string(),
+        None => String::new(),
     }
 }
 
@@ -176,12 +174,8 @@ pub fn who_label(who: Option<&str>) -> String {
             let id = &w[4..];
             cat.engines.iter().find(|e| e.id == id).map(|e| e.label.clone()).unwrap_or_else(|| id.to_string())
         }
-        Some(w) if w.starts_with("team:") => {
-            let parts: Vec<String> = w[5..].split('|').filter(|p| !p.is_empty()).map(|p| who_label(Some(p))).collect();
-            format!("合作 · {}", parts.join(" + "))
-        }
         Some(w) => w.to_string(),
-        None => "旧的发任务".into(),
+        None => "（没记是谁）".into(),
     }
 }
 

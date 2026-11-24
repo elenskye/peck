@@ -1,7 +1,7 @@
 //! CLI 引擎能选的模型（站主 2026-11-13 要的：在 AGENTS 里给 CLI 选模型）。
 //!
 //! 从 CLI 自己那里读，不起模型、不花额度：Codex `app-server` 的 `model/list`、Muse `serve` 的 `model/list`、
-//! Grok / Antigravity（ACP）`session/new` 回应里的 `configOptions`（模型和强度）。Claude Code 没有列模型的接口，
+//! Grok（ACP）`session/new` 回应里的 `configOptions`（模型和强度）。Claude Code 没有列模型的接口，
 //! 读它自己缓存的模型目录（配置目录下 `cache/model-catalog/*.json`：带版本的模型名、强度档、现在选的哪个）；
 //! 没有缓存才退回 `--model` 认的别名（fable、opus、sonnet、haiku）。
 //! 读到的存在 `app_settings` 的 `cli_models`，界面点 REFRESH 才重读；读不到照旧给上次的，带上原因。
@@ -219,7 +219,6 @@ fn mock(engine: &str) -> Vec<CliModel> {
         "codex" => vec![m("gpt-6.1-sol", &["low", "medium", "high", "xhigh"], true), m("gpt-6-luna", &["low", "medium", "high"], false)],
         "muse" => vec![m("muse-wonder-1.0", &["low", "medium", "high", "max"], true), m("muse-ember-1.0", &["low", "medium", "high", "max"], false), m("muse-spark-1.3", &["low", "medium", "high", "max"], false)],
         "grok" => vec![m("grok-4.7", &["medium", "high", "xhigh"], true), m("grok-4.7-build-fast", &["medium", "high", "xhigh"], false), m("grok-4.6", &["medium", "high", "xhigh"], false)],
-        "antigravity" => vec![m("gemini-4-argon", &["low", "medium", "high"], true), m("gemini-3.8-flash", &["low", "medium", "high"], false), m("claude-opus-5-5", &["low", "medium", "high"], false)],
         _ => Vec::new(),
     }
 }
@@ -260,7 +259,6 @@ async fn ask(engine: &str, setup: engines::EngineSetup, cwd: std::path::PathBuf)
         "codex" => vec!["app-server".into()],
         "muse" => vec!["serve".into()],
         "grok" => engines::acp::GROK.args.iter().map(|s| s.to_string()).collect(),
-        "antigravity" => engines::acp::ANTIGRAVITY.args.iter().map(|s| s.to_string()).collect(),
         _ => return Err("这家 CLI 不用读。".into()),
     };
     let launch = Launch { bin: setup.bin, args, cwd: cwd.clone(), env: setup.env, path: setup.path };
@@ -294,7 +292,7 @@ async fn ask(engine: &str, setup: engines::EngineSetup, cwd: std::path::PathBuf)
         }
         .await,
         _ => async {
-            let flavor = if engine == "grok" { engines::acp::GROK } else { engines::acp::ANTIGRAVITY };
+            let flavor = engines::acp::GROK;
             rpc(
                 &mut pipe,
                 1,
@@ -425,7 +423,7 @@ mod tests {
 
     #[test]
     fn acp_options_from_the_recorded_fixtures() {
-        for (dir, option, first) in [("grok-small-task", "reasoning_effort", "grok-4.7"), ("antigravity-small-task", "thought_level", "gemini-4-argon")] {
+        for (dir, option, first) in [("grok-small-task", "reasoning_effort", "grok-4.7")] {
             let raw = std::fs::read_to_string(format!("{}/tests/fixtures/gateway/{dir}/raw.jsonl", env!("CARGO_MANIFEST_DIR"))).unwrap();
             let reply = raw
                 .lines()

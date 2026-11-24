@@ -1,4 +1,4 @@
-{"type":"session.started","engine":"codex","model":"gpt-6.1-sol","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":true,"interrupt":true,"resume":true,"mcpInject":true,"usage":"cumulative","cost":"unknown","quota":true,"switchModel":true,"needsTty":false,"directOnly":false},"tools":[],"mcp":[],"sessionRef":"01a1cde8-386e-7ae0-85f0-88094adfe84e","version":"0.167.2"}
+{"type":"session.started","engine":"codex","model":"gpt-6.1-sol","caps":{"streaming":true,"reasoningReplay":false,"tools":"engine","approvals":"live","askUser":true,"steer":true,"interrupt":true,"resume":true,"mcpInject":true,"usage":"cumulative","cost":"unknown","quota":true,"switchModel":true,"needsTty":false},"tools":[],"mcp":[],"sessionRef":"01a1cde8-386e-7ae0-85f0-88094adfe84e","version":"0.167.2"}
 {"type":"turn.started","turnId":"01a1cde8-4079-76f1-8a99-82f60e90a844"}
 {"type":"message.delta","itemId":"msg_00715505428a93ce016af5396ddc4487d0981907d2c3a62975","text":"我"}
 {"type":"message.delta","itemId":"msg_00715505428a93ce016af5396ddc4487d0981907d2c3a62975","text":"会"}

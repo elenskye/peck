@@ -103,10 +103,7 @@ impl ProjectLayer {
             if !out.is_empty() {
                 out.push('\n');
             }
-            out.push_str("# Memory\nNotes about this project that the user approved for you to remember:\n");
-            for m in &self.memories {
-                out.push_str(&format!("- {}\n", m.trim()));
-            }
+            out.push_str(&format!("# Memory\n{}", memory_lines(&self.memories)));
         }
         if !self.skills.is_empty() {
             if !out.is_empty() {
@@ -360,6 +357,20 @@ pub fn messages_estimate(messages: &[Message]) -> (u64, u64) {
         }
     }
     (conv, tools)
+}
+
+/// 记忆那几行（Peck Loop 的系统提示和 CLI 的第一句共用）。
+fn memory_lines(memories: &[String]) -> String {
+    let mut out = String::from("Notes about this project that the user approved for you to remember:\n");
+    for m in memories {
+        out.push_str(&format!("- {}\n", m.trim()));
+    }
+    out
+}
+
+/// CLI 引擎的项目记忆（v1.1.5）：新会话的第一句前面带上这一块（续上的会话里已经有了）。没有记忆为空。
+pub fn memory_block(memories: &[String]) -> Option<String> {
+    (!memories.is_empty()).then(|| format!("<peck-memory>\n{}</peck-memory>", memory_lines(memories)))
 }
 
 #[cfg(test)]

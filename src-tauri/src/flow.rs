@@ -1,5 +1,4 @@
-//! 任务记录里的「计划」：一个任务有哪几步（v0.8 起新的发任务都只有一步；旧记录照旧读）。
-//! 旧的流程清单（`flows/*.toml`）和按清单派发在 v0.8 删了。
+//! 任务记录里的「计划」：一个任务有哪几步（现在都只有一步）。
 use serde::{Deserialize, Serialize};
 
 use crate::events::{StepDescriptor, StepStatus};

@@ -75,11 +75,11 @@ export function fileSize(bytes: number): string {
 // ---------- 谁来干 ----------
 
 /** 身份色点：五家 CLI 各一色，API（Peck Loop）一色；空的是不上色的点。 */
-export type DotKind = "muse" | "grok" | "codex" | "claude-code" | "antigravity" | "api" | "";
-const ENGINE_DOTS: DotKind[] = ["muse", "grok", "codex", "claude-code", "antigravity"];
+export type DotKind = "muse" | "grok" | "codex" | "claude-code" | "api" | "";
+const ENGINE_DOTS: DotKind[] = ["muse", "grok", "codex", "claude-code"];
 /** 引擎 id → 色点；不认识的是空的。 */
 export const engineDot = (engine: string): DotKind => (ENGINE_DOTS.includes(engine as DotKind) ? (engine as DotKind) : "");
-const NAME: Record<string, string> = { muse: "Muse", grok: "Grok", codex: "Codex", "claude-code": "Claude Code", antigravity: "Antigravity", peck: "Peck" };
+const NAME: Record<string, string> = { muse: "Muse", grok: "Grok", codex: "Codex", "claude-code": "Claude Code", peck: "Peck" };
 export const agentName = (id: string, fallback?: string) => NAME[id.toLowerCase()] ?? fallback ?? id;
 
 // 模型列表（gateway_models）里每一项的显示名：App 拿到列表时记一下，whoLabel 用。
@@ -103,26 +103,12 @@ export function entryLabel(id: string): string {
   return agentName(id);
 }
 
-/** 合作的任务（v0.8）记的是 `team:<写规范>|<实施>|<审查>`。 */
-export function teamParts(who: string): { spec: string; build: string; review: string } | null {
-  if (!who.startsWith("team:")) return null;
-  const [spec = "", build = "", review = ""] = who.slice(5).split("|");
-  return { spec, build, review };
-}
-
-/** 一个任务是谁干的：点阵字的短名字。v0.8 以前的旧记录没有「谁」，写「旧记录」。 */
+/** 一个任务是谁干的：点阵字的短名字。 */
 export function whoLabel(run: Pick<RunRecord, "who">): string {
-  const team = run.who ? teamParts(run.who) : null;
-  if (team) {
-    const name = (id: string) => entryLabel(id).toUpperCase();
-    return [team.spec ? `${name(team.spec)} → ${name(team.build)}` : name(team.build), team.review && `审 ${name(team.review)}`].filter(Boolean).join(" · ");
-  }
-  return run.who ? entryLabel(run.who).toUpperCase() : "旧记录";
+  return run.who ? entryLabel(run.who).toUpperCase() : "—";
 }
 
 export function whoDots(run: Pick<RunRecord, "who">): DotKind[] {
-  const team = run.who ? teamParts(run.who) : null;
-  if (team) return [...new Set([team.spec, team.build, team.review].filter(Boolean).map((id) => entryDot(id)).filter(Boolean))];
   const d = run.who ? entryDot(run.who) : "";
   return d ? [d] : [];
 }

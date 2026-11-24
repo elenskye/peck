@@ -694,7 +694,6 @@ export const mockIpc = {
   async harnessOneshot(args: OneshotArgs, onEvent: (event: AgentEvent) => void): Promise<string> {
     if (!args.prompt.trim()) throw new Error("先写一句话。");
     const engine = args.who.startsWith("api:") ? "peck" : args.who.replace(/^cli:/, "");
-    if (engine === "antigravity") throw new Error("Antigravity 只做直接调用，不进 ONE SHOT。");
     const id = `oneshot-${++oneshotCounter}`;
     const header: ReplayEvent[] = [
       { type: "session.started", engine, model: engine === "peck" ? args.who.slice(4) : null, caps: PECK_CAPS, tools: [], mcp: [], sessionRef: null, version: null },
@@ -899,7 +898,7 @@ function nextMonday(h: number, m: number): number {
 
 // 演示：一个照常的，一个错过了的（每次开新任务：卡片在 notebook 的新任务页），一个接在对话里跑、也错过了的（卡片在那个对话里）。
 let schedulesState: Schedule[] = [
-  { id: "sched-demo", workspaceId: "ws-peck", title: "每天看一眼 TODO", prompt: "列出项目里还没做完的 TODO 和 FIXME，按文件分组，别改文件", who: "api:deepseek/deepseek-flash", permission: "plan", when: { kind: "daily", time: "09:30", weekdays: true }, offsetMin: 480, enabled: true, nextAt: Date.now() + 5 * 3_600_000, lastRunAt: Date.now() - 19 * 3_600_000, lastSession: null, lastNote: "发出去了", createdAt: Date.now() - 7 * 86_400_000 },
+  { id: "sched-demo", workspaceId: "ws-peck", title: "每天看一眼 TODO", prompt: "列出项目里还没做完的 TODO 和 FIXME，按文件分组，别改文件", who: "api:deepseek/deepseek-flash", permission: "plan", when: { kind: "daily", time: "09:30", days: [1, 2, 3, 4, 5] }, offsetMin: 480, enabled: true, nextAt: Date.now() + 5 * 3_600_000, lastRunAt: Date.now() - 19 * 3_600_000, lastSession: null, lastNote: "发出去了", createdAt: Date.now() - 7 * 86_400_000 },
   { id: "sched-deps", workspaceId: "ws-notebook", title: "依赖更新", prompt: "检查这个项目的依赖有没有可以更新的版本，列出能升的和升级风险，先不要改文件", who: "cli:codex", permission: "auto", when: { kind: "daily", time: "09:00", days: [1] }, offsetMin: 480, enabled: true, nextAt: nextMonday(9, 0), lastRunAt: Date.now() - 8 * 86_400_000, lastSession: null, lastNote: "App 关着，错过了", missedAt: Date.now() - 3 * 3_600_000, createdAt: Date.now() - 20 * 86_400_000 },
   { id: "sched-ci", workspaceId: "ws-notebook", title: "看一下 CI", prompt: "看一下 main 分支最近一次 CI 过了没有，没过就说是哪一步", who: "api:deepseek/deepseek-flash", permission: "auto", when: { kind: "interval", hours: 6 }, offsetMin: 480, enabled: true, nextAt: Date.now() + 2 * 3_600_000, lastRunAt: Date.now() - 10 * 3_600_000, lastSession: "task-11", lastNote: "项目一直有任务在跑，错过了", session: "task-11", missedAt: Date.now() - 4 * 3_600_000, createdAt: Date.now() - 3 * 86_400_000 },
 ];
@@ -923,8 +922,8 @@ function screenshotRound(runId: string): ReplayEvent[] {
   ];
 }
 
-/** 和 Rust 的 history::family_of 一样：Peck Loop（不管哪个模型）、某个 CLI、合作。 */
-const familyOf = (who?: string | null) => (!who ? "old" : who.startsWith("api:") ? "peck" : who.startsWith("team:") ? "team" : who.startsWith("cli:") ? who : `old:${who}`);
+/** 和 Rust 的 history::family_of 一样：Peck Loop（不管哪个模型）、某个 CLI。 */
+const familyOf = (who?: string | null) => (!who ? "" : who.startsWith("api:") ? "peck" : who);
 
 /** 换了引擎接着发（分叉）：这一家上一次以后别家做过几次，写一行。 */
 function forkNotice(sessionId: string, runId: string, family: string, to: string): ReplayEvent[] {
@@ -1096,7 +1095,6 @@ function mockSpend(days: number): SpendOverview {
     ["codex", "codex", 0.18, true],
     ["grok", "grok", 0.08, true],
     ["muse", "muse", 0.1, true],
-    ["antigravity", "antigravity", 0.2, true],
   ];
   for (let d = days - 1; d >= 0; d--) {
     const day = now - d * 86_400_000;

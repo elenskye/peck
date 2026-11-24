@@ -280,9 +280,6 @@ impl ReplayBackend {
             }
             "muse" => include_str!("../../tests/fixtures/gateway/muse-small-task/events.jsonl"),
             "grok" => include_str!("../../tests/fixtures/gateway/grok-small-task/events.jsonl"),
-            "antigravity" => {
-                include_str!("../../tests/fixtures/gateway/antigravity-small-task/events.jsonl")
-            }
             _ => return None,
         };
         Self::from_jsonl(engine, jsonl, pace).ok()

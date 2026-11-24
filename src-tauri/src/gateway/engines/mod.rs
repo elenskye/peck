@@ -4,7 +4,7 @@
 //! - [`codex::CodexBackend`]：`codex app-server`（JSON-RPC）。
 //! - [`claude_code::ClaudeCodeBackend`]：`claude -p` 的双向 stream-json，审批走 stdio。
 //! - [`muse::MuseBackend`]：`muse serve`（会话协议 MSP）。
-//! - [`acp::AcpBackend`]：Grok（`grok agent stdio`）、Antigravity（`agy acp`），都是 ACP。
+//! - [`acp::AcpBackend`]：Grok（`grok agent stdio`，ACP）。
 //!
 //! 进程放进自己的进程组，收尾时先关 stdin、等它退出，超时再结束整组。
 //! 测试用 [`Pipe::script`]：按录下的原始输出回放，碰到「该 Peck 回话」的地方停下等 Peck 回。
@@ -101,7 +101,6 @@ pub async fn backend_for(
         "claude-code" => Ok(Arc::new(claude_code::ClaudeCodeBackend::new(setup))),
         "muse" => Ok(Arc::new(muse::MuseBackend::new(setup))),
         "grok" => Ok(Arc::new(acp::AcpBackend::new(setup, acp::GROK))),
-        "antigravity" => Ok(Arc::new(acp::AcpBackend::new(setup, acp::ANTIGRAVITY))),
         _ => Err(GatewayError::new(ErrorKind::BadRequest, format!("不认识的引擎 {engine}。"))),
     }
 }

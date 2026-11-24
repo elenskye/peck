@@ -1,44 +1,46 @@
 # 当前交接
 
-更新：2026-11-24。**v1.1.4 做完了，已装进 /Applications**。这是逐步优化 Peck Loop 的第四轮，站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「脚本 Hook」「工具」「外部 MCP 服务器」「Git Plan」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-24。**v1.1.5 做完了，已装进 /Applications**。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 这一版做了什么（1.1.4）
+## 这一版做了什么（1.1.5）
 
-1. **设置 → MEMORY**：全部项目的记忆一个项目一块（移出列表的有记忆才列），每条能 EDIT、DELETE，最下面自己记一条（ADD）。项目设置里的 MEMORY 用同一块，也能加、改了。
-2. **读 PDF、Notebook**：`read_pdf`（macOS 自带的 PDFKit，经 `osascript` 在本机抽文字，扫描页给能看图的模型附 JPEG）、`ocr_pdf`（Mathpix：本机先拆出要的几页、只送这几页，识别完删掉它那边的，每页 $0.005 记在 `mathpix` 名下；设置 → PROVIDERS → PDF 两样 Key 都填了才给），两个都写进工具说明、模型自己挑（站主在提问里定的）。`read_notebook` 读 `.ipynb` 的单元和输出（图附给能看图的模型）。子代理也有。
-3. **MCP 工具按需加载**：外部 MCP 工具开头只在 `tool_search` 的说明里列名字；`select:` 或关键词加载，加载的从下一次请求起进工具列表（站主在提问里选的「加进工具列表直接调」），一个对话里一直留着。CLI 的 MCP 说明是 CLI 自己的事（Claude Code 本来就按需加载），Peck 给 CLI 的本机 MCP 只有几样工具。
-4. **写进 roadmap「不做」**：改完代码自动拿到编译错误、会话树和分叉浏览、轨迹记录。
-5. **脚本 Hook 的 `SessionStart`**：对话第一句发出去之前跑一次（`startup`），压成交接摘要之后再跑一次（`compact`，站主在提问里定的「只在换成交接摘要之后」）；stdout 当补充上下文，退出码 2 不拦、只记一笔，子代理不跑。收尾时的 stdin 多了 `peck_changed_files`（这一轮改了的文件）。
-6. **Git Plan 1.1.0**：多一条 `type: command` 的收尾 Hook（`hooks/handoff.sh`）：项目里有 HANDOFF.md、这一轮改了别的文件、HANDOFF.md 没改，就退出码 2 让模型先更新；一回合只提醒一次。Skill 里也写了一段。插件库自带、一字没改的 Hook 不弹卡片（我加的，不然每个项目第一次收尾都要点一次）。
-7. **Peck 替 CLI 跑三个 Hook**：开场时、发话时在这句发出去之前跑（stdout 放在这句前面，发话时退出码 2 不发）；收尾时 CLI 做完再跑，退出码 2 就续上它的会话把原因发过去接着干，一回合最多 3 次，排在 Git Plan 自动提交之前。Claude Code 只跑插件里的；Antigravity 不跑。Hook 卡片走 Peck 自己的通道，不会被「替 CLI 批命令」的规则自动批掉（写测试时发现的，已挡住）。
-8. **顺手修的**：插件详情里 `command` 类 Hook 还写着「Peck 不跑」（v1.1.2 起早就跑了）；交接摘要里会把 Hook 补充的话当成站主说的话。
+1. **CLI 带项目记忆**：CLI 新会话（不是续上的）的第一句前面放一块 `<peck-memory>`（和 Peck Loop 系统提示里的同一份），排在开场时的 Hook 前面；续上的会话不重复带。
+2. **去掉 Antigravity**（Google 条款风险）：引擎、「直接调用」这个概念（`direct_only`）、模型目录和生成脚本里的条目、夹具、QUOTA 的额度卡片和检测、状态栏脚本里那一支、ACP 转换器里只给它用的分支、界面上的色点和图表色、各处文档；CLAUDE.md 写明不再接，roadmap「不做」也写了。仓库外 `cli/agy`、`cli/bin/agy` 移到了废纸篓（站主定的），`cli/README.md` 和 `briefs/peck-compaction-brief.md` 里的那几行也删了。
+3. **精简代码**（站主定的：删旧记录兼容、删死代码、合并重复，不拆文件）：
+   - 旧记录兼容：接力、审查的 `stage.*` 事件和界面上那几段（SPEC 一行、审查结论框、验收清单、按段花费里的几段）、`team:` 的「谁来干」、旧的 `delegate_task` 显示、`<peck-verify>`、定时任务的 `weekdays`、项目默认里存的 `relay` / `api:`。删之前只读查了正式库：没有「工作日」的定时任务、没有项目存过默认「谁来干」。
+   - 死代码：合作时代几段共用 MCP 服务器的 `mcp_slot`、永远是默认账号的 `default_account` / `without_quota_sync`、没人调的 `shortName`、没人用的样式（`.agents-row--team`、`.agent-stage*` 等）。用编译器、更严的类型检查、脚本扫了没人用的导出、样式、IPC、事件类型；只读子代理列了旧兼容的清单，我逐条核对后删。
+   - 合并：Peck Loop（`harness/run.rs`）和 CLI（`gateway/runner.rs`）发任务的占号、前后快照、收尾、停止都改用 `run.rs` 的 `claim_run`、`Lifecycle`、`abandon`、`watch_cancel`。
+   - 顺手修的：Peck Loop 占了任务号以后读库出错会提前返回，任务一直标着「在跑」、项目被占到重启（现在记成失败、放开项目）；项目设置里默认「谁来干」的列表把 PLOOP 滤掉了、PLOOP 选不了，却列着现在已经不能单独选的 API 模型（现在是 PLOOP 和各家 CLI）。
+   - 留着的：界面设置的迁移（正式版的设置还没迁移过，见「留意」）、数据库迁移、旧表和删任务时清旧表的那几行（外键）。
+   - 改动合计约 −1430 / +600 行。
 
-- 新加依赖：没有（PDF 走系统的 PDFKit，Mathpix 的上传自己拼 multipart）。数据库没动（schema 11）。钥匙串「其他」那一包多 `mathpix_id`、`mathpix_key`。IPC 多 `memory_overview`、`memory_add`、`memory_update`。
+- 新加依赖：没有。数据库没动（schema 11）。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（330 个；新加：SessionStart 只在第一句跑、退出码 2 不拦、压缩后补回；CLI 的三个 Hook 用假 CLI 跑一整个任务（开场、发话补充在这句前面，收尾拦一次续上会话，脚本拿到 `peck_changed_files`，卡片三张）；控制通道的转发；Git Plan 的 HANDOFF 脚本（装进项目没改过不问、改过要问、没 HANDOFF.md 放行）；MCP 按需加载（开头只有名单、加载了才有、下一句从记录认回来）；读 Notebook、PDF 一批同时跑、图跟在结果后面；PDFKit 真读一份 `cupsfilter` 做的 PDF、拆页；Mathpix 的错误和 multipart；记忆改字）；`pnpm check`、`pnpm build` 过。
-- **`?mock`**：设置 → MEMORY（加一条、改一条、明暗都看了）、PROVIDERS 的 PDF 一块。
-- **真跑**（账在 roadmap）：Mathpix 两次各 1 页（$0.01）：公式出 LaTeX、表格出 tabular；第二次确认它那边删掉了。
-- **正式版**：装好了（`pnpm app:install`），版本号 1.1.4、签名校验过；窗口里没点过。
+- **自动测试**：全量 `cargo test` 过（326 个；新加：CLI 新会话先带记忆、续上的不带；占号一次一个、`abandon` 放开项目；删掉的旧兼容带走了它们的测试）；`pnpm check`、`pnpm build`、`tsc --noUnusedLocals --noUnusedParameters` 过。
+- **`?mock`**：改过的两条假任务（原来的接力换成 PLOOP、Grok）显示正常；项目设置里默认「谁来干」能选 PLOOP、存得上；左栏 CLI 只剩四家；QUOTA 的图五种颜色、没有 Antigravity。
+- **真跑**：没有。
+- **正式版**：装好了（`pnpm app:install`），版本号 1.1.5、签名校验过；窗口里没点过。
 - **没验的**：
-  - Peck Loop 里真模型用 `read_pdf` / `ocr_pdf` / `read_notebook`、`tool_search` 没真跑过（只有假模型）；扫描页出图只在格式化里测过，没拿真扫描件跑。
-  - CLI 的三个 Hook 没在真 CLI 上跑过（只有假 CLI）；续上会话那一步各家的表现没看过。
-  - 正式版窗口里一下都没点过：设置 → MEMORY、PROVIDERS 的 Mathpix、Hook 卡片。
+  - CLI 带记忆没在真 CLI 上跑过（只有假 CLI 的测试）。
+  - 正式版窗口里没点过：这一版和 1.1.4 的都没有。
 
 ## 留给站主的
 
-- **Git Plan 要点 UPDATE**：已经装了 1.0.0 的项目，在项目设置 → PLUGINS 点 UPDATE 才有 HANDOFF 检查（Peck 不自己改装进项目的文件）；新装的直接是 1.1.0。
-- **Mathpix 的 Key**：在设置 → PROVIDERS → PDF 填 App ID、App Key（我真跑用的是 Key 目录里的 `mathpix`，没存进钥匙串）。
-- **第一次打开新版**：可能弹钥匙串授权框。
-- **走一遍**：在测试项目里放一份 PDF，PLOOP 发「读一下 x.pdf 第 1 页」；配了 MCP 服务器的项目看过程里先「加载 MCP 工具」再调；测试项目的 `.claude/settings.json` 写一条 `SessionStart`，换 Codex 发一句看补充有没有带上。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.4 的全部提交。
-- 以前留下、还没验的：1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置、旧任务的样子；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
+- **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。
+- **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
+- **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目在项目设置 → PLUGINS 点 UPDATE 才有 HANDOFF 检查；Mathpix 的 Key 要在设置 → PROVIDERS → PDF 填。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.5 的全部提交。
+- 以前留下、还没验的：1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
 ## 已知问题
 
 | 问题 | 建议 |
 | --- | --- |
+| 以前版本的任务（v1.1.1 以前的接力、审查，v0.8 以前没记过程的）打开只剩状态和结果那一句（v1.1.5 删了兼容，站主定的） | 记着 |
+| 以前 Antigravity 跑过的任务，QUOTA 的图里算进 Peck Loop 那一色（它的用量大多没有花费） | 记着 |
+| 旧表 `api_calls`、`api_tasks`、`usage_calls`、`messages` 还在库里（几十行），删任务时那几行清理代码得留着（外键） | 要清就加一条迁移把四张表删掉 |
 | 加载一批 MCP 工具，下一次请求的缓存整个重写一次（工具列表变了） | 站主选的这种；常用的话一个对话里只付一次 |
 | 没加载就直接调 MCP 工具也照样跑（模型不该这样，供应商一般也不让） | 记着 |
 | CLI 收尾 Hook 的卡片等着时按了停：这一轮照样算做完，Git Plan 照样提交 | 记着 |
@@ -58,7 +60,7 @@
 | 只有界面点开项目时才认结构、装默认插件；定时任务在一个从没点开过的老项目里跑时不会先做 | 记在 roadmap |
 | 单独的 Skill 装没装是按「项目里有没有同名的 Skill」认的：项目自己写了一个和库里同名的，会显示成装着的，点 UPDATE / REMOVE 会动到它（库里现在没有单独的 Skill） | 往库里放单独的 Skill 之前先加归属记号 |
 | 收尾提交失败（仓库的 pre-commit 钩子不过、没配 `user.name`）时，这一轮的文件已经 `git add` 了，留在暂存区 | 记着 |
-| CLI 任务每轮做完多用一轮订阅额度问提交说明；Antigravity、续不了会话的不问，写「模型没给出提交说明」 | 用一阵看烦不烦 |
+| CLI 任务每轮做完多用一轮订阅额度问提交说明；续不了会话的不问，写「模型没给出提交说明」 | 用一阵看烦不烦 |
 | Peck Loop 用命令（不是自己的工具）改了一个开头就没提交的文件、别的都没动时，收尾不问、也不提交 | 记着 |
 | 插件带的 MCP 服务器（`.mcp.json`）只列出来，Peck Loop 不起 | 有插件要用时再接 |
 | CLI 续接会话的花费按「会话号」取差：续接后会话号变了就整个算进去（不会少算，可能多算一次） | 真跑时顺便看 QUOTA |
@@ -71,11 +73,12 @@
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、PLOOP 每一段的头和审查结论框、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.0.3 新加的：SPEC 那一行（整行能点、最右三角）和展开后的规范框、「读过 N 个文件」列表。 1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.4 新加的：设置 → MEMORY 的项目头（`.memory-group`、`.memory-path`）、改字和自己记一条那一行（`.memory-edit`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：插件那一行（名字前的小三角、版本、标签）和展开的清单（`.plugin-detail`）、EVERY PROJECT 开关旁的字、recap 里收尾提交的那一行。 1.1.2 新加的：LOG 上面的成员名单（`.log-roster`）、设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.4 新加的：设置 → MEMORY 的项目头（`.memory-group`、`.memory-path`）、改字和自己记一条那一行（`.memory-edit`）。
 
 ## 留意
 
 - Gemini 4 Carbon / Argon 12 月 1 日起涨价（Google 官网），到时在设置 → QUOTA 点 REFRESH。
+- 设置迁移（`settings.ts` 的 `loadSettings`）别删：正式版的界面设置还是 v1.1.1 以前的样子（有 `relay`、单干选的 API 模型、没有 `subagents`），第一次打开新版才换。
 - Codex 和 ChatGPT 客户端共用登录；Claude 额度要 `cli/bin` 的 Claude Code 登录一次才读得到。
 - 测试项目 `projects/tester`、`projects/moon-lab`、`projects/gateway-smoke`、`projects/git-plan-smoke`（git 仓库，收尾提交用）在 Peck 仓库外。
 - 改系统级的插件（`src-tauri/defaults/plugins/`、`defaults/library/`）要升它自己的 `version`，不然装着旧版的数据目录和项目收不到。

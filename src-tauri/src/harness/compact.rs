@@ -24,8 +24,6 @@ pub const STOP_AT: f64 = 0.95;
 pub const SPILL_OVER: usize = 3 * 1024;
 /// 第 2 步：最近几轮的工具输出不动。
 pub const KEEP_ROUNDS: usize = 2;
-/// 旧对话里 Peck 交回去的验证结果（v1.0.2 以前有后台验证）：不当成站主说的话。
-pub const VERIFY_TAG: &str = "<peck-verify>";
 /// 认出交接摘要。
 pub const HANDOFF_TAG: &str = "<peck-handoff>";
 
@@ -120,7 +118,7 @@ pub fn clear_old(messages: &mut [Message]) -> usize {
     cleared
 }
 
-/// 站主自己写的几句（不算环境块、引用、验证结果、交接摘要、Hook 补充的话、工具输出），最近的 `n` 句，旧的在前。
+/// 站主自己写的几句（不算环境块、引用、交接摘要、Hook 补充的话、工具输出），最近的 `n` 句，旧的在前。
 pub fn user_requests(messages: &[Message], n: usize) -> Vec<String> {
     let mut out: Vec<String> = messages
         .iter()
@@ -131,7 +129,6 @@ pub fn user_requests(messages: &[Message], n: usize) -> Vec<String> {
                 if !text.starts_with(CONTEXT_TAG)
                     && !text.starts_with(REF_TAG)
                     && !text.starts_with("<hook-")
-                    && !text.starts_with(VERIFY_TAG)
                     && !text.starts_with(HANDOFF_TAG) =>
             {
                 Some(clip_bytes(text.trim(), 1500).to_string())
@@ -230,7 +227,7 @@ mod tests {
     #[test]
     fn rebuilding_keeps_what_the_user_said() {
         let mut m = sample();
-        m.push(Message { role: Role::User, parts: vec![Part::Text { text: format!("{VERIFY_TAG}\nfail") }] });
+        m.push(Message { role: Role::User, parts: vec![Part::Text { text: "<hook-context event=\"UserPromptSubmit\">\n今天周一\n</hook-context>".into() }] });
         let asks = user_requests(&m, 3);
         assert_eq!(asks, vec!["把标题改成中文".to_string()]);
         let new = rebuild("## 目标\n改标题", &asks);

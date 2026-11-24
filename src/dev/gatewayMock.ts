@@ -11,7 +11,6 @@ import codexRaw from "../../src-tauri/tests/fixtures/gateway/codex-small-task/ev
 import claudeRaw from "../../src-tauri/tests/fixtures/gateway/claude-code-small-task/events.jsonl?raw";
 import museRaw from "../../src-tauri/tests/fixtures/gateway/muse-small-task/events.jsonl?raw";
 import grokRaw from "../../src-tauri/tests/fixtures/gateway/grok-small-task/events.jsonl?raw";
-import agyRaw from "../../src-tauri/tests/fixtures/gateway/antigravity-small-task/events.jsonl?raw";
 
 function jsonl(text: string): ReplayEvent[] {
   return text
@@ -27,5 +26,4 @@ export const MOCK_ENGINE_REPLAYS: Record<string, ReplayEvent[]> = {
   "claude-code": jsonl(claudeRaw),
   muse: jsonl(museRaw),
   grok: jsonl(grokRaw),
-  antigravity: jsonl(agyRaw),
 };

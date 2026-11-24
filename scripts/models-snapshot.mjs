@@ -64,7 +64,6 @@ const ENGINES = [
   { id: "codex", label: "Codex", command: "codex", protocol: "app-server" },
   { id: "muse", label: "Muse", command: "muse", protocol: "exec-json" },
   { id: "grok", label: "Grok", command: "grok", protocol: "acp" },
-  { id: "antigravity", label: "Antigravity", command: "agy", protocol: "acp" },
 ];
 
 function price(cost) {

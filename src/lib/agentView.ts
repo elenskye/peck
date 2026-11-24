@@ -5,7 +5,7 @@
 // - 没批、没答的审批和 ASK 单独拿出来做卡片；任务清单取最新的一份；
 // - 花费：这一次的进、出、缓存命中、美元（CLI 估的标「估」，不知道的写「未知」，不当 0）。
 // - v0.6：上下文多大（输入框旁的小环）、自动压缩的每一步、后台命令、模型想记住的几条。
-import type { AgentEvent, ApprovalDecision, BackgroundKind, BoardItem, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, CriterionCheck, FileDiff, PlanStep, ResolvedBy, ReviewVerdict, SkillReviewStatus, SkillScope, StageRole, TokenUsage, ToolKind, ToolStatus, TurnEndReason } from "@/lib/agentEvents";
+import type { AgentEvent, ApprovalDecision, BackgroundKind, BoardItem, BackgroundStatus, CompactStep, ContextPart, Cost, CostSource, FileDiff, PlanStep, ResolvedBy, SkillReviewStatus, SkillScope, TokenUsage, ToolKind, ToolStatus } from "@/lib/agentEvents";
 
 export interface ToolView {
   callId: string;
@@ -66,28 +66,11 @@ export interface BackgroundView {
   past?: boolean;
 }
 
-/** 接力、审查里的一段（v0.8）：头上一行写谁做哪一段，收尾写怎么结束的、审查的结论。 */
-export interface StageView {
-  stage: StageRole;
-  engine: string;
-  title: string;
-  startedAt: number;
-  endedAt?: number;
-  reason?: TurnEndReason;
-  error?: string | null;
-  verdict?: ReviewVerdict | null;
-  /** 审查按验收标准逐条判的结果（v0.9）。 */
-  checks?: CriterionCheck[];
-  /** 写规范那一段的回答、工具调用和思考（v1.0.3）：收在这一段的头里，点开看规范全文和读过的文件，不进主线。 */
-  items?: ViewItem[];
-}
-
 /** 一段思考（只用来显示「Thinking… 3s」，想完不显示）。 */
 export interface ThoughtView { text: string; done: boolean; startedAt: number; endedAt?: number }
 
 export type ViewItem =
-  | { kind: "text"; id: string; text: string; done: boolean; stage?: StageRole }
-  | { kind: "stage"; id: string; info: StageView }
+  | { kind: "text"; id: string; text: string; done: boolean }
   /** 连着的工具调用和思考（v1.0.1：思考并进来，不再单独一行）。 */
   | { kind: "tools"; id: string; calls: ToolView[]; thoughts: ThoughtView[] }
   | { kind: "asked"; id: string; ask: AskView }
@@ -151,8 +134,6 @@ export interface AgentView {
   memory: { notes: string[]; reviewed: { saved: string[]; skipped: string[] } | null } | null;
   /** 这个任务里的后台命令（最新的状态）。 */
   background: BackgroundView[];
-  /** 接力、审查的几段（v0.8；一个引擎干的任务为空）。 */
-  stages: StageView[];
   /** 插件的收尾 Hook 跑完的结果（v1.1.0，写在 recap 里）：提交了哪一笔、或者为什么没提交。 */
   hooks: Array<{ ok: boolean; text: string }>;
 }
@@ -169,8 +150,7 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], stages: [], hooks: [] };
-  let stageNow: StageView | null = null;
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], hooks: [] };
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
@@ -181,18 +161,13 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   const asks = new Map<string, AskView>();
   const skills = new Map<string, SkillProposalView>();
   const subStreamed = new Set<string>();
-  // CLI 经本机 MCP 委派的子任务（v0.9 B1）：Peck 不知道 CLI 那一步的编号，挂到最近一个在跑的 delegate_task 那一步。
-  const alias = new Map<string, string>();
-  const parentOf = (sid: string) => tools.get(alias.get(sid) ?? sid);
+  const parentOf = (sid: string) => tools.get(sid);
   let diffFiles: FileDiff[] | null = null;
   // 用量：一回合一次（turn）的加起来；累计（cumulative）的取最后一条。
   let turnUsage: UsageLine | null = null;
   let cumulative: UsageLine | null = null;
-  // 写规范那一段的话、工具调用、思考收进那一段（对话里只露实施那一个的输出）；卡片、提醒、出错照旧在主线。
-  const box = (): ViewItem[] => (stageNow?.items ?? view.items);
   const lastGroup = (): Extract<ViewItem, { kind: "tools" }> | null => {
-    const items = box();
-    const last = items[items.length - 1];
+    const last = view.items[view.items.length - 1];
     return last && last.kind === "tools" ? last : null;
   };
   for (const e of events) {
@@ -216,40 +191,20 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
           break;
         }
         thoughtsDone(e.at);
-        // 每一段的引擎各自从 m1 编号：同一个号在不同段里是两段话。
-        const key = stageNow ? `${view.stages.length}:${e.itemId}` : e.itemId;
-        let item = texts.get(key);
+        let item = texts.get(e.itemId);
         if (!item) {
-          item = { kind: "text", id: `t-${key}-${e.seq}`, text: "", done: false, stage: stageNow?.stage };
-          texts.set(key, item);
-          box().push(item);
+          item = { kind: "text", id: `t-${e.itemId}-${e.seq}`, text: "", done: false };
+          texts.set(e.itemId, item);
+          view.items.push(item);
         }
         if (e.type === "message.delta") item.text += e.text;
         else { item.text = e.text; item.done = true; }
         break;
       }
-      case "stage.started": {
-        // 上一段的话收尾（它的引擎不会再说了）。
-        for (const t of texts.values()) t.done = true;
-        stageNow = { stage: e.stage, engine: e.engine, title: e.title, startedAt: e.at, items: e.stage === "spec" ? [] : undefined };
-        view.stages.push(stageNow);
-        view.items.push({ kind: "stage", id: `s-${e.seq}`, info: stageNow });
-        break;
-      }
-      case "stage.completed": {
-        const st = [...view.stages].reverse().find((x) => x.stage === e.stage && x.endedAt == null);
-        if (st) { st.endedAt = e.at; st.reason = e.reason; st.error = e.error; st.verdict = e.verdict; st.checks = e.checks ?? []; }
-        for (const call of tools.values()) {
-          if (call.status === "running") { call.status = e.reason === "done" ? "ok" : "cancelled"; call.endedAt = e.at; }
-        }
-        for (const t of texts.values()) t.done = true;
-        stageNow = null;
-        break;
-      }
       case "reasoning.delta":
       case "reasoning.completed": {
         if (e.subagentId) break;
-        const rkey = stageNow ? `${view.stages.length}:${e.itemId}` : e.itemId;
+        const rkey = e.itemId;
         let item = thoughts.get(rkey);
         if (!item) {
           if (e.type === "reasoning.completed" && !e.text.trim()) break;
@@ -258,7 +213,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
           // 并进前面那一组工具调用；前面不是就新开一组（后面的工具调用接着进这一组）。
           const group = lastGroup();
           if (group) group.thoughts.push(item);
-          else box().push({ kind: "tools", id: `g-r-${rkey}-${e.seq}`, calls: [], thoughts: [item] });
+          else view.items.push({ kind: "tools", id: `g-r-${rkey}-${e.seq}`, calls: [], thoughts: [item] });
         }
         if (e.type === "reasoning.delta") item.text += e.text;
         else { item.text = e.text || item.text; item.done = true; item.endedAt = e.at; }
@@ -274,7 +229,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
           thoughtsDone(e.at);
           const group = lastGroup();
           if (group) group.calls.push(call);
-          else box().push({ kind: "tools", id: `g-${e.callId}-${e.seq}`, calls: [call], thoughts: [] });
+          else view.items.push({ kind: "tools", id: `g-${e.callId}-${e.seq}`, calls: [call], thoughts: [] });
         }
         const pending = [...approvals.values()].find((a) => a.callId === e.callId);
         if (pending) call.approval = { title: pending.title, decision: pending.decision, by: pending.by, highRisk: pending.highRisk };
@@ -349,7 +304,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [] };
         break;
       case "context.compacted":
-        box().push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
+        view.items.push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
         break;
       case "memory.proposed": {
         const m = (view.memory ??= { notes: [], reviewed: null });
@@ -392,13 +347,8 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         else view.items.push({ kind: "error", id: `e-${e.seq}`, text: e.message });
         break;
       case "subagent.started": {
-        // 交出去的那一步：Peck Loop 的委派、Claude Code 的 Task 编号和那一步一样；CLI 经本机 MCP 委派的对不上，
-        // 挂到最近一个还在跑、名字里有 delegate_task 的那一步。
-        let parent = tools.get(e.subagentId);
-        if (!parent) {
-          parent = [...tools.values()].reverse().find((c) => c.status === "running" && /delegate_task/.test(c.name) && !c.sub?.calls.length && ![...alias.values()].includes(c.callId));
-          if (parent) alias.set(e.subagentId, parent.callId);
-        }
+        // 交出去的那一步：Peck Loop 派的子代理、Claude Code 的 Task 编号和那一步一样。
+        const parent = tools.get(e.subagentId);
         if (parent) parent.sub = { title: e.title, model: e.model ?? null, calls: parent.sub?.calls ?? [] };
         break;
       }
@@ -443,15 +393,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   view.cumulativeUsage = cumulative != null;
   view.files = diffFiles ?? collectDiffs([...tools.values()]);
   view.background = [...bgs.values()];
-  // 审查最后那一行结论（VERDICT: …）不显示，结论写在这一段的头上。
-  // 逐条判的 `CHECK n: …` 也一样：清单画在头上（v0.9）。
-  const checked = view.stages.some((s) => s.stage === "review" && (s.checks?.length ?? 0) > 0);
-  for (const item of view.items) {
-    if (item.kind !== "text" || item.stage !== "review") continue;
-    item.text = item.text.replace(/^\s*[`*]*VERDICT:\s*\w+[`*]*\s*$/gim, "");
-    if (checked) item.text = item.text.replace(/^\s*(?:[-*•]\s+)?[`*]*CHECK\s*#?\d+\s*[:：.].*$/gim, "").replace(/\n{3,}/g, "\n\n");
-    item.text = item.text.trim();
-  }
   if (view.ended) {
     // 模型起的后台命令跟着任务停了；留着的 dev server 以后的变化不进任务记录，只记到起过。
     for (const item of view.items) {
@@ -509,7 +450,7 @@ function activity(c: ToolView): string {
   if (n === "load_skill") return "skill";
   if (n === "screenshot_app") return "shot";
   if (n === "list_directory") return "list";
-  if (c.sub || /delegate_task$/.test(n) || n === "spawn_agent" || n === "task" || n === "agent") return "agent";
+  if (c.sub || n === "spawn_agent" || n === "task" || n === "agent") return "agent";
   if (n === "update_plan" || /todo/.test(n) || /^task(create|update|list|get)$/.test(n)) return "plan";
   if (/ask_user$/.test(n)) return "ask";
   if (n === "memory") return "note";
@@ -642,26 +583,10 @@ export function findCall(items: ViewItem[], id: string): ToolView | null {
     return null;
   };
   for (const item of items) {
-    const hit = item.kind === "tools" ? inCalls(item.calls) : item.kind === "stage" && item.info.items ? findCall(item.info.items, id) : null;
+    const hit = item.kind === "tools" ? inCalls(item.calls) : null;
     if (hit) return hit;
   }
   return null;
-}
-
-/** 一段里读过的文件（按先后、去重）：读文件那几步的标题是「读 a.ts」，Codex 一步读几个用「、」连着；读 Skill 不算。 */
-export function readFiles(items: ViewItem[]): string[] {
-  const out: string[] = [];
-  for (const item of items) {
-    if (item.kind !== "tools") continue;
-    for (const c of item.calls) {
-      const m = c.kind === "read" ? c.title.match(/^读 (?!Skill )(.+)$/s) : null;
-      for (const p of m ? m[1].split("、") : []) {
-        const path = p.trim();
-        if (path && !out.includes(path)) out.push(path);
-      }
-    }
-  }
-  return out;
 }
 
 /** 落盘的完整输出路径（bash_run 的结果里写着「完整的存在 …」）。 */
@@ -736,11 +661,11 @@ export function usageText(u: UsageLine): string {
 
 // ---------- 按段列花费（v0.9 Phase 14 B4） ----------
 
-/** 一段（或委派出去的一个子任务）花的。 */
+/** 主线或派出去的一个子代理花的。 */
 export interface CostRow {
   id: string;
-  /** 合作里的哪一段；`main` 是没分段的任务的主线，`sub` 是委派的子任务。 */
-  role: StageRole | "main" | "sub";
+  /** `main` 是主线，`sub` 是子代理（Claude Code 的 Task 也算）。 */
+  role: "main" | "sub";
   title: string;
   /** 引擎 id：`peck` 是 Peck Loop（API 按量）；别的是 CLI（订阅）。 */
   engine: string;
@@ -750,15 +675,12 @@ export interface CostRow {
   endedAt: number | null;
 }
 
-/** 合作的几段、委派的子任务各花了多少。只有一段（没合作、没委派）返回空。
- *  累计口径（Claude Code 续接）按段取差：按审查改的那一段续接了实施的会话，减掉实施那段报到的。 */
+/** 主线和派出去的子代理各花了多少。只有主线（没派子代理）返回空。累计口径的取最后一条。 */
 export function costRows(events: AgentEvent[], mainTitle: string): CostRow[] {
   const rows: CostRow[] = [];
   const subs = new Map<string, CostRow>();
   const turn = new Map<CostRow, UsageLine>();
-  const cum = new Map<CostRow, { first: UsageLine; last: UsageLine; base: UsageLine | null }>();
-  const lastCum = new Map<string, UsageLine>();
-  let cur: CostRow | null = null;
+  const cum = new Map<CostRow, UsageLine>();
   // 放在对象里：在闭包里赋值，TS 才不会把它收窄成永远是 null。
   const top: { main: CostRow | null } = { main: null };
   const mainRow = (at: number): CostRow => {
@@ -768,15 +690,7 @@ export function costRows(events: AgentEvent[], mainTitle: string): CostRow[] {
   for (const e of events) {
     switch (e.type) {
       case "session.started":
-        if (!e.subagentId && !cur) { const m = mainRow(e.at); m.engine = e.engine; m.model = e.model ?? m.model; }
-        break;
-      case "stage.started":
-        cur = { id: `s-${e.seq}`, role: e.stage, title: e.title, engine: e.engine, model: e.model ?? null, usage: null, startedAt: e.at, endedAt: null };
-        rows.push(cur);
-        break;
-      case "stage.completed":
-        if (cur) cur.endedAt = e.at;
-        cur = null;
+        if (!e.subagentId) { const m = mainRow(e.at); m.engine = e.engine; m.model = e.model ?? m.model; }
         break;
       case "subagent.started": {
         const row: CostRow = { id: `sub-${e.subagentId}`, role: "sub", title: e.title, engine: "peck", model: null, usage: null, startedAt: e.at, endedAt: null };
@@ -793,17 +707,11 @@ export function costRows(events: AgentEvent[], mainTitle: string): CostRow[] {
         if (top.main && top.main.endedAt == null) top.main.endedAt = e.at;
         break;
       case "usage.updated": {
-        const row = (e.subagentId ? subs.get(e.subagentId) : null) ?? cur ?? mainRow(e.at);
+        const row = (e.subagentId ? subs.get(e.subagentId) : null) ?? mainRow(e.at);
         if (e.model && !row.model) row.model = e.model;
         const line = usageLine(e.usage, e.cost);
-        if (e.scope === "cumulative") {
-          const seen = cum.get(row);
-          const prior = lastCum.get(row.engine) ?? null;
-          // 续接的会话接着累计：这一段第一次报的数不比上一段报的少，就减掉上一段的。
-          const base = seen ? seen.base : row.role === "fix" && prior && (line.input ?? 0) >= (prior.input ?? 0) ? prior : null;
-          cum.set(row, { first: seen?.first ?? line, last: line, base });
-          lastCum.set(row.engine, line);
-        } else {
+        if (e.scope === "cumulative") cum.set(row, line);
+        else {
           const had = turn.get(row);
           turn.set(row, had ? addUsage(had, line) : line);
         }
@@ -813,11 +721,10 @@ export function costRows(events: AgentEvent[], mainTitle: string): CostRow[] {
   }
   for (const row of rows) {
     const t = turn.get(row) ?? null;
-    const c = cum.get(row);
-    const fromCum = c ? (c.base ? minusUsage(c.last, c.base) : c.last) : null;
+    const fromCum = cum.get(row) ?? null;
     row.usage = t && fromCum ? addUsage(t, fromCum) : t ?? fromCum;
   }
-  // 主线没花钱、也没别的段（比如合作的总头）：不列。
+  // 主线没花钱：不列。
   const shown = rows.filter((r) => r !== top.main || r.usage || rows.length === 1);
   return shown.length >= 2 ? shown : [];
 }

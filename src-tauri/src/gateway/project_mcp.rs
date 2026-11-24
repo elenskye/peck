@@ -7,7 +7,6 @@
 //! - Codex：`codex mcp list --json`；Grok：`grok inspect --json`（带 `projectTrusted`）；Muse：`muse mcp list --json`。
 //!   都不调模型，几十毫秒。
 //! - Claude Code：不另起进程，看它启动时报的 `mcp_servers`（[`claude_code_missing`]）。
-//! - Antigravity 只做直接调用，读工作区插件，没有能查的命令：不查。
 
 use super::engines::EngineSetup;
 use serde_json::Value;
@@ -184,7 +183,7 @@ mod tests {
         assert_eq!(loaded("grok", &json!({"projectTrusted": false, "mcpServers": [{"name": "dw"}]})), Some(BTreeSet::new()));
         // Muse：没信任时列表是空的。
         assert_eq!(loaded("muse", &json!({"servers": []})), Some(BTreeSet::new()));
-        assert_eq!(loaded("antigravity", &json!({})), None);
+        assert_eq!(loaded("nope", &json!({})), None);
         let line = notice("Muse", "muse", &dw);
         assert!(line.starts_with("Muse 没读到这个项目配的 MCP：dw。") && line.contains("Trust and continue") && line.ends_with("Peck 不替它改设置。"));
     }

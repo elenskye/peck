@@ -1,5 +1,4 @@
-//! ACP（Agent Client Protocol，stdio JSON-RPC）→ 统一事件。Grok（`grok agent stdio`）和
-//! Antigravity（`agy acp`）共用，引擎 id 不同。
+//! ACP（Agent Client Protocol，stdio JSON-RPC）→ 统一事件。现在只有 Grok（`grok agent stdio`）。
 //!
 //! - 过程都在 `session/update` 里（`sessionUpdate`：`agent_message_chunk`、`agent_thought_chunk`、
 //!   `tool_call`、`tool_call_update`、`plan`……）。ACP 的文字没有「段落完了」的信号：碰到别的事件
@@ -126,37 +125,27 @@ impl AcpConverter {
         let kind_word = u["kind"].as_str().or(meta["kind"].as_str()).unwrap_or("other");
         let path = input["path"]
             .as_str()
-            .or(input["Path"].as_str())
             .or(input["target_file"].as_str())
             .or(input["file_path"].as_str())
             .or(u["locations"][0]["path"].as_str())
             .map(|p| self.rel(p))
             .unwrap_or_default();
-        let command = input["command"].as_str().or(input["CommandLine"].as_str()).unwrap_or("");
-        // Antigravity 调 MCP 是 `call_mcp_tool`（kind 写 execute）：`ServerName` 是「插件_服务器」，`ToolName` 是工具。
-        if let (Some(server), Some(tool)) = (input["ServerName"].as_str(), input["ToolName"].as_str()) {
-            return (name, ToolKind::Mcp, format!("MCP {} · {}", short(server, 40), short(tool, 50)));
-        }
+        let command = input["command"].as_str().unwrap_or("");
         let (kind, title) = match kind_word {
             "read" => (ToolKind::Read, format!("读 {path}")),
             "edit" | "delete" | "move" => (ToolKind::Edit, if path.is_empty() { "改文件".into() } else { format!("改 {path}") }),
             "execute" => (ToolKind::Run, format!("跑 {}", short(command, 80))),
             "search" => {
-                let q = input["pattern"].as_str().or(input["query"].as_str()).or(input["Query"].as_str()).unwrap_or(&path);
+                let q = input["pattern"].as_str().or(input["query"].as_str()).unwrap_or(&path);
                 (ToolKind::Search, format!("搜 {}", short(q, 60)))
             }
-            "fetch" => (ToolKind::Fetch, format!("取 {}", short(input["url"].as_str().or(input["Url"].as_str()).unwrap_or(""), 60))),
+            "fetch" => (ToolKind::Fetch, format!("取 {}", short(input["url"].as_str().unwrap_or(""), 60))),
             "think" => (ToolKind::Other, "想一想".into()),
             _ => {
                 // Grok 经通用的 use_tool 调 MCP 工具：显示真正的工具名（`peck__ask_user` 是问站主）。
                 let inner = input["tool_name"].as_str().or(u["title"].as_str().filter(|t| t.contains("__")));
                 match inner {
                     Some(t) if t.ends_with("ask_user") => (ToolKind::Mcp, "问站主".into()),
-                    // Peck 的委派（v0.9 B1）：和 Peck Loop 一样写。
-                    Some(t) if t.ends_with("delegate_task") => {
-                        let task = input["arguments"]["task"].as_str().or(input["parameters"]["task"].as_str()).or(input["task"].as_str()).unwrap_or("");
-                        (ToolKind::Other, if task.is_empty() { "交给子任务".into() } else { format!("交给子任务：{}", short(task, 60)) })
-                    }
                     // `dw__new_canvas` 写成「MCP dw · new_canvas」，和 Peck Loop、Codex 的一样。
                     Some(t) => match t.split_once("__") {
                         Some((server, tool)) if !server.is_empty() && !tool.is_empty() => (ToolKind::Mcp, format!("MCP {server} · {}", short(tool, 50))),
@@ -277,7 +266,7 @@ impl AcpConverter {
             }
             "tool_call" => {
                 let mut out = self.tool_started(u);
-                // 有的引擎（Antigravity）一开始就带 completed。
+                // 一开始就带 completed 的也收尾。
                 if matches!(u["status"].as_str(), Some("completed") | Some("failed")) {
                     out.extend(self.tool_update(u));
                 }
@@ -332,9 +321,9 @@ impl AcpConverter {
             let ticks = u["costUsdTicks"].as_f64();
             out.push(EventBody::UsageUpdated {
                 usage: TokenUsage {
-                    // ACP 的 inputTokens 有的含缓存（Grok），有的不含（Antigravity：缓存读另报、大于输入）。
+                    // Grok 的 inputTokens 含缓存：减掉缓存读写，和别家一样只算没缓存的。
                     input: n("inputTokens").map(|i| match read {
-                        Some(r) if r <= i && self.engine == "grok" => i - r - write.unwrap_or(0).min(i - r),
+                        Some(r) if r <= i => i - r - write.unwrap_or(0).min(i - r),
                         _ => i,
                     }),
                     output: n("outputTokens"),
@@ -551,16 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_small_task_fixture() {
-        let bodies = run("antigravity", "antigravity-small-task");
-        let titles: Vec<&str> = bodies.iter().filter_map(|b| match b { EventBody::ToolCallStarted { title, .. } => Some(title.as_str()), _ => None }).collect();
-        assert_eq!(titles, vec!["读 notes.txt", "跑 echo agy > stamp.txt"]);
-        assert!(bodies.iter().any(|b| matches!(b, EventBody::ApprovalRequested { options, .. } if options == &vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce])));
-        assert!(bodies.iter().any(|b| matches!(b, EventBody::MessageCompleted { .. })));
-        assert!(matches!(bodies.last(), Some(EventBody::TurnCompleted { reason: TurnEndReason::Done, .. })));
-    }
-
-    #[test]
     fn mcp_tools_called_through_use_tool_show_their_real_name() {
         let c = AcpConverter::new("grok", None);
         let u = json!({"toolCallId": "c1", "title": "use_tool", "rawInput": {"tool_name": "peck__ask_user", "tool_input": {"question": "?"}}});
@@ -570,10 +549,6 @@ mod tests {
         assert_eq!(c.describe(&perm).2, "问站主");
         let dw = json!({"toolCallId": "c2", "title": "use_tool", "rawInput": {"tool_name": "dw__new_canvas", "tool_input": {"canvas": "x"}}});
         assert_eq!(c.describe(&dw).2, "MCP dw · new_canvas");
-        // Antigravity 的 call_mcp_tool。
-        let agy = json!({"toolCallId": "c3", "kind": "execute", "name": "call_mcp_tool", "title": "MCP Tool list", "rawInput": {"ServerName": "dw_dw", "ToolName": "list", "Arguments": {}}});
-        let (_, kind, title) = c.describe(&agy);
-        assert_eq!((kind, title.as_str()), (ToolKind::Mcp, "MCP dw_dw · list"));
     }
 
     #[test]

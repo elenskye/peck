@@ -1,6 +1,6 @@
 # Peck
 
-只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok、Antigravity，各用官方原生接口）接进来。两种干法分开：CLI 引擎整包干，Peck 只当外壳；Peck Loop 是 Peck 自己的循环，带工具箱、上下文管理和联网搜索去改代码，PLOOP 是它的工作方式（一个 API 模型当主角色，能派子代理）。每个任务前后都有快照，说一声就能回到任何一次之前；定时任务也是说一声就设好。
+只为我、只在我这台 Mac 上跑的个人 Harness：Model Gateway 把各家 API（Anthropic、OpenAI、DeepSeek、Aliyun、Gemini、Vertex AI）和各家 Coding CLI（Claude Code、Codex、Muse、Grok，各用官方原生接口）接进来。两种干法分开：CLI 引擎整包干，Peck 只当外壳；Peck Loop 是 Peck 自己的循环，带工具箱、上下文管理和联网搜索去改代码，PLOOP 是它的工作方式（一个 API 模型当主角色，能派子代理）。每个任务前后都有快照，说一声就能回到任何一次之前；定时任务也是说一声就设好。
 
 Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](docs/roadmap.md)，规则和文档分工见 [CLAUDE.md](CLAUDE.md)。
 
@@ -24,7 +24,7 @@ Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](doc
 ## 怎么用
 
 - **安装或更新**：`pnpm app:install`，装进「应用程序」，旧包自动备份一份。新版改了数据库结构时先备份、再升级。
-- **CLI**：Claude Code、Codex、Antigravity、Muse、Grok 和 gcloud 都装在仓库外的 `personal-cli-studio/cli/`（`cli/bin/` 是统一入口，怎么更新看 `cli/README.md`），用订阅账号登录；Peck 打开时自己找到 `cli/bin`（设置 → CLI 里能看、能改）。没登录的那家只是不能选。
+- **CLI**：Claude Code、Codex、Muse、Grok 和 gcloud 都装在仓库外的 `personal-cli-studio/cli/`（`cli/bin/` 是统一入口，怎么更新看 `cli/README.md`），用订阅账号登录；Peck 打开时自己找到 `cli/bin`（设置 → CLI 里能看、能改）。没登录的那家只是不能选。
 - **API**：在设置 → PROVIDERS 填 Key（存在 macOS 钥匙串），只显示配了 Key 的供应商。
 - **开发**：`pnpm dev` 后开 `http://localhost:1430/?mock` 看假数据；`pnpm app:dev` 是原生窗口，用开发数据目录。怎么测见 [docs/testing.md](docs/testing.md)。
 

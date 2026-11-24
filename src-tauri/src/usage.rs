@@ -9,13 +9,12 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{Emitter, State};
 
-pub const CLIENTS: [&str; 5] = ["codex", "claude-code", "antigravity", "muse-code", "grok"];
+pub const CLIENTS: [&str; 4] = ["codex", "claude-code", "muse-code", "grok"];
 
 pub fn client_label(client: &str) -> &'static str {
     match client {
         "codex" => "Codex",
         "claude-code" => "Claude Code",
-        "antigravity" => "Antigravity",
         "muse-code" => "Muse",
         "grok" => "Grok Build",
         _ => "未知客户端",
@@ -110,10 +109,6 @@ pub fn client_source_coverage(client: &str) -> (&'static str, &'static str) {
         "claude-code" => (
             "Claude Code /usage（非交互，不进模型）",
             "Claude 订阅的 5 小时和每周窗口（桌面 App 和 Claude Code 共用）",
-        ),
-        "antigravity" => (
-            "Antigravity CLI statusline quota（事件驱动）",
-            "Antigravity CLI quota bucket；桌面 App 不等于 CLI",
         ),
         _ => ("未知来源", "未知覆盖范围"),
     }
@@ -355,54 +350,6 @@ pub fn parse_claude_statusline(v: &Value, collected_at: i64) -> ClientCard {
     card
 }
 
-pub fn parse_antigravity_quota(v: &Value, collected_at: i64) -> ClientCard {
-    let mut card = ClientCard::base("antigravity");
-    card.installed = true;
-    card.running = true;
-    card.collected_at = collected_at;
-    let quota = v.get("quota");
-    let mut windows = vec![];
-    if let Some(q) = quota.and_then(Value::as_object) {
-        for (bucket, item) in q {
-            let remaining_fraction = opt_f64(item, "remaining_fraction");
-            windows.push(QuotaWindow {
-                label: format!("quota · {bucket}"),
-                used_percent: remaining_fraction.map(|r| (100.0 - r * 100.0).clamp(0.0, 100.0)),
-                remaining_amount: opt_f64(item, "remaining_amount"),
-                reset_at_ms: opt_str(item, "reset_time").and_then(|s| parse_reset_time(&s)),
-                window_duration_mins: None,
-            });
-        }
-    }
-    if windows
-        .iter()
-        .all(|w| w.used_percent.is_none() && w.remaining_amount.is_none())
-    {
-        card.status = "fields_missing".into();
-        card.failure_reason = Some("Antigravity CLI 事件缺少 quota.remaining_fraction/remaining_amount；上下文比例不是订阅额度，桌面 App 不等于 CLI。".into());
-        card.last_failure_at = Some(collected_at);
-        return card;
-    }
-    card.windows = windows
-        .into_iter()
-        .filter(|w| w.used_percent.is_some() || w.remaining_amount.is_some())
-        .collect();
-    card.status = "ok".into();
-    card.fresh = false;
-    card.last_success_at = Some(collected_at);
-    card.raw_label = "官方 CLI quota 的 remaining_fraction 或 remaining_amount（供应商额度单位，非货币）；reset_time 保留时区语义".into();
-    card
-}
-
-fn parse_reset_time(s: &str) -> Option<i64> {
-    if let Ok(n) = s.parse::<i64>() {
-        return Some(if n < 10_000_000_000 { n * 1000 } else { n });
-    }
-    let parsed =
-        time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()?;
-    i64::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
-}
-
 // ---------- 进程识别（仅 pid/ppid/可执行路径，不读 argv/环境） ----------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,14 +377,6 @@ pub fn classify_process(comm: &str) -> Option<(&'static str, &'static str)> {
     }
     if base == "claude" || lower.contains("/.local/share/claude/versions/") {
         return Some(("claude-code", "cli"));
-    }
-    if base == "antigravity" {
-        let variant = if lower.contains(".app") {
-            "desktop"
-        } else {
-            "cli"
-        };
-        return Some(("antigravity", variant));
     }
     if base == "chatgpt" && lower.contains("chatgpt.app") {
         return Some(("codex", "desktop"));
@@ -538,7 +477,7 @@ pub fn list_processes() -> Vec<ProcInfo> {
 // ---------- Store 持久化 ----------
 
 impl Store {
-    /// 有没有在跑的、用 DeepSeek 的任务（Peck Loop 直接用它，或者合作里有一段是它）：DeepSeek 余额只在这时候查。
+    /// 有没有在跑的、主角色用 DeepSeek 的 Peck Loop 任务：DeepSeek 余额只在这时候查。
     pub fn deepseek_running(&self) -> bool {
         self.conn
             .query_row(
@@ -610,13 +549,12 @@ fn gateway_client(provider: &str) -> Option<&'static str> {
         "claude-code" => Some("claude-code"),
         "muse" => Some("muse-code"),
         "grok" => Some("grok"),
-        "antigravity" => Some("antigravity"),
         _ => None,
     }
 }
 
 /// 引擎在任务里报的订阅窗口（统一事件 `quota.updated`）→ 这个客户端的额度卡片。账号沿用旧卡片的
-/// （引擎没报账号；用非默认账号跑的不会走到这里，见 `EventSink::without_quota_sync`）。
+/// （引擎没报账号；CLI 只用和客户端同一个账号）。
 pub fn gateway_quota_card(
     provider: &str,
     windows: &[crate::gateway::event::QuotaWindow],
@@ -769,11 +707,6 @@ fn installed_map(path: &str) -> HashMap<String, bool> {
     map.insert(
         "claude-code".into(),
         find_executable("claude", &[]).is_some(),
-    );
-    map.insert(
-        "antigravity".into(),
-        find_executable("antigravity", &[]).is_some()
-            || PathBuf::from("/Applications/Antigravity.app").exists(),
     );
     map
 }
@@ -1344,11 +1277,7 @@ fn event_driven_card(client: &str, variant: &str, collected_at: i64) -> ClientCa
                 && running_clients(&lineage, std::process::id() as i64).contains_key(client)
             {
                 if let Some(fields) = event.get("fields") {
-                    let mut card = if client == "claude-code" {
-                        parse_claude_statusline(fields, captured)
-                    } else {
-                        parse_antigravity_quota(fields, captured)
-                    };
+                    let mut card = parse_claude_statusline(fields, captured);
                     card.account_id = opt_str(fields, "accountId");
                     card.collected_at = collected_at;
                     return card;
@@ -1356,11 +1285,7 @@ fn event_driven_card(client: &str, variant: &str, collected_at: i64) -> ClientCa
             }
         }
     }
-    c.failure_reason = Some(match (client, variant) {
-        ("claude-code", _) => "还没读到 Claude 的额度。".into(),
-        ("antigravity", "desktop") => "仅检测到 Antigravity 桌面 App；官方可核实的是 CLI statusline quota，桌面不等于 CLI 读取。Peck 未收到 CLI quota 事件。可手工录入快照。".into(),
-        _ => "Antigravity 正在运行，但 Peck 尚未收到 CLI statusline 的 quota 事件；上下文比例不是订阅额度。可手工录入快照。".into(),
-    });
+    c.failure_reason = Some("还没读到 Claude 的额度。".into());
     c
 }
 
@@ -1370,7 +1295,6 @@ async fn query_client(client: &str, variant: &str, claude: Option<&ClaudeSetup>,
         "grok" => query_grok(path).await,
         "codex" => query_codex().await,
         "claude-code" => query_claude(claude, variant).await,
-        "antigravity" => event_driven_card("antigravity", variant, now_ms()),
         _ => ClientCard::base(client),
     }
 }
@@ -1913,9 +1837,9 @@ mod tests {
         run.who = Some("cli:codex".into());
         store.save_run(&run).unwrap();
         assert!(!store.deepseek_running(), "别家的不算");
-        run.who = Some("team:api:anthropic/claude-opus-5-5|api:deepseek/deepseek-flash|".into());
+        run.who = Some("api:deepseek/deepseek-flash".into());
         store.save_run(&run).unwrap();
-        assert!(store.deepseek_running(), "合作里有一段是 DeepSeek 也算");
+        assert!(store.deepseek_running(), "PLOOP 的主角色是 DeepSeek");
         run.status = crate::events::RunStatus::Succeeded;
         store.save_run(&run).unwrap();
         assert!(!store.deepseek_running(), "做完了就不查");
@@ -1974,20 +1898,6 @@ mod tests {
         assert_ne!(parsed.windows[0].label, parsed.windows[1].label);
     }
 
-    #[test]
-    fn usage_antigravity_parses_amount_and_timezone() {
-        let data = json!({"quota":{"fixture":{"remaining_amount":42,"reset_time":"2026-07-06T15:50:32+08:00"}}});
-        let parsed = parse_antigravity_quota(&data, 1);
-        assert_eq!(parsed.status, "ok");
-        assert_eq!(parsed.windows[0].used_percent, None);
-        assert_eq!(parsed.windows[0].remaining_amount, Some(42.0));
-        assert_eq!(
-            parsed.windows[0].reset_at_ms,
-            parse_reset_time("2026-07-06T07:50:32Z")
-        );
-        assert!(parsed.windows[0].reset_at_ms.is_some());
-    }
-
     #[tokio::test]
     async fn usage_cancel_slow_query_terminates_process() {
         let dir = std::env::temp_dir().join(format!("peck-usage-cancel-{}", uuid::Uuid::new_v4()));
@@ -2032,7 +1942,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_claude_and_antigravity_missing_fields_fixture() {
+    fn usage_claude_missing_fields_fixture() {
         assert_eq!(
             parse_claude_statusline(&json!({}), 1).status,
             "fields_missing"
@@ -2042,15 +1952,6 @@ mod tests {
             1,
         );
         assert_eq!(ok.status, "ok");
-        assert_eq!(
-            parse_antigravity_quota(&json!({}), 1).status,
-            "fields_missing"
-        );
-        let ag = parse_antigravity_quota(
-            &json!({"quota":{"model-a":{"remaining_fraction":0.25,"reset_time":"1700000000"}}}),
-            1,
-        );
-        assert_eq!(ag.windows[0].used_percent, Some(75.0));
     }
 
     #[test]
