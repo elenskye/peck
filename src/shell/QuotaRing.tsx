@@ -47,9 +47,11 @@ export const QuotaRing: React.FC<{
     ipc.harnessSpend().then((s) => { if (live) setMonth(s.monthUsd); }).catch(() => {});
     return () => { live = false; };
   }, [cli, stamp]);
-  // 读不到额度的 CLI：点开时算 Peck 自己记的近 5 小时、近 7 天。
+  // 读不到额度的 CLI（没读数，或者读数都过了重置时间）：点开时算 Peck 自己记的近 5 小时、近 7 天。
   const [points, setPoints] = useState<SpendPoint[] | null>(null);
-  const unreadable = cli && !(card?.windows ?? []).some((w) => w.usedPercent != null);
+  const now = Date.now();
+  const stale = (w: { resetAtMs?: number | null }) => w.resetAtMs != null && w.resetAtMs <= now;
+  const unreadable = cli && !(card?.windows ?? []).some((w) => w.usedPercent != null && !stale(w));
   useEffect(() => {
     if (!open || !unreadable) return;
     let live = true;
@@ -57,11 +59,11 @@ export const QuotaRing: React.FC<{
     return () => { live = false; };
   }, [open, unreadable, engine, stamp]);
 
-  const now = Date.now();
   const rows: Row[] = cli
     ? (card?.windows ?? []).filter((w) => w.usedPercent != null).map((w) => {
-        const stale = w.resetAtMs != null && w.resetAtMs <= now;
-        return { key: w.label, name: windowName(w.label, w.windowDurationMins), pct: w.usedPercent, note: stale ? "已重置" : w.resetAtMs ? resetIn(w.resetAtMs) : "", stale };
+        // 过了重置时间的读数作废：不画旧的百分比。
+        const old = stale(w);
+        return { key: w.label, name: windowName(w.label, w.windowDurationMins), pct: old ? null : w.usedPercent, note: old ? "已重置" : w.resetAtMs ? resetIn(w.resetAtMs) : "", stale: old };
       })
     : [{ key: "month", name: "本月", pct: settings.costCap && month != null ? (month / settings.costCap) * 100 : null, note: `${usd(month ?? 0) ?? "$0"}${settings.costCap ? ` / $${settings.costCap}` : ""}` }];
   // 环：没过重置时间的窗口里用得最多的那个。
@@ -99,7 +101,7 @@ export const QuotaRing: React.FC<{
             )}
             {unreadable && (
               <>
-                <p className="note">{card?.failureReason ?? "读不到"}</p>
+                {(card?.failureReason || rows.length === 0) && <p className="note">{card?.failureReason ?? "读不到"}</p>}
                 {points && points.length > 0 && (
                   <ul className="ctx-parts">
                     {([["近 5 小时", 5 * 3_600_000], ["近 7 天", 7 * 86_400_000]] as const).map(([name, ms]) => {

@@ -25,14 +25,30 @@ pub async fn workspace_open(path: String, state: State<'_, AppState>) -> Result<
     Ok(ws)
 }
 
-/// 输入框 + 按钮（v1.1.8）：系统选文件的窗，多选，只返回路径。取消返回空。
+/// 系统选文件、选文件夹的窗（osascript）：`from` 是个文件夹就从那里开始（路径走参数，不拼进脚本）。
+async fn choose(what: &str, from: Option<&str>) -> std::io::Result<std::process::Output> {
+    let start = from.filter(|p| std::path::Path::new(p).is_dir());
+    let script = format!(
+        "on run argv\n{}\nend run",
+        if start.is_some() { what.replace("{from}", " default location (POSIX file (item 1 of argv))") } else { what.replace("{from}", "") }
+    );
+    let mut cmd = tokio::process::Command::new("/usr/bin/osascript");
+    cmd.args(["-e", &script]);
+    if let Some(p) = start {
+        cmd.arg(p);
+    }
+    cmd.output().await
+}
+
+/// 输入框 + 按钮（v1.1.8）：系统选文件的窗，多选，从项目文件夹开始，只返回路径。取消返回空。
 #[tauri::command]
-pub async fn dialog_pick_uploads() -> Result<Vec<String>, String> {
-    let output = tokio::process::Command::new("/usr/bin/osascript")
-        .args(["-e", "set fs to choose file with multiple selections allowed\nset out to \"\"\nrepeat with f in fs\nset out to out & POSIX path of f & linefeed\nend repeat\nreturn out"])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn dialog_pick_uploads(from: Option<String>) -> Result<Vec<String>, String> {
+    let output = choose(
+        "set fs to choose file with multiple selections allowed{from}\nset out to \"\"\nrepeat with f in fs\nset out to out & POSIX path of f & linefeed\nend repeat\nreturn out",
+        from.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
         if message.contains("-128") {
@@ -43,14 +59,12 @@ pub async fn dialog_pick_uploads() -> Result<Vec<String>, String> {
     Ok(String::from_utf8_lossy(&output.stdout).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
 }
 
-/// 项目设置里加一个其他文件夹（v0.7）：系统选文件夹的窗，只返回路径，不打开成项目。
+/// 系统选文件夹的窗，只返回路径、不打开成项目：项目设置里加一个其他文件夹（v0.7），`+` 附一个文件夹
+/// （`attach`，不写提示、从项目文件夹开始）。
 #[tauri::command]
-pub async fn dialog_pick_folder() -> Result<Option<String>, String> {
-    let output = tokio::process::Command::new("/usr/bin/osascript")
-        .args(["-e", "POSIX path of (choose folder with prompt \"选一个文件夹加进项目\")"])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn dialog_pick_folder(from: Option<String>, attach: Option<bool>) -> Result<Option<String>, String> {
+    let what = if attach == Some(true) { "return POSIX path of (choose folder{from})" } else { "return POSIX path of (choose folder with prompt \"选一个文件夹加进项目\"{from})" };
+    let output = choose(what, from.as_deref()).await.map_err(|e| e.to_string())?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
         if message.contains("-128") {

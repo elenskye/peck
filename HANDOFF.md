@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-24。**v1.1.9 做完了，已装进 /Applications**（连同 1.1.8）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」和 [docs/design.md](./docs/design.md)「输入框」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-24 深夜。**v1.1.9 做完、在正式版窗口里验收过，验收时修的也装进 /Applications 了**（连同 1.1.8）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」和 [docs/design.md](./docs/design.md)「输入框」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
 ## 这一版做了什么（1.1.9）
 
@@ -12,6 +12,14 @@
 6. **输入框**长到半个窗口才开始滚；**附图**点开放大。
 7. **右栏 LOG 去掉**（站主定的）：页签剩 FILES / ONE SHOT / PREVIEW / TERM（⌘1–⌘4）；对话里每次记录头上的按钮改叫 FILES。PLOOP 的成员名单不再显示（事件里还记着）。
 - 数据库没动（schema 11）。事件多了 `user.appended`，`user_input.requested` 多了 `questions`，`Control::Answer` 多了 `answers`。没加依赖。
+
+## 验收时修的（站主让我接管屏幕、在正式版窗口里真点真跑）
+
+1. **Claude Code 跑着时追加一句会卡住**：它把那句并进这一回合（两步之间吃进去）、只回一个 `result`，Peck 按「写几行等几个 result」一直等，任务停在「在跑」（STOP 能收）。现在带 `--replay-user-messages`，按它吃进去时的回显核对；不回显的旧版本 `result` 后 15 秒没动静也收。探针走协议核实过（2.1.322），复测：追加后 0.6 秒自己收尾。
+2. **Codex 任务开头那行「没读到这个项目配的 MCP：dw，去 Codex 里点信任」是错的**：Codex 不读 `.mcp.json`（信任了也不读，`codex mcp list` 核实），只读 `.codex/config.toml`。现在 Codex 只拿后者比。
+3. **附图放大超出窗口**：大图按原尺寸画、下半截跑到窗口外。现在按窗口缩。
+4. **`+` 的选窗**：从当前项目文件夹开始（以前停在上次去过的地方）；附文件夹的那个不再写「选一个文件夹加进项目」（那是项目设置的提示）。
+5. **额度弹层**：读数过了重置时间的窗口只写「已重置」、不画旧百分比（Muse 的读数还是 11-16 的），都过了就当读不到、显示 Peck 自己记的近 5 小时 / 7 天；「每周 Fable」「估 $0.181」不再折成两行。
 
 ## 上一版（1.1.8，提交 `7a7fbec`）
 
@@ -26,23 +34,24 @@
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（360 个；新加：追加的话到引擎也进过程、几个问题各自的选项和答案、Claude Code 的多问题回答、CLI 花费估算和读旧事件时补、Muse 等后台命令回来和等的时候按 STOP）；`pnpm check`、`pnpm build` 过。
+- **自动测试**：全量 `cargo test` 过（361 个，验收时加了 Claude Code 追加并进回合 / 下一回合 / 不回显三种收尾、Codex 只读 `.codex/config.toml`；新加：追加的话到引擎也进过程、几个问题各自的选项和答案、Claude Code 的多问题回答、CLI 花费估算和读旧事件时补、Muse 等后台命令回来和等的时候按 STOP）；`pnpm check`、`pnpm build` 过。
 - **`?mock`**（明暗各看过）：三问题卡片；跑着时追加（PLOOP 进过程、Grok 排队后自动发）；两个环和各自的弹层；附图放大；输入框 40 行时长到 413px 开始滚；LOG 页签没了；TRUST 卡片；FILES 的 ALL。
 - **真跑**（账本在 roadmap）：Muse 3 次——后台命令跑完它自己开下一回合（走协议看的），Peck 的引擎等到了那一回合（Spark、带 `--trust-workspace`），额度事件也到了；Codex 1 次——带信任开关，干活中途追加一句（`turn/steer`），最后照那句做了，花费估出来了。
-- **正式版**：装好了（`pnpm app:install`，版本号、签名核对过；用临时数据目录隔离着起了一次，能起来）；窗口里没点过。
+- **正式版窗口（验收，正式数据）**：QUOTA 页、三家 CLI 和 PLOOP 的额度环、上下文环；⌘1–⌘4 四个页签（LOG 没了、⌘5 不动）；FILES 的 ALL（`.peck` 变暗列出；链接不列是故意的）；`+` 附文件和文件夹、附图放大、40 行输入框长高后滚；真跑——PLOOP（DeepSeek Flash）和 Codex 跑着时追加、照做了，花费标「估」；Grok 的 TRUST 卡片（`grok --trust` 记进它的信任表、项目设置 `trusted` 记上）和排队自动发；Claude Code 一次问两个问题各自答回去、带信任开关、追加（修完复测过）。界面设置在第一次打开新版时已经迁移好（有 PLOOP、subagents）。测试时换过的模型都改回去了。
 - **没验的**：
-  - Grok 的 `--trust`（会往它的信任表里写一条，没替站主试；头一次在 Grok 任务的 TRUST 卡片上点了就知道，没记上会写一行）和 Grok 的排队在真 CLI 上。
-  - Claude Code：`cli/bin` 的登录过期，信任开关（`--settings`）、多问题回答、追加都没在真的上面跑。
   - Muse 的中途插话（`turn/steer`，代码没动）和三问题卡片在真 Muse 上：这一版 Muse 的 3 次用完了。
-  - 正式版窗口：1.1.8、1.1.9 的都没点过。
+  - Codex 的多问题卡片：Codex 默认模式下不给提问工具，没触发到（Claude Code 的验过）。
+  - Codex 那行 MCP 提示去掉以后没再真跑 Codex 看（单元测试和 `codex mcp list` 核对过）。
+  - 通知横幅截不到，没看。
 
 ## 留给站主的
 
-- **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。
+- **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。验收时换了两次包，旧的 `Peck.app.backup-20261124-*` 也在废纸篓。
+- **测试项目 tester** 被批了信任（验收时在 Grok 的 TRUST 卡片上点的）：Grok 自己记进了 `~/.grok/trusted_folders.toml`，Peck 的项目设置 `trusted` 也亮着（项目设置里能关）；tester 里多了一个 `notes.txt`（Claude Code 测多问题时写的）。
 - **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
 - **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
 - **仓库里多了 `.agents/skills`**（指向 `.claude/skills` 的链接）：站主在 Peck 里第一次点开 peck 项目时 Peck 认结构建的，没跟踪、我没动，要不要提交站主定。
-- **Claude Code 重新登录**：设置 → CLI → LOGIN 里的 Claude Code（`cli/bin` 那份）登录过期了。登好以后要核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
+- **Claude Code**：`cli/bin` 那份现在能用了（验收时跑了 3 次）。还没核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
 - **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.9 的全部提交。
 - 以前留下、还没验的：1.1.6 的设置页在正式版窗口里；1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
@@ -52,7 +61,7 @@
 | --- | --- |
 | 排着的话（Grok）只在内存里，只在正看着那个任务时接着发；切到别的任务、重开 App 就不发了 | 记着 |
 | 任务跑着时追加的话带不了图和附件、用不了斜杠命令 | 记着 |
-| Claude Code 收到追加的话是排到它这一步之后；它已经在收尾时可能送不进去（会写一行） | 记着 |
+| Claude Code 收到追加的话在两步之间并进这一回合，或者说完了再开一回合；它已经在收尾时可能送不进去（会写一行）。不回显的旧版本要多等 15 秒才收 | 记着 |
 | TRUST 卡片等着时任务不往下走：定时任务碰到第一次要问的项目会一直等 | 先手动发一次、点掉 |
 | Muse 留着不停的后台命令（它起的 dev server）会让任务多等到 30 分钟才收 | 按 STOP 就收（照做完算） |
 | Claude Code 的 TRUST 卡片按「项目里有没有 `.mcp.json`」问：已经在 Claude Code 里批过的也会问一次 | 记着 |

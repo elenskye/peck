@@ -1,6 +1,6 @@
 //! CLI 读没读到项目里的 MCP（v0.9 Phase 13，roadmap A1）。
 //!
-//! Peck 以项目文件夹为工作目录起官方 CLI，项目里写好的 MCP 配置（`.mcp.json`；Codex 还有 `.codex/config.toml`）
+//! Peck 以项目文件夹为工作目录起官方 CLI，项目里写好的 MCP 配置（`.mcp.json`；Codex 只读 `.codex/config.toml`）
 //! 由 CLI 自己读。可各家都要站主先在它自己的客户端里点一次「信任」或「批准」，没点就悄悄不连。
 //! 任务开头查一下：项目里配了、这家却没读到的，写一行。信任这件事 v1.1.8 起由 TRUST 卡片管（`trust.rs`）：
 //! 卡片问过、或者站主批过这个项目，就不再写这一行。
@@ -15,22 +15,24 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-/// 项目根上配的 MCP 服务器名：`.mcp.json` 的 `mcpServers`，Codex 再加 `.codex/config.toml` 的 `[mcp_servers.*]`。
+/// 项目根上配的、这家会读的 MCP 服务器名：`.mcp.json` 的 `mcpServers`；Codex 不读 `.mcp.json`（信任了也不读，
+/// v1.1.9 验收时核实），只算 `.codex/config.toml` 的 `[mcp_servers.*]`。
 pub fn project_servers(root: &Path, engine: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    if let Ok(text) = std::fs::read_to_string(root.join(".mcp.json")) {
-        if let Ok(v) = serde_json::from_str::<Value>(&text) {
-            if let Some(m) = v.get("mcpServers").and_then(Value::as_object) {
-                out.extend(m.keys().cloned());
-            }
-        }
-    }
     if engine == "codex" {
         if let Ok(text) = std::fs::read_to_string(root.join(".codex/config.toml")) {
             if let Ok(v) = text.parse::<toml::Table>() {
                 if let Some(m) = v.get("mcp_servers").and_then(|m| m.as_table()) {
                     out.extend(m.keys().cloned());
                 }
+            }
+        }
+        return out;
+    }
+    if let Ok(text) = std::fs::read_to_string(root.join(".mcp.json")) {
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            if let Some(m) = v.get("mcpServers").and_then(Value::as_object) {
+                out.extend(m.keys().cloned());
             }
         }
     }
@@ -164,6 +166,10 @@ mod tests {
         ]);
         assert_eq!(project_servers(&dir, "grok").into_iter().collect::<Vec<_>>(), vec!["dw"]);
         assert_eq!(project_servers(&dir, "codex").into_iter().collect::<Vec<_>>(), vec!["dw", "extra"]);
+        // Codex 不读 `.mcp.json`：只有它的时候不提醒。
+        let only_json = project(&[(".mcp.json", r#"{"mcpServers": {"dw": {}}}"#)]);
+        assert!(project_servers(&only_json, "codex").is_empty());
+        let _ = std::fs::remove_dir_all(&only_json);
         assert!(project_servers(&project(&[]), "muse").is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

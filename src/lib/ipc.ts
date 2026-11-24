@@ -148,15 +148,15 @@ export const ipc = {
     if (isMockMode()) return mockIpc.filesRead(workspaceId, path, runId);
     return invoke<FilePreview>("files_read", { workspaceId, path, runId });
   },
-  /** 系统选文件夹的窗（只返回路径；浏览器里没有）。 */
-  async pickFolder(): Promise<string | null> {
+  /** 系统选文件夹的窗（只返回路径；浏览器里没有）。`from` 从哪个文件夹开始；`attach` 是 + 附文件夹（不写提示）。 */
+  async pickFolder(from?: string, attach?: boolean): Promise<string | null> {
     if (isMockMode()) return "/mock/参考资料";
-    return invoke<string | null>("dialog_pick_folder");
+    return invoke<string | null>("dialog_pick_folder", { from, attach });
   },
-  /** 系统选文件的窗（v1.1.8，+ 按钮，多选，只返回路径；浏览器里给两条演示）。 */
-  async pickUploads(): Promise<string[]> {
+  /** 系统选文件的窗（v1.1.8，+ 按钮，多选，从 `from` 开始，只返回路径；浏览器里给两条演示）。 */
+  async pickUploads(from?: string): Promise<string[]> {
     if (isMockMode()) return ["/mock/需求文档.md", "/mock/接口说明.pdf"];
-    return invoke<string[]>("dialog_pick_uploads");
+    return invoke<string[]>("dialog_pick_uploads", { from });
   },
   /** Quick Look 的缩略图（Word、Excel 这类，PNG 的 data URL）。只在 Mac 上有。 */
   async filesQuicklook(workspaceId: string, path: string): Promise<string> {

@@ -529,10 +529,10 @@ const Composer: React.FC<Props & {
     });
   };
   const pickUploadFiles = async () => {
-    try { addUploads(await ipc.pickUploads(), false); } catch (e) { say(e); }
+    try { addUploads(await ipc.pickUploads(project.workspace.path), false); } catch (e) { say(e); }
   };
   const pickUploadFolder = async () => {
-    try { const p = await ipc.pickFolder(); if (p) addUploads([p], true); } catch (e) { say(e); }
+    try { const p = await ipc.pickFolder(project.workspace.path, true); if (p) addUploads([p], true); } catch (e) { say(e); }
   };
   const baseName = (p: string) => p.replace(/\/$/, "").split("/").pop() || p;
   // ↵：弹层开着就插选中的那个；不然发出去。

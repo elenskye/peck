@@ -631,8 +631,9 @@ body { overflow: hidden; }
 .quota-ring.is-unknown .quota-ring-track { stroke-dasharray: 2 2.32; }
 .quota-ring:hover .quota-ring-track { stroke: var(--color-line-strong); }
 .quota-ring:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
-.quota-rows { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-.quota-rows li { display: grid; grid-template-columns: 52px minmax(0, 1fr) 36px auto; gap: var(--space-4); align-items: center; font-size: var(--text-small); color: var(--color-text-2); }
+.quota-rows { display: grid; grid-template-columns: max-content minmax(60px, 1fr) 36px auto; gap: var(--space-3) var(--space-4); margin: 0; padding: 0; list-style: none; }
+.quota-rows li { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; font-size: var(--text-small); color: var(--color-text-2); }
+.quota-rows span { white-space: nowrap; }
 .quota-rows b { font-weight: 400; text-align: right; color: var(--color-text); }
 .quota-rows em { font-style: normal; min-width: 64px; text-align: right; color: var(--color-text-3); white-space: nowrap; }
 .quota-rows li.is-stale { opacity: .5; }
@@ -644,9 +645,9 @@ body { overflow: hidden; }
 .ctx-bar i.is-warn { background: var(--color-warn); }
 .ctx-bar i.is-line::after { content: ""; position: absolute; top: -3px; bottom: -3px; right: -2px; width: 1px; border-right: 1px dotted var(--color-warn); }
 .ctx-parts { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.ctx-parts li { display: grid; grid-template-columns: minmax(0, 1fr) auto 36px; gap: var(--space-4); align-items: baseline; font-size: var(--text-small); color: var(--color-text-2); }
+.ctx-parts li { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(36px, auto); gap: var(--space-4); align-items: baseline; font-size: var(--text-small); color: var(--color-text-2); }
 .ctx-parts b { font-weight: 400; color: var(--color-text); }
-.ctx-parts em { font-style: normal; text-align: right; color: var(--color-text-3); }
+.ctx-parts em { font-style: normal; text-align: right; color: var(--color-text-3); white-space: nowrap; }
 
 /* 自动压缩的一步、交接摘要 */
 .agent-compact { color: var(--color-text-3); }
@@ -689,7 +690,7 @@ body { overflow: hidden; }
 .skill-history .set-row:first-child { border-top: 0; }
 /* 小窗（v1.1.6）：盖住整个窗口，中间一块模块；里面整块放大 7/6（和设置页一样），窗口本身按屏幕尺寸算。 */
 /* 附图点开看大的（v1.1.9）：盖住整个窗口，点哪都关 */
-.lightbox { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: var(--space-10); background: color-mix(in srgb, var(--color-page) 86%, transparent); cursor: zoom-out; }
+.lightbox { position: fixed; inset: 0; z-index: 70; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: var(--space-10); background: color-mix(in srgb, var(--color-page) 86%, transparent); cursor: zoom-out; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; box-shadow: 0 0 0 1px var(--color-line-strong); }
 .composer-shot img { cursor: zoom-in; }
 .modal-scrim { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--space-11); background: color-mix(in srgb, var(--color-page) 72%, transparent); }

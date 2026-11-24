@@ -62,6 +62,8 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
 | v1.1.9 | Muse | 默认、muse-spark-1.3 | 3 / 3 | 两次直接走协议看后台命令：回合结束时 `task/list` 还有一条在跑，跑完它自己开下一回合；一次走 Peck 的引擎（Spark、带 `--trust-workspace`）：等到了那一回合，`quota.updated` 也到了（5 小时 14%、每周 10%） |
-| v1.1.9 | Codex | gpt-6-luna low | 1 / 3（估 $0.002） | 带信任开关起 app-server；第一步工具开始时追加一句（`turn/steer`），最后的回答照追加的那句做了 |
-| v1.1.9 | Claude Code、Grok | — | 0 / 3 | 没跑：Claude Code 登录过期；Grok 的 `--trust` 会往它的信任表里写一条，没替站主试 |
+| v1.1.9 | Codex | gpt-6-luna low | 2 / 3（估 $0.005） | 带信任开关起 app-server；第一步工具开始时追加一句（`turn/steer`），最后的回答照追加的那句做了；验收时正式版窗口里再追加一次，照做、花费标「估」 |
+| v1.1.9 | DeepSeek | V4.1 Flash | 3 / 5（$0.0014） | 验收：正式版窗口里 PLOOP 跑着时追加一句，YOU 进过程，回答照那句改了 |
+| v1.1.9 | Grok | grok-4.7-build-fast | 1 / 3（两轮，估 $0.26） | 验收：TRUST 卡片点了，`grok --trust` 记进它的信任表；跑着时发的话排着，这一轮做完自动发成下一句 |
+| v1.1.9 | Claude Code | haiku-5-5 | 3 / 3（估 $0.012） | 验收：一次问两个问题各自答回去、带信任开关；跑着时追加卡住（它把那句并进这一回合、只回一个 `result`），按 STOP 收；一次探针走协议看回显（`--replay-user-messages`）；修完复测追加，自己收尾 |
 | v1.1.8 | Muse、Codex | — | 0 / 3 | 没花额度：`muse serve [--trust-workspace]` 只建会话，用本地假 MCP 看它连不连（带了才连）；`codex -c projects={…} mcp list` 看项目 `.codex/config.toml` 读没读进来（内联表的写法才认） |

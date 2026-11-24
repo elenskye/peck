@@ -3,8 +3,10 @@
 //!
 //! 一个回合：起进程 → 写一行 `user` → 读到 `result` 为止。审批用 `--permission-prompt-tool stdio`：
 //! Claude Code 发 `control_request`（`can_use_tool`），Peck 回 `control_response`；`AskUserQuestion`
-//! 也走这条路，回答放进 `updatedInput.answers`。追加一句就再写一行 `user`（它排在这一回合后面，
-//! 等它的 `result` 也到了才算完）；打断发 `control_request`（`interrupt`）。
+//! 也走这条路，回答放进 `updatedInput.answers`。追加一句就再写一行 `user`：Claude Code 在两步之间把它
+//! 并进这一回合（只回一个 `result`），或者这一回合说完了再开一回合。带 `--replay-user-messages`，它吃进
+//! 一句就回显一行 `isReplay` 的 `user`：写进去的都回显过、又到了 `result` 才算完；不回显的版本
+//! `result` 之后 15 秒没动静也算完（2.1.322 真跑核实）。打断发 `control_request`（`interrupt`）。
 //!
 //! 权限三档：PLAN = `plan`，EDIT = `acceptEdits`，AUTO 也是 `acceptEdits`（放宽靠 Peck 自动批，
 //! 高危照样弹卡片）。
@@ -17,7 +19,7 @@ use crate::gateway::event::{EventBody, NoticeLevel, PermissionLevel, TurnEndReas
 use crate::gateway::log::EventSink;
 use crate::gateway::{AgentBackend, AgentTask, BoxFuture, Control, GatewayError, RunOutcome};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -46,6 +48,7 @@ impl ClaudeCodeBackend {
             "stream-json",
             "--verbose",
             "--include-partial-messages",
+            "--replay-user-messages",
             "--permission-prompt-tool",
             "stdio",
             "--permission-mode",
@@ -131,9 +134,14 @@ pub(crate) struct Session {
     /// 等站主回答的审批和提问：request id → (工具名, 它要用的参数)。
     pending: HashMap<String, (String, Value)>,
     session_id: Option<String>,
-    /// 写进去的 `user` 行数和收到的 `result` 数：一样多才算这一回合完了。
+    /// 写进去的 `user` 行数和收到的 `result` 数。
     sent_messages: usize,
     results: usize,
+    /// 写进去、还没回显（`isReplay`）的话：空了说明它都吃进去了。
+    unconsumed: VecDeque<String>,
+    /// 最近一个 `result` 的时候，和那之后主线有没有又动起来（回显、说话、要审批）。
+    last_result_at: Option<tokio::time::Instant>,
+    active_since_result: bool,
     last_turn: Option<(TurnEndReason, String)>,
     interrupts: u32,
     /// 在后台跑的子代理（v0.9：`system` / `background_tasks_changed` 里 `local_agent` 的个数）。主线说完了还有，
@@ -151,6 +159,8 @@ pub(crate) struct Session {
 const BACKGROUND_WAIT: Duration = Duration::from_secs(30 * 60);
 /// 后台做完以后等 Claude Code 叫醒主线、说完那一轮最多多久。
 const WAKE_WAIT: Duration = Duration::from_secs(120);
+/// 追加的话没见回显：`result` 之后这么久主线没再动，就当它已经并进那一回合了。
+const QUEUE_WAIT: Duration = Duration::from_secs(15);
 
 impl Session {
     pub(crate) fn new(pipe: Pipe, task: &AgentTask, sink: EventSink) -> Self {
@@ -162,6 +172,9 @@ impl Session {
             session_id: None,
             sent_messages: 0,
             results: 0,
+            unconsumed: VecDeque::new(),
+            last_result_at: None,
+            active_since_result: false,
             last_turn: None,
             interrupts: 0,
             background: 0,
@@ -171,8 +184,15 @@ impl Session {
         }
     }
 
+    /// 到了 `result`、之后主线没再动，而且写进去的话都有着落：一句一个 `result`，或者都回显过（并进了
+    /// 那一回合），或者等了 [`QUEUE_WAIT`] 还没动静（不回显的版本）。
     fn finished(&self) -> bool {
-        self.sent_messages > 0 && self.results >= self.sent_messages
+        if self.sent_messages == 0 || self.results == 0 || self.active_since_result {
+            return false;
+        }
+        self.results >= self.sent_messages
+            || self.unconsumed.is_empty()
+            || self.last_result_at.is_some_and(|at| at.elapsed() >= QUEUE_WAIT)
     }
 
     /// 主线说完了，但还有后台子代理在跑、或者刚做完在等叫醒的那一轮：先别收。
@@ -215,8 +235,8 @@ impl Session {
                     None => std::future::pending().await,
                 }
             };
-            // 等后台时每 5 秒醒一下，看等够了没有。
-            let idle = self.finished();
+            // 有过 `result` 以后每 5 秒醒一下，看等够了没有（等后台、等追加的那句）。
+            let idle = self.results > 0;
             let tick = async move {
                 if idle {
                     tokio::time::sleep(Duration::from_secs(5)).await
@@ -273,7 +293,32 @@ impl Session {
     async fn say(&mut self, text: &str) -> Result<(), GatewayError> {
         self.pipe.send(&ClaudeCodeConverter::user_message(text)).await?;
         self.sent_messages += 1;
+        self.unconsumed.push_back(text.to_string());
         Ok(())
+    }
+
+    /// 回合收尾要用的几个数：`result`、吃进去的话（回显）、`result` 之后主线又动了没有。
+    fn track(&mut self, raw: &Value) {
+        let main = raw["parent_tool_use_id"].is_null();
+        match raw["type"].as_str().unwrap_or("") {
+            "result" => {
+                self.results += 1;
+                self.last_result_at = Some(tokio::time::Instant::now());
+                self.active_since_result = false;
+            }
+            "user" if raw["isReplay"] == true => {
+                let content = &raw["message"]["content"];
+                let text = content.as_str().map(str::to_string).or_else(|| {
+                    content.as_array().map(|blocks| blocks.iter().filter_map(|b| b["text"].as_str()).collect::<String>())
+                });
+                if let Some(i) = text.and_then(|t| self.unconsumed.iter().position(|u| *u == t)) {
+                    self.unconsumed.remove(i);
+                }
+                self.active_since_result = true;
+            }
+            "assistant" | "stream_event" | "control_request" if main => self.active_since_result = true,
+            _ => {}
+        }
     }
 
     fn handle(&mut self, line: Line) {
@@ -301,9 +346,7 @@ impl Session {
                 let _ = writeln!(f, "{raw}");
             }
         }
-        if raw["type"] == "result" {
-            self.results += 1;
-        }
+        self.track(&raw);
         if self.compacting && raw["type"] == "system" && raw["subtype"] == "init" {
             let has = raw["slash_commands"].as_array().map(|c| c.iter().any(|x| x.as_str() == Some("compact")));
             if has == Some(false) {
@@ -484,6 +527,7 @@ mod tests {
         let args = ClaudeCodeBackend::args(&AgentTask { resume: Some("s1".into()), permission: PermissionLevel::Plan, ..task() });
         let joined = args.join(" ");
         assert!(joined.contains("--permission-prompt-tool stdio"));
+        assert!(joined.contains("--replay-user-messages"));
         assert!(joined.contains("--permission-mode plan"));
         assert!(joined.contains("--model haiku") && joined.contains("--resume s1"));
         assert!(!joined.contains("--bare") && !joined.contains("--effort"));
@@ -525,6 +569,50 @@ mod tests {
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::Notice { text, .. } if text.contains("1 个后台子代理"))));
         // 叫醒的那一轮说的话也收到了（没在主线第一次说完时就关掉）。
         assert!(events.iter().any(|e| matches!(&e.body, EventBody::MessageCompleted { text, .. } if text.contains("后台查完了"))));
+    }
+
+    /// 跑着时追加一句（v1.1.9 验收时真跑卡住过）：Claude Code 把它并进这一回合，只回一个 `result`。
+    #[tokio::test]
+    async fn an_appended_line_ends_with_the_turn_it_was_merged_into() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (sink, _events) = auto_answer("claude-code", tx, |_| ApprovalDecision::AllowOnce, "");
+        let t = task();
+        let replay = |text: &str| Line::Json(json!({"type": "user", "isReplay": true, "parent_tool_use_id": null, "message": {"role": "user", "content": text}}));
+        let result = || Line::Json(result_line());
+        let started = || Line::Json(json!({"type": "assistant", "parent_tool_use_id": null, "message": {"id": "m2", "role": "assistant", "content": [{"type": "text", "text": "好"}]}}));
+
+        // 两步之间吃进去（回显）、一个 result 收掉。
+        let mut s = Session::new(script(&[]), &t, sink.clone());
+        s.say("跑 sleep").await.unwrap();
+        s.handle(replay("跑 sleep"));
+        s.say("补一句").await.unwrap();
+        assert!(!s.finished());
+        s.handle(replay("补一句"));
+        s.handle(result());
+        assert!(s.finished());
+
+        // 回合说完了才到：先一个 result，回显后开下一回合，第二个 result 才算完。
+        let mut s = Session::new(script(&[]), &t, sink.clone());
+        s.say("跑 sleep").await.unwrap();
+        s.handle(replay("跑 sleep"));
+        s.say("补一句").await.unwrap();
+        s.handle(result());
+        assert!(!s.finished(), "那一句还没吃进去");
+        s.handle(replay("补一句"));
+        s.handle(started());
+        s.last_result_at = tokio::time::Instant::now().checked_sub(QUEUE_WAIT * 2);
+        assert!(!s.finished(), "下一回合在跑，不能收");
+        s.handle(result());
+        assert!(s.finished());
+
+        // 不回显的版本：result 之后一直没动静，等够了也收。
+        let mut s = Session::new(script(&[]), &t, sink);
+        s.say("跑 sleep").await.unwrap();
+        s.say("补一句").await.unwrap();
+        s.handle(result());
+        assert!(!s.finished());
+        s.last_result_at = tokio::time::Instant::now().checked_sub(QUEUE_WAIT);
+        assert!(s.finished());
     }
 
     #[tokio::test]
