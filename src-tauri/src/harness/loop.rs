@@ -2826,6 +2826,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         }
     }
 

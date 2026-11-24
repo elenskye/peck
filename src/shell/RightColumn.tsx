@@ -5,7 +5,7 @@ import { foldEvents } from "@/lib/agentView";
 import { ipc, isMockMode, type BgInfo } from "@/lib/ipc";
 import PREVIEW_SCRIPT from "../../src-tauri/src/preview.js?raw";
 import type { AppSettings } from "@/lib/settings";
-import type { FileChangeItem, FileListing, FilePreview, ProjectOverview, RunRecord } from "@/lib/types";
+import type { FileChangeItem, FileListing, FilePreview, IgnoredEntry, ProjectOverview, RunRecord } from "@/lib/types";
 import { clock, cn, copyText, fileSize, runState, shortenHomePath, span, stepName } from "@/lib/utils";
 import { Btn, Icon, Info, ModHead, Twinkle, type IconName } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
@@ -417,8 +417,8 @@ function useStored<T>(key: string, init: T): [T, (next: T) => void] {
 // ---------- FILES ----------
 
 /** 文件行（这次任务改到的标 NEW、DEL、+ −）。 */
-const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; on?: boolean; depth?: number; dir?: "open" | "closed"; onClick: () => void }> = ({ name, title, mark, on, depth = 0, dir, onClick }) => (
-  <button type="button" title={title} className={cn("pk-row", dir && "pk-row--dir", mark?.kind === "delete" && "pk-row--del", on && "is-on")} style={depth ? { paddingLeft: 6 + depth * 14 } : undefined} onClick={onClick}>
+const FileRow: React.FC<{ name: string; title?: string; mark?: FileChangeItem; on?: boolean; depth?: number; dir?: "open" | "closed"; dim?: boolean; onClick: () => void }> = ({ name, title, mark, on, depth = 0, dir, dim, onClick }) => (
+  <button type="button" title={title} className={cn("pk-row", dir && "pk-row--dir", mark?.kind === "delete" && "pk-row--del", dim && "pk-row--dim", on && "is-on")} style={depth ? { paddingLeft: 6 + depth * 14 } : undefined} onClick={onClick}>
     <Icon name={dir === "open" ? "triD" : dir === "closed" ? "triR" : "file"} size={12} />
     <span className="pk-row-name">{name}</span>
     {mark?.kind === "create" ? <em className="pk-tag pk-tag--new">NEW</em> : mark?.kind === "delete" ? <em className="pk-tag pk-tag--del">DEL</em> : <span />}
@@ -435,16 +435,17 @@ const OpenBtns: React.FC<{ workspaceId: string; path: string; app: string; say: 
   </>
 );
 
-interface TreeNode { name: string; path: string; dir: boolean; size: number; children: TreeNode[] }
-function buildTree(paths: Array<{ path: string; size: number }>): TreeNode[] {
+interface TreeNode { name: string; path: string; dir: boolean; size: number; children: TreeNode[]; /** 照忽略规则藏着的（ALL 开着才列，变暗；文件夹点开才读一层）。 */ ignored?: boolean }
+function buildTree(paths: Array<{ path: string; size: number; dir?: boolean; ignored?: boolean }>): TreeNode[] {
   const root: TreeNode = { name: "", path: "", dir: true, size: 0, children: [] };
   for (const entry of paths) {
     let node = root;
     const parts = entry.path.split("/");
     parts.forEach((part, i) => {
       const path = parts.slice(0, i + 1).join("/");
+      const leaf = i === parts.length - 1;
       let child = node.children.find((c) => c.name === part);
-      if (!child) { child = { name: part, path, dir: i < parts.length - 1, size: i < parts.length - 1 ? 0 : entry.size, children: [] }; node.children.push(child); }
+      if (!child) { child = { name: part, path, dir: !leaf || !!entry.dir, size: leaf && !entry.dir ? entry.size : 0, children: [], ignored: entry.ignored && (leaf || node.ignored) }; node.children.push(child); }
       node = child;
     });
   }
@@ -507,6 +508,9 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [marks, setMarks] = useState<Set<number>>(new Set());
   const workspaceId = project?.workspace.id;
+  // ALL（v1.1.8）：照忽略规则藏着的也列出来（变暗）；藏着的文件夹点开才读一层，读过的记着。
+  const [all, setAll] = useStored<boolean>("peck.files.all", false);
+  const [inside, setInside] = useState<Record<string, IgnoredEntry[]>>({});
   // 独立工作区里做的、还没搬回：FILES 列的是项目文件夹，改动不在这里，就不标。
   const elsewhere = !!run?.worktree && !run.worktree.appliedAt && !run.worktree.discardedAt;
   const changed = useMemo(() => new Map(elsewhere ? [] : (run?.files ?? []).map((f) => [f.path, f])), [run?.files, elsewhere]);
@@ -519,7 +523,7 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
     void ipc.filesList(workspaceId).then((l) => { if (!cancelled) setListing(l); }).catch((e) => { if (!cancelled) say(e); });
     return () => { cancelled = true; };
   }, [workspaceId, stamp, say]);
-  useEffect(() => { setClosed(null); setPath(null); }, [workspaceId]);
+  useEffect(() => { setClosed(null); setPath(null); setInside({}); }, [workspaceId]);
   // 对话里点了一个改过的文件：打开它（用完就清掉，之后在这里自己点别的不受它管）。
   useEffect(() => { if (filePath) { setPath(filePath); onFilePath(null); } }, [filePath, onFilePath]);
 
@@ -528,13 +532,15 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
     const present = listing?.entries ?? [];
     const names = new Set(present.map((e) => e.path));
     const gone = undone ? [] : [...changed.values()].filter((f) => f.kind === "delete" && !names.has(f.path)).map((f) => ({ path: f.path, size: 0 }));
-    return [...present, ...gone];
-  }, [listing, changed, undone]);
+    const hidden = all ? [...(listing?.ignored ?? []), ...Object.values(inside).flat()].map((e) => ({ ...e, ignored: true })) : [];
+    return [...present, ...gone, ...hidden];
+  }, [listing, changed, undone, all, inside]);
   const tree = useMemo(() => buildTree(entries), [entries]);
   // 默认：第一层开着，再往下只开有改动的文件夹。
   const isClosed = (node: TreeNode, depth: number) => {
     if (closed?.has(node.path)) return true;
     if (closed?.has(`!${node.path}`)) return false;
+    if (node.ignored) return true;
     return depth > 0 && ![...changed.keys()].some((p) => p.startsWith(`${node.path}/`));
   };
   const toggle = (node: TreeNode, depth: number) => {
@@ -543,6 +549,9 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
     next.delete(node.path); next.delete(`!${node.path}`);
     next.add(now ? `!${node.path}` : node.path);
     setClosed(next);
+    if (now && node.ignored && workspaceId && !inside[node.path]) {
+      void ipc.filesChildren(workspaceId, node.path).then((list) => setInside((prev) => ({ ...prev, [node.path]: list }))).catch(say);
+    }
   };
 
   const mark = path && !undone ? changed.get(path) : undefined;
@@ -562,10 +571,10 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
   const walk = (nodes: TreeNode[], depth: number) => nodes.forEach((node) => {
     if (node.dir) {
       const shut = isClosed(node, depth);
-      rows.push(<FileRow key={node.path} name={node.name} depth={depth} dir={shut ? "closed" : "open"} onClick={() => toggle(node, depth)} />);
+      rows.push(<FileRow key={node.path} name={node.name} depth={depth} dim={node.ignored} dir={shut ? "closed" : "open"} onClick={() => toggle(node, depth)} />);
       if (!shut) walk(node.children, depth + 1);
     } else {
-      rows.push(<FileRow key={node.path} name={node.name} title={node.path} depth={depth} mark={undone ? undefined : changed.get(node.path)} on={node.path === path} onClick={() => setPath(node.path === path ? null : node.path)} />);
+      rows.push(<FileRow key={node.path} name={node.name} title={node.path} depth={depth} dim={node.ignored} mark={undone ? undefined : changed.get(node.path)} on={node.path === path} onClick={() => setPath(node.path === path ? null : node.path)} />);
     }
   });
   walk(tree, 0);
@@ -603,15 +612,20 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
   const note = !preview ? "" : elsewhere ? "改动还在独立工作区，这里是项目文件夹现在的样子" : preview.deleted ? "这个任务删了它，这里是删之前的样子" : "";
   return (
     <div className="pk-mod col-grow files">
-      <ModHead label="FILES" note="只看，不改"><Expand wide={wide} onWide={onWide} /></ModHead>
+      <ModHead label="FILES">
+        {!!listing?.hidden && (
+          <button type="button" className={cn("pk-chip pk-chip--sm", all && "is-on")} aria-pressed={all} title={`照 .gitignore 藏着的 ${listing.hidden} 个`} onClick={() => setAll(!all)}>
+            <span className="pk-chip-label">ALL</span>
+          </button>
+        )}
+        <Expand wide={wide} onWide={onWide} />
+      </ModHead>
       {!project ? <p className="empty-line">选一个项目，这里列它的文件。</p> : (
         <div className={cn("files-body", wide && "files-body--wide")}>
           <div className="files-tree">
             <div className="pk-tree scroll">{listing ? rows : <p className="empty-line"><Twinkle /> 在读项目里的文件…</p>}</div>
             {listing && entries.length === 0 && <p className="empty-line">这个文件夹里还没有文件。</p>}
-            {listing && (listing.hidden > 0 || listing.truncated) && (
-              <p className="hint files-hidden">{listing.hidden > 0 ? `照忽略规则藏了 ${listing.hidden} 个` : ""}{listing.truncated ? "文件太多，只列了前 4000 个。" : ""}</p>
-            )}
+            {listing?.truncated && <p className="hint files-hidden">只列了前 4000 个</p>}
           </div>
           {path && (
             <div className="files-preview">

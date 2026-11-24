@@ -7,7 +7,7 @@ import { SUBAGENT_KINDS, type AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
 import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath, type DotKind } from "@/lib/utils";
-import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, ModHead, Seg, useNow } from "@/ui";
+import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
@@ -30,7 +30,7 @@ interface Props {
   runningRunId: string | null;
   draft: string;
   onDraft: (text: string) => void;
-  onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[]) => Promise<boolean>;
+  onSend: (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[], uploads?: string[]) => Promise<boolean>;
   /** `/compact [重点]`（v1.1.7）：压这个任务的对话（PLOOP）或转给 CLI。 */
   onCompact: (focus: string, who: string, permission: Permission) => Promise<boolean>;
   /** 往某一次的事件里追加一条（批完「想记住这几条」）。 */
@@ -424,8 +424,8 @@ const Composer: React.FC<Props & {
   };
   const sendText = (text: string, level: Permission) => {
     if (!who) return Promise.resolve(false);
-    return onSend(text, who.id, level, sendEffort(who, settings), cliModelOf(who, settings), worktree || undefined, shots.length ? shots.map((s) => ({ mediaType: s.mediaType, data: s.data })) : undefined)
-      .then((ok) => { if (ok) { setWorktree(false); setShots([]); } return ok; });
+    return onSend(text, who.id, level, sendEffort(who, settings), cliModelOf(who, settings), worktree || undefined, shots.length ? shots.map((s) => ({ mediaType: s.mediaType, data: s.data })) : undefined, uploads.length ? uploads.map((u) => u.path) : undefined)
+      .then((ok) => { if (ok) { setWorktree(false); setShots([]); setUploads([]); } return ok; });
   };
   const send = () => {
     if (!ready || !who) return;
@@ -503,6 +503,24 @@ const Composer: React.FC<Props & {
     }
     return true;
   };
+  // + 按钮（v1.1.8）：附文档和文件夹（文件多选、文件夹一次一个）。只记本机路径，发出去时后端把文件拷进附件目录、文件夹只带路径。
+  const [uploads, setUploads] = useState<Array<{ path: string; dir: boolean }>>([]);
+  const addUploads = (paths: string[], dir: boolean) => {
+    if (!paths.length) return;
+    setUploads((prev) => {
+      const next = [...prev];
+      for (const p of paths) if (!next.some((u) => u.path === p)) next.push({ path: p, dir });
+      if (next.length > 10) say("一次最多附 10 个");
+      return next.slice(0, 10);
+    });
+  };
+  const pickUploadFiles = async () => {
+    try { addUploads(await ipc.pickUploads(), false); } catch (e) { say(e); }
+  };
+  const pickUploadFolder = async () => {
+    try { const p = await ipc.pickFolder(); if (p) addUploads([p], true); } catch (e) { say(e); }
+  };
+  const baseName = (p: string) => p.replace(/\/$/, "").split("/").pop() || p;
   // ↵：弹层开着就插选中的那个；不然发出去。
   const submit = () => {
     if (popKind === "mention") { pick(others[Math.min(active, others.length - 1)]); return; }
@@ -560,6 +578,17 @@ const Composer: React.FC<Props & {
           ))}
         </div>
       )}
+      {uploads.length > 0 && (
+        <div className="composer-shots" aria-label="附的文档和文件夹">
+          {uploads.map((u) => (
+            <span key={u.path} className="pk-chip pk-chip--sm composer-upload" title={u.path}>
+              <Icon name={u.dir ? "folder" : "file"} size={12} />
+              <span className="pk-chip-label">{baseName(u.path)}</span>
+              <button type="button" aria-label={`不要附：${baseName(u.path)}`} onClick={() => setUploads((prev) => prev.filter((x) => x.path !== u.path))}><Icon name="x" size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className={cn("composer-in", busy && "is-off")}
         onPasteCapture={(e) => { if (!e.clipboardData.getData("text/plain") && addFiles([...e.clipboardData.files])) e.preventDefault(); }}
         onDragOver={(e) => { if ([...e.dataTransfer.items].some((i) => i.type.startsWith("image/"))) e.preventDefault(); }}
@@ -573,6 +602,18 @@ const Composer: React.FC<Props & {
         <span>{whoShort(who, settings, entries)}</span>
       </button>
       <div className="composer-row">
+        <MenuChip sm up disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label="+">
+          {(close) => (
+            <>
+              <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFiles(); close(); }}>
+                <Icon name="file" size={12} /><b>文件</b><span />
+              </button>
+              <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFolder(); close(); }}>
+                <Icon name="folder" size={12} /><b>文件夹</b><span />
+              </button>
+            </>
+          )}
+        </MenuChip>
         <Seg label="权限" sm disabled={busy} items={PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))} value={permission} onChange={onPermission} />
         {worktreeable && (
           <button type="button" className={cn("pk-chip pk-chip--sm", worktree && "is-on")} aria-pressed={worktree} disabled={busy}

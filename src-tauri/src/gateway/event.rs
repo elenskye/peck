@@ -332,6 +332,12 @@ pub enum EventBody {
     // ── 其他 ──
     #[serde(rename = "notice")]
     Notice { level: NoticeLevel, text: String },
+    /// CLI 没信任这个项目文件夹（v1.1.8，`trust.rs`）：任务开头一张卡片 TRUST / NOT NOW，等站主点了才起 CLI。
+    /// 回答走 `Control::Approve`（`request_id` 是 `trust-<任务 id>`）。
+    #[serde(rename = "trust.prompt")]
+    TrustPrompt { request_id: String, engine: String, label: String },
+    #[serde(rename = "trust.resolved")]
+    TrustResolved { request_id: String, trusted: bool },
     #[serde(rename = "error")]
     Error {
         message: String,
@@ -387,6 +393,8 @@ impl EventBody {
             Self::HookRan { .. } => "hook.ran",
             Self::BackgroundUpdated { .. } => "background.updated",
             Self::Notice { .. } => "notice",
+            Self::TrustPrompt { .. } => "trust.prompt",
+            Self::TrustResolved { .. } => "trust.resolved",
             Self::Error { .. } => "error",
             Self::Raw { .. } => "raw",
         }
@@ -394,7 +402,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 34] = [
+    pub const TYPE_NAMES: [&'static str; 36] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -427,6 +435,8 @@ impl EventBody {
         "hook.ran",
         "background.updated",
         "notice",
+        "trust.prompt",
+        "trust.resolved",
         "error",
         "raw",
     ];
@@ -826,6 +836,8 @@ mod tests {
     fn type_names_match_serialized_tags() {
         let samples = vec![
             EventBody::TurnStarted { turn_id: "t".into() },
+            EventBody::TrustPrompt { request_id: "trust-r".into(), engine: "muse".into(), label: "Muse".into() },
+            EventBody::TrustResolved { request_id: "trust-r".into(), trusted: true },
             EventBody::Notice {
                 level: NoticeLevel::Info,
                 text: "x".into(),

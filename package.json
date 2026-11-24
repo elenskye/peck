@@ -1,7 +1,7 @@
 {
   "name": "peck",
   "private": true,
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "Peck — 只在自己 Mac 上跑的个人 Harness（macOS，Tauri 2）",
   "type": "module",
   "scripts": {

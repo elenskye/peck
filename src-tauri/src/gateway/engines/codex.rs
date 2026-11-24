@@ -47,6 +47,10 @@ impl AgentBackend for CodexBackend {
         let (mcp_args, mcp_env) = peck_mcp_args(&task);
         let mut args: Vec<String> = vec!["app-server".into()];
         args.extend(mcp_args);
+        // 站主批过这个项目（v1.1.8）：这一次进程把它当 trusted（读项目里的 `.codex/`）。
+        if task.trusted {
+            args.extend(crate::gateway::trust::launch_args("codex", &task.cwd));
+        }
         let mut env = super::project_env(&task);
         env.extend(self.setup.env.iter().cloned());
         env.extend(mcp_env);
@@ -424,6 +428,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         }
     }
 
@@ -555,6 +560,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
+            trusted: std::env::var("PECK_LIVE_TRUST").is_ok(),
         };
         let outcome = CodexBackend::new(setup).run(t, sink, rx).await;
         for e in events.lock().unwrap().iter() {
@@ -586,6 +592,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         };
         let backend = CodexBackend::new(setup);
         let outcome = backend.run(t.clone(), sink, rx).await.expect("第一轮");

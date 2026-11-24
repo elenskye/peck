@@ -99,6 +99,10 @@ export const ProjectPage: React.FC<{
               {settings.who && <Btn sm v="ghost" onClick={() => void save({ settings: { ...settings, who: null } }, "改回跟全局")}>CLEAR</Btn>}
               <WhoPicker entries={options} value={who} up={false} flows={["cli", "ploop"]} onChange={(id) => void save({ settings: { ...settings, who: id } }, "这个项目默认用它了")} />
             </Row>
+            <Row name="CLI 信任这个文件夹">
+              <Switch label="CLI 信任这个文件夹" on={!!settings.trusted} disabled={missing || saving}
+                onChange={(on) => { setSaving(true); void ipc.projectTrust(workspace.id, on).then(() => onChanged()).catch(say).finally(() => setSaving(false)); }} />
+            </Row>
             <Row name="默认权限" info="GLOBAL 跟设置 → 权限里的默认档。">
               <Seg<Permission | "global"> label="这个项目的默认权限" sm
                 items={[{ id: "global", label: "GLOBAL" }, ...PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))]}

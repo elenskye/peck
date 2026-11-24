@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.1.7**（2026-11-24）：`/compact [重点]`（PLOOP 三步都做、叫一次模型；CLI 转给它自己压），压完放回环境块、加载过的 MCP 工具和最近的文件，交接摘要长度跟着窗口；CLI 报的上下文用量也画小环；Peck Loop 的读网页 `web_fetch`（所有模型都有）。v1.1.6 是设置页统一排法、PROVIDERS 两组、MEMORY 和 PLUGINS 的小窗。
+**v1.1.8**（2026-11-24）：输入框 `+`（附文档、文件夹）；CLI 没信任项目文件夹时任务开头一张 TRUST 卡片，点了以后每次起 CLI 带各家官方的信任开关（四家都管）；FILES 头上的 ALL 把照 `.gitignore` 藏着的也列出来；Muse、Grok 的订阅额度现在读不到，卡片上写明原因；「说明文字能不写就不写」进了 CLAUDE.md。v1.1.7 是 `/compact [重点]`、CLI 用量小环、读网页 `web_fetch`。
 
 ## 定位
 
@@ -61,8 +61,5 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.7 | DeepSeek | deepseek-flash | 3 / 5（≈ $0.0062） | 读 docs.rs 的 serde_json 页（web_fetch，正文干净、44 KB），再手动压缩带重点（摘要按重点写细了） |
-| v1.1.7 | Codex | gpt-6-luna low | 2 / 3 | 小任务建会话（上下文 19,953 / 258,400）→ `/compact`：`contextCompaction` 条目、回合正常结束 |
-| v1.1.7 | Muse | 默认 | 2 / 3 | 同上：`session/compact` accepted，压缩条目 26,240 → 26,127、`trigger: manual` |
-| v1.1.7 | Grok | 默认 | 2 / 3（估 $0.04） | 同上：窗口 500,000（模型列表的 `_meta.totalContextTokens` 有）；`/compact` 收到 `auto_compact_completed`；续上的会话不再报窗口 |
-| v1.1.7 | Claude Code | haiku | 1 / 3（站主批了一次核对） | `cli/bin` 的登录过期（OAuth 刷新不了），没花额度；开场的 `slash_commands` 里有 `compact`；重点生不生效没核对上 |
+| v1.1.8 | Muse | — | 0 / 3 | 没花额度：`muse serve`（带 / 不带 `--trust-workspace`）只建会话、不发回合，用本地假 MCP 看它连不连（带了才连）；`usage/read` 是空的 |
+| v1.1.8 | Codex | — | 0 / 3 | 没花额度：`codex -c projects={…} mcp list --json` 看项目 `.codex/config.toml` 读没读进来（内联表的写法才认） |

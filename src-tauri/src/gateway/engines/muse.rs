@@ -48,7 +48,8 @@ impl AgentBackend for MuseBackend {
     ) -> BoxFuture<Result<RunOutcome, GatewayError>> {
         let launch = Launch {
             bin: self.setup.bin.clone(),
-            args: vec!["serve".into()],
+            // 站主批过这个项目（v1.1.8）：`--trust-workspace`，只这一次进程。
+            args: std::iter::once("serve".to_string()).chain(task.trusted.then(|| crate::gateway::trust::launch_args("muse", &task.cwd)).into_iter().flatten()).collect(),
             cwd: task.cwd.clone(),
             env: super::project_env(&task).into_iter().chain(self.setup.env.iter().cloned()).collect(),
             path: self.setup.path.clone(),
@@ -462,6 +463,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         }
     }
 
@@ -589,6 +591,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
+            trusted: std::env::var("PECK_LIVE_TRUST").is_ok(),
         };
         let outcome = MuseBackend::new(setup).run(t, sink, rx).await;
         for e in events.lock().unwrap().iter() {

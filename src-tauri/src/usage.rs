@@ -195,8 +195,12 @@ pub fn parse_muse_usage(v: &Value, collected_at: i64) -> ClientCard {
     }
     if windows.iter().all(|w| w.used_percent.is_none()) {
         card.status = "fields_missing".into();
-        card.failure_reason =
-            Some("Muse usage 已返回，但 allowance 窗口缺少 usedPercent；未知不填 0。".into());
+        // `allowance: null` + `reason: server_sent_no_usage`：Muse 的服务器这次没给这个订阅的数据（2026-11-16 以后一直这样）。
+        card.failure_reason = Some(if v.get("reason").and_then(Value::as_str) == Some("server_sent_no_usage") {
+            "Muse 的服务器没给这个订阅的额度数据。".into()
+        } else {
+            "Muse 返回了，但没有已用比例。".into()
+        });
         card.last_failure_at = Some(collected_at);
         return card;
     }
@@ -912,7 +916,7 @@ async fn query_grok(path: &str) -> ClientCard {
             // Known local limitation (tester-verified): not proof of not logged in.
             if msg.contains("can't show your plan") || msg.contains("Run /usage inside grok") {
                 c.status = "fields_missing".into();
-                c.failure_reason = Some("本机 Grok 1.0.x 的 usage --json 暂不支持套餐读取（提示 Run /usage inside grok instead）；这不等于未登录。可使用下方手工快照，或在 Grok 内执行 /usage 后录入。".into());
+                c.failure_reason = Some("这一版 Grok 的额度只能在它里面用 /usage 看（官方的 `grok usage` 在这条线路上不给）。".into());
             } else if msg.to_lowercase().contains("login") || msg.contains("登录") {
                 c.status = "not_logged_in".into();
                 c.failure_reason = Some(msg.clone());
@@ -1859,6 +1863,10 @@ mod tests {
         assert!(card.raw_label.contains("mint"));
         let missing = parse_muse_usage(&json!({"schemaVersion":1,"allowance":{"tier":"pro"}}), 1);
         assert_eq!(missing.status, "fields_missing");
+        // 服务器没给数据（站主的订阅 2026-11-16 以后一直这样）：说清楚是它没给，不是没登录。
+        let none = parse_muse_usage(&json!({"schemaVersion":1,"allowance":null,"reason":"server_sent_no_usage","hint":"…"}), 1);
+        assert_eq!(none.status, "fields_missing");
+        assert!(none.failure_reason.unwrap().contains("服务器没给"));
     }
 
     #[test]

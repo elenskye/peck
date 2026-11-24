@@ -2,7 +2,8 @@
 //!
 //! Peck 以项目文件夹为工作目录起官方 CLI，项目里写好的 MCP 配置（`.mcp.json`；Codex 还有 `.codex/config.toml`）
 //! 由 CLI 自己读。可各家都要站主先在它自己的客户端里点一次「信任」或「批准」，没点就悄悄不连。
-//! 任务开头查一下：项目里配了、这家却没读到的，写一行说明去哪点。**不替 CLI 改配置**，只提醒。
+//! 任务开头查一下：项目里配了、这家却没读到的，写一行。信任这件事 v1.1.8 起由 TRUST 卡片管（`trust.rs`）：
+//! 卡片问过、或者站主批过这个项目，就不再写这一行。
 //!
 //! - Codex：`codex mcp list --json`；Grok：`grok inspect --json`（带 `projectTrusted`）；Muse：`muse mcp list --json`。
 //!   都不调模型，几十毫秒。
@@ -81,7 +82,7 @@ fn how_to(engine: &str) -> &'static str {
 /// 提醒的那一行。
 pub fn notice(label: &str, engine: &str, missing: &BTreeSet<String>) -> String {
     let names = missing.iter().cloned().collect::<Vec<_>>().join("、");
-    format!("{label} 没读到这个项目配的 MCP：{names}。{}，以后就读得到；Peck 不替它改设置。", how_to(engine))
+    format!("{label} 没读到这个项目配的 MCP：{names}。{}。", how_to(engine))
 }
 
 /// Codex、Grok、Muse：任务开头查一次。项目里没配 MCP、查不了、都读到了，都是 `None`。
@@ -119,11 +120,6 @@ fn muse_trusted_in(text: &str, cwd: &Path) -> Option<bool> {
     Some(projects.iter().any(|(path, d)| d.get("decision").and_then(Value::as_str) == Some("trusted") && cwd.starts_with(path)))
 }
 
-/// Muse 没信任这个文件夹时任务开头那一行。
-pub fn muse_untrusted_notice() -> String {
-    format!("Muse 没信任这个文件夹：Peck 给它的工具（提 Skill、委派）这次用不了。{}，以后就能用；Peck 不替它改设置。", how_to("muse"))
-}
-
 /// Claude Code：启动时报的 `mcp_servers` 里，项目 `.mcp.json` 配了、却没读进来的（根本没列出来，或者被关掉了）。
 /// 启动那一刻还在连的是 `pending`（Phase 13 真跑：批准过的 `dw` 也是 pending，过一会儿就能用），不算没读到；
 /// 连失败的是服务器自己的问题，也不在这里提醒「去批准」。
@@ -147,7 +143,6 @@ mod tests {
         assert_eq!(muse_trusted_in(text, Path::new("/b")), Some(false));
         assert_eq!(muse_trusted_in(text, Path::new("/c")), Some(false));
         assert_eq!(muse_trusted_in("坏的", Path::new("/c")), None);
-        assert!(muse_untrusted_notice().contains("Trust and continue"));
     }
 
     fn project(files: &[(&str, &str)]) -> std::path::PathBuf {
@@ -185,7 +180,7 @@ mod tests {
         assert_eq!(loaded("muse", &json!({"servers": []})), Some(BTreeSet::new()));
         assert_eq!(loaded("nope", &json!({})), None);
         let line = notice("Muse", "muse", &dw);
-        assert!(line.starts_with("Muse 没读到这个项目配的 MCP：dw。") && line.contains("Trust and continue") && line.ends_with("Peck 不替它改设置。"));
+        assert!(line.starts_with("Muse 没读到这个项目配的 MCP：dw。") && line.ends_with("选「Trust and continue」。"));
     }
 
     #[test]

@@ -262,6 +262,8 @@ body { overflow: hidden; }
 .files-tree { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .files-tree .pk-tree { flex: 0 1 auto; }
 .files-hidden { flex: none; padding: var(--space-2) 0 0 var(--space-3); }
+/* ALL 开着时，照忽略规则藏着的那些：变暗 */
+.pk-row--dim .pk-row-name { color: var(--color-text-3); }
 .files-preview { flex: 1.4 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); padding-top: var(--space-5); border-top: 1px dotted var(--color-line-strong); }
 .files-body--wide { flex-direction: row; }
 .files-body--wide .files-tree { flex: none; width: 320px; padding-right: var(--space-8); }
@@ -789,6 +791,10 @@ body { overflow: hidden; }
 .composer-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .composer-shot button { position: absolute; top: 2px; right: 2px; display: inline-flex; padding: 1px; border: 0; background: var(--color-panel); color: var(--color-text-2); cursor: pointer; }
 .composer-shot button:hover { color: var(--color-bad); }
+/* + 附的文档、文件夹（v1.1.8）：一片一个，叉掉 */
+.composer-upload { cursor: default; max-width: 220px; }
+.composer-upload button { display: inline-flex; padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }
+.composer-upload button:hover { color: var(--color-bad); }
 /* 回答的 COPY 挂在回答右上角的外面（原来压在第一行字上，Phase 13 改）；代码块的照旧在块里。 */
 .agent-answer-wrap { position: relative; }
 .agent-answer-wrap > .agent-copy { top: auto; bottom: 100%; margin-bottom: 2px; line-height: 1.6; }

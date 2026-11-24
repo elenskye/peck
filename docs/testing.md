@@ -43,6 +43,9 @@
 | 换引擎接着发 | PLOOP 做完的任务里换成 CLI 再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
 | 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |
 | 截图、贴图 | 带「截图」；输入框粘贴或拖进图 | 演示图；小图，发出去一行「这一句带了 1 张图」 |
+| `+` 附文档 | 输入框 `+` → 文件 / 文件夹（浏览器里给演示路径） | 上面排出小片（文件、文件夹图标不同）、能叉掉；发出去清掉 |
+| TRUST 卡片 | peck 项目里选一个 CLI 发一句（刷新后头一次） | 任务开头 `[ TRUST ]`：点 TRUST 留一行「信任了这个文件夹」再接着回放，项目设置里「CLI 信任这个文件夹」亮了；点 NOT NOW 直接回放，这次打开不再问 |
+| FILES 的 ALL | 右栏 FILES 头上点 ALL | 藏着的 `dist`、`node_modules` 变暗列出来，点开 `node_modules` 读出一层 |
 | 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
 | 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页两组卡片 + MCP SERVERS，点卡片开小窗（每个项目都装、按项目装和开关、它带的东西）；三个项目三种状态：notebook 装着旧版（卡片上青色版本号、小窗里 UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后项目设置的 SKILLS 多一行。在装着 Git Plan 的 peck 项目里发一个任务，做完后 recap 里多一行「Git Plan 提交了 …」 |
 
@@ -90,7 +93,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
   - 通知横幅会抢到最前，之后的点击被拦：把 Peck 重新拉到前面。站主开着台前调度：点到桌面会把窗口全收起来，跨 App 拖文件做不成。
   - 长任务别一直截图：只读查正式库（`runs.record` 的状态、`agent_events` 里的阶段、卡片、`turn.completed`），有卡片再回去点。
   - 退出 Peck 会停掉在跑的任务：换包要等真跑都完了。
-- **Muse** 只在它信任过的文件夹里才连 Peck 挂在会话上的 MCP（提 Skill 这些）：验之前站主先在那个文件夹里开一次 `muse` 点信任。
+- **Muse** 只在信任的文件夹里才连 Peck 挂在会话上的 MCP（提 Skill 这些）：TRUST 卡片点过的项目带 `--trust-workspace`（v1.1.8；`live_small_task` 里用 `PECK_LIVE_TRUST=1`）。不花额度地验：起 `muse serve [--trust-workspace]`，只发 `initialize`、`session/start`（`config.mcpServers` 指到一个本地假 MCP），看它连不连。
 
 ## 升级测试
 
@@ -126,8 +129,8 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 |---|---|---|
 | Codex | [App Server](https://learn.chatgpt.com/docs/app-server)：`account/rateLimits/read`、`account/rateLimits/updated` | 不用 API Key 推订阅额度；credits 不当 USD |
 | Claude Code | [status line JSON](https://code.claude.com/docs/en/statusline)：`rate_limits`；Peck 现在跑 `claude -p /usage` | 空闲不刷新；缺字段不是 0；`cli/bin` 的 Claude Code 要先登录 |
-| Muse CLI | `muse usage --json`（[更新记录](https://dev.meta.ai/docs/muse-code/changelog)） | 用 `allowance.asOfMs` 作数据时间 |
-| Grok CLI | [`/usage`](https://docs.x.ai/build/modes-and-commands) | `usage --json` 还不给套餐数据 |
+| Muse CLI | `muse usage --json`（[更新记录](https://dev.meta.ai/docs/muse-code/changelog)）；会话里是 `usage/read`、`usage/changed` | 用 `allowance.asOfMs` 作数据时间；`allowance: null`、`reason: server_sent_no_usage` 是服务器没给（站主的订阅 2026-11-16 以后一直这样） |
+| Grok CLI | [`/usage`](https://docs.x.ai/build/modes-and-commands) | `grok usage` 只在 daemon 线路上给套餐数据，shell 线路报「Run /usage inside grok」 |
 | DeepSeek API | [GET `/user/balance`](https://api-docs.deepseek.com/api/get-user-balance/) | 用已配置的 Key；换 Key 清旧余额 |
 | Anthropic API | [Usage/Cost Analytics](https://platform.claude.com/docs/en/manage-claude/usage-cost-analytics-api) | 要 Admin 权限，普通 Key 显示未知 |
 

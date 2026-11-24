@@ -1,4 +1,5 @@
 //! 右栏 FILES：只看不改。照忽略规则列项目里的文件，读一个文件给预览。
+//! v1.1.8：藏起来的那几个也报上去（界面的 ALL 开着时变暗列出来）；藏着的文件夹点开才读一层（[`list_children`]）。
 //! v0.7：图片、PDF 带上 data URL 直接显示；Word、Excel 这类交给 Quick Look（`qlmanage` 出一张缩略图，
 //! 也能叫出系统的 Quick Look 窗口）。代码上色、md 和 html 切源码 / 预览在界面里做。
 
@@ -28,12 +29,26 @@ pub struct FileEntry {
     pub size: u64,
 }
 
+/// 照忽略规则藏起来的一个（或藏着的文件夹里的一个）。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoredEntry {
+    pub path: String,
+    pub dir: bool,
+    pub size: u64,
+}
+
+/// 藏着的文件夹点开一层最多列这么多个。
+pub const MAX_CHILDREN: usize = 500;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FileListing {
     pub entries: Vec<FileEntry>,
     /// 照忽略规则藏起来的文件和文件夹数（一个文件夹算一个）。
     pub hidden: usize,
+    /// 藏起来的那几个（文件夹不往里走，点开才读）。
+    pub ignored: Vec<IgnoredEntry>,
     /// 文件太多，只列了前 `MAX_ENTRIES` 个。
     pub truncated: bool,
 }
@@ -89,6 +104,9 @@ fn walk(root: &Path, current: &Path, rules: &GitignoreRules, out: &mut FileListi
             let name = entry.file_name();
             if name != ".git" && name != ".DS_Store" {
                 out.hidden += 1;
+                if out.ignored.len() < MAX_CHILDREN {
+                    out.ignored.push(IgnoredEntry { path: rel_str, dir: is_dir, size: if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) } });
+                }
             }
             continue;
         }
@@ -105,6 +123,28 @@ fn walk(root: &Path, current: &Path, rules: &GitignoreRules, out: &mut FileListi
             });
         }
     }
+}
+
+/// 藏着的文件夹里的一层（v1.1.8，ALL 开着时点开才读）：文件夹在前，各按名字排；不跟链接、不进 `.git`。
+pub fn list_children(workspace: &Path, rel: &str) -> Result<Vec<IgnoredEntry>, String> {
+    check_relative(rel)?;
+    let dir = workspace.join(rel);
+    let mut out: Vec<IgnoredEntry> = fs::read_dir(&dir)
+        .map_err(|_| "这个文件夹读不了。".to_string())?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let kind = entry.file_type().ok()?;
+            if kind.is_symlink() || name == ".git" || name == ".DS_Store" {
+                return None;
+            }
+            let dir = kind.is_dir();
+            Some(IgnoredEntry { path: format!("{}/{name}", rel.trim_end_matches('/')), dir, size: if dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) } })
+        })
+        .collect();
+    out.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.path.cmp(&b.path)));
+    out.truncate(MAX_CHILDREN);
+    Ok(out)
 }
 
 /// 只接受项目里的相对路径：不要绝对路径、`..`、`.git`。
@@ -368,6 +408,13 @@ mod tests {
         // node_modules（一个文件夹算一个）和 debug.log；.git 不数。
         assert_eq!(listing.hidden, 2);
         assert!(!listing.truncated);
+        // 藏着的两个报上去（ALL 开着时列）；文件夹点开才读一层。
+        let ignored: Vec<(&str, bool)> = listing.ignored.iter().map(|e| (e.path.as_str(), e.dir)).collect();
+        assert_eq!(ignored, vec![("debug.log", false), ("node_modules", true)]);
+        fs::write(ws.join("node_modules/a.txt"), "x").unwrap();
+        let inside: Vec<(String, bool)> = list_children(&ws, "node_modules").unwrap().into_iter().map(|e| (e.path, e.dir)).collect();
+        assert_eq!(inside, vec![("node_modules/react".to_string(), true), ("node_modules/a.txt".to_string(), false)]);
+        assert!(list_children(&ws, "../").is_err() && list_children(&ws, ".git").is_err());
 
         let text = read_preview(&ws, "src/main.ts").unwrap();
         assert_eq!(text.kind, "text");

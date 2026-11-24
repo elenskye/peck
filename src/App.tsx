@@ -360,7 +360,7 @@ const App: React.FC = () => {
   }, [refreshSchedules, say]);
 
   /** 发任务：没选任务就新开一个（任务名是这句话），选着任务就接着在里面发。发出去了回 true（输入框这才清掉附图）。 */
-  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[]): Promise<boolean> => {
+  const send = useCallback(async (prompt: string, who: string, permission: Permission, effort?: string, model?: string, worktree?: boolean, images?: ImageInput[], uploads?: string[]): Promise<boolean> => {
     if (!project) return false;
     if (project.missing) { say("这个项目的文件夹不在了：先重新找文件夹"); return false; }
     if (busy) { say("同一个项目一次跑一个任务"); return false; }
@@ -391,9 +391,9 @@ const App: React.FC = () => {
       const early: AgentEvent[] = [];
       const onEvent = (event: AgentEvent) => { if (id) onAgentEvent(ctx, id, event); else early.push(event); };
       if (main) {
-        id = await ipc.harnessRunStart({ sessionId: target, prompt, who: main.id, permission, effort: sendEffort(main, s), costCap: s.costCap, worktree, images }, onEvent);
+        id = await ipc.harnessRunStart({ sessionId: target, prompt, who: main.id, permission, effort: sendEffort(main, s), costCap: s.costCap, worktree, images, uploads }, onEvent);
       } else {
-        id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images }, onEvent);
+        id = await ipc.gatewayRunStart({ sessionId: target, prompt, who, permission, model, effort, resume: taskId ? lastSessionRef(runs, agentEvents, who) : undefined, worktree, images, uploads }, onEvent);
       }
       runId = id;
       if (swap) setSwapOnce(null);

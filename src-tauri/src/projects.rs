@@ -179,11 +179,22 @@ pub fn workspace_update(
         ws.name = name.chars().take(80).collect();
     }
     if let Some(mut settings) = settings {
-        // Peck 自己记的两样不让界面盖掉（界面手里的可能是旧的）。
+        // Peck 自己记的几样不让界面盖掉（界面手里的可能是旧的）。
         settings.prepared = ws.settings.prepared;
+        settings.trusted = ws.settings.trusted;
         settings.plugins_removed = ws.settings.plugins_removed.clone();
         ws.settings = settings.normalized(Path::new(&ws.path))?;
     }
+    db.save_workspace(&ws).map_err(|e| e.to_string())?;
+    Ok(ws)
+}
+
+/// 项目设置里的 TRUST 开关（v1.1.8）：关掉以后起 CLI 不再带信任开关（Grok 自己记着的那一条不动）。
+#[tauri::command]
+pub fn project_trust(id: String, trusted: bool, state: State<'_, AppState>) -> Result<Workspace, String> {
+    let db = lock(&state)?;
+    let mut ws = db.workspace(&id).map_err(|_| "没找到这个项目。")?;
+    ws.settings.trusted = trusted;
     db.save_workspace(&ws).map_err(|e| e.to_string())?;
     Ok(ws)
 }

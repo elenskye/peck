@@ -243,6 +243,9 @@ export type EventBody =
   // ── 后台命令（v0.6）──
   | { type: "background.updated"; id: string; name: string; command: string; kind: BackgroundKind; status: BackgroundStatus; exitCode?: number | null }
   | { type: "notice"; level: NoticeLevel; text: string }
+  /** CLI 没信任这个项目文件夹（v1.1.8）：任务开头一张卡片 TRUST / NOT NOW，回答走 `approve`。 */
+  | { type: "trust.prompt"; requestId: string; engine: string; label: string }
+  | { type: "trust.resolved"; requestId: string; trusted: boolean }
   | { type: "error"; message: string; fatal: boolean }
   /** 不认识的事件：原件在事件日志里。 */
   | { type: "raw"; source: string; kind?: string | null };
@@ -393,4 +396,6 @@ export interface GatewayRunArgs {
   worktree?: boolean;
   /** 这一句附的图（v0.8）：存成文件，路径写在这一句后面。 */
   images?: { mediaType: string; data: string }[];
+  /** 这一句附的文档和文件夹（v1.1.8，+ 按钮挑的本机路径）。 */
+  uploads?: string[];
 }

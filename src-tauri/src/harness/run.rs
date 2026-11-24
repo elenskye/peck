@@ -193,6 +193,8 @@ pub async fn harness_run_start(
     worktree: Option<bool>,
     // 这一句附的图（v0.8，站主贴进来的）。
     images: Option<Vec<crate::gateway::ImageInput>>,
+    // 这一句附的文档和文件夹（v1.1.8，输入框 + 按钮挑的）。
+    uploads: Option<Vec<String>>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
@@ -205,6 +207,8 @@ pub async fn harness_run_start(
     // 子代理（v1.1.2）：照设置 → AGENTS 准备好这个任务能派的几类。
     let (team, team_notes) = super::agents::prepare(&state, &model_id).await;
     let images = checked_images(images)?;
+    let saved_uploads = save_uploads(&session_id, &uploads.unwrap_or_default())?;
+    let prompt = format!("{prompt}{}", uploads_note(&saved_uploads));
     start_peck_run(
         PeckRun {
             store: state.store.clone(),
@@ -266,6 +270,80 @@ pub(crate) fn attachment_note(paths: &[PathBuf]) -> String {
     }
     let list: Vec<String> = paths.iter().map(|p| format!("- {}", p.display())).collect();
     format!("\n\n（站主附了 {} 张图，存在这些本机文件里，需要就读：\n{}）", paths.len(), list.join("\n"))
+}
+
+/// + 按钮（v1.1.8）：这一句附的文档和文件夹（系统选框挑的本机路径）。
+/// 文件拷进附件目录（和附图放一起）；文件夹不拷，只记路径让模型自己进去看。
+pub(crate) struct SavedUploads {
+    pub files: Vec<PathBuf>,
+    pub folders: Vec<PathBuf>,
+}
+
+pub(crate) fn save_uploads(session_id: &str, uploads: &[String]) -> Result<SavedUploads, String> {
+    const MAX_UPLOADS: usize = 10;
+    const MAX_BYTES: u64 = 10 * 1024 * 1024;
+    if uploads.len() > MAX_UPLOADS {
+        return Err(format!("一次最多附 {MAX_UPLOADS} 个，先挑最要紧的。"));
+    }
+    let mut saved = SavedUploads { files: vec![], folders: vec![] };
+    if uploads.is_empty() {
+        return Ok(saved);
+    }
+    let dir = spill_root().join(session_id).join("attachments");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("放不下附的文档：{e}"))?;
+    for raw in uploads {
+        let path = PathBuf::from(raw);
+        if !path.is_absolute() {
+            return Err(format!("只收本机选框挑的绝对路径：{raw}"));
+        }
+        let meta = std::fs::symlink_metadata(&path).map_err(|_| format!("找不到了：{raw}"))?;
+        if meta.is_symlink() {
+            return Err(format!("链接不收（怕指到外面去）：{raw}"));
+        }
+        if meta.is_dir() {
+            if path.parent().is_none() {
+                return Err("根目录太大了，挑小一点的文件夹。".into());
+            }
+            if std::env::var_os("HOME").is_some_and(|h| PathBuf::from(h) == path) {
+                return Err("家目录太大了，挑小一点的文件夹。".into());
+            }
+            saved.folders.push(path);
+            continue;
+        }
+        if !meta.is_file() {
+            return Err(format!("这个附不上：{raw}"));
+        }
+        if meta.len() > MAX_BYTES {
+            return Err(format!("{} 超过 10MB，拆小一点再附。", path.display()));
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).filter(|n| !n.is_empty() && !n.contains('/')).ok_or_else(|| format!("文件名认不出：{raw}"))?;
+        // 同名后到的加序号，不覆盖。
+        let mut dest = dir.join(name);
+        let mut n = 2;
+        while dest.exists() {
+            let stem = PathBuf::from(name).file_stem().and_then(|s| s.to_str()).unwrap_or("文档").to_string();
+            let ext = PathBuf::from(name).extension().and_then(|s| s.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+            dest = dir.join(format!("{stem}-{n}{ext}"));
+            n += 1;
+        }
+        std::fs::copy(&path, &dest).map_err(|e| format!("拷不进 {}：{e}", path.display()))?;
+        saved.files.push(dest);
+    }
+    Ok(saved)
+}
+
+/// 附的文档和文件夹写在这一句后面（CLI 和 Peck Loop 都看）。
+pub(crate) fn uploads_note(saved: &SavedUploads) -> String {
+    let mut out = String::new();
+    if !saved.files.is_empty() {
+        let list: Vec<String> = saved.files.iter().map(|p| format!("- {}", p.display())).collect();
+        out.push_str(&format!("\n\n（站主附了 {} 个文档，拷在这些本机文件里，需要就读：\n{}）", saved.files.len(), list.join("\n")));
+    }
+    if !saved.folders.is_empty() {
+        let list: Vec<String> = saved.folders.iter().map(|p| format!("- {}", p.display())).collect();
+        out.push_str(&format!("\n\n（站主还给了 {} 个文件夹（只读，别改里面；只看要紧的，别全扫）：\n{}）", saved.folders.len(), list.join("\n")));
+    }
+    out
 }
 
 /// 一个任务最多几轮（设置 → GENERAL，默认 40）：手动发的、合作的、定时任务的 Peck Loop 都按它。
@@ -516,6 +594,7 @@ pub(crate) fn start_peck_run(
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         };
         let compacting = compact.is_some();
         let outcome = match compact {
@@ -659,6 +738,7 @@ pub(crate) fn start_oneshot(
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         };
         let _ = backend.run(task, sink, control_rx).await;
         runner::unregister_control(&id);
@@ -843,6 +923,30 @@ mod tests {
     use crate::gateway::event::{ApprovalDecision, Cost, CostSource, TokenUsage, UsageScope};
     use crate::gateway::mock::ScriptedModel;
     use std::time::Duration;
+
+    #[test]
+    fn uploads_copy_files_and_note_folders() {
+        let src = std::env::temp_dir().join(format!("peck-uploads-src-{}", uuid::Uuid::new_v4()));
+        let sub = src.join("参考资料");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(src.join("需求文档.md"), "# 需求\n").unwrap();
+        let session = format!("upload-test-{}", uuid::Uuid::new_v4().simple());
+        let saved = save_uploads(
+            &session,
+            &[src.join("需求文档.md").to_string_lossy().to_string(), sub.to_string_lossy().to_string()],
+        )
+        .unwrap();
+        assert_eq!(saved.files.len(), 1);
+        assert_eq!(saved.folders, vec![sub.clone()]);
+        assert_eq!(std::fs::read_to_string(&saved.files[0]).unwrap(), "# 需求\n");
+        let note = uploads_note(&saved);
+        assert!(note.contains("1 个文档") && note.contains("1 个文件夹"));
+        // 不收相对路径、链接和超大；根目录和家目录不收。
+        assert!(save_uploads(&session, &["相对/路径.md".into()]).is_err());
+        assert!(save_uploads(&session, &["/".into()]).is_err());
+        let _ = std::fs::remove_dir_all(spill_root().join(&session));
+        let _ = std::fs::remove_dir_all(src);
+    }
 
     fn temp_store() -> (PathBuf, crate::store::Store, crate::workspace::Workspace) {
         let root = std::env::temp_dir().join(format!("peck-harness-run-{}", uuid::Uuid::new_v4()));

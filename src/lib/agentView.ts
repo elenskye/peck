@@ -82,6 +82,8 @@ export type ViewItem =
   | { kind: "asked"; id: string; ask: AskView }
   | { kind: "approved"; id: string; approval: ApprovalView }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
+  /** 站主在 TRUST 卡片上批了（v1.1.8）：留一行。 */
+  | { kind: "trusted"; id: string; label: string }
   | { kind: "error"; id: string; text: string }
   | { kind: "compacted"; id: string; step: CompactStep; text: string; before: number; after: number; summary?: string | null }
   /** 一条后台命令或留着的 dev server（最新的状态）。 */
@@ -124,6 +126,8 @@ export interface AgentView {
   approvals: ApprovalView[];
   /** 还没答的提问（ASK 卡片）。 */
   asks: AskView[];
+  /** 还没点的 TRUST 卡片（v1.1.8）。 */
+  trust: { requestId: string; label: string } | null;
   plan: PlanStep[] | null;
   /** 任务板（v1.1.3）：主角色派出去的 worker、member，进度由 Peck 填（最新一份）。 */
   board: BoardItem[] | null;
@@ -156,7 +160,7 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], hooks: [] };
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], trust: null, plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], hooks: [] };
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
@@ -305,6 +309,13 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
       case "notice":
         view.items.push({ kind: "notice", id: `n-${e.seq}`, level: e.level, text: e.text });
         break;
+      case "trust.prompt":
+        view.trust = { requestId: e.requestId, label: e.label };
+        break;
+      case "trust.resolved":
+        if (e.trusted && view.trust) view.items.push({ kind: "trusted", id: `tr-${e.seq}`, label: view.trust.label });
+        view.trust = null;
+        break;
       case "context.updated":
         if (e.subagentId) break;
         view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [], managedBy: e.managedBy ?? null, warn: !!e.warn };
@@ -395,6 +406,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   }
   view.approvals = view.ended ? [] : [...approvals.values()].filter((a) => !a.decision);
   view.asks = view.ended ? [] : [...asks.values()].filter((a) => a.answer == null);
+  if (view.ended) view.trust = null;
   view.usage = cumulative ?? turnUsage;
   view.cumulativeUsage = cumulative != null;
   view.files = diffFiles ?? collectDiffs([...tools.values()]);

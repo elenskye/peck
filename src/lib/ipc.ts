@@ -4,6 +4,7 @@ import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccoun
 import type {
   Activity,
   FileListing,
+  IgnoredEntry,
   FilePreview,
   Permission,
   ProjectOverview,
@@ -43,6 +44,11 @@ export const ipc = {
   async workspaceUpdate(id: string, patch: { name?: string; settings?: ProjectSettings }): Promise<Workspace> {
     if (isMockMode()) return mockIpc.workspaceUpdate(id, patch);
     return invoke<Workspace>("workspace_update", { id, name: patch.name ?? null, settings: patch.settings ?? null });
+  },
+  /** 项目设置里的 TRUST 开关（v1.1.8）：起 CLI 时带不带各家官方的信任开关。 */
+  async projectTrust(id: string, trusted: boolean): Promise<Workspace> {
+    if (isMockMode()) return mockIpc.projectTrust(id, trusted);
+    return invoke<Workspace>("project_trust", { id, trusted });
   },
   /** 移出列表：文件夹、任务、快照都不动，重新打开这个文件夹就回来。 */
   async workspaceRemove(id: string): Promise<void> {
@@ -133,14 +139,24 @@ export const ipc = {
     if (isMockMode()) return mockIpc.filesList(workspaceId);
     return invoke<FileListing>("files_list", { workspaceId });
   },
+  /** FILES 的 ALL（v1.1.8）：藏着的文件夹点开时读一层。 */
+  async filesChildren(workspaceId: string, path: string): Promise<IgnoredEntry[]> {
+    if (isMockMode()) return mockIpc.filesChildren(workspaceId, path);
+    return invoke<IgnoredEntry[]>("files_children", { workspaceId, path });
+  },
   async filesRead(workspaceId: string, path: string, runId?: string): Promise<FilePreview> {
     if (isMockMode()) return mockIpc.filesRead(workspaceId, path, runId);
     return invoke<FilePreview>("files_read", { workspaceId, path, runId });
   },
   /** 系统选文件夹的窗（只返回路径；浏览器里没有）。 */
   async pickFolder(): Promise<string | null> {
-    if (isMockMode()) return null;
+    if (isMockMode()) return "/mock/参考资料";
     return invoke<string | null>("dialog_pick_folder");
+  },
+  /** 系统选文件的窗（v1.1.8，+ 按钮，多选，只返回路径；浏览器里给两条演示）。 */
+  async pickUploads(): Promise<string[]> {
+    if (isMockMode()) return ["/mock/需求文档.md", "/mock/接口说明.pdf"];
+    return invoke<string[]>("dialog_pick_uploads");
   },
   /** Quick Look 的缩略图（Word、Excel 这类，PNG 的 data URL）。只在 Mac 上有。 */
   async filesQuicklook(workspaceId: string, path: string): Promise<string> {
@@ -525,6 +541,8 @@ export interface HarnessRunArgs {
   worktree?: boolean;
   /** 这一句附的图（v0.8）。 */
   images?: ImageInput[];
+  /** 这一句附的文档和文件夹（v1.1.8，+ 按钮挑的本机路径）。 */
+  uploads?: string[];
 }
 
 /** 定时任务（schedule.rs）。时间按本机时区。days：1 是周一 … 7 是周日。 */

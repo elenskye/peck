@@ -44,6 +44,10 @@ pub struct ProjectSettings {
     /// 认过项目结构了（v1.1.0）：说明文件、Skill 文件夹的软链接只在第一次点开时补一次。Peck 自己记，界面不改。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub prepared: bool,
+    /// 站主在 TRUST 卡片上批过这个项目（v1.1.8，`gateway/trust.rs`）：起 CLI 时带上各家官方的信任开关。
+    /// Peck 自己记（卡片、项目设置里的开关走 `project_trust`），界面存别的设置时不盖。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub trusted: bool,
     /// 站主在这个项目里 REMOVE 过的库里的插件（v1.1.0）：标了「每个项目都装」也不再自动装。Peck 自己记，界面不改。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub plugins_removed: Vec<String>,

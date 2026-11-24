@@ -21,6 +21,7 @@ import type { ApiConfig, ApiStatus } from "@/lib/api";
 import type {
   FileChangeKind,
   FileListing,
+  IgnoredEntry,
   FilePreview,
   Permission,
   ProjectOverview,
@@ -164,6 +165,13 @@ export const mockIpc = {
     return n;
   },
 
+  async projectTrust(id: string, trusted: boolean): Promise<Workspace> {
+    const ws = workspacesState.find((w) => w.id === id);
+    if (!ws) throw new Error("没找到这个项目。");
+    ws.settings = { ...ws.settings, trusted };
+    return { ...ws };
+  },
+
   async workspaceUpdate(id: string, patch: { name?: string; settings?: ProjectSettings }): Promise<Workspace> {
     const ws = workspacesState.find((w) => w.id === id);
     if (!ws) throw new Error("没找到这个项目。");
@@ -264,8 +272,13 @@ export const mockIpc = {
     return {
       entries: Object.keys(files).sort().map((path) => ({ path, size: files[path].length || 18_400 })),
       hidden: MOCK_HIDDEN[workspaceId] ?? 0,
+      ignored: MOCK_HIDDEN[workspaceId] ? [{ path: "node_modules", dir: true, size: 0 }, { path: "dist", dir: true, size: 0 }, { path: "debug.log", dir: false, size: 2_140 }].slice(0, MOCK_HIDDEN[workspaceId]) : [],
       truncated: false,
     };
+  },
+
+  async filesChildren(_workspaceId: string, path: string): Promise<IgnoredEntry[]> {
+    return path.split("/").length > 2 ? [] : [{ path: `${path}/react`, dir: true, size: 0 }, { path: `${path}/index.js`, dir: false, size: 812 }];
   },
 
   async filesRead(workspaceId: string, path: string, runId?: string): Promise<FilePreview> {
@@ -469,7 +482,11 @@ export const mockIpc = {
       record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
       worktreeState[runId] = { files: {}, conflicts: [] };
     }
-    void replayAgent(runId, [replay], forkNotice(args.sessionId, runId, `cli:${engine}`, label), onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
+    // TRUST 卡片（v1.1.8）：这个项目还没批过、这次打开也没点过 NOT NOW，先问。
+    const ws = workspacesState.find((w) => w.id === workspaceId);
+    const askTrust = !!ws && !ws.settings?.trusted && !trustSkipped.has(`${workspaceId}:${engine}`);
+    const rounds: Round[] = askTrust ? [[{ type: "trust.prompt", requestId: `trust-${runId}`, engine, label }], replay] : [replay];
+    void replayAgent(runId, rounds, forkNotice(args.sessionId, runId, `cli:${engine}`, label), onEvent, { costCap: null, countSpend: false }).then((end) => finishAgentRecord(record, end, label));
     return runId;
   },
   // ── 定时任务：只在内存；演示里不会到点自己跑。设是「定时」那个剧本演的，这里只列、取消、点错过的卡片 ──
@@ -1009,6 +1026,9 @@ function finishAgentRecord(record: RunRecord, end: AgentEnd, label: string) {
   }
 }
 
+/** 点过 NOT NOW 的（项目:引擎），刷新就忘。 */
+const trustSkipped = new Set<string>();
+
 /** 一轮一轮演；每轮开头看花费上限。碰到审批、提问停下等回答；被拒的命令换成「没批」。 */
 async function replayAgent(
   runId: string, rounds: Round[], header: ReplayEvent[], onEvent: (event: AgentEvent) => void,
@@ -1059,6 +1079,17 @@ async function replayAgent(
       if (ev.type === "usage.updated" && ev.cost.usd != null) spent += ev.cost.usd;
       if (ev.type === "message.completed") text = ev.text;
       if (ev.type === "tool_call.completed") for (const d of ev.diff ?? []) diffs.set(d.path, d);
+      if (ev.type === "trust.prompt") {
+        const control = await new Promise<Control>((resolve) => { run.waiting = resolve; });
+        run.waiting = null;
+        if (control.type !== "approve") { run.stopped = true; break; }
+        const trusted = control.decision.startsWith("allow");
+        const sessionId = Object.keys(runsState).find((sid) => runsState[sid].some((r) => r.id === runId));
+        const ws = sessionId ? workspacesState.find((w) => w.id === workspaceOfSession(sessionId)) : undefined;
+        if (ws && trusted) ws.settings = { ...ws.settings, trusted: true };
+        else if (ws) trustSkipped.add(`${ws.id}:${ev.engine}`);
+        send({ type: "trust.resolved", requestId: ev.requestId, trusted });
+      }
       if (ev.type === "approval.requested" || ev.type === "user_input.requested") {
         let control: Control;
         do {

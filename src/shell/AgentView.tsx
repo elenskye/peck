@@ -41,6 +41,7 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
       {view.items.map((item) => item.kind === "skill"
         ? <SkillCard key={item.id} skill={item.skill} runId={runId} running={running} onAppend={onAppend} say={say} />
         : <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} hideSteps={!!nextSteps && !!view.ended && item.id === lastText} />)}
+      {view.trust && running && <TrustCard trust={view.trust} onControl={onControl} say={say} />}
       {view.approvals.map((a) => <ApprovalCard key={a.requestId} approval={a} who={who} onControl={onControl} say={say} />)}
       {view.asks.map((a) => <AskCard key={a.requestId} ask={a} who={who} onControl={onControl} say={say} />)}
       {view.memory && view.ended && !running && runId && <MemoryCard runId={runId} notes={view.memory.notes} reviewed={view.memory.reviewed} onAppend={onAppend} say={say} />}
@@ -66,6 +67,8 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
       return <p className={cn("agent-line", item.approval.decision?.startsWith("deny") && "is-bad")}><Icon name={item.approval.decision?.startsWith("deny") ? "x" : "check"} size={12} />{decisionWord(item.approval.decision, item.approval.by)} · {item.approval.title}</p>;
     case "notice":
       return <p className={cn("agent-line", item.level === "warn" && "is-warn")}><Icon name="bang" size={12} />{item.text}</p>;
+    case "trusted":
+      return <p className="agent-line"><Icon name="shield" size={12} />信任了这个文件夹 · {item.label}</p>;
     case "error":
       return <div className="pk-bar pk-bar--bad task-bar sel"><Icon name="x" /><span className="pk-bar-text">{item.text}</span></div>;
     case "compacted":
@@ -534,6 +537,29 @@ const ApprovalCard: React.FC<{ approval: ApprovalView; who: string; onControl: P
           <span className="grow" />
           {has("allow_always") && <Btn disabled={sent} onClick={() => void decide("allow_always")}>ALWAYS</Btn>}
           {has("allow_once") && <Btn v="primary" disabled={sent} onClick={() => void decide("allow_once")}>ALLOW</Btn>}
+        </div>
+      </div>
+    </section>
+  );
+};
+
+/** CLI 没信任这个项目文件夹（v1.1.8）：TRUST 记在这个项目上、以后每次起 CLI 都带官方的信任开关；NOT NOW 这次不带。 */
+const TrustCard: React.FC<{ trust: { requestId: string; label: string }; onControl: Props["onControl"]; say: Props["say"] }> = ({ trust, onControl, say }) => {
+  const [sent, setSent] = useState(false);
+  const decide = async (decision: ApprovalDecision) => {
+    setSent(true);
+    try { await onControl({ type: "approve", requestId: trust.requestId, decision }); } catch (e) { setSent(false); say(e); }
+  };
+  return (
+    <section className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="信任这个文件夹">
+      <Edge />
+      <div className="pk-anim-reveal">
+        <ModHead label="TRUST" note={<span className="pk-who">{trust.label.toUpperCase()}</span>} />
+        <p className="pk-ask-q">让 {trust.label} 信任这个项目文件夹？</p>
+        <div className="pk-ask-foot">
+          <Btn v="ghost" disabled={sent} onClick={() => void decide("deny_once")}>NOT NOW</Btn>
+          <span className="grow" />
+          <Btn v="primary" disabled={sent} onClick={() => void decide("allow_always")}>TRUST</Btn>
         </div>
       </div>
     </section>

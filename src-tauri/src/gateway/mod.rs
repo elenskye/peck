@@ -29,6 +29,7 @@ pub mod project_mcp;
 pub mod providers;
 pub mod runner;
 pub mod search;
+pub mod trust;
 
 use event::{
     ApprovalDecision, Cost, OpaqueReasoning, PermissionLevel, TokenUsage, TurnEndReason,
@@ -273,6 +274,9 @@ pub struct AgentTask {
     /// 转发 `/compact`（v1.1.7）：续上 `resume` 那个会话，让 CLI 自己压一次（`prompt` 是 `/compact [重点]`），不发站主的话。
     #[serde(default)]
     pub compact: bool,
+    /// 站主在 TRUST 卡片上批过这个项目（v1.1.8）：起 CLI 时带上这家官方的信任开关（`trust::launch_args`）。
+    #[serde(default)]
+    pub trusted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

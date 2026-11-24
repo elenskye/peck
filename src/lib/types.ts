@@ -27,6 +27,8 @@ export interface ProjectSettings {
   skillsOff?: string[];
   /** 这个项目里关掉的自带插件（v1.1.0，按名字）：它的 Skill 和工具都不给。 */
   pluginsOff?: string[];
+  /** 站主在 TRUST 卡片上批过（v1.1.8）：起 CLI 时带各家官方的信任开关。Peck 自己记，用 `projectTrust` 改。 */
+  trusted?: boolean;
 }
 
 export interface ProjectFolder { path: string; writable: boolean }
@@ -122,7 +124,9 @@ export interface ProjectOverview {
 }
 
 export interface FileEntry { path: string; size: number }
-export interface FileListing { entries: FileEntry[]; hidden: number; truncated: boolean }
+/** 照忽略规则藏起来的一个（v1.1.8：FILES 的 ALL 开着时变暗列出来；文件夹点开才读一层）。 */
+export interface IgnoredEntry { path: string; dir: boolean; size: number }
+export interface FileListing { entries: FileEntry[]; hidden: number; ignored: IgnoredEntry[]; truncated: boolean }
 export interface FilePreview {
   path: string;
   /** office：Word、Excel 这类，交给 Quick Look（v0.7）。 */

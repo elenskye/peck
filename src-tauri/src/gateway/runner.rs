@@ -41,6 +41,8 @@ pub async fn gateway_run_start(
     worktree: Option<bool>,
     // 这一句附的图（v0.8）：存成文件，路径写在这一句后面。
     images: Option<Vec<super::ImageInput>>,
+    // 这一句附的文档和文件夹（v1.1.8，输入框 + 按钮挑的）。
+    uploads: Option<Vec<String>>,
     channel: Channel<AgentEvent>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
@@ -60,6 +62,8 @@ pub async fn gateway_run_start(
     let backend = engines::from_state(&state, &engine).await.map_err(|e| e.message)?;
     let images = crate::harness::run::checked_images(images)?;
     let attachments = crate::harness::run::save_attachments(&session_id, &images);
+    let saved_uploads = crate::harness::run::save_uploads(&session_id, &uploads.unwrap_or_default())?;
+    let prompt = format!("{prompt}{}", crate::harness::run::uploads_note(&saved_uploads));
     start_engine_run(
         EngineRun {
             store: state.store.clone(),
@@ -309,15 +313,41 @@ pub(crate) fn start_engine_run(
         };
         let peck_mcp = mcp::hub().await.ok().map(|h| h.register_offer(sink.clone(), offer));
         let token = peck_mcp.as_ref().map(|m| m.token.clone());
-        // A1：项目里配了 MCP、这家 CLI 却没读到（没点过信任）——开头写一行去哪点。
+        // 信任（v1.1.8，`trust.rs`）：这家 CLI 没信任这个文件夹、站主也还没在 Peck 里批过——先弹 TRUST 卡片，点了才起 CLI。
+        // 批过的每次带上这家官方的开关；NOT NOW 这次打开 Peck 期间不再问。转发 `/compact` 不问。
+        let mut control_rx = control_rx;
+        let mut held: Option<RunOutcomeOrStop> = None;
+        let mut trusted = settings.trusted;
+        let mut asked = false;
         if let Some(setup) = backend.setup() {
-            if let Some(text) = super::project_mcp::check(&engine, &label, setup, &cwd).await {
-                sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text });
+            if !trusted && !compact && !super::trust::is_skipped(&workspace_id, &engine) && super::trust::untrusted(&engine, setup, &cwd).await {
+                asked = true;
+                match ask_trust(&sink, &mut control_rx, &control_tx, &id, &engine, &label).await {
+                    Some(true) => {
+                        trusted = true;
+                        if let Ok(db) = store.lock() {
+                            if let Ok(mut ws) = db.workspace(&workspace_id) {
+                                ws.settings.trusted = true;
+                                let _ = db.save_workspace(&ws);
+                            }
+                        }
+                    }
+                    Some(false) => super::trust::skip(&workspace_id, &engine),
+                    None => held = Some(RunOutcomeOrStop::Interrupted),
+                }
             }
-        }
-        // Muse 没信任这个文件夹：Peck 挂给它的 MCP（提 Skill、委派）它不连，开头写一行（v0.10 验收发现）。
-        if engine == "muse" && super::project_mcp::muse_trusted(&cwd) == Some(false) {
-            sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: super::project_mcp::muse_untrusted_notice() });
+            // Grok 没有只这一次的开关：批过、它自己还没记着，就用它的 `--trust` 记一次。
+            if trusted && engine == "grok" && held.is_none() && super::trust::untrusted(&engine, setup, &cwd).await {
+                if let Err(why) = super::trust::grant_grok(setup, &cwd).await {
+                    sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: why });
+                }
+            }
+            // A1：项目里配了 MCP、这家 CLI 却没读到——开头写一行。信任的事卡片管了，问过、批过的不再写。
+            if !trusted && !asked {
+                if let Some(text) = super::project_mcp::check(&engine, &label, setup, &cwd).await {
+                    sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text });
+                }
+            }
         }
         // 脚本 Hook（v1.1.4）：Peck 替 CLI 跑开场时、发话时（这一句发出去之前，stdout 放在这句前面）和收尾时。
         // 有要跑的，控制通道先交给 `CliHooks`：Hook 卡片的回答归 Peck，别的转给正在跑的那一次引擎。
@@ -341,13 +371,12 @@ pub(crate) fn start_engine_run(
             )
         });
         let mut engine_prompt = engine_prompt;
-        let mut held: Option<RunOutcomeOrStop> = None;
         // 项目记忆（v1.1.5）：新会话（不是续上的）的第一句前面带上，排在开场时的 Hook 前面。
         let mut contexts: Vec<String> = Vec::new();
         if resume.is_none() && !compact {
             contexts.extend(crate::harness::context::memory_block(&crate::harness::run::memories_of(&store, &workspace_id)));
         }
-        if let Some(h) = hooks.as_mut() {
+        if let Some(h) = hooks.as_mut().filter(|_| held.is_none()) {
             use crate::harness::script_hooks::{context_block, Event};
             if resume.is_none() {
                 let input = serde_json::json!({"source": "startup", "model": model});
@@ -379,6 +408,7 @@ pub(crate) fn start_engine_run(
             env: project_env.clone(),
             folders: folders.clone(),
             compact,
+            trusted,
         };
         let mut outcome = match held {
             // 发话时的 Hook 拦下了、卡片等着时按了停：这一句不发。
@@ -460,6 +490,7 @@ pub(crate) fn start_engine_run(
             env: project_env.clone(),
             folders: vec![],
             compact: false,
+            trusted,
         };
         let (asker, ask, usage_to, asked_engine) = (backend.clone(), stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default(), sink.clone(), engine.clone());
         let hooked = crate::harness::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
@@ -484,6 +515,35 @@ pub(crate) fn start_engine_run(
         life.finish(step_status, run_status, summary, changeset);
     });
     Ok(run_id)
+}
+
+/// TRUST 卡片（v1.1.8）：发出去、等站主点。`Some(true)` 批了，`Some(false)` NOT NOW，`None` 等着时按了停。
+/// 等的时候来的别的控制（追加的话）先收着，问完放回通道。
+async fn ask_trust(
+    sink: &EventSink,
+    rx: &mut mpsc::UnboundedReceiver<Control>,
+    tx: &mpsc::UnboundedSender<Control>,
+    run_id: &str,
+    engine: &str,
+    label: &str,
+) -> Option<bool> {
+    let request_id = super::trust::request_id(run_id);
+    sink.emit(EventBody::TrustPrompt { request_id: request_id.clone(), engine: engine.to_string(), label: label.to_string() });
+    let mut stray = Vec::new();
+    let answer = loop {
+        match rx.recv().await {
+            Some(Control::Approve { request_id: r, decision }) if r == request_id => break Some(decision.allows()),
+            Some(Control::Interrupt) | None => break None,
+            Some(other) => stray.push(other),
+        }
+    };
+    for c in stray {
+        let _ = tx.send(c);
+    }
+    if let Some(trusted) = answer {
+        sink.emit(EventBody::TrustResolved { request_id, trusted });
+    }
+    answer
 }
 
 /// 发话时的 Hook 没让这一句发出去：拦下了（原因），或者卡片等着时站主按了停。
@@ -1147,6 +1207,30 @@ pub(crate) fn unregister_control(run_id: &str) {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    /// TRUST 卡片（v1.1.8）：发出去、等站主点；等的时候来的追加先收着、问完放回去；按停就是没答。
+    #[tokio::test]
+    async fn the_trust_card_waits_for_the_answer_and_keeps_stray_controls() {
+        use crate::gateway::event::ApprovalDecision;
+        let (sink, events) = EventSink::memory("muse");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let id = super::super::trust::request_id("run-t");
+        tx.send(Control::Append { text: "顺便".into() }).unwrap();
+        tx.send(Control::Approve { request_id: "别的".into(), decision: ApprovalDecision::AllowOnce }).unwrap();
+        tx.send(Control::Approve { request_id: id.clone(), decision: ApprovalDecision::AllowAlways }).unwrap();
+        assert_eq!(ask_trust(&sink, &mut rx, &tx, "run-t", "muse", "Muse").await, Some(true));
+        assert!(matches!(rx.recv().await, Some(Control::Append { .. })), "追加的话放回通道");
+        assert!(matches!(rx.recv().await, Some(Control::Approve { .. })));
+        let seen: Vec<&'static str> = events.lock().unwrap().iter().map(|e| e.body.type_name()).collect();
+        assert_eq!(seen, ["trust.prompt", "trust.resolved"]);
+
+        tx.send(Control::Approve { request_id: id.clone(), decision: ApprovalDecision::DenyOnce }).unwrap();
+        assert_eq!(ask_trust(&sink, &mut rx, &tx, "run-t", "muse", "Muse").await, Some(false));
+        tx.send(Control::Interrupt).unwrap();
+        assert_eq!(ask_trust(&sink, &mut rx, &tx, "run-t", "muse", "Muse").await, None);
+        // 按停的那一次没有「答了」。
+        assert_eq!(events.lock().unwrap().iter().filter(|e| e.body.type_name() == "trust.resolved").count(), 2);
+    }
 
     #[test]
     fn answers_for_a_subtask_go_to_it_and_interrupts_reach_both() {

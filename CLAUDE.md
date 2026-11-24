@@ -2,6 +2,14 @@
 
 Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 + React + Rust + SQLite）。站主不是设计师、不是全职开发者，用自然语言指挥 Agent。这里只放核心规则，细则在 `docs/`（分工见「文档」），同一条规则只写在一处。`AGENTS.md` 指向这里。
 
+## 界面（优先级最高）
+
+**说明文字能不写就不写，必须写就写短。** 新做的、改到的界面都照这条：
+
+- 不加解释「这是什么、会怎样」的句子、提示行和 ⓘ；状态用图标、数字、颜色、位置说。
+- 非写不可的（确认、错误、空状态）只留一句，越短越好；弹层、卡片里也一样。
+- 改到旧界面时顺手把那里多余的说明删掉。细则见 `docs/design.md`「默认取舍」。
+
 ## 开工前
 
 1. 读本文件、`docs/roadmap.md`、`HANDOFF.md`；定过的不重复问。
@@ -34,7 +42,7 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 - 只在 `personal-cli-studio/` 里开发；`~/Documents/GitHub/pomelo` 只读。
 - `src/vendor/peck/` 是 visual-atelier 方案 `peck` 同步来的，不手改；视觉方案要站主批。visual-atelier 里只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里 Peck 那一行，守它自己的 `CLAUDE.md`。
 - 不接 Google 的 Antigravity（条款风险，v1.1.5 整个去掉了），以后也不加回来。
-- CLI 保持原厂设置：不改它们的配置、不替它们点信任，不读、不复用任何 CLI 的登录凭据；Peck 只在外面编排。
+- CLI 保持原厂设置：不改它们的配置，不读、不复用任何 CLI 的登录凭据；Peck 只在外面编排。信任项目文件夹只在站主点了 TRUST 卡片以后，用各家官方的开关带上（见 `docs/architecture.md`「CLI 四家」），Peck 不直接写它们的文件。
 - 不碰 Keychain 里的 Key 内容；Key、账号、绝对路径、提示词不进文档和夹具。不新增付费服务；新加依赖写成 `^x.y.z`，在 HANDOFF 记一笔。
 - 真跑（花 API 的钱、用 CLI 的订阅额度）只按 `docs/roadmap.md`「现行授权」。
 - 没验过的不写「通过」。

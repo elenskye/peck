@@ -63,6 +63,10 @@ impl ClaudeCodeBackend {
         if let Some(session) = &task.resume {
             args.extend(["--resume".into(), session.clone()]);
         }
+        // 站主批过这个项目（v1.1.8）：`.mcp.json` 里的服务器这一次都连。
+        if task.trusted {
+            args.extend(crate::gateway::trust::launch_args("claude-code", &task.cwd));
+        }
         // 项目里能改的其他文件夹（v0.10）：只这一次进程挂上（只读的只在这一句后面写明，读的时候它照常问）。
         for dir in super::writable_folders(task) {
             args.extend(["--add-dir".into(), dir]);
@@ -404,6 +408,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         }
     }
 
@@ -553,6 +558,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
+            trusted: std::env::var("PECK_LIVE_TRUST").is_ok(),
         };
         let mut args = ClaudeCodeBackend::args(&t);
         if let Ok(mode) = std::env::var("PECK_LIVE_MODE") {

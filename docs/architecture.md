@@ -119,7 +119,8 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 - **任务清单**：四家的清单都转成 `plan.updated`（过程最上面那一块）。Codex `turn/plan/updated`、Muse `session/todoListChanged`、Grok 的 ACP `plan`；Claude Code 旧的 `TodoWrite` 每次整份，2.1 起默认的 `TaskCreate` / `TaskUpdate` 一次一项（编号在结果「Task #N created」里），Peck 拼成整份（v1.1.3）。子任务里的清单不转。
 - **Peck 替 CLI 批命令**（`runner.rs` 的 `rule_allows`）：EDIT、AUTO 里 CLI 要跑的命令先过 Peck Loop 同一套 `permission::check_command`，这一档 Peck 自己也不会问的直接批、不弹卡片；装依赖、起常驻进程、高危的照旧给站主。PLAN、改文件、MCP 的审批不替它批。
 - **脚本 Hook**（v1.1.4，`cli_hooks.rs`）：Peck 替 CLI 跑开场时、发话时、收尾时三个（见「脚本 Hook」）。
-- **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`，要站主先在它的客户端里信任过这个文件夹。任务开头查一次，配了却没读到的写一行提示。
+- **信任文件夹**（`trust.rs`，v1.1.8）：CLI 没信任项目文件夹时会悄悄少干事（Muse 不连 Peck 挂给它的工具，Grok、Codex 不读项目里的配置，Claude Code 不连 `.mcp.json` 里没批过的服务器）。起 CLI 之前只读地看一眼（Muse 读它的 `trust.json`、Grok 跑 `grok inspect --json`、Codex 读 `config.toml` 的 `[projects]` 且项目里有 `.codex/`、Claude Code 看项目有没有 `.mcp.json`）；没信任、站主也没批过，发 `trust.prompt` 等回答（`Control::Approve`，编号 `trust-<任务 id>`）。批了记进项目设置 `trusted`（Peck 自己记，`project_trust` 能关），之后每次起 CLI 带官方的开关：Muse `serve --trust-workspace`、Codex `-c projects={"<文件夹>"={trust_level="trusted"}}`（点分的写法它不认）、Claude Code `--settings {"enableAllProjectMcpServers":true}`，都只对这一次进程；Grok 没有只这一次的，用 `grok --trust mcp list` 让它自己记进信任表。Peck 不直接写任何 CLI 的文件。NOT NOW 记在内存里，这次打开不再问；转发 `/compact` 不问。
+- **项目里的 MCP**（`project_mcp.rs`）：CLI 自己读项目的 `.mcp.json`。任务开头查一次，配了却没读到的写一行提示（TRUST 卡片问过、或者批过的项目不写）。
 - **本机 MCP**（`mcp.rs`）：只听 127.0.0.1，每个任务一个随机令牌，只对这一次进程挂上、不改 CLI 的配置。工具：`create_skill`、`restore_snapshot`、定时任务那三个（四家都给；项目里关掉的自带插件的不列、调了也不收）、`load_skill`（读自带插件的 Skill 全文：给了哪个自带插件的工具就能读它的）、`git_commit`（项目里装着 Git Plan、这一段不是只读的才给）、`ask_user`（Grok）。Muse 要那个文件夹在它那里信任过才连，没信任 Peck 在任务开头提示。
 - **`/compact` 转给 CLI**（v1.1.7，`gateway_compact`）：续上这个任务里它的会话（没有就说没什么可压的），落成一次新记录；不带引用、记忆、文件夹说明，Peck 替它跑的 Hook 也不跑。各家怎么发见上表；用量和压缩事件转成 `context.updated`（带 `managedBy`：压缩由这一家自己管）和 `context.compacted`（`engine` 这一步）。不改 CLI 的配置（自动压缩阈值、压缩提示都不碰）。
 - **登录**（`accounts.rs`）：Claude Code、Codex 只用和客户端同一个账号。LOGIN / RELOGIN 在伪终端里跑它们自己的登录命令，`open` 换成只记链接的小脚本，站主自己挑浏览器登。
@@ -327,7 +328,7 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 顶栏 QUOTA（`usage.rs`、`spend.rs`、`UsagePage.tsx`）。官方来源见 [testing.md](./testing.md#额度与花费的真实来源)。
 
 - **Claude 订阅额度**：Claude 桌面 App 或 Claude Code 在跑时，定时在 `cli-probe/` 里跑 `claude -p /usage`（本地命令，不进模型、不花额度）。要 Claude Code 命令行按订阅登录；status line 的数据作补充（`integrations/statusline.py`）。
-- **别家**：CLI 报的 `quota.updated` 写进额度卡，缺数据不填 0；DeepSeek 余额只在真实模式下、有在跑的任务用到 DeepSeek（Peck Loop 直接用，或 PLOOP 里有一段是它）时查（`Store::deepseek_running`）。
+- **别家**：CLI 报的 `quota.updated` 写进额度卡，缺数据不填 0；Muse 用 `muse usage --json`，Grok 用 `grok usage --json`——这两家现在都读不到（2026-11-24 核实：Muse 的服务器对站主的订阅回 `server_sent_no_usage`，会话里的 `usage/read` 也是空的；Grok 的 `grok usage` 只在它的 daemon 线路上给套餐数据，这台机器是 shell 线路，只能在它里面 `/usage` 看），卡片上写原因，手工记一笔还在；DeepSeek 余额只在真实模式下、有在跑的任务用到 DeepSeek（Peck Loop 直接用，或 PLOOP 里有一段是它）时查（`Store::deepseek_running`）。
 - **图**（`spend_overview`）：事件日志里的 `usage.updated`，按模型记。CLI 按它会话的模型用价格表折成 API 价、标「估」（订阅不真花）。
 - **额度提醒**（`src/lib/quota.ts`）：发任务前看这次要用到的 CLI 的 5 小时 / 每周窗口，用到阈值（默认 85%，能关）就提示换成另一家还够的 CLI。不自动换、不拦着发；读不到的不提示。
 

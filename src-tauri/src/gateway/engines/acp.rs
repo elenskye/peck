@@ -384,6 +384,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: false,
+            trusted: false,
         }
     }
 
@@ -456,6 +457,7 @@ mod tests {
             env: vec![],
             folders: vec![],
             compact: std::env::var("PECK_LIVE_COMPACT").is_ok(),
+            trusted: std::env::var("PECK_LIVE_TRUST").is_ok(),
         };
         let outcome = AcpBackend::new(setup, flavor).run(t, sink, rx).await;
         for e in events.lock().unwrap().iter() {

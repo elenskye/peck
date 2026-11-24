@@ -25,6 +25,24 @@ pub async fn workspace_open(path: String, state: State<'_, AppState>) -> Result<
     Ok(ws)
 }
 
+/// 输入框 + 按钮（v1.1.8）：系统选文件的窗，多选，只返回路径。取消返回空。
+#[tauri::command]
+pub async fn dialog_pick_uploads() -> Result<Vec<String>, String> {
+    let output = tokio::process::Command::new("/usr/bin/osascript")
+        .args(["-e", "set fs to choose file with multiple selections allowed\nset out to \"\"\nrepeat with f in fs\nset out to out & POSIX path of f & linefeed\nend repeat\nreturn out"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        if message.contains("-128") {
+            return Ok(vec![]);
+        }
+        return Err(format!("选不了文件：{}", message.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+}
+
 /// 项目设置里加一个其他文件夹（v0.7）：系统选文件夹的窗，只返回路径，不打开成项目。
 #[tauri::command]
 pub async fn dialog_pick_folder() -> Result<Option<String>, String> {
@@ -161,6 +179,13 @@ pub async fn files_list(
     tokio::task::spawn_blocking(move || crate::files::list_files(&root))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 右栏 FILES 的 ALL（v1.1.8）：照忽略规则藏着的文件夹，点开时读一层。
+#[tauri::command]
+pub async fn files_children(workspace_id: String, path: String, state: State<'_, AppState>) -> Result<Vec<crate::files::IgnoredEntry>, String> {
+    let root = workspace_root(&state, &workspace_id)?;
+    tokio::task::spawn_blocking(move || crate::files::list_children(&root, &path)).await.map_err(|e| e.to_string())?
 }
 
 /// 右栏 FILES：读一个文件给预览。文件已经不在、又给了任务号时，读任务前快照里的样子。

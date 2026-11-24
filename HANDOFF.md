@@ -1,40 +1,37 @@
 # 当前交接
 
-更新：2026-11-24。**v1.1.7 做完了，已装进 /Applications**。站主写明了版本号、不分 Phase，照两份 brief（上下文压缩、读网页）做，先压缩后读网页。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「上下文」「联网」「CLI 四家」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-24。**v1.1.8 做完了**（Muse 在 Peck 里开了头，Claude Code 审过、补完）；正式版还是 1.1.7，等 1.1.9 做完一起装。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。在做的版本：1.1.9。
 
-## 这一版做了什么（1.1.7）
+## 这一版做了什么（1.1.8）
 
-1. **`/compact [重点]`**（站主在提问里定的：落成这个任务的一次新记录）：
-   - PLOOP：三步都做（落盘、清旧输出、叫一次模型写交接摘要），重点接在写摘要的要求后面、进 `PreCompact` Hook 的 `custom_instructions`（`trigger: manual`）。用这个对话存的模型，用不了报原因不换；花费照记、算进上限。原来那个免费、只做前两步的 `/compact` 去掉了。任务在跑时提示「跑完再压」。
-   - CLI：续上它在这个任务里的会话转过去（`gateway_compact`）：Claude Code、Grok 发文字命令，Codex `thread/compact/start`，Muse `session/compact`；Codex、Muse、Grok 不收重点，写一行说明。不带引用、记忆、文件夹说明，Peck 替它跑的 Hook 不跑。
-   - 界面：那一次不画 YOU，一行「COMPACT 压缩上下文 · 重点：…」。
-2. **压完放回**（第 3 步之后，自动、手动都做）：交接摘要 → 站主说过的每一句（超过窗口 3% 省中间）→ 新的环境块 → 加载过的 MCP 工具（`<peck-loaded-tools>`，下一句认回来、工具列表不变）→ 最近读过和改过的文件（最多 5 个、窗口的 10%，现读、带行号、放不下留头尾、登记成读过）→ 接着干。清旧输出时 `tool_search` 留着「已加载：…」那一行。
-3. **交接摘要长度跟窗口**：目标窗口 × 1.5%（1500–8000 tokens），输出上限 min(模型上限, max(16000, 目标 × 2))。
-4. **CLI 的用量小环和压缩那一行**：四家报的「用了 / 窗口」转成 `context.updated`（带 `managedBy`），CLI 任务也画小环（点开「压缩由 X 自己管」，不画压缩线，Muse 说快满了变琥珀，CLI 压过以后变暗等下一条）；它自己压了一次显示成「CLI 自己压」一行。Codex 的上下文用量改成 `last.totalTokens`。
-5. **读网页 `web_fetch`**（`harness/tools/web.rs`）：所有模型、哪一档、ONE SHOT 都有，不弹卡片、不花钱；searcher（替掉了 curl）、member 有。地址检查（本机、内网、钉 IP）、同站重定向最多 5 次（跨站停下）、HTML 抽正文转 Markdown（`dom_smoothie`）、文字原样、PDF 存下读前 20 页、只放开头 32 KB 其余落盘、15 分钟缓存（子代理共用）、能停。过程里一步「Fetch …」，点开头上的网址用系统浏览器打开（新命令 `open_url`，只认 http / https）。
-6. 顺手修的：压缩那几行、一组工具的摘要在窄栏里换成两行时会压住下一行（`.fold-head` 写死了高度），现在跟着变高；Codex 的 `thread/goal/cleared` 不再冒成一条 raw。
-7. **装新版不再留备份**（站主定的）：`install-app.sh` 把刚换下来的和以前留的 `Peck.app.backup-*` 都挪进废纸篓，「应用程序」里只有 Peck.app。
-- **新加依赖**：`dom_smoothie ^0.18.2`（Readability；故意用 0.18，和 tauri 共用 `dom_query 0.28`、`html5ever 0.39`，锁文件里没有第二份）、`dom_query ^0.28.0`（开 `markdown`，整个 `<body>` 转 Markdown 用）、`encoding_rs ^0.8.44`（锁文件里本来就有，改成直接依赖）。
-- 数据库没动（schema 11）。`AgentTask` 多了 `compact`，事件 `context.updated` 多了 `managedBy`、`warn`，`context.compacted` 的 `step` 多了 `engine`。
-- brief 里「接力每段都是新会话」那条没做：接力在 v1.1.1 就去掉了。ACP 初始化时声明 `session.compaction` 没做（字段名查不准，怕 Grok 拒）；收到 `compaction_update`、`usage_update` 照样认。
+1. **开发准则**（站主定，优先级最高，进了 CLAUDE.md「界面」）：说明文字能不写就不写，必须写就写短。
+2. **输入框 `+`**（Muse 做的，收拾过）：附文档（多选）和文件夹（一次一个），最多 10 个、每个文件 10MB 以内；文件拷进这个任务的附件目录、文件夹只带路径，写在这一句后面，CLI 和 Peck Loop 都看得到。
+3. **TRUST 卡片**（站主在提问里定的：卡片上点 TRUST 就行、四家都管）：起 CLI 之前看它信没信任项目文件夹，没信任、站主也没批过就弹卡片，点了才起。批了记在项目设置里（项目设置多一个开关「CLI 信任这个文件夹」），以后每次带各家官方的开关：Muse、Codex、Claude Code 只对这一次进程生效，Grok 用它自己的 `--trust` 记进它的信任表。Muse 原来做的「打开终端自己点」去掉了。CLAUDE.md「边界」那句跟着改了。
+4. **FILES 的 ALL**（站主在提问里定的：加开关、默认藏）：有照 `.gitignore` 藏着的就多一片 ALL，点亮了变暗列出来，藏着的文件夹点开才读一层。底下那行「照忽略规则藏了 N 个」去掉了。
+5. **Muse、Grok 的订阅额度**：两家现在都读不到，不是 Peck 读错了——Muse 的官方接口对这个订阅回 `server_sent_no_usage`（命令行和会话里都一样，11-16 那次是最后一次有数）；Grok 的 `grok usage` 在这台机器的线路上不给套餐数据，只能在它里面 `/usage` 看。卡片上的原因改短改准了，手工记一笔还在。Muse 原来写的「跑一次 Grok 任务会自动带回」不对，去掉了。
+- 数据库没动（schema 11）。项目设置多了 `trusted`；事件多了 `trust.prompt`、`trust.resolved`；`AgentTask` 多了 `trusted`；`FileListing` 多了 `ignored`，新命令 `files_children`、`project_trust`、`dialog_pick_uploads`。没加依赖。
+
+## Muse 那一轮的情况（站主问的）
+
+- **全量测试是谁在跑、跑完了吗**：是 Muse 自己的命令工具在跑（`cargo test`，它给自己设了等 5 分钟）。5 分钟没出结果它就把命令放到后台、接着改文档，然后说「测完我就写 HANDOFF」并结束了这一回合。CLI 的回合一结束 Peck 就收尾、关掉它的进程，后台那条命令跟着没了，也没有谁再叫醒它——所以 HANDOFF、装正式版、提交都没做。那 5 分钟大多花在编译上，测试本身只要几秒。
+- **留下的问题**：前端有一处语法错（`MiddleColumn.tsx` 多了一个 `}`），`pnpm check` 过不了——它那边跑不了前端检查，没发现。已修。
+- **三个问题只弹出第一个**：Muse 一次问了三个问题，Peck 的卡片只画了第一个问题的选项，站主的回答被原样填给了三个问题。1.1.9 修。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（350 个，新加：摘要长度、站主的话省中间、放回文件的挑法和预算、`tool_search` 那一行、手动压缩三步和重点进 Hook、压缩后不用再读就能整个覆盖、四家 CLI 的转发和用量、runner 转发不带记忆和 Hook、读网页的地址 / 重定向 / 类型 / 截断落盘 / 缓存 / 停止 / PDF、`web_fetch` 和搜索一起跑）；四份 CLI 夹具重新生成（只多了 `context.updated`）；`pnpm check`、`pnpm build` 过。
-- **`?mock`**：PLOOP 任务 `/compact 数据库迁移` 一行 COMPACT 和三步、花费；Codex 任务小环 22.7k / 475k、`/compact` 一行「不接收重点」和「CLI 自己压」；「搜一下」两步 Search + 两步 Fetch（一步失败），点开网址那一行；明暗各看了一次。
-- **真跑**（账本在 roadmap）：DeepSeek 3 次（≈ $0.0062）读 docs.rs 一页正文干净、手动压缩的摘要照重点写细；Codex、Muse、Grok 各 2 个小任务，`/compact` 都正常结束、压缩那一行和用量都到了；Grok 的窗口在模型列表里有（500,000）。
-- **正式版**：装好了（`pnpm app:install`，旧包都进了废纸篓）；窗口里没点过。
-- **没验的**：
-  - **Claude Code**：`cli/bin` 的登录过期了（OAuth 刷新不了），没跑成，没花额度；`/compact 重点` 的重点在 stream-json 下生不生效还不知道。
-  - 正式版窗口：这一版和 1.1.6 的都没点过。
+- **自动测试**：全量 `cargo test` 过（355 个；新加：TRUST 卡片等回答和收着别的控制、各家的信任开关、Codex 的信任表、NOT NOW 记着、藏着的文件清单和按层读、Muse 没给数据时的原因）；`pnpm check`、`pnpm build` 过。
+- **`?mock`**：peck 项目里选 CLI 发一句 → `[ TRUST ]` → 点 TRUST 留一行、接着回放；FILES 的 ALL 点亮、`node_modules` 点开读出一层；`+` 的小片。
+- **真 CLI（没花额度）**：`muse serve --trust-workspace` 建会话、用本地假 MCP 看——带了开关它才连 Peck 挂的 MCP；`codex -c projects={…} mcp list` 带了才读项目的 `.codex/config.toml`（点分的写法它不认）。
+- **没验的**：Grok 的 `--trust`（会往它的信任表里写一条，没替站主试；头一次在 Grok 任务的 TRUST 卡片上点了就知道，没记上会写一行）；Claude Code 的 `--settings`（`cli/bin` 的登录过期）；TRUST 卡片在正式版窗口里。
 
 ## 留给站主的
 
 - **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。
 - **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
 - **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
+- **仓库里多了 `.agents/skills`**（指向 `.claude/skills` 的链接）：站主在 Peck 里第一次点开 peck 项目时 Peck 认结构建的，没跟踪、我没动，要不要提交站主定。
 - **Claude Code 重新登录**：设置 → CLI → LOGIN 里的 Claude Code（`cli/bin` 那份）登录过期了。登好以后要核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.7 的全部提交。
+- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.8 的全部提交。
 - 以前留下、还没验的：1.1.6 的设置页在正式版窗口里；1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
 
 ## 已知问题
