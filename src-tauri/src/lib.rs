@@ -13,6 +13,7 @@ mod plugins;
 mod process;
 mod project_plugins;
 mod projects;
+mod prompts;
 mod run;
 mod schedule;
 mod skill_propose;
@@ -183,6 +184,10 @@ pub fn run() {
             harness::history::memory_update,
             harness::history::memory_delete,
             harness::history::memory_review,
+            prompts::prompt_list,
+            prompts::prompt_add,
+            prompts::prompt_update,
+            prompts::prompt_delete,
             harness::background::background_list,
             harness::background::background_stop,
             app_icon::app_icon_set,

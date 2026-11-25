@@ -13,8 +13,9 @@ import { Md } from "@/shell/Markdown";
 import { highlight, type Token } from "@/lib/highlight";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { EffortPicker, WhoPicker, cliModelOf, defaultEffort, sendEffort } from "@/shell/ModelPicker";
+import { PromptPanel } from "@/shell/PromptLibrary";
 
-export type RightTab = "oneshot" | "files" | "term";
+export type RightTab = "oneshot" | "files" | "prompt" | "term";
 
 interface Props {
   project: ProjectOverview | null;
@@ -37,7 +38,7 @@ interface Props {
   entries: ModelEntry[];
   settings: AppSettings;
   onSettings: (patch: Partial<AppSettings>) => void;
-  /** 把 ONE SHOT 的回答放进中栏输入框 */
+  /** 把 ONE SHOT 的回答、PROMPT 的一条放进中栏输入框 */
   onToTask: (text: string) => void;
   /** 顶栏上收起了右栏（v1.1.12）：藏起来不卸掉，ONE SHOT 的状态留着。 */
   hidden?: boolean;
@@ -57,6 +58,7 @@ export const RightColumn: React.FC<Props> = (props) => {
   const tabs: Array<{ id: RightTab; label: string; icon: IconName; extra?: React.ReactNode }> = [
     { id: "files", label: "FILES", icon: "files", extra: run && run.files.length > 0 && !run.undoneAt ? <em>{run.files.length}</em> : null },
     { id: "oneshot", label: "ONE SHOT", icon: "oneshot" },
+    { id: "prompt", label: "PROMPT", icon: "prompt" },
     {
       id: "term",
       label: "TERM",
@@ -91,6 +93,11 @@ export const RightColumn: React.FC<Props> = (props) => {
       {/* ONE SHOT 一直挂着，只是藏起来：切去别的页签再回来，问到一半的、答完的都还在，STOP 也还能点。 */}
       <OneShot key={props.project?.workspace.id ?? "none"} {...props} shown={tab === "oneshot"} />
       {tab === "files" && <Files {...props} />}
+      {tab === "prompt" && (
+        // 放进输入框时收回宽栏，不然看不到中栏的输入框。
+        <PromptPanel canInsert={!!props.project} say={props.say} tools={<Expand wide={wide} onWide={onWide} />}
+          onToTask={(text) => { onWide(false); props.onToTask(text); }} />
+      )}
       {tab === "term" && <Term {...props} />}
     </section>
   );

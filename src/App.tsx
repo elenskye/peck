@@ -660,12 +660,12 @@ const App: React.FC = () => {
   };
   const selectTask = (pid: string, id: string | null) => { setPeek(null); setProjectId(pid); setTaskId(id); setPage(""); };
 
-  // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–3 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
+  // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–4 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
   // ⌘N、⌘[ ⌘] 只认左栏里的项目（看归档的任务时不在归档里翻）。
   const keysRef = useRef({ project: listed, taskId, page, wide, stop, selectTask, selectTab, setSide });
   keysRef.current = { project: listed, taskId, page, wide, stop, selectTask, selectTab, setSide };
   useEffect(() => {
-    const TABS: RightTab[] = ["files", "oneshot", "term"];
+    const TABS: RightTab[] = ["files", "oneshot", "prompt", "term"];
     const onKey = (e: KeyboardEvent) => {
       const k = keysRef.current;
       if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
@@ -678,11 +678,13 @@ const App: React.FC = () => {
       }
       if (!e.metaKey || e.ctrlKey || e.altKey) return;
       const key = e.key.toLowerCase();
+      // 小窗、大图开着时只认 ⌘.：切页签、换任务会把小窗连同没存的字一起卸掉。
+      if (key !== "." && document.querySelector("[aria-modal=true]")) return;
       if (key === "n" && !e.shiftKey && k.project) { e.preventDefault(); k.selectTask(k.project.workspace.id, null); }
       else if (key === "." && !e.shiftKey) { e.preventDefault(); void k.stop(); }
       else if (key === "," && !e.shiftKey) { e.preventDefault(); setSettingsAt(undefined); setPage((p) => (p === "settings" ? "" : "settings")); }
       else if (key === "l" && !e.shiftKey) { e.preventDefault(); setPage(""); window.setTimeout(() => document.querySelector<HTMLElement>(".md-editor .cm-content")?.focus(), 0); }
-      else if (/^[1-3]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); k.setSide("right", true); }
+      else if (/^[1-4]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); k.setSide("right", true); }
       else if ((key === "[" || key === "]") && k.project) {
         const list = k.project.tasks;
         if (!list.length) return;

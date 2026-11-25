@@ -52,12 +52,13 @@
 | 附图放大 | 输入框贴一张图，点小图 | 盖住窗口的大图，点一下或 Esc 关 |
 | 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
 | 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页两组卡片 + MCP SERVERS，点卡片开小窗（每个项目都装、按项目装和开关、它带的东西）；三个项目三种状态：notebook 装着旧版（卡片上青色版本号、小窗里 UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后项目设置的 SKILLS 多一行。在装着 Git Plan 的 peck 项目里发一个任务，做完后 recap 里多一行「Git Plan 提交了 …」 |
+| 提示词库（`mockData.ts` 的 `MOCK_PROMPTS`） | 右栏 PROMPT（⌘3）；`&empty` 看空的 | 5 条样例（「讲清楚一个文件」「补测试」带 `{占位}`）；NEW 加一条排到最上；笔改了排到最上；小窗 DELETE 点两下删；搜 `{`、「代码」、两个词（头上「1/4」）；点一行标题后绿勾；箭头放进输入框（宽栏收回；`&empty` 没项目时灰） |
 
-- 其他入口：`@` 旧任务；ONE SHOT；项目设置（FOLDERS、ENV、PLUGINS、SKILLS、MCP、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。TERM 头上的 dev server 小片见上表。
+- 其他入口：`@` 旧任务；ONE SHOT；PROMPT（见上表）；项目设置（FOLDERS、ENV、PLUGINS、SKILLS、MCP、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。TERM 头上的 dev server 小片见上表。
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
-- **截清楚的图**（v1.1.11）：内置浏览器的面板常被缩小、截图糊。PLOOP 里用 `screenshot_page`；别处直接跑它的脚本：`osascript -l JavaScript -e "$(cat src-tauri/src/harness/tools/page.js)" <url> <out.png> 1360 860 <light|dark|空> 1 "<一段 JS，async 函数体>" 300`（参数顺序见脚本头）。每次是新开的页面，`?mock` 的状态要在那段 JS 里点出来；离屏时计时器变慢，JS 最多跑 30 秒。
+- **截清楚的图**（v1.1.11）：内置浏览器的面板常被缩小、截图糊。PLOOP 里用 `screenshot_page`；别处直接跑它的脚本：`osascript -l JavaScript -e "$(cat src-tauri/src/harness/tools/page.js)" <url> <out.png> 1360 860 <light|dark|空> 1 "<一段 JS，async 函数体>" 300`（参数顺序见脚本头）。每次是新开的页面，`?mock` 的状态要在那段 JS 里点出来；离屏时计时器变慢，JS 最多跑 30 秒；离屏的窗口没有焦点和鼠标，`:hover`、`:focus-within` 才露的东西（PROMPT 的笔）截不到；剪贴板在 JS 里换掉 `navigator.clipboard` 再读。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
 
 ## 类型和构建

@@ -4,6 +4,7 @@ import type { ApiStatus } from "@/lib/api";
 import type { AgentCaps, AgentEvent, FileDiff, ToolKind } from "@/lib/agentEvents";
 import type { FileChangeKind, RunRecord, Session, StepDescriptor, Workspace } from "@/lib/types";
 import type { ReplayEvent } from "@/dev/gatewayMock";
+import type { PromptItem } from "@/lib/ipc";
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -514,6 +515,16 @@ export const MOCK_FILES: Record<string, Record<string, string>> = {
 };
 /** 照忽略规则藏起来的文件夹（演示）。 */
 export const MOCK_HIDDEN: Record<string, number> = { "ws-notebook": 2, "ws-peck": 3, "ws-gateway": 1 };
+
+// ---------- 提示词库（v1.2.0，全局一份；演示用的样例，最近改的在上） ----------
+
+export const MOCK_PROMPTS: PromptItem[] = [
+  { id: "prompt-review", title: "审一下这次的改动", body: "看一下这次的改动：\n- 有没有明显的 Bug\n- 命名和结构清不清楚\n- 测试够不够\n最后列出要改的地方，先别动手改。", createdAt: NOW - 9 * DAY, updatedAt: NOW - 20 * MIN },
+  { id: "prompt-explain", title: "讲清楚一个文件", body: "读 {文件名}，用几句话说清楚它做什么、被谁调用、有哪些坑。\n不用改代码。", createdAt: NOW - 6 * DAY, updatedAt: NOW - 3 * HOUR },
+  { id: "prompt-tests", title: "补测试", body: "给 {函数名} 补单元测试，覆盖 {边界情况}。\n跑一遍确认都过，失败的贴出来。", createdAt: NOW - 4 * DAY, updatedAt: NOW - 1 * DAY },
+  { id: "prompt-commit", title: "写提交说明", body: "照项目说明里「Git」那节给这次的改动写一句提交说明，只给说明，不提交。", createdAt: NOW - 8 * DAY, updatedAt: NOW - 2 * DAY },
+  { id: "prompt-handoff", title: "收尾更新 HANDOFF", body: "这一轮做完了。更新 HANDOFF.md：\n1. 只留当前状态、没验的、已知问题、下一步\n2. 不追加历史\n3. 没验过的不写「通过」", createdAt: NOW - 12 * DAY, updatedAt: NOW - 5 * DAY },
+];
 
 // ---------- 设置里的供应商（演示） ----------
 

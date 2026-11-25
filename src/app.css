@@ -613,6 +613,9 @@ body { overflow: hidden; }
 /* 归档（v0.9，方案里还没有，先照像素图标的画法画一个箱子）。 */
 .pk-i--archive{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 0h8v1h-8zM0 1h1v1h-1zM7 1h1v1h-1zM0 2h8v1h-8zM1 3h1v1h-1zM6 3h1v1h-1zM1 4h1v1h-1zM3 4h2v1h-2zM6 4h1v1h-1zM1 5h1v1h-1zM6 5h1v1h-1zM1 6h6v1h-6z'/%3E%3C/svg%3E")}
 
+/* 右栏 PROMPT 页签（v1.2.0，方案里还没有，占位）：一对花括号夹一个点，像带 `{占位}` 的模板。 */
+.pk-i--prompt{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M1 0h2v1h-2zM5 0h2v1h-2zM1 1h1v2h-1zM6 1h1v2h-1zM0 3h1v1h-1zM3 3h2v1h-2zM7 3h1v1h-1zM1 4h1v2h-1zM6 4h1v2h-1zM1 6h2v1h-2zM5 6h2v1h-2z'/%3E%3C/svg%3E")}
+
 /* 顶栏收起 / 展开左栏、右栏（v1.1.12，方案里还没有）：一个框，靠边那一条实心是栏开着、空心是收起了。 */
 .pk-i--side-l{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 1h8v1h-8zM0 2h3v4h-3zM7 2h1v4h-1zM0 6h8v1h-8z'/%3E%3C/svg%3E")}
 .pk-i--side-l-off{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 1h8v1h-8zM0 2h1v4h-1zM2 2h1v4h-1zM7 2h1v4h-1zM0 6h8v1h-8z'/%3E%3C/svg%3E")}
@@ -757,6 +760,30 @@ body { overflow: hidden; }
 .app .memo-edit:focus { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
 .app .memo-edit:disabled { opacity: .6; }
 .memo-add { margin-top: var(--space-7); }
+
+/* 右栏 PROMPT（v1.2.0）：顶上搜索；一行一条，标题像素字、正文前两行 Body 小字；点一下复制（标题后绿勾、底色绿一下），
+   笔悬停才露、箭头一直在（朝左：放进中栏）。 */
+.prompts > .pk-mod-head { margin-bottom: var(--space-5); }
+.app .prompt-search { flex: none; width: 100%; height: var(--size-input); }
+.app .prompt-search input { width: 0; }
+.prompt-list { flex: 1 1 0; display: flex; flex-direction: column; margin-top: var(--space-4); }
+.prompt-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px dotted var(--color-line-strong); }
+.prompt-row:first-child { border-top: 0; }
+.prompt-main { position: relative; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; margin: 0; padding: var(--space-3) var(--space-4); border: 0; background: none; clip-path: var(--pk-clip2); text-align: left; font: inherit; color: var(--color-text-2); cursor: pointer; }
+.prompt-main:hover { background: var(--color-raised); }
+.prompt-main:focus-visible { outline: 1px dotted var(--color-focus); outline-offset: -3px; }
+.prompt-row.is-copied .prompt-main { background: var(--color-ok-soft); }
+.prompt-title { display: flex; align-items: center; gap: var(--space-3); min-width: 0; color: var(--color-text); }
+.prompt-title b { min-width: 0; font-family: var(--font-name); font-weight: 400; font-size: var(--text-name); line-height: var(--leading-name); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prompt-title .pk-i { flex: none; color: var(--color-ok); }
+.prompt-line { font-size: var(--text-small); line-height: 1.5; color: var(--color-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prompt-acts { display: flex; align-items: center; gap: var(--space-1); padding-top: var(--space-2); }
+.prompt-to .pk-i { transform: scaleX(-1); }
+.prompt-edit-btn { opacity: 0; }
+.prompt-row:hover .prompt-edit-btn, .prompt-row:focus-within .prompt-edit-btn { opacity: 1; }
+.prompt-form { display: flex; flex-direction: column; gap: var(--space-5); }
+.prompt-form .pk-field { flex: none; width: 100%; }
+.app .prompt-body-edit { min-height: 180px; }
 
 /* ---------- 审阅和预览（v0.7 Phase 10，云端取了沉静一边，本地改方案时并进 tokens） ---------- */
 /* Peck 的代码配色：青只给关键字；字符串、数、类型、属性用压低的几种色（不和绿、红、琥珀的意思撞），注释退到暗字。 */

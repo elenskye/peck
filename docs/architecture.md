@@ -63,7 +63,8 @@
 | 内容 | 位置 |
 |---|---|
 | 数据目录 | 正式 `~/Library/Application Support/Peck/`；开发（`pnpm app:dev`）`Peck Dev/` |
-| 项目、任务、消息、事件日志、设置、记忆、定时任务 | `peck.db`（schema 11，迁移在 `src-tauri/migrations/`）；设置在 `app_settings`，一样一行 JSON |
+| 项目、任务、消息、事件日志、设置、记忆、定时任务、提示词库 | `peck.db`（schema 12，迁移在 `src-tauri/migrations/`）；设置在 `app_settings`，一样一行 JSON |
+| 提示词库（v1.2.0，`prompts.rs`） | `prompts` 表，全局一份、不分项目：标题、正文、建和改的时间（毫秒）。标题并成一行、最多 120 字；正文去掉开头的空行和末尾的空白、最多 64 KB，中间和 `{占位}` 照原样；改一条刷新改的时间（一定比库里最新的晚），列表按它新的在上。IPC `prompt_list` / `_add` / `_update` / `_delete` 都返回全部 |
 | 项目设置 | `workspaces` 表那一行的 JSON（加字段不加迁移）；`prepared`、`plugins_removed` 是 Peck 自己记的 |
 | 快照、历史 Diff | `shadow/<项目哈希>/`，其他文件夹各自 `shadow/<文件夹哈希>/` |
 | 独立工作区 | `worktrees/<项目哈希>/<任务号>/` |
@@ -75,7 +76,7 @@
 | 子代理的设置、每个模型的思考强度 | `app_settings` 的 `ui` 那一行（`subagents`、`efforts`），后端发任务时读 |
 
 - `PECK_DATA_DIR`、`PECK_SHADOW_ROOT` 把数据和快照指到别处；`PECK_API_MODE=mock|real` 强制模拟或真实，开发包和设了 `PECK_DATA_DIR` 的默认模拟。
-- **迁移和升级**：改数据库结构就在 `src-tauri/migrations/` 加迁移，不改旧记录的含义；升级前先用 SQLite Backup API 备份；比自己新的 schema 拒绝写入。
+- **迁移和升级**：改数据库结构就在 `src-tauri/migrations/` 加迁移（再在 `migrations.rs` 的 `STEPS` 里登一版），不改旧记录的含义；升级前先用 SQLite Backup API 备份到 `backups/peck-<时间>-before-v<新版>.db`（空库不备份）；比自己新的 schema 拒绝写入。
 - **影子仓库**：独立的 `GIT_DIR`、`GIT_WORK_TREE`，每个任务存前后两棵树。`peck.db` 和 `shadow/` 要一起备份。
 - 点开项目时 Peck 会往项目里写两样：补说明文件和 Skill 文件夹的软链接（只一次）、装「每个项目都装」的插件（见「插件」）。别的不动。项目里的 `.peck/` 是旧版本留下的，Peck 不读（照 `.gitignore`）。
 - 不读 `~/.claude/`（Claude 桌面 App 和 Claude Code 共用的个人目录）；Claude Code 这个引擎自己的登录、模型列表、额度照旧。
@@ -331,7 +332,7 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
 - **菜单栏和通知**（`tray.rs`）：空闲、在跑、等你；做完、失败、停下、等你批或答发通知（Peck 在最前面时不发）。
 - **图标**：`scripts/menubar-icons.mjs`、`scripts/app-icons.sh` 从 `src/vendor/peck/marks/` 出图到 `src-tauri/icons/`。
 - **贴图、拖图**：`tauri.conf.json` 设 `dragDropEnabled: false`，HTML5 拖放才能把图拖进输入框。
-- **键盘**（`src/App.tsx`）：⌘N、⌘L、⌘.、⌘[ ⌘]（上一个 / 下一个任务）、⌘1–⌘3、⌘,、Esc。
+- **键盘**（`src/App.tsx`）：⌘N、⌘L、⌘.、⌘[ ⌘]（上一个 / 下一个任务）、⌘1–⌘4（右栏 FILES、ONE SHOT、PROMPT、TERM）、⌘,、Esc。
 
 ## Key 和模拟 / 真实（`src-tauri/src/api/`）
 
@@ -362,9 +363,11 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 | `src-tauri/src/{lib,commands,state,events}.rs` | 启动和恢复、IPC、共享状态、推给界面的事件 |
 | `src-tauri/src/{run,flow,agent,process,mode}.rs` | 在跑的登记和 Peck Loop、CLI 共用的发任务（`claim_run` 占号、`Lifecycle` 前后快照和收尾、`abandon` 占了号出错时放开项目）、任务记录里的计划、找 CLI、进程组、数据目录和模拟 / 真实 |
 | `src-tauri/src/{store,migrations,workspace,snapshot,watch}.rs` | 存储和迁移、项目和校验、快照、忽略规则 |
+| `src-tauri/src/prompts.rs` | 提示词库的增删改查和 IPC（见「数据存放」） |
 | `src-tauri/{defaults,integrations,tests/fixtures/gateway}/` | 模型目录、价格表、自带插件（`plugins/`）、插件库的源（`library/`）；状态栏脚本；Gateway 夹具 |
 | `src/App.tsx`、`src/lib/` | 编排和状态；IPC（`ipc.ts`，浏览器里转给 `?mock`）、设置、事件 → 界面（`agentView.ts`） |
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳和各页；方案里还没有的样式和身份色 |
 | `src/shell/Plugins.tsx` | 插件的界面：设置 → PLUGINS 的两块、项目设置 → PLUGINS |
 | `src/shell/Memory.tsx` | 记忆：设置 → MEMORY、项目设置 → MEMORY 共用的列表（改字、删、自己记一条） |
+| `src/shell/PromptLibrary.tsx` | 右栏 PROMPT：搜索、列表、复制、放进输入框、新加和改的小窗；规整规则在 `src/lib/prompts.ts`（和 `?mock` 共用） |
 | `src/dev/`、`src/vendor/peck/` | `?mock` 的假数据和剧本；同步来的视觉 |

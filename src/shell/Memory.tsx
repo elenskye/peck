@@ -1,10 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ipc, type MemoryGroup, type MemoryNote } from "@/lib/ipc";
-import { ago, shortenHomePath } from "@/lib/utils";
+import { ago, cn, shortenHomePath } from "@/lib/utils";
 import { Btn, Modal, Row } from "@/ui";
 
-/** 多行的框，跟着字变高（记忆的改字、记一条）。Esc 交给 `onEscape`，不关小窗；⌘↵ 交给 `onSubmit`。 */
-const GrowText: React.FC<{ value: string; onChange: (v: string) => void; onSubmit: () => void; onEscape?: () => void; placeholder?: string; label: string; disabled?: boolean; autoFocus?: boolean }> = ({ value, onChange, onSubmit, onEscape, placeholder, label, disabled, autoFocus }) => {
+/** 多行的框，跟着字变高（记忆的改字、记一条；提示词的正文）。Esc 交给 `onEscape`，不关小窗；⌘↵ 交给 `onSubmit`。 */
+export const GrowText: React.FC<{ value: string; onChange: (v: string) => void; onSubmit: () => void; onEscape?: () => void; placeholder?: string; label: string; disabled?: boolean; autoFocus?: boolean; className?: string }> = ({ value, onChange, onSubmit, onEscape, placeholder, label, disabled, autoFocus, className }) => {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -17,7 +17,7 @@ const GrowText: React.FC<{ value: string; onChange: (v: string) => void; onSubmi
     if (autoFocus && el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   }, [autoFocus]);
   return (
-    <textarea ref={ref} className="memo-edit" aria-label={label} placeholder={placeholder} rows={2} spellCheck={false} disabled={disabled} value={value}
+    <textarea ref={ref} className={cn("memo-edit", className)} aria-label={label} placeholder={placeholder} rows={2} spellCheck={false} disabled={disabled} value={value}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {
         if (e.nativeEvent.isComposing) return;

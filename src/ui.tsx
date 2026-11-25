@@ -6,7 +6,7 @@ import { cn, type DotKind } from "@/lib/utils";
 export type IconName =
   | "check" | "x" | "play" | "ask" | "bang" | "term" | "file" | "folder" | "shield" | "globe" | "trash" | "pen"
   | "undo" | "bell" | "send" | "out" | "clock" | "lock" | "plus" | "expand" | "collapse" | "chat" | "triR" | "triD"
-  | "stop" | "gear" | "log" | "oneshot" | "files" | "archive";
+  | "stop" | "gear" | "log" | "oneshot" | "files" | "archive" | "prompt";
 
 export const Icon: React.FC<{ name: IconName; size?: 12 | 16 | 24; className?: string }> = ({ name, size = 16, className }) => (
   <i aria-hidden="true" className={cn("pk-i", `pk-i--${name}`, size !== 16 && `pk-i--${size}`, className)} />

@@ -507,6 +507,24 @@ export const ipc = {
     return invoke<AgentEvent>("memory_review", { runId, keep, skip });
   },
 
+  // ── 提示词库（v1.2.0，prompts.rs）：全局一份，都返回全部（最近改的在上）──
+  async promptList(): Promise<PromptItem[]> {
+    if (isMockMode()) return mockIpc.promptList();
+    return invoke<PromptItem[]>("prompt_list");
+  },
+  async promptAdd(title: string, body: string): Promise<PromptItem[]> {
+    if (isMockMode()) return mockIpc.promptAdd(title, body);
+    return invoke<PromptItem[]>("prompt_add", { title, body });
+  },
+  async promptUpdate(id: string, title: string, body: string): Promise<PromptItem[]> {
+    if (isMockMode()) return mockIpc.promptUpdate(id, title, body);
+    return invoke<PromptItem[]>("prompt_update", { id, title, body });
+  },
+  async promptDelete(id: string): Promise<PromptItem[]> {
+    if (isMockMode()) return mockIpc.promptDelete(id);
+    return invoke<PromptItem[]>("prompt_delete", { id });
+  },
+
   // ── 后台命令 ──
   /** 这个项目的后台命令和留着的 dev server。 */
   async backgroundList(workspaceId: string): Promise<BgInfo[]> {
@@ -680,6 +698,9 @@ export interface WorktreeApply { applied: string[]; conflicts: string[]; record:
 export interface MemoryNote { id: string; text: string; sourceRun?: string | null; createdAt: number }
 /** 设置 → MEMORY（v1.1.4）的一块：一个项目和它的记忆（移出列表的项目有记忆才列）。 */
 export interface MemoryGroup { workspaceId: string; name: string; path: string; hidden: boolean; notes: MemoryNote[] }
+
+/** 提示词库的一条（prompts.rs）：正文照原样，`{占位}` 不解析。 */
+export interface PromptItem { id: string; title: string; body: string; createdAt: number; updatedAt: number }
 
 /** 后台命令（harness/background.rs）。 */
 export interface BgInfo {

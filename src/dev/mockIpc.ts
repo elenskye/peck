@@ -5,6 +5,7 @@ import {
   MOCK_EVENTS,
   MOCK_FILES,
   MOCK_HIDDEN,
+  MOCK_PROMPTS,
   MOCK_RUNS,
   type MockDiff,
   MOCK_SESSIONS,
@@ -13,9 +14,10 @@ import {
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
 import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, CompactArgs, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
+import type { AllowRule, BgInfo, CompactArgs, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, PromptItem, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
+import { PROMPT_BODY_MAX, PROMPT_TITLE_MAX, tidyPrompt } from "@/lib/prompts";
 import { boardRound, rosterEvent, spawnRound } from "@/dev/agentsMock";
 import type { ApiConfig, ApiStatus } from "@/lib/api";
 import type {
@@ -899,6 +901,28 @@ export const mockIpc = {
     return structuredClone(event);
   },
 
+  // ── 提示词库（v1.2.0）：和 prompts.rs 一样规整、一样排（最近改的在上）──
+  async promptList(): Promise<PromptItem[]> {
+    return sortedPrompts();
+  },
+  async promptAdd(title: string, body: string): Promise<PromptItem[]> {
+    const clean = cleanPrompt(title, body);
+    const at = promptStamp();
+    promptState.push({ id: `prompt-${++promptCounter}`, ...clean, createdAt: at, updatedAt: at });
+    return sortedPrompts();
+  },
+  async promptUpdate(id: string, title: string, body: string): Promise<PromptItem[]> {
+    const clean = cleanPrompt(title, body);
+    const target = promptState.find((p) => p.id === id);
+    if (!target) throw new Error("这一条不在了。");
+    Object.assign(target, clean, { updatedAt: promptStamp() });
+    return sortedPrompts();
+  },
+  async promptDelete(id: string): Promise<PromptItem[]> {
+    promptState = promptState.filter((p) => p.id !== id);
+    return sortedPrompts();
+  },
+
   // ── 后台命令 ──
   async backgroundList(workspaceId: string): Promise<BgInfo[]> {
     return structuredClone(Object.values(serverState[workspaceId] ?? {}));
@@ -954,6 +978,21 @@ const memoryState: Record<string, MemoryNote[]> = {
   ],
 };
 const serverState: Record<string, Record<string, BgInfo>> = {};
+
+// ── 提示词库（v1.2.0，演示）──
+let promptState: PromptItem[] = emptyPreview ? [] : structuredClone(MOCK_PROMPTS);
+let promptCounter = 0;
+const sortedPrompts = () => structuredClone([...promptState].sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt));
+/** 和后端 `prompts::clean` 一样：规整再校验。 */
+function cleanPrompt(title: string, body: string): { title: string; body: string } {
+  const t = tidyPrompt(title, body);
+  if (!t.title || !t.body.trim()) throw new Error("标题和正文都要写。");
+  if ([...t.title].length > PROMPT_TITLE_MAX) throw new Error(`标题最多 ${PROMPT_TITLE_MAX} 个字。`);
+  if (new TextEncoder().encode(t.body).length > PROMPT_BODY_MAX) throw new Error(`正文最多 ${PROMPT_BODY_MAX / 1024} KB。`);
+  return t;
+}
+/** 改的时间：一定比最新的那条晚。 */
+const promptStamp = () => Math.max(Date.now(), ...promptState.map((p) => p.updatedAt + 1));
 
 // ── 统一事件的任务（CLI 引擎、Peck Loop、ONE SHOT）：回放 ──
 /** 项目设置 SKILLS 的演示数据（v0.10 C3）：slashList 那几个加上批进来的。 */
