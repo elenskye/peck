@@ -161,7 +161,9 @@ fn set_activity(app: &AppHandle, activity: Activity) {
                     }
                     let bytes = RUN[frame % RUN.len()];
                     let handle = app.clone();
-                    if app.run_on_main_thread(move || set_icon(&handle, bytes)).is_err() {
+                    // 排队到主线程的这段时间里可能已经切到空闲、等你：到时再核对一次，不然会停在跑动的那一帧上。
+                    let still = move |app: &AppHandle| app.state::<TrayState>().current.lock().map(|c| c.1 == generation).unwrap_or(false);
+                    if app.run_on_main_thread(move || if still(&handle) { set_icon(&handle, bytes) }).is_err() {
                         break;
                     }
                     frame += 1;
