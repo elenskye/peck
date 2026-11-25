@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-25。**在做 v1.2.0**（分 Phase，表和状态在 roadmap「Phase」；版本号收尾才改，现在还写 1.1.12）：Phase 1–3 做完、已提交。正式版是 **v1.1.12**，已装进 /Applications（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
+更新：2026-11-25。**在做 v1.2.0**（分 Phase，表和状态在 roadmap「Phase」；版本号收尾才改，现在还写 1.1.12）：Phase 1–4 做完、已提交。正式版是 **v1.1.12**，已装进 /Applications（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
 
 ## v1.2.0 在做
 
@@ -9,9 +9,16 @@
   - 数据库到 **schema 12**：`0012_prompts.sql` 加 `prompts` 表（全局一份、不分项目），`prompts.rs` 增删改查和 4 个 IPC；升级照旧先备份 `before-v12`。存法和规整见 architecture「数据存放」。
   - 右栏新页签 **PROMPT**（ONE SHOT 和 TERM 之间，⌘1–⌘4 是 FILES、ONE SHOT、PROMPT、TERM），`src/shell/PromptLibrary.tsx`，规整规则前端和 `?mock` 共用 `src/lib/prompts.ts`；样子见 design「右栏」。箭头接的是 ONE SHOT 那个 `onToTask`，另外会收回宽栏。
   - 顺手（auditor 提的）：小窗、大图开着时快捷键只认 ⌘.（以前 ⌘1–⌘4、⌘N 会把小窗连同没存的字卸掉）。
-  - `{占位}` 只存、照原样显示；插进输入框时选中占位是 Phase 4。没加依赖。
+  - `{占位}` 在库里只存、照原样显示（插进输入框见 Phase 4）。没加依赖。
+- **Phase 4 输入框里调提示词**（PLOOP）：
+  - `/` 弹层按光标算（`slashAt(text, cursor)`）：整句只有「/几个字」时 `/ 命令` 在前、`/ 提示词` 在后，句中（空格、换行后）只列提示词；网址、路径、选了一段、输入法组字时不弹。样子和规则见 design「输入框」。
+  - 选了提示词只换「/查询词」（`MarkdownEditor` 的 `insertPrompt`，先核对那几个字还在）；占位照 snippet 的做法用 CodeMirror 的 StateField 记：选中第一个、Tab 跳下一个（排在列表缩进前面），光标走出所有占位、Esc、撤销插入就整组退出（auditor 指出以前留着没填的会一直抢列表的 Tab）。字面的 `{` 写 `\{`，代码里的花括号不算占位；复制和 PROMPT 的箭头也把 `\{` 换成 `{`。占位规则在 `src/lib/prompts.ts`（`expandPrompt`）。
+  - 顺手：弹层里说明太长会压到命令名上（`/compact` 那行），改成名字照全、说明省略；↑↓ 选到下面会滚出来（以前选到第 8 个以后看不见）；插件命令只在句首时读。
+  - 没加依赖，数据库没动。
 - **验证（Phase 3）**：沙箱里全量 `cargo test` 过（374 个，要套沙箱的跳过），新加的：新库建表不备份、从 schema 11 升到 12 先备份（备份还是 11、没有新表、旧数据都在）、再开不再备份；增删改查和排序、规整和上限、重开还在。`pnpm check`、`pnpm build` 过。`?mock` 明暗都看了：加（SAVE、⌘↵）、改（排到最上；只加末尾空白 SAVE 不亮）、删（点两下，焦点回到搜索框）、搜（`{`、正文里的词、两个词、搜不到）、复制（拿到的是正文、绿勾）、放进输入框（接在后面隔空行、宽栏收回、没项目时灰）、⌘1–⌘4（小窗开着时不切）、`&empty` 的空状态。
 - **没验的（Phase 3）**：原生窗口里真走 Rust 的那一遍（只有 Rust 测试和 `?mock`）；笔悬停才露（离屏截图没有鼠标和焦点，只看了样式规则）；系统剪贴板（`?mock` 里换掉了 `navigator.clipboard`）；正式数据的升级测试（版本收尾做）。
+- **验证（Phase 4）**：`pnpm check` 过；纯函数（`slashAt`、`expandPrompt` 含代码里的花括号、`matchPrompts`）用 node 跑了一个临时检查脚本，48 条都过（不进仓库）。auditor 审了一遍，提的真缺陷（占位抢 Tab）和几条建议改了。`?mock` 明暗：句首 `/` 两组小标题、↓ 走到提示词自己滚出来、`/compact` 那行不压字；`/补` ↵ 插进来选中 `{函数名}`、打字替换、Tab 选中 `{边界情况}`、填完再 Tab 不管；句中「改完以后 /补 再提交」只换「/补」、后面照留，句中只列提示词；网址、路径、`a/`、选一段不弹；Esc 关、接着打字再弹；列表里插一段、留着没填的点到上面一行，Tab 是缩进；Esc 退出占位；点进第二个占位再 Tab 不管；撤销插入占位一起没；列表 Tab / ⇧Tab 照旧；假的组字事件下组字时不弹、组完才弹；选 CLI（Claude Code）插一段发出去，YOU 就是那段字。
+- **没验的（Phase 4）**：原生窗口里用真中文输入法打（只有假的 composition 事件；组字时的回车靠 CodeMirror 和原来的判断，没真按过；选中占位后直接用拼音替换也没真打过）；真鼠标点弹层（只用 JS 点过）；`\{` 在复制、箭头里换成 `{` 只有纯函数的检查（样例里没有 `\{`）。
 
 ## 这一版做了什么（1.1.12）
 
@@ -61,6 +68,8 @@
 
 | 问题 | 建议 |
 | --- | --- |
+| 句中 `/` 按标题包含筛：空格后打路径（` /src`）时标题里正好有这几个字会弹，这时 ↵ 是插提示词不是发出去（打下一个 `/` 就收起） | Esc 关掉再 ↵ |
+| 占位 Tab 只往后跳、不绕回，⇧Tab 不回上一个（还是退缩进）；光标走出去就整组退出，回头要自己选那几个字；撤销、重做不找回占位；PROMPT 的箭头放进来的不选占位 | 用一阵看要不要 |
 | 关了轮数上限，一个任务（定时任务也是）能一直跑到每月花费上限才停 | 长任务前看一眼花费上限 |
 | 在 Peck 里开发 Peck 时装不了正式版（换包会把自己换掉、签名要钥匙串）；每装一次新包第一次打开都要点几个钥匙串框 | 装包留给站主或 Claude Code，攒一批再装 |
 | 对话里的图超了预算，去掉的旧图模型要再看得自己重新读（落盘的还在） | 记着 |
@@ -126,7 +135,7 @@
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、TERM 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。**1.2.0 新加的**：右栏 PROMPT 的页签图标（`.pk-i--prompt`，占位：花括号夹一个点）、提示词列表（`.prompt-*`：复制后的绿勾和底色、悬停才露的笔、朝左的箭头是 `send` 翻过来）和它的小窗（`.prompt-form`）。1.1.12 新加的：顶栏收起左右栏的按钮和图标（`.top-side`、`.pk-i--side-l`、`.pk-i--side-r` 和 `-off`）、不带箭头的 `+`。1.1.11 新加的：审批卡片的原因标签（`.agent-card-reason`）和「看命令」、ASK 的页签（`.ask-tab`）和 Other 那一行（`.agent-other`）、YOU 下面的小图和小片（`.you-attached`、`.you-shot`）、输入框拖放时的虚线（`.composer.is-drop`）、任务头的轮数和子代理小片（`.task-round--warn`、`.task-agents`）、子代理那一步的「N/上限 轮」、命令那一步点开的 `$ 命令` 行（`.out-cmd`）。1.1.10 新加的：中栏 15px 正文、卡片和标题换 Body（方案里还是像素字）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、TERM 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。**1.2.0 新加的**：右栏 PROMPT 的页签图标（`.pk-i--prompt`，占位：花括号夹一个点）、提示词列表（`.prompt-*`：复制后的绿勾和底色、悬停才露的笔、朝左的箭头是 `send` 翻过来）和它的小窗（`.prompt-form`）；`/` 弹层里 `/ 提示词` 一组（标题加正文第一行，`.slash-row`）和输入框里没填的占位（`.cm-slot`：琥珀字加点线）。1.1.12 新加的：顶栏收起左右栏的按钮和图标（`.top-side`、`.pk-i--side-l`、`.pk-i--side-r` 和 `-off`）、不带箭头的 `+`。1.1.11 新加的：审批卡片的原因标签（`.agent-card-reason`）和「看命令」、ASK 的页签（`.ask-tab`）和 Other 那一行（`.agent-other`）、YOU 下面的小图和小片（`.you-attached`、`.you-shot`）、输入框拖放时的虚线（`.composer.is-drop`）、任务头的轮数和子代理小片（`.task-round--warn`、`.task-agents`）、子代理那一步的「N/上限 轮」、命令那一步点开的 `$ 命令` 行（`.out-cmd`）。1.1.10 新加的：中栏 15px 正文、卡片和标题换 Body（方案里还是像素字）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
 
 ## 留意
 
@@ -140,4 +149,4 @@
 
 ## 下一步
 
-v1.2.0 接着做 Phase 4（输入框里调提示词）、5、6；收尾（版本号、审查、升级测试、装正式版）由 Claude Code 做。这一版之后：自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。
+v1.2.0 接着做 Phase 5、6；收尾（版本号、审查、升级测试、装正式版）由 Claude Code 做。这一版之后：自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。

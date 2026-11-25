@@ -50,7 +50,8 @@
 | 跑着时发话 | 任务在跑（比如停在卡片上）时在输入框打一句 ↵ | PLOOP、Codex、Claude Code、Muse：过程里多一行 YOU；Grok：输入框上面排一片，这一轮做完自动发成下一句 |
 | 两个环 | 输入框右下角 | 左边 12 个点是上下文，右边实心弧是额度：PLOOP 点开「本月 $0.42 / $20」；Claude Code、Codex 点开两个窗口；Muse、Grok 读不到，虚线、点开原因加近 5 小时 / 7 天 |
 | 附图放大 | 输入框贴一张图，点小图 | 盖住窗口的大图，点一下或 Esc 关 |
-| 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
+| 斜杠命令 | 输入框打 `/` | `/ 命令`：Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数），下面 `/ 提示词` 5 条（↓ 走到那里自己滚出来）；`/undo` 发一句话给模型、`/model` 提示不转发 |
+| 插提示词 | peck 新任务页：句首打 `/补` ↵；句中写「改完以后 /补 再提交」光标停在「补」后面 ↵；CLI 也插一次发出去 | 句中只列 `/ 提示词`；只换「/补」，后面「再提交」照留；`{函数名}` 选中、打字替换，Tab 选中 `{边界情况}`，再 Tab 不管；没填的琥珀字加点线；在列表里插、点到上面一行或 Esc 以后 Tab 是缩进；`看 https://a.com/`、`改 /usr/`、`a/` 不弹；列表里 Tab / ⇧Tab 照旧；YOU 就是插进去的字 |
 | 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页两组卡片 + MCP SERVERS，点卡片开小窗（每个项目都装、按项目装和开关、它带的东西）；三个项目三种状态：notebook 装着旧版（卡片上青色版本号、小窗里 UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后项目设置的 SKILLS 多一行。在装着 Git Plan 的 peck 项目里发一个任务，做完后 recap 里多一行「Git Plan 提交了 …」 |
 | 提示词库（`mockData.ts` 的 `MOCK_PROMPTS`） | 右栏 PROMPT（⌘3）；`&empty` 看空的 | 5 条样例（「讲清楚一个文件」「补测试」带 `{占位}`）；NEW 加一条排到最上；笔改了排到最上；小窗 DELETE 点两下删；搜 `{`、「代码」、两个词（头上「1/4」）；点一行标题后绿勾；箭头放进输入框（宽栏收回；`&empty` 没项目时灰） |
 
@@ -59,6 +60,7 @@
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
 - **截清楚的图**（v1.1.11）：内置浏览器的面板常被缩小、截图糊。PLOOP 里用 `screenshot_page`；别处直接跑它的脚本：`osascript -l JavaScript -e "$(cat src-tauri/src/harness/tools/page.js)" <url> <out.png> 1360 860 <light|dark|空> 1 "<一段 JS，async 函数体>" 300`（参数顺序见脚本头）。每次是新开的页面，`?mock` 的状态要在那段 JS 里点出来；离屏时计时器变慢，JS 最多跑 30 秒；离屏的窗口没有焦点和鼠标，`:hover`、`:focus-within` 才露的东西（PROMPT 的笔）截不到；剪贴板在 JS 里换掉 `navigator.clipboard` 再读。
+- **在脚本里改输入框**（CodeMirror）：`.cm-content` 上 `focus()` 以后 `document.execCommand('insertText', false, '…')` 打字；按键在 `.cm-content` 上派 `keydown`（带 `key`、`keyCode`）；读内容和选区用 `document.querySelector('.composer .cm-content').cmTile.root.view.state`。假的 `compositionstart` / `compositionend` 只能验弹不弹：Safari 里 `insertText` 过 20ms CodeMirror 就当组完了，这时派的回车会变成换行（真输入法组字时 CodeMirror 不收按键，要在原生窗口里用真输入法验）。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
 
 ## 类型和构建

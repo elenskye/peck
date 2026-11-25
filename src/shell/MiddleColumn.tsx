@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, compactRun, costCell, costRows, foldEvents, minusUsage, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
-import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
+import { ipc, type ImageInput, type PromptItem, type Schedule, type SlashList } from "@/lib/ipc";
 import { baseName, imageType, splitAttachments } from "@/lib/attachments";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
 import type { AppSettings } from "@/lib/settings";
@@ -13,7 +13,8 @@ import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, runState, span, timer
 import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, Lightbox, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
-import { MarkdownEditor } from "@/shell/MarkdownEditor";
+import { MarkdownEditor, type Caret, type EditorHandle } from "@/shell/MarkdownEditor";
+import { matchPrompts } from "@/lib/prompts";
 import { useScrollMemory } from "@/lib/scrollMemory";
 import { dayClock, scheduleWhen } from "@/lib/schedules";
 import { PLOOP_ID, cliModelOf, pickable, ploopMain, sendEffort, whoShort, whoText } from "@/shell/ModelPicker";
@@ -405,31 +406,61 @@ const Composer: React.FC<Props & {
     const q = mention.query.toLowerCase();
     return project.tasks.filter((t) => t.id !== task?.id && t.runCount > 0 && (!q || t.title.toLowerCase().includes(q))).slice(0, 6);
   }, [mention?.query, project, task?.id]);
-  // 斜杠命令（v0.10 C2）：整句只有「/几个字」时弹，Peck 自己的在前，再是项目和你的命令文件。
-  const slashQ = dismissed === draft ? null : slashAt(draft);
+  // 斜杠命令（v0.10 C2）和提示词（v1.2.0）：按光标算。整句只有「/几个字」时命令在前（Peck 自己的、再是插件的）、提示词在后；
+  // 空格、换行后面的「/几个字」只列提示词。选了一段、输入法组字时不弹。
+  const editorRef = useRef<EditorHandle>(null);
+  const [caret, setCaret] = useState<Caret | null>(null);
+  const at = caret && caret.text === draft ? caret : { from: draft.length, to: draft.length, composing: false };
+  const slashQ = dismissed === draft || at.composing || at.from !== at.to ? null : slashAt(draft, at.to);
   const slashOpen = !!slashQ;
+  const wantCommands = !!slashQ?.head;
   const [slashData, setSlashData] = useState<SlashList | null>(null);
+  const [prompts, setPrompts] = useState<PromptItem[] | null>(null);
+  // 插件的命令只在句首时读（要扫命令文件）；提示词每次弹都重读（PROMPT 里可能刚改过）。
   useEffect(() => {
-    if (!slashOpen) return;
+    if (!wantCommands) return;
     let live = true;
     ipc.slashList(projectKey).then((l) => { if (live) setSlashData(l); }).catch(() => { if (live) setSlashData(null); });
     return () => { live = false; };
-  }, [slashOpen, projectKey]);
+  }, [wantCommands, projectKey]);
+  useEffect(() => {
+    if (!slashOpen) return;
+    let live = true;
+    ipc.promptList().then((l) => { if (live) setPrompts(l); }).catch(() => { if (live) setPrompts(null); });
+    return () => { live = false; };
+  }, [slashOpen]);
   const slashItems = useMemo(() => {
-    if (!slashQ) return [];
+    if (!slashQ) return { commands: [] as SlashItem[], prompts: [] as PromptItem[] };
     const files: SlashItem[] = (slashData?.commands ?? [])
       .filter((c) => !PECK_COMMANDS.some((p) => p.name === c.name))
       .map((c) => ({ name: c.name, description: c.description, hint: c.hint, kind: "file", plugin: c.plugin }));
-    return matchSlash([...PECK_COMMANDS, ...files], slashQ.query).slice(0, 12);
-  }, [slashQ?.query, slashData]); // eslint-disable-line react-hooks/exhaustive-deps
+    return {
+      commands: slashQ.head ? matchSlash([...PECK_COMMANDS, ...files], slashQ.query).slice(0, 12) : [],
+      prompts: matchPrompts(prompts ?? [], slashQ.query).slice(0, 12),
+    };
+  }, [slashQ?.query, slashQ?.head, slashData, prompts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const slashCount = slashItems.commands.length + slashItems.prompts.length;
   const [note, setNote] = useState<SlashNote | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   useEffect(() => setNote(null), [projectKey, task?.id]);
   const [active, setActive] = useState(0);
-  useEffect(() => setActive(0), [mention?.query, slashQ?.query]);
-  const popKind: "mention" | "slash" | null = mention && others.length > 0 ? "mention" : slashQ && slashItems.length > 0 ? "slash" : null;
+  useEffect(() => setActive(0), [mention?.query, slashQ?.query, slashQ?.head]);
+  const popKind: "mention" | "slash" | null = mention && others.length > 0 ? "mention" : slashQ && slashCount > 0 ? "slash" : null;
   const popping = popKind !== null;
-  const popCount = popKind === "mention" ? others.length : slashItems.length;
+  const popCount = popKind === "mention" ? others.length : slashCount;
+  // ↑↓ 选到滚出去的那一行：滚到看得见（一组的第一行连它的小标题一起露出来）。
+  useEffect(() => {
+    const box = popRef.current;
+    const on = box?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!box || !on) return;
+    const head = on.previousElementSibling?.classList.contains("mention-head") ? on.previousElementSibling : on;
+    const b = box.getBoundingClientRect();
+    const top = head.getBoundingClientRect().top;
+    const bottom = on.getBoundingClientRect().bottom;
+    if (top < b.top) box.scrollTop -= b.top - top;
+    else if (bottom > b.bottom) box.scrollTop += bottom - b.bottom;
+  }, [active, popKind, slashQ?.query]);
   const pick = (t: { id: string; title: string }) => {
     if (!mention) return;
     const title = t.title.replace(/[[\]()\\`]/g, " ").trim() || "旧任务";
@@ -504,6 +535,17 @@ const Composer: React.FC<Props & {
   const pickSlash = (item: SlashItem) => {
     if (item.instant) { onDraft(""); void runSlash(item.name, "").catch(say); return; }
     onDraft(`/${item.name} `);
+  };
+  /** 选了提示词：只把「/查询词」换成正文（插在光标处），占位选中第一个。编辑器里已经不是这几个字（打得太快）就不动。 */
+  const pickPrompt = (p: PromptItem) => {
+    if (!slashQ) return;
+    const token = `/${slashQ.query}`;
+    editorRef.current?.insertPrompt(slashQ.start, slashQ.start + token.length, p.body, token);
+  };
+  const pickAt = (i: number) => {
+    const n = slashItems.commands.length;
+    if (i < n) pickSlash(slashItems.commands[i]);
+    else pickPrompt(slashItems.prompts[Math.min(i - n, slashItems.prompts.length - 1)]);
   };
   // 贴图、拖图进输入框（v0.8）：最多 6 张，每张 6MB 以内；发出去以后清掉。
   const [shots, setShots] = useState<Array<ImageInput & { url: string; name: string }>>([]);
@@ -580,7 +622,7 @@ const Composer: React.FC<Props & {
   // ↵：弹层开着就插选中的那个；不然发出去。
   const submit = () => {
     if (popKind === "mention") { pick(others[Math.min(active, others.length - 1)]); return; }
-    if (popKind === "slash") { pickSlash(slashItems[Math.min(active, slashItems.length - 1)]); return; }
+    if (popKind === "slash") { pickAt(Math.min(active, slashCount - 1)); return; }
     send();
   };
   const onKey = (key: "up" | "down" | "escape") => {
@@ -597,16 +639,27 @@ const Composer: React.FC<Props & {
       {quota && !busy && <QuotaLine quota={quota} />}
       {note && <SlashNoteBar note={note} onClose={() => setNote(null)} />}
       {popKind === "slash" && (
-        <AbovePop anchor={boxRef} label="斜杠命令">
-          <div className="pk-menu-scroll">
-            <p className="mention-head t-label">/ 命令</p>
-            {slashItems.map((c, i) => (
-              <button key={`${c.kind}-${c.name}`} type="button" role="option" aria-selected={i === active} className={cn("pk-menu-item", i === active && "is-on")} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
+        <AbovePop anchor={boxRef} label={slashItems.commands.length ? "斜杠命令和提示词" : "提示词"}>
+          <div className="pk-menu-scroll" ref={popRef}>
+            {slashItems.commands.length > 0 && <p className="mention-head t-label">/ 命令</p>}
+            {slashItems.commands.map((c, i) => (
+              <button key={`${c.kind}-${c.name}`} type="button" role="option" aria-selected={i === active} className={cn("pk-menu-item slash-row", i === active && "is-on")} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
                 <Dot kind="" />
                 <b className="slash-name t-code">/{c.name}{c.hint ? <em> {c.hint}</em> : null}</b>
                 <span className="slash-desc">{c.description}{c.kind === "file" && c.plugin ? ` · ${c.plugin}` : ""}</span>
               </button>
             ))}
+            {slashItems.prompts.length > 0 && <p className="mention-head t-label">/ 提示词</p>}
+            {slashItems.prompts.map((p, j) => {
+              const i = slashItems.commands.length + j;
+              return (
+                <button key={p.id} type="button" role="option" aria-selected={i === active} className={cn("pk-menu-item slash-row", i === active && "is-on")} onMouseDown={(e) => e.preventDefault()} onClick={() => pickPrompt(p)}>
+                  <Dot kind="" />
+                  <b className="mention-title">{p.title}</b>
+                  <span className="slash-desc">{p.body.split("\n").find((l) => l.trim())?.trim()}</span>
+                </button>
+              );
+            })}
           </div>
         </AbovePop>
       )}
@@ -660,7 +713,7 @@ const Composer: React.FC<Props & {
       <div className={cn("composer-in", locked && "is-off")}
         onPasteCapture={(e) => { if (!e.clipboardData.getData("text/plain") && addFiles([...e.clipboardData.files], false)) e.preventDefault(); }}>
         <span className="pk-prompt">›</span>
-        <MarkdownEditor value={draft} onChange={onDraft} onSubmit={submit} onKey={onKey} placeholder={placeholder} disabled={locked} ariaLabel="一句话说要做什么" />
+        <MarkdownEditor ref={editorRef} value={draft} onChange={onDraft} onSubmit={submit} onKey={onKey} onCaret={setCaret} placeholder={placeholder} disabled={locked} ariaLabel="一句话说要做什么" />
       </div>
       {/* 谁来干在左栏 AGENTS 里选；这里一行短的写现在是谁（用着预设就写预设名），悬停看全的，点它跳过去。 */}
       <button type="button" className="composer-who" title={`${whoText(who, settings, entries)}\n在左栏 AGENTS 里换`} onClick={onShowAgents}>

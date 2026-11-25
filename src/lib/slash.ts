@@ -33,10 +33,17 @@ export const CLI_ONLY = new Set([
   "usage", "add-dir", "export", "rewind", "context", "statusline", "settings", "approvals", "diff", "fork", "skills",
 ]);
 
-/** 整句只有 `/` 加几个字（还没写参数）：弹列表。 */
-export function slashAt(draft: string): { query: string } | null {
-  const m = draft.match(/^\/([A-Za-z0-9_.:-]{0,130})$/);
-  return m ? { query: m[1] } : null;
+/** 光标前的 `/查询词`（v1.2.0 接上提示词）：`/` 在整句开头或空格、换行后面，光标停在这个词末尾（后面是空白或没字了）才弹。
+ *  `head`：整句只有它，命令在前、提示词在后；不然只列提示词。`/` 前面不是空白的（网址、路径、`a/b`）不弹。
+ *  `start` 是 `/` 的位置，选了提示词就把 `start` 到光标换掉。 */
+export function slashAt(text: string, cursor = text.length): { start: number; query: string; head: boolean } | null {
+  if (cursor < 0 || cursor > text.length) return null;
+  const after = text.slice(cursor);
+  if (after && !/^\s/.test(after)) return null;
+  const m = /(?:^|\s)\/([^\s/]{0,130})$/.exec(text.slice(0, cursor));
+  if (!m) return null;
+  const start = cursor - m[1].length - 1;
+  return { start, query: m[1], head: start === 0 && !after.trim() };
 }
 
 /** 这句话是不是一个斜杠命令：`/名字` 后面空格接参数（可以换行）。 */

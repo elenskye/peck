@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ipc, type PromptItem } from "@/lib/ipc";
-import { PROMPT_TITLE_MAX, tidyPrompt } from "@/lib/prompts";
+import { PROMPT_TITLE_MAX, promptText, tidyPrompt } from "@/lib/prompts";
 import { ago, cn, copyText } from "@/lib/utils";
 import { Btn, Field, Icon, ModHead, Modal, Twinkle } from "@/ui";
 import { GrowText } from "@/shell/Memory";
@@ -39,7 +39,7 @@ export const PromptPanel: React.FC<{
   const shown = useMemo(() => (list ?? []).filter((p) => matches(p, words)), [list, query]); // eslint-disable-line react-hooks/exhaustive-deps
   const copy = async (p: PromptItem) => {
     try {
-      await copyText(p.body);
+      await copyText(promptText(p.body));
       setCopied(p.id);
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(null), 1200);
@@ -70,7 +70,7 @@ export const PromptPanel: React.FC<{
                   </button>
                   <span className="prompt-acts">
                     <Btn v="ghost" sm square className="prompt-edit-btn" aria-label={`改「${p.title}」`} onClick={() => setEditing(p)}><Icon name="pen" size={12} /></Btn>
-                    <Btn v="ghost" sm square className="prompt-to" aria-label={`把「${p.title}」放进输入框`} disabled={!canInsert} onClick={() => onToTask(p.body)}><Icon name="send" size={12} /></Btn>
+                    <Btn v="ghost" sm square className="prompt-to" aria-label={`把「${p.title}」放进输入框`} disabled={!canInsert} onClick={() => onToTask(promptText(p.body))}><Icon name="send" size={12} /></Btn>
                   </span>
                 </div>
               ))}

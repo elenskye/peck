@@ -932,7 +932,10 @@ body { overflow: hidden; }
 /* 斜杠命令（v0.10 C2）：弹层里的一行、输入框上方的结果块。 */
 .mention-pop .pk-menu-item b.slash-name { flex: none; font-weight: 400; letter-spacing: 0; }
 .mention-pop .pk-menu-item b.slash-name em { font-style: normal; color: var(--color-text-3); }
-.mention-pop .pk-menu-item .slash-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.mention-pop .pk-menu-item .slash-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+/* 命令和提示词（v1.2.0）一样排：名字、标题照全，说明、正文第一行占剩下的、放不下省略（以前说明太长会压到名字上）；第二组的小标题和上一组隔开一点。 */
+.mention-pop .pk-menu-item.slash-row { grid-template-columns: 7px auto minmax(0, 1fr); }
+.mention-pop .pk-menu-item + .mention-head { margin-top: var(--space-3); }
 .slash-note { flex: none; margin: 0 0 var(--space-4); gap: var(--space-4); align-items: flex-start; padding-top: var(--space-3); padding-bottom: var(--space-3); }
 .slash-note--quiet { background: var(--color-line-strong); }
 .slash-note--quiet:before { background: var(--color-panel-2); }

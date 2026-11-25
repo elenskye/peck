@@ -369,5 +369,5 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳和各页；方案里还没有的样式和身份色 |
 | `src/shell/Plugins.tsx` | 插件的界面：设置 → PLUGINS 的两块、项目设置 → PLUGINS |
 | `src/shell/Memory.tsx` | 记忆：设置 → MEMORY、项目设置 → MEMORY 共用的列表（改字、删、自己记一条） |
-| `src/shell/PromptLibrary.tsx` | 右栏 PROMPT：搜索、列表、复制、放进输入框、新加和改的小窗；规整规则在 `src/lib/prompts.ts`（和 `?mock` 共用） |
+| `src/shell/PromptLibrary.tsx` | 右栏 PROMPT：搜索、列表、复制、放进输入框、新加和改的小窗；规整规则和占位（`expandPrompt`）在 `src/lib/prompts.ts`（和 `?mock` 共用）。输入框 `/` 里插提示词：弹层在 `MiddleColumn.tsx`（`slashAt` 按光标算），插入和占位 Tab 在 `MarkdownEditor.tsx` |
 | `src/dev/`、`src/vendor/peck/` | `?mock` 的假数据和剧本；同步来的视觉 |
