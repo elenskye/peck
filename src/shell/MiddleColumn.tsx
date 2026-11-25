@@ -158,7 +158,7 @@ const MissingFolder: React.FC<{ project: ProjectOverview; onRelocate: (id: strin
   const [armed, setArmed] = useState(false);
   const { workspace, tasks } = project;
   return (
-    <section className="col" aria-label="对话">
+    <section className="col col-mid" aria-label="对话">
       <div className="pk-mod pk-mod--wait col-grow home">
         <ModHead label="MISSING" note={workspace.name} />
         <h1 className="t-hero">文件夹不在了</h1>
@@ -203,7 +203,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
 
   if (!task) {
     return (
-      <section className="col" aria-label="对话">
+      <section className="col col-mid" aria-label="对话">
         <div className="pk-mod col-grow home scroll">
           <ModHead label="NEW TASK" />
           <h1 className="t-hero">{project.workspace.name} 要做什么？</h1>
@@ -221,7 +221,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
   }
 
   return (
-    <section className="col" aria-label="对话">
+    <section className="col col-mid" aria-label="对话">
       <div className="col-grow scroll task-stack" ref={stackRef}>
         {runs.length === 0 && <div className="pk-mod"><p className="empty-line">在读这个任务…</p></div>}
         {runs.map((run, i) => (
@@ -840,7 +840,7 @@ const TaskModule: React.FC<{
         <span className="task-info">
           任务 {run.number} · {clock(run.startedAt)} 开始{running && run.files.length > 0 ? ` · 改了 ${run.files.length} 个文件` : ""}
           {/* PLOOP 到第几轮了（v1.1.11，用到八成变琥珀）。 */}
-          {running && view?.round && <> · <span className={cn(view.round.round >= view.round.max * 0.8 && "task-round--warn")}>第 {view.round.round}/{view.round.max} 轮</span></>}
+          {running && view?.round && <> · <span className={cn(view.round.max > 0 && view.round.round >= view.round.max * 0.8 && "task-round--warn")}>{view.round.max > 0 ? `第 ${view.round.round}/${view.round.max} 轮` : `第 ${view.round.round} 轮`}</span></>}
         </span>
         {running && view && view.agents.running + view.agents.queued > 0 && (
           <button type="button" className="pk-chip pk-chip--sm task-agents" title="跳到在跑的子代理"

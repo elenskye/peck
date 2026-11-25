@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-25。**v1.1.12 做完、已提交，还没装进 /Applications**：站主自己装（Peck 在跑时换包会把自己换掉，签名也要钥匙串）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-25。**v1.1.12 做完、已提交、已装进 /Applications**（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
 ## 这一版做了什么（1.1.12）
 
@@ -17,6 +17,9 @@
 9. （Claude Code）命令的 `CARGO_HOME` 用站主的 `~/.cargo`（以前每次全量重编）；沙箱里的命令带 `PECK_SANDBOX=seatbelt`，要套第二层沙箱的 14 个测试在沙箱里跳过（以前全量测试卡住跑不完）。
 10. （Claude Code）PLOOP 主角色选过的不再被悄悄换成第一个能用的（这一轮被换成了 Vertex 上的 Opus、令牌过期起不来）；Vertex 上的名字后面带 `· VERTEX`。
 11. （Claude Code）Anthropic 的思考带 `block_binding: drop_block`：换了版本工具说明变了，旧思考块不再让请求整个 400。
+12. （Claude Code，最后一轮）**任务能不限轮数**（站主问的）：设置 → GENERAL「每个任务最多几轮」左边一个开关，关了就不按轮数停（`roundsUnlimited`），任务头只写「第 N 轮」；靠每月花费上限和原地打转收尾。ONE SHOT、子代理照旧有上限。
+13. （Claude Code，最后一轮）**收了栏中栏不再拉满**：对话的每一块和输入框最宽 900px、居中（两栏都收时以前一行字有 1300px）。
+14. （Claude Code，最后一轮）**命令读得到站主的 git 身份**：带 `GIT_CONFIG_GLOBAL` 指到 `~/.gitconfig`（只读）；PLOOP 这一轮提交时只好自己在命令里带。被挡在 `.git` 上时卡片原因写「要写 .git」，以前写成「要写到项目外」。
 - 修了三个测试：worker 的轮数（上限改了）；CLI 收尾 Hook（Peck 给的临时目录带空格，测试拼的命令没加引号）；追加的那句（测试的 `drive` 改成先处理事件，以前全量并发时偶尔先跑到下一轮）。
 - 数据库没动（schema 11），没加依赖。
 
@@ -24,16 +27,18 @@
 
 - **自动测试**：在 Peck 的沙箱里全量 `cargo test` 连跑三遍都过（373 个；要套沙箱的 14 个在沙箱里跳过，这一版没在终端里跑）；`pnpm check`、`pnpm build` 过。新加：页面图按窗口、对话里的图一次去一批（没超不动、再超才去下一批、按张数、最新的一张总留）、轮数到 1000。
 - **`?mock`**（明暗）：PROJECTS 收起只剩头；`+` 没箭头；收左栏、收右栏、两个都收（中栏占满）、设置页里收；点「谁」展开左栏、⌘1 展开右栏；列表 Tab、⇧Tab、有序列表改编号。
-- **这一轮续跑**就是带着 `block_binding` 发的，没再 400。
+- **这一轮续跑**就是带着 `block_binding` 发的，没再 400。真 API 也试过：不带时改了工具说明再带回旧思考块是 400，带上 `drop_block` 照常答。
+- **最后一轮（Claude Code）**：终端里全量 `cargo test` 374 个都过（沙箱外，要套沙箱的那 14 个也真跑了）；`pnpm check`、`pnpm build` 过；`?mock` 看了收两栏时对话居中 900px、设置里不限的开关（关了这一行变灰）。
 - **没验的**：
-  - 正式版窗口里的这一版（站主装）：收起的栏重开 App 还收着没有。
+  - 正式版窗口里的这一版：收起的栏重开 App 还收着没有；不限轮数真跑到 1000 轮以上（只有设置读法的测试）。
   - 真模型：一次读 20 页扫描件（手上没有扫描件）；真断线时的重发（只有假模型的测试）。
   - 1.1.11 留下的：从访达、截图浮窗拖图进输入框，`+` 的系统选窗；PLOOP 会不会每条命令写 `description`、一次问完、看界面用 `screenshot_page`；挡住钥匙串后真起 Chrome 不弹框；Codex 的多问题卡片（默认模式不给提问工具）。
   - 更早的：Gemini 原生搜索（Key 额度用完）、Vertex（ADC 过期）、百炼新加坡（要国际站 Key）、Muse 会不会自己跑项目 Hook、钥匙串里的 MCP 变量、额度真到 85% 的提醒、Mathpix（没 Key）、通知横幅。
 
 ## 留给站主的
 
-- **装正式版**：`pnpm app:install`（第一次打开可能弹钥匙串授权框）。push 也是你做：`origin/main` 到 1.1.11，1.1.12 这一笔没推。
+- **push** 你做：`origin/main` 到 1.1.11，1.1.12 的两笔没推。
+- **设置 → GENERAL「每个任务最多几轮」**：现在存的是 400（旧版把你填的 1000 压成了 400）；要不限就把左边的开关关掉。
 - **废纸篓**：`agy-…`（Antigravity 的程序，223 MB）、`agy-link-…` 和以前的 `Peck.app.backup-*`，确认不要了自己清空。
 - **测试项目 tester** 批过信任（Grok 记进了 `~/.grok/trusted_folders.toml`，项目设置里 `trusted` 能关），里面有验收时加的记忆和几个样例文件。**git-plan-smoke** 里 Git Plan 提交过一笔 `243787f`（没 push）。
 - **Vertex**：要用先在终端跑 `gcloud auth application-default login`（ADC 过期）。
@@ -45,6 +50,8 @@
 
 | 问题 | 建议 |
 | --- | --- |
+| 关了轮数上限，一个任务（定时任务也是）能一直跑到每月花费上限才停 | 长任务前看一眼花费上限 |
+| 在 Peck 里开发 Peck 时装不了正式版（换包会把自己换掉、签名要钥匙串）；每装一次新包第一次打开都要点几个钥匙串框 | 装包留给站主或 Claude Code，攒一批再装 |
 | 对话里的图超了预算，去掉的旧图模型要再看得自己重新读（落盘的还在） | 记着 |
 | 真用完额度的 429 也会等满 5 次重发（约 2 分钟）才停 | 用一阵看要不要分开「限流」和「额度用完」 |
 | Vertex 上的 Claude 没带 `block_binding`：换了版本后续跑旧对话可能还是 400 | 开了 Vertex 再试 |

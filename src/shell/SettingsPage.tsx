@@ -224,8 +224,9 @@ const General: React.FC<Props> = ({ settings, onSettings, apiStatus, onRefreshAp
         <Field type="number" unit="USD" aria-label="每月花费上限（美元）" placeholder="不设" min={0} value={settings.costCap ?? ""} onChange={(e) => onSettings({ costCap: e.target.value === "" ? null : Math.max(0, Number(e.target.value)) })} />
       </Row>
       <SpendRow cap={settings.costCap} />
-      <Row name="每个任务最多几轮">
-        <BoundedNumber unit="轮" label="Peck Loop 每个任务最多几轮" min={5} max={1000} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} />
+      <Row name="每个任务最多几轮" off={settings.roundsUnlimited}>
+        <Switch label="限制每个任务的轮数" on={!settings.roundsUnlimited} onChange={(on) => onSettings({ roundsUnlimited: !on })} />
+        <BoundedNumber unit="轮" label="Peck Loop 每个任务最多几轮" min={5} max={1000} off={settings.roundsUnlimited} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} />
       </Row>
       <Row name="ONE SHOT 最多几轮">
         <BoundedNumber unit="轮" label="ONE SHOT 最多几轮" min={5} max={1000} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} />

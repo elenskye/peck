@@ -50,9 +50,11 @@ export interface AppSettings {
   notifyDone: boolean;
   /** 每月花费上限（美元）：Peck Loop（API）这个月花到这么多，下一次请求前停下。空着不管。 */
   costCap: number | null;
-  /** Peck Loop 一个任务最多几轮（v0.10，5–400，默认 40；后台发任务时读这里存的）。 */
+  /** Peck Loop 一个任务最多几轮（v0.10，5–1000，默认 40；后台发任务时读这里存的，跑着的任务每轮现读）。 */
   maxRounds: number;
-  /** ONE SHOT 最多几轮（v1.0.3，5–400，默认 12）。 */
+  /** 任务不限轮数（v1.1.12，站主要的）：开着就不按轮数停，靠花费上限和原地打转收尾；ONE SHOT、子代理照旧有上限。 */
+  roundsUnlimited: boolean;
+  /** ONE SHOT 最多几轮（v1.0.3，5–1000，默认 12）。 */
   oneshotRounds: number;
   /** Dock 里的 App 图标。 */
   appIcon: "j2" | "a3";
@@ -79,6 +81,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyDone: true,
   costCap: 20,
   maxRounds: 40,
+  roundsUnlimited: false,
   oneshotRounds: 12,
   appIcon: "j2",
   editorApp: "",

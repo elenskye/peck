@@ -132,7 +132,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 ## Peck Loop（`src-tauri/src/harness/`）
 
 - **循环**（`loop.rs`，`PeckBackend`，引擎 id `peck`）：问模型 → 跑工具 → 结果放回，直到不再要工具。对话存 `harness_conversations`。
-- **上限**：设置 → GENERAL 能调，5–1000 轮（v1.1.12 起，以前 400；子代理一样）：每个任务默认 40（主角色、定时任务都按它）、ONE SHOT 默认 12；子代理每类各自的（设置 → AGENTS，默认 24）。存在 `app_settings` 的 `ui` 那一行（`maxRounds`、`oneshotRounds`、`subagents`），`harness/run.rs` 发任务时读；任务的上限每轮开头再读一次（`rounds_probe`，v1.1.12），设置里改了跑着的下一轮就跟着变，子代理、ONE SHOT 按开始时的。
+- **上限**：设置 → GENERAL 能调，5–1000 轮（v1.1.12 起，以前 400；子代理一样），任务的能关掉不限（`roundsUnlimited`，`round.started` 的上限写 0；靠花费上限和原地打转收尾）：每个任务默认 40（主角色、定时任务都按它）、ONE SHOT 默认 12；子代理每类各自的（设置 → AGENTS，默认 24）。存在 `app_settings` 的 `ui` 那一行（`maxRounds`、`oneshotRounds`、`subagents`），`harness/run.rs` 发任务时读；任务的上限每轮开头再读一次（`rounds_probe`，v1.1.12），设置里改了跑着的下一轮就跟着变，子代理、ONE SHOT 按开始时的。
 - **重发**（v1.1.12，学 Claude Code）：问模型出了能重发的错（见「API 七家」），等 2、5、15、30、60 秒原样再发，最多 5 次；不算轮数，过程里一行「X 秒后重发（n/5）」，断在半句的那一段收好尾、重发的另起一段；等的时候按停马上停。子代理一样。起因：PLOOP 开发 Peck 跑到第 86 轮，一次 Broken pipe 整个停了。
 - **第几轮**（v1.1.11）：每问一次模型前发一条 `round.started`（`round`、`max`；子代理的带 `subagentId`），任务头上「第 N/上限 轮」、子代理那一步右边「N/上限 轮」照它画。
 - **一批工具**：一次回答里要的全是只读的（`list_directory`、`read_file`、`search_text`、`find_files`、`load_skill`、`search_tasks`、`web_search`、`web_fetch`、`read_pdf`、`ocr_pdf`、`read_notebook`；`spawn_agent` 也算，它马上回）就同时跑（`tools::PARALLEL_SAFE`），谁先完先报，结果按调用的顺序放回对话；混进改文件、跑命令、MCP 的就按顺序一个一个来。
@@ -198,6 +198,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 - 划了文件的 worker、member（v1.1.3）：项目里只放开划给它的几块，加上构建、缓存目录（`BUILD_DIRS`：`target`、`node_modules`、`dist`、`.next`、`__pycache__` 这些，任何一层；`*.tsbuildinfo`、`.eslintcache`）和 git 忽略着的文件夹，构建、测试照样能跑。要写别处同样弹高危卡片（写明是它那块以外）。项目在临时目录里时这一层不起作用（临时目录本来整个能写），文件工具那一层照样管。
 - 环境是站主 shell 的，去掉名字像 Key、令牌、密码、Cookie、Session 的变量和 `SSH_AUTH_SOCK`。
 - 默认 120 秒、最长 600 秒，结束整个进程组。输出太长整份落盘（`spill.rs`），上下文留开头、结尾和路径。
+- **git**（v1.1.12）：命令带 `GIT_CONFIG_GLOBAL` 指到站主自己的 `~/.gitconfig`（没有就 `~/.config/git/config`），沙箱里只读，git 认得出是谁提交；被挡在 `.git` 上（`bash::BashOutcome::denied_git`）卡片原因写「要写 .git（提交、切分支这类）」，不再写「项目外」。
 - **cargo**（v1.1.12）：EDIT、AUTO 的命令 `CARGO_HOME` 是站主自己的 `~/.cargo`，沙箱只放开它的 `registry`、`git` 和锁（`bin`、配置照样写不了，`bash::cargo_caches`）；PLAN 照旧用 Peck 给的 HOME 里的。以前一律用 Peck 给的，依赖源码的路径和平时不一样，每次全量重编 300 多个依赖。
 - **`PECK_SANDBOX=seatbelt`**（v1.1.12，照 Codex 的 `CODEX_SANDBOX`）：在沙箱里跑的命令都带。macOS 不让沙箱里的进程再套一层沙箱，要套的程序（Peck 自己的那几个测试）看到它就跳过（见 testing「后端」）。
 

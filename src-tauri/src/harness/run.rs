@@ -349,8 +349,22 @@ pub(crate) fn uploads_note(saved: &SavedUploads) -> String {
 }
 
 /// 一个任务最多几轮（设置 → GENERAL，默认 40）：手动发的、合作的、定时任务的 Peck Loop 都按它。
+/// 关了「每个任务最多几轮」（`roundsUnlimited`，v1.1.12）就不限。
 pub(crate) fn max_rounds(store: &Arc<Mutex<Store>>) -> u32 {
-    rounds_setting(store, "maxRounds", DEFAULT_MAX_ROUNDS)
+    let saved = store.lock().ok().and_then(|db| db.setting("ui").ok().flatten());
+    task_rounds_from(saved.as_deref())
+}
+
+fn task_rounds_from(saved: Option<&str>) -> u32 {
+    let unlimited = saved
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|v| v.get("roundsUnlimited").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false);
+    if unlimited {
+        super::r#loop::UNLIMITED_ROUNDS
+    } else {
+        rounds_from(saved, "maxRounds", DEFAULT_MAX_ROUNDS)
+    }
 }
 
 /// ONE SHOT 最多几轮（v1.0.3 起设置 → GENERAL 能调，默认 12）。
@@ -986,6 +1000,12 @@ mod tests {
         // ONE SHOT、子任务各读各的，没存用各自的默认（v1.0.3）。
         let saved = Some(r#"{"maxRounds":80,"oneshotRounds":30}"#);
         assert_eq!(rounds_from(saved, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS), 30);
+        // 不限（v1.1.12）：只管任务，ONE SHOT 照旧。
+        assert_eq!(task_rounds_from(saved), 80);
+        let unlimited = Some(r#"{"maxRounds":80,"roundsUnlimited":true,"oneshotRounds":30}"#);
+        assert_eq!(task_rounds_from(unlimited), super::super::r#loop::UNLIMITED_ROUNDS);
+        assert_eq!(rounds_from(unlimited, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS), 30);
+        assert_eq!(task_rounds_from(Some(r#"{"maxRounds":80,"roundsUnlimited":false}"#)), 80);
     }
 
     use super::*;

@@ -185,6 +185,8 @@ body { overflow: hidden; }
 .composer-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 
 .task-stack { display: flex; flex-direction: column; gap: var(--space-5); overflow-x: hidden; }
+/* 中栏很宽时（收起了左栏、右栏，v1.1.12）：对话的每一块和输入框最宽 900px、居中，一行字不拉到一千多像素；滚动条还在中栏边上。 */
+.col-mid > .task-stack > *, .col-mid > .composer, .col-mid > .home { width: 100%; max-width: var(--width-read, 900px); margin-inline: auto; }
 .you { flex: none; display: flex; align-items: baseline; gap: var(--space-5); padding: 0 var(--space-2); }
 .you .t-label { color: var(--color-text-3); }
 /* `/compact` 那一次（v1.1.7）：不画 YOU，一行「压缩上下文」。 */

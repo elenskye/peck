@@ -46,6 +46,8 @@ pub const DEFAULT_ONESHOT_ROUNDS: u32 = 12;
 /// 轮数能调的范围（任务、ONE SHOT、子代理都是）：v1.1.12 起最多 1000（以前 400）。
 pub const MIN_ROUNDS: u32 = 5;
 pub const MAX_ROUNDS_CAP: u32 = 1000;
+/// 设置里关了「每个任务最多几轮」（v1.1.12）：不按轮数停。`round.started` 里的上限写 0。
+pub const UNLIMITED_ROUNDS: u32 = u32::MAX;
 
 /// 花费上限：这个月已经花了多少，上限多少（美元）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1152,7 +1154,7 @@ impl Run {
             let (_, raw) = self.report_context(names, window);
             self.last_sent = raw;
             round += 1;
-            self.emit(EventBody::RoundStarted { round, max: self.config.max_rounds });
+            self.emit(EventBody::RoundStarted { round, max: if self.config.max_rounds == UNLIMITED_ROUNDS { 0 } else { self.config.max_rounds } });
             let mut attempt = 0usize;
             let response = loop {
                 let request = ModelRequest { messages: self.messages.clone(), ..base_request.clone() };
@@ -1714,7 +1716,7 @@ impl Run {
     /// 成员名单（放在 LOG 里）：主角色和这个任务能派的几类。
     fn roster(&self) -> Option<Vec<crate::gateway::event::RosterMember>> {
         let team = self.config.team.as_ref().filter(|_| !self.config.oneshot && self.config.subtask.is_none())?;
-        let mut members = vec![crate::gateway::event::RosterMember { role: "main".into(), model: self.config.model_id.clone(), effort: self.task.effort.clone(), rounds: Some(self.config.max_rounds), parallel: None }];
+        let mut members = vec![crate::gateway::event::RosterMember { role: "main".into(), model: self.config.model_id.clone(), effort: self.task.effort.clone(), rounds: (self.config.max_rounds != UNLIMITED_ROUNDS).then_some(self.config.max_rounds), parallel: None }];
         for kind in &self.kinds {
             if let Some(m) = team.get(*kind) {
                 members.push(crate::gateway::event::RosterMember { role: kind.id().into(), model: m.model_id.clone(), effort: m.effort.clone(), rounds: Some(m.rounds), parallel: (m.parallel > 1).then_some(m.parallel) });
@@ -2544,6 +2546,7 @@ impl Run {
         };
         if outcome.sandbox_denied() && self.level != PermissionLevel::Plan {
             let reason = match &self.scope {
+                _ if outcome.denied_git() => "要写 .git（提交、切分支这类），出沙箱再跑".to_string(),
                 Some(scope) => format!("要写到划给它的范围（{}）以外，出沙箱再跑", scope.join("、")),
                 None => "要写到项目外，出沙箱再跑".into(),
             };
@@ -2559,7 +2562,7 @@ impl Run {
         let (shown, _) = spill::shape(&self.ctx, "bash", &outcome.output, failed);
         let mut text = outcome.status_line();
         if outcome.sandbox != bash::Sandbox::Off && outcome.sandbox_denied() {
-            text.push_str(if self.scope.is_some() { "\n（沙箱只让你写划给你的范围和构建、缓存目录，站主没批出沙箱。别绕过去；真要改别处就在报告里写明。）" } else { "\n（沙箱没让它写到项目外，站主没批出沙箱。）" });
+            text.push_str(if outcome.denied_git() { "\n（沙箱里 .git 只读，站主没批出沙箱。）" } else if self.scope.is_some() { "\n（沙箱只让你写划给你的范围和构建、缓存目录，站主没批出沙箱。别绕过去；真要改别处就在报告里写明。）" } else { "\n（沙箱没让它写到项目外，站主没批出沙箱。）" });
         }
         if !shown.trim().is_empty() {
             text.push('\n');

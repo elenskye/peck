@@ -64,6 +64,11 @@ impl BashOutcome {
             && (self.output.contains("Operation not permitted") || self.output.contains("Read-only file system"))
     }
 
+    /// 被挡的是写 `.git`（提交、切分支这类，v1.1.12）：拒绝的那一行里提到 `.git/`（`.github/` 不算）。卡片原因照这个写，不再一律写「项目外」。
+    pub fn denied_git(&self) -> bool {
+        self.output.lines().any(|l| (l.contains("Operation not permitted") || l.contains("Read-only file system")) && l.contains(".git/"))
+    }
+
     pub fn status_line(&self) -> String {
         let secs = format!("{:.1}s", self.duration.as_secs_f64());
         if self.cancelled {
@@ -366,6 +371,13 @@ pub async fn run_command(
         .kill_on_drop(true);
     if sandbox != Sandbox::Off {
         cmd.env(SANDBOX_ENV, "seatbelt");
+    }
+    // git 的全局配置（v1.1.12）：HOME 是 Peck 给的，git 读不到站主的 user.name、user.email，提交就失败（PLOOP 开发
+    // Peck 时只好自己在命令里带 GIT_CONFIG_GLOBAL）。指到站主自己的那份，沙箱里只能读、改不了。
+    if !ctx.env.iter().any(|(k, _)| k == "GIT_CONFIG_GLOBAL") {
+        if let Some(global) = real_home.as_ref().and_then(|h| [h.join(".gitconfig"), h.join(".config/git/config")].into_iter().find(|p| p.is_file())) {
+            cmd.env("GIT_CONFIG_GLOBAL", global);
+        }
     }
     if let Some(real) = &real_home {
         if real.join(".rustup").is_dir() {
@@ -682,9 +694,34 @@ mod tests {
         assert!(!ro.ok() && !p.dir.join("ro.txt").exists());
         std::fs::create_dir_all(p.dir.join(".git")).unwrap();
         let git = run(&ctx, &json!({"command":"echo x > .git/x"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
-        assert!(!git.ok());
+        assert!(!git.ok() && git.denied_git(), "{}", git.output);
+        assert!(!out.denied_git(), "写项目外的不算 .git");
         let net = run(&ctx, &json!({"command":"/usr/bin/curl -sS -o /dev/null -w '%{http_code}' https://example.com || true"}), Sandbox::Project, None, never(), |_| {}).await.unwrap();
         assert!(!net.output.contains("Operation not permitted"), "{}", net.output);
+    }
+
+    /// 站主自己的 `~/.cargo`、`~/.gitconfig`（v1.1.12）：EDIT、AUTO 的命令用它们（git 认得出是谁提交），PLAN 不用 cargo 的。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn commands_use_the_users_cargo_home_and_git_identity() {
+        if nested_sandbox() {
+            return;
+        }
+        let p = TempProject::new();
+        let home = p.dir.with_extension("home");
+        std::fs::create_dir_all(home.join(".cargo")).unwrap();
+        std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Peck Test\n").unwrap();
+        let mut ctx = p.ctx();
+        ctx.env.push(("HOME".into(), home.to_string_lossy().into_owned()));
+        let cmd = json!({"command": "echo \"$CARGO_HOME\"; git config --global user.name"});
+        let out = run(&ctx, &cmd, Sandbox::Project, None, never(), |_| {}).await.unwrap();
+        assert!(out.ok(), "{}", out.output);
+        let mut lines = out.output.lines();
+        assert_eq!(lines.next().map(PathBuf::from), Some(home.join(".cargo")));
+        assert_eq!(lines.next(), Some("Peck Test"));
+        let ro = run(&ctx, &cmd, Sandbox::ReadOnly, None, never(), |_| {}).await.unwrap();
+        assert!(!ro.output.lines().next().unwrap_or("").starts_with(&*home.to_string_lossy()), "PLAN 照旧用 Peck 给的：{}", ro.output);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// cargo 的下载缓存（v1.1.12）：只放开 registry、git 和那几个锁，`bin`、配置照样写不了。
