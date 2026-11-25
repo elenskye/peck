@@ -423,7 +423,7 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
          - {edit_line}\n\
          - For multi-step work keep a short checklist with update_plan (one step in_progress at a time).\n\
          - Checking your work is your job: after you change files, run what the project instructions (AGENTS.md / CLAUDE.md) say to run, or the project's own tests, build or lint, with bash_run. A failing command is evidence, not success: fix the cause and don't claim success while a check fails.\n\
-         - Use bash_background for dev servers, watchers and long test suites instead of bash_run, then read their output. When the user wants a dev server to look at (the PREVIEW panel), start it with keep=true so it stays up after the task ends.\n\
+         - Use bash_background for dev servers, watchers and long test suites instead of bash_run, then read their output. When the user wants a dev server to keep looking at (the TERM tab lists it and can stop it), start it with keep=true so it stays up after the task ends.\n\
          - search_tasks finds earlier tasks in this project; <referenced-task> blocks are earlier tasks the user pointed you to.{web_line}\n\
          - When you learn something durable about this project (a convention, a command, a pitfall, a preference the user stated), propose it with memory; the user approves it at the end.{skill_line}\n\
          - Use ask_user only when you cannot continue without the user's decision, and put every question you have now into one call (up to 4).\n\
@@ -2065,7 +2065,7 @@ impl Run {
                     _ = self.ctl.until_interrupt(), if !self.ctl.interrupted => {}
                 }
                 let first = proc_.read_new();
-                let kept_note = if keep { "\n留着了：任务结束不停，站主在右栏 PREVIEW 里看、能点停；退出 Peck 才全停。" } else { "" };
+                let kept_note = if keep { "\n留着了：任务结束不停，站主在右栏 TERM 头上看、能点停；退出 Peck 才全停。" } else { "" };
                 (ToolStatus::Ok, format!("{}{kept_note}
 完整输出写在 {}（read_file 读得到）。
 {first}", proc_.status_line(), proc_.log.display()), None, vec![])

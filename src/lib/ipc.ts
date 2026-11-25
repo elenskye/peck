@@ -443,11 +443,6 @@ export const ipc = {
     const c = await listen("schedules-changed", () => onChanged());
     return () => { a(); b(); c(); };
   },
-  /** 预览面板（v0.8）：给这个本机地址起代理，返回面板要开的地址。 */
-  async previewStart(url: string): Promise<string> {
-    if (isMockMode()) return mockIpc.previewStart(url);
-    return invoke<string>("preview_start", { url });
-  },
   /** 截图、附图（Peck 输出目录里的）→ data URL。 */
   async harnessImageRead(path: string): Promise<string> {
     if (isMockMode()) return mockIpc.harnessImageRead(path);

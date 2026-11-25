@@ -4,13 +4,13 @@
 
 ## 这一版做了什么（1.1.12）
 
-站主列的 6 条（另 2 条只汇报：看网页的能力、PREVIEW）加上中途追加的轮数。PLOOP（Claude，AUTO）做到第 86 轮断线（Broken pipe）停了；Claude Code 审了日志和改动，修了 Peck 自己的几处问题（下面 7–11），PLOOP 再接着做完。
+站主列的 6 条（另 2 条只汇报：看网页的能力、右栏开页面）加上中途追加的轮数。PLOOP（Claude，AUTO）做到第 86 轮断线（Broken pipe）停了；Claude Code 审了日志和改动，修了 Peck 自己的几处问题（下面 7–11），PLOOP 再接着做完。
 
 1. **`read_pdf` 的页面图按窗口给**（`pdf::image_budget`）：每 5 万 token 一张、2–20 张，100 万窗口的一次 20 页给满 20 张，不知道窗口的 6 张。
 2. **对话里的图有总预算**（`loop.rs` 的 `prune_old_images`）：超过 15 MB 或 80 张，一次去到一半（最新的一张总留），旧的换成一句话。各家上限是 searcher 查的（Gemini 内联、Vertex 上的 Gemini 一次 20 MB 最紧）。Claude Code 审时指出每轮去一张会每轮断缓存，改成了一次去一批。
 3. **输入框**：`+` 去掉下箭头（`MenuChip` 的 `caret`）；列表里 Tab / ⇧Tab 缩进一级（缩到上一项正文那一格，有序的改编号，`MarkdownEditor.tsx`）。
 4. **PROJECTS 收起**只剩模块头，不再写项目名。
-5. **收起左栏、右栏**：顶栏两头各一个按钮（新像素图标），存在界面设置的 `fold.left` / `fold.right`；点输入框下面的「谁」展开左栏，点改过的文件、⌘1–⌘4 展开右栏；收右栏时宽栏一起收回。栏是藏起来不卸掉（PREVIEW 不重开）。
+5. **收起左栏、右栏**：顶栏两头各一个按钮（新像素图标），存在界面设置的 `fold.left` / `fold.right`；点输入框下面的「谁」展开左栏，点改过的文件、⌘1–⌘3 展开右栏；收右栏时宽栏一起收回。栏是藏起来不卸掉。
 6. **轮数上限** 5–1000（以前 400；任务、ONE SHOT、子代理都是）。
 7. （Claude Code）问模型时断线、超时、限流、5xx 自动重发 5 次（2/5/15/30/60 秒），不算轮数。
 8. （Claude Code）子代理到了上限多给一轮写报告；设置里改轮数，跑着的任务下一轮就跟着变。
@@ -57,7 +57,7 @@
 | Vertex 上的 Claude 没带 `block_binding`：换了版本后续跑旧对话可能还是 400 | 开了 Vertex 再试 |
 | 列表 Tab 只认空格缩进、只看上面的项：有序列表缩进以后，下面的同级项编号不跟着改 | 记着 |
 | Gemini 内联数据的上限官方文档自相矛盾（20 MB / 100 MB），图的预算按 20 MB 定 | 记着 |
-| PREVIEW 只开本机地址，Peck 没有能看外网的浏览器；模型看外网只有 `web_fetch` 的文字 | 要做再定 |
+| Peck 没有能看外网的浏览器；模型看外网只有 `web_fetch` 的文字，看本机页面用 `screenshot_page` | 记着 |
 | 高危放宽后，项目里被 .gitignore 忽略的文件（`.env`、`node_modules`）用 `rm` 删了不问，任务前快照里也没有，救不回来；`git clean -x` 照问 | 用一阵看要不要把删 `.env` 这类单独算高危 |
 | `screenshot_page` 每次是新开的页面：只在内存里的状态（`?mock`）要在 script 里点出来；离屏时页面的计时器变慢，等动画、轮询的要多给时间 | 记着 |
 | 拖进来的文档先存在 `harness-output/staging/`，没发出去的也留着（14 天没动的随输出目录一起清） | 记着 |
@@ -65,7 +65,6 @@
 | CLI 的审批卡片标题照各家转换器给的：Claude Code 的 Bash 带说明（英文），别家还是「跑 命令」 | 记着 |
 | 排着的话（Grok）只在内存里，只在正看着那个任务时接着发；切到别的任务、重开 App 就不发了 | 记着 |
 | auditor 只读但不限在项目里：验收时它翻了 `~/Library/Application Support` 里 Peck 的数据、想跑 `tmutil`（被拒），一组就跑了十几轮 | 用一阵看要不要在它的提示里限死项目、少给轮数 |
-| dev server 认出新地址后 PREVIEW 只换地址，要点 GO 才打开 | 记着 |
 | 主角色问提交说明、任务板 auditor 这类多出来的请求也算真跑次数，按次数给的额度要留余量 | 记着 |
 | 任务跑着时追加的话带不了图和附件、用不了斜杠命令 | 记着 |
 | Claude Code 收到追加的话在两步之间并进这一回合，或者说完了再开一回合；它已经在收尾时可能送不进去（会写一行）。不回显的旧版本要多等 15 秒才收 | 记着 |
@@ -102,9 +101,8 @@
 | 模型只在被点名时才提议存 Skill，主动提的没见过 | 用一阵再看 |
 | 定时任务的「谁来干」设的时候不查 Key 和 CLI 在不在，到点起不来记成错过 | 记着 |
 | 回退只按整个文件放回，做不到一个文件里的某一段 | Skill 里让模型直接改那一段 |
-| 预览的 RELOAD 回到最初的地址；`localhost` 只连 127.0.0.1 | 记着 |
 | Vertex 上的 Claude / Gemini 只有离线测试，没真跑过 | 站主开了 GCP 项目再试 |
-| PREVIEW 批注只在浏览器存储里；Esc 关设置页时没存的 MCP 编辑会丢 | 记着 |
+| Esc 关设置页时没存的 MCP 编辑会丢 | 记着 |
 | 小窗打开的 0.2 秒动画里点下去会落到外面那层、把小窗关掉（动画用 clip-path，没露出来的部分点不中） | 记着 |
 | 设置 → PLUGINS 的小窗按项目一个个读状态（项目多了会慢一点）；点开时不在左栏的项目不列 | 记着 |
 | 窗口最窄（980）时设置页的名字会被省略得很短（「Vertex AI」只剩几个字） | 记着 |
@@ -117,7 +115,7 @@
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.12 新加的：顶栏收起左右栏的按钮和图标（`.top-side`、`.pk-i--side-l`、`.pk-i--side-r` 和 `-off`）、不带箭头的 `+`。1.1.11 新加的：审批卡片的原因标签（`.agent-card-reason`）和「看命令」、ASK 的页签（`.ask-tab`）和 Other 那一行（`.agent-other`）、YOU 下面的小图和小片（`.you-attached`、`.you-shot`）、输入框拖放时的虚线（`.composer.is-drop`）、任务头的轮数和子代理小片（`.task-round--warn`、`.task-agents`）、子代理那一步的「N/上限 轮」、命令那一步点开的 `$ 命令` 行（`.out-cmd`）。1.1.10 新加的：中栏 15px 正文、卡片和标题换 Body（方案里还是像素字）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、TERM 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.12 新加的：顶栏收起左右栏的按钮和图标（`.top-side`、`.pk-i--side-l`、`.pk-i--side-r` 和 `-off`）、不带箭头的 `+`。1.1.11 新加的：审批卡片的原因标签（`.agent-card-reason`）和「看命令」、ASK 的页签（`.ask-tab`）和 Other 那一行（`.agent-other`）、YOU 下面的小图和小片（`.you-attached`、`.you-shot`）、输入框拖放时的虚线（`.composer.is-drop`）、任务头的轮数和子代理小片（`.task-round--warn`、`.task-agents`）、子代理那一步的「N/上限 轮」、命令那一步点开的 `$ 命令` 行（`.out-cmd`）。1.1.10 新加的：中栏 15px 正文、卡片和标题换 Body（方案里还是像素字）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
 
 ## 留意
 

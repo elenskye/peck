@@ -15,9 +15,9 @@ Tauri 2 + React + TypeScript + Rust + SQLite。当前版本见[开发路线](doc
 | 看任务 | 任务清单在最上面（各家 CLI 的也转过来），回答按 Markdown 显示，连着的工具调用折成一行英文（像 Claude Code），在想时一行 Thinking；要批的事、要问的事弹卡片，下面一行花费；压缩上下文、「想记住这几条」；每轮末尾一块 recap；进任务停在最新一轮、回来回到上次的位置 |
 | 上下文 | 项目说明（AGENTS.md / CLAUDE.md，改完跑什么测试也写在这里，模型自己跑）和记忆（设置 → MEMORY 能自己记、改、删）、Skills（按需读全文；模型能提议存成 Skill，批了才写进这个项目）、每次带上的环境和 git；输入框旁的小环看用了多少（CLI 报了的也画），到压缩线自动压缩；`/compact 重点` 现在就压（Peck Loop 写交接摘要、压完放回最近的文件；CLI 转给它自己压） |
 | 插件 | 一包 Skill、斜杠命令、工具、Hook。自带的（撤销、定时任务、写 Skill）按项目开关；插件库里的在项目设置里 INSTALL，拷进项目、跟着项目的 git 走，库里有新版出 UPDATE、点了才覆盖。库里第一个是 **Git Plan**（默认每个项目都装）：版本和提交的规矩、`/git-plan:plan` 这几个命令，每一轮做完 Peck 问模型要一行提交说明、自己提交这一轮改过的文件，不 push；项目里有 HANDOFF.md 时，改了别的文件没更新它就先让模型更新。点开项目时 Peck 补齐 CLAUDE.md / AGENTS.md 和 Skill 文件夹的软链接，哪家 CLI 都读得到同一份 |
-| 在对话里做的 | **反悔**：「撤掉刚才的改动」，模型列出快照、复述，弹高危卡片，批了才放回去。**定时任务**：「每周一早上九点帮我检查依赖更新」，模型复述确认后设好，PROJECTS 头上的钟里看；App 关着错过的，重开时弹卡片 RUN NOW / SKIP。**dev server**：模型起的会留着，右栏 PREVIEW 里看、点一下停 |
-| 右栏 | 四个页签：FILES（标出这次改了哪些，ALL 把照 .gitignore 藏着的也列出来）、ONE SHOT（边干活边问，不改文件）、PREVIEW（开本机 dev server 的页面，流式的也行；点元素写批注；不开外面的网站）、TERM（我自己的终端） |
-| 本机 | 截 App 窗口、截本机网页（dev server）给模型看、剪贴板、键盘（⌘N、⌘L、⌘.、⌘1–⌘4……）、菜单栏图标和通知 |
+| 在对话里做的 | **反悔**：「撤掉刚才的改动」，模型列出快照、复述，弹高危卡片，批了才放回去。**定时任务**：「每周一早上九点帮我检查依赖更新」，模型复述确认后设好，PROJECTS 头上的钟里看；App 关着错过的，重开时弹卡片 RUN NOW / SKIP。**dev server**：模型起的会留着，右栏 TERM 头上看、点一下停 |
+| 右栏 | 三个页签：FILES（标出这次改了哪些，ALL 把照 .gitignore 藏着的也列出来）、ONE SHOT（边干活边问，不改文件）、TERM（我自己的终端；留着的 dev server 在头上，点一下停） |
+| 本机 | 截 App 窗口、截本机网页（dev server）给模型看、剪贴板、键盘（⌘N、⌘L、⌘.、⌘1–⌘3……）、菜单栏图标和通知 |
 | 设置 | GENERAL、PROVIDERS、AGENTS、MEMORY、QUOTA、ACCESS、CLI、LOOK、PLUGINS、ARCHIVE、KEYS；项目自己的在右键 → 项目设置 |
 | 额度与花费 | 顶栏 QUOTA：各家订阅还剩多少、API 平台余额、本机花费（按 API 价格表算，CLI 折成 API 价；国内的模型按人民币） |
 

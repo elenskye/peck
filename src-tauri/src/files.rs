@@ -12,7 +12,7 @@ use crate::watch::GitignoreRules;
 /// 列表最多给这么多个文件，再多就写「太多了」。
 pub const MAX_ENTRIES: usize = 4000;
 /// 超过这个大小不预览。
-pub const MAX_PREVIEW_BYTES: u64 = 400 * 1024;
+pub const MAX_READ_BYTES: u64 = 400 * 1024;
 /// 图片、PDF 超过这个大小不预览（要转成 data URL 送给界面）。
 pub const MAX_MEDIA_BYTES: u64 = 24 * 1024 * 1024;
 /// 交给 Quick Look 的文件（Word、Excel、PowerPoint、iWork、RTF、OpenDocument）。
@@ -355,7 +355,7 @@ pub fn read_preview(workspace: &Path, rel: &str) -> Result<FilePreview, String> 
     if is_office(rel) {
         return Ok(preview("office", None, size));
     }
-    if size > MAX_PREVIEW_BYTES {
+    if size > MAX_READ_BYTES {
         return Ok(preview("large", None, size));
     }
     let bytes = fs::read(&real).map_err(|e| format!("读不了这个文件：{e}"))?;
@@ -437,7 +437,7 @@ mod tests {
         assert!(read_preview(&ws, "/etc/hosts").is_err());
         assert!(read_preview(&ws, ".git/HEAD").is_err());
 
-        let big = "x".repeat(MAX_PREVIEW_BYTES as usize + 1);
+        let big = "x".repeat(MAX_READ_BYTES as usize + 1);
         fs::write(ws.join("big.txt"), big).unwrap();
         assert_eq!(read_preview(&ws, "big.txt").unwrap().kind, "large");
 

@@ -10,7 +10,6 @@ mod harness;
 mod migrations;
 mod mode;
 mod plugins;
-mod preview;
 mod process;
 mod project_plugins;
 mod projects;
@@ -152,7 +151,6 @@ pub fn run() {
             harness::run::upload_stage,
             commands::open_path,
             commands::open_url,
-            preview::preview_start,
             schedule::schedule_list,
             schedule::schedule_delete,
             schedule::schedule_missed,

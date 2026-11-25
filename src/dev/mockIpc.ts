@@ -532,10 +532,6 @@ export const mockIpc = {
     // 只摘自己挂的（React 开发模式会挂两次、摘一次）。
     return () => { if (scheduleListeners.fired === onFired) { scheduleListeners.fired = null; scheduleListeners.event = null; scheduleListeners.changed = null; } };
   },
-  async previewStart(url: string): Promise<string> {
-    if (!/^http:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/|$)/.test(url.trim())) throw new Error("预览只开本机的地址（localhost、127.0.0.1），不代理外面的网站。");
-    return "about:blank#mock-preview";
-  },
   async harnessImageRead(path: string): Promise<string> {
     if (!path.startsWith("/mock/")) throw new Error("只能打开 Peck 存下来的图。");
     return attachedImages.get(path) ?? demoPicture(`截图 · ${path.split("/").pop() ?? path}`, true);

@@ -786,12 +786,8 @@ body { overflow: hidden; }
 .media-frame--html { background: #fff; }
 .files-md { flex: 1 1 0; min-height: 0; padding: var(--space-4) var(--space-2); }
 
-/* PREVIEW 批注那一行里的小按钮 */
-.dl-act { margin: 0; padding: 0 var(--space-2); border: 0; background: none; font-family: var(--font-dots); font-weight: 900; font-size: 11px; letter-spacing: .06em; color: var(--color-text-3); cursor: pointer; }
-.dl-act:hover:not(:disabled) { color: var(--color-cyan-text); }
-.dl-act:disabled { opacity: .5; cursor: default; }
-.notes-bar, .wt-bar { flex: none; margin-bottom: var(--space-4); }
-.notes-bar .pk-bar-text, .wt-bar .pk-bar-text { flex: 1; min-width: 0; }
+.wt-bar { flex: none; margin-bottom: var(--space-4); }
+.wt-bar .pk-bar-text { flex: 1; min-width: 0; }
 .wt-conflicts { margin: var(--space-2) 0 var(--space-3); padding-left: var(--space-8); color: var(--color-text-2); }
 
 /* ---------- 会话和项目（v0.7 Phase 9） ---------- */
@@ -876,24 +872,6 @@ body { overflow: hidden; }
 .agent-shot img { display: block; width: 100%; height: auto; }
 .agent-shot.is-big { max-width: 100%; cursor: zoom-out; }
 @media (prefers-reduced-motion: reduce) { .agent-copy, .md-copy { transition: none; } }
-
-/* 预览面板（v0.8）：地址栏、页面、批注。 */
-.preview-pane { display: flex; flex-direction: column; min-height: 0; }
-.preview-bar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
-.preview-bar input { flex: 1; min-width: 0; height: 26px; padding: 0 var(--space-4); }
-.preview-empty { padding: var(--space-6) 0; }
-.preview-empty .pk-btn { margin-left: var(--space-3); }
-.preview-frame { position: relative; flex: 1; min-height: 240px; background: #fff; box-shadow: 0 0 0 1px var(--color-line); }
-.preview-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
-.preview-frame.is-annotating { box-shadow: 0 0 0 1px var(--color-cyan-line), 0 0 0 3px var(--color-cyan-soft); }
-.preview-pick { margin-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
-.preview-sel { margin: 0; color: var(--color-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app .preview-pick textarea { width: 100%; padding: var(--space-3) var(--space-4); background: var(--color-panel-2); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); resize: vertical; }
-.preview-notes { margin-top: var(--space-4); }
-.preview-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); max-height: 160px; overflow-y: auto; }
-.preview-list li { display: flex; align-items: baseline; gap: var(--space-3); font-size: var(--text-small); }
-.preview-list .t-code { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-3); }
-.preview-note { flex: 1; min-width: 0; color: var(--color-text); }
 
 /* 系统设置里开了「减弱动态效果」：动效都收成一下（在跑的样子照样显示，只是不动）。 */
 @media (prefers-reduced-motion: reduce) {

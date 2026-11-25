@@ -33,7 +33,7 @@
 | 快照回退 | 「撤销」「撤掉」「回退」；`/undo` | 读 Skill → 列快照 → 复述 → `[ RISK ]`「回到任务 N 开始前（2 个文件）」→ ALLOW / DENY |
 | 定时任务 | 「定时」「每周」「每天」「每隔」 | 读 Skill → 复述、ASK 确认 → 设好，PROJECTS 头上的钟多一个 |
 | 错过的定时任务 | 打开就有两个（notebook） | 一打开跳到 notebook 的新任务页：`[ MISSED ]` RUN NOW / SKIP；另一张在「日期统一成 YYYY-MM-DD」那个对话末尾；钟里看详情、REMOVE |
-| 留着的 dev server | 「dev server」 | 过程里一行「留着在跑」；右栏 PREVIEW 头上一个 DEV 小片，点一下停 |
+| 留着的 dev server | 「dev server」 | 过程里一行「留着在跑」；右栏 TERM 头上一个 DEV 小片，点一下停 |
 | 花费上限 | 设置里上限设得比 0.42 低 | 发出去就停、写明原因 |
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
 | 任务板（`agentsMock.ts`） | PLOOP 下句子带「任务板」或「member」（在没有任务在跑的项目里，比如 peck） | 过程最上面「任务板」：worker 1、2 和 member 1 在跑、worker 3（和 worker 1 划的同一个文件）排队，worker 1 做完它才跑；点 member 1 展开它的几步，它派的 explorer 再挂一层；设置 → AGENTS 五块、member 默认 40 轮同时 2 个 |
@@ -53,7 +53,7 @@
 | 斜杠命令 | 输入框打 `/` | Peck 自己的八个 + 项目里装着的插件带的（peck、notebook 装着 Git Plan：`/git-plan:plan` 这几个，选了填成「/名字 」等参数）；`/undo` 发一句话给模型、`/model` 提示不转发 |
 | 插件（`pluginMock.ts`） | 设置 → PLUGINS；右键项目 → 项目设置 → PLUGINS | 设置页两组卡片 + MCP SERVERS，点卡片开小窗（每个项目都装、按项目装和开关、它带的东西）；三个项目三种状态：notebook 装着旧版（卡片上青色版本号、小窗里 UPDATE）、peck 装着最新的（REMOVE 点两下）、edge-gateway 没装（INSTALL）；装了以后项目设置的 SKILLS 多一行。在装着 Git Plan 的 peck 项目里发一个任务，做完后 recap 里多一行「Git Plan 提交了 …」 |
 
-- 其他入口：`@` 旧任务；ONE SHOT；PREVIEW（GO → NOTE 点元素写批注 → TO TASK）；项目设置（FOLDERS、ENV、PLUGINS、SKILLS、MCP、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。
+- 其他入口：`@` 旧任务；ONE SHOT；项目设置（FOLDERS、ENV、PLUGINS、SKILLS、MCP、记忆）；设置各组；FILES（peck 的 `docs/`、`public/` 里有各种文件；对话里点改过的文件名在这里打开）；AGENTS 头上的 ⓘ。TERM 头上的 dev server 小片见上表。
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
@@ -81,7 +81,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 - **每次用新的临时目录**，不碰正式数据（模拟授权次数记在数据目录里，重复用会失败）。
 - **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样（现在用了 700105、700106、700201–700205、905001、910_001、920_001、930_001、930_002、940_001、960_001、970_001），新测试另挑一个。
 - 要 git 仓库的测试（`git_commit`、收尾 Hook）用 `harness::git::testing` 起临时仓库（自己配 `user.name`，不碰站主的 git 配置）。
-- Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环（子代理一批叫醒一次、worker 和 auditor、划文件的 worker 同时跑和排队、member 再派 explorer、只读的一批同时跑、原地打转、项目里的脚本 Hook 和开场时、MCP 按需加载、读 Notebook 和 PDF 都在 `harness::r#loop` 里；CLI 的脚本 Hook 用 `gateway::runner` 里的假 CLI 跑一整个任务；读 PDF 的测试用 `cupsfilter` 现做一份 PDF；会派子代理的测试各用自己的 `run_id`，子代理的控制通道按任务号登记），外部 MCP 用 sh 写的假服务器，预览代理起一个假 dev server（一段一段出的 SSE、分块的 HTML、POST）。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
+- Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环（子代理一批叫醒一次、worker 和 auditor、划文件的 worker 同时跑和排队、member 再派 explorer、只读的一批同时跑、原地打转、项目里的脚本 Hook 和开场时、MCP 按需加载、读 Notebook 和 PDF 都在 `harness::r#loop` 里；CLI 的脚本 Hook 用 `gateway::runner` 里的假 CLI 跑一整个任务；读 PDF 的测试用 `cupsfilter` 现做一份 PDF；会派子代理的测试各用自己的 `run_id`，子代理的控制通道按任务号登记），外部 MCP 用 sh 写的假服务器。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境，慢几秒。夹具通过不等于真实账号通过。
 

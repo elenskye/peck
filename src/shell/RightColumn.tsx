@@ -2,8 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { TermView } from "@/App";
 import type { AgentEvent, ModelEntry } from "@/lib/agentEvents";
 import { foldEvents } from "@/lib/agentView";
-import { ipc, isMockMode, type BgInfo } from "@/lib/ipc";
-import PREVIEW_SCRIPT from "../../src-tauri/src/preview.js?raw";
+import { ipc, type BgInfo } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import type { FileChangeItem, FileListing, FilePreview, IgnoredEntry, ProjectOverview, RunRecord } from "@/lib/types";
 import { cn, copyText, fileSize, runState, shortenHomePath, span } from "@/lib/utils";
@@ -15,7 +14,7 @@ import { highlight, type Token } from "@/lib/highlight";
 import { MarkdownEditor } from "@/shell/MarkdownEditor";
 import { EffortPicker, WhoPicker, cliModelOf, defaultEffort, sendEffort } from "@/shell/ModelPicker";
 
-export type RightTab = "oneshot" | "files" | "preview" | "term";
+export type RightTab = "oneshot" | "files" | "term";
 
 interface Props {
   project: ProjectOverview | null;
@@ -38,9 +37,9 @@ interface Props {
   entries: ModelEntry[];
   settings: AppSettings;
   onSettings: (patch: Partial<AppSettings>) => void;
-  /** 把 ONE SHOT 的回答、PREVIEW 里攒的批注放进中栏输入框 */
+  /** 把 ONE SHOT 的回答放进中栏输入框 */
   onToTask: (text: string) => void;
-  /** 顶栏上收起了右栏（v1.1.12）：藏起来不卸掉，PREVIEW、ONE SHOT 的状态留着。 */
+  /** 顶栏上收起了右栏（v1.1.12）：藏起来不卸掉，ONE SHOT 的状态留着。 */
   hidden?: boolean;
 }
 
@@ -58,7 +57,6 @@ export const RightColumn: React.FC<Props> = (props) => {
   const tabs: Array<{ id: RightTab; label: string; icon: IconName; extra?: React.ReactNode }> = [
     { id: "files", label: "FILES", icon: "files", extra: run && run.files.length > 0 && !run.undoneAt ? <em>{run.files.length}</em> : null },
     { id: "oneshot", label: "ONE SHOT", icon: "oneshot" },
-    { id: "preview", label: "PREVIEW", icon: "globe" },
     {
       id: "term",
       label: "TERM",
@@ -93,165 +91,10 @@ export const RightColumn: React.FC<Props> = (props) => {
       {/* ONE SHOT 一直挂着，只是藏起来：切去别的页签再回来，问到一半的、答完的都还在，STOP 也还能点。 */}
       <OneShot key={props.project?.workspace.id ?? "none"} {...props} shown={tab === "oneshot"} />
       {tab === "files" && <Files {...props} />}
-      {tab === "preview" && <Preview key={`preview-${props.project?.workspace.id ?? "none"}`} {...props} />}
       {tab === "term" && <Term {...props} />}
     </section>
   );
 };
-
-// ---------- PREVIEW（v0.8） ----------
-
-interface PreviewNote { id: string; url: string; selector: string; tag: string; text: string; note: string }
-interface PickedElement { selector: string; tag: string; text: string; url: string }
-
-/** 预览面板：开 dev server 的页面（经 Peck 的本机代理，插了点元素的小脚本）；NOTE 开着点一个元素写批注，
- *  攒着，TO TASK 一起放进输入框。地址默认是留着的 dev server 输出里的那个，也能自己写。
- *  dev server 是模型在对话里起的（`bash_background` 带 `keep`）：任务结束不停，头上列出来、点一下停。 */
-const Preview: React.FC<Props> = ({ project, onToTask, wide, onWide, say }) => {
-  const workspaceId = project?.workspace.id ?? "";
-  const [servers, setServers] = useState<BgInfo[]>([]);
-  const [url, setUrl] = useStored<string>(`peck.preview.url.${workspaceId}`, "");
-  const [draftUrl, setDraftUrl] = useState(url);
-  const [frame, setFrame] = useState<string | null>(null);
-  const [nonce, setNonce] = useState(0);
-  const [annotate, setAnnotate] = useState(false);
-  const [notes, setNotes] = useStored<PreviewNote[]>(`peck.preview.notes.${workspaceId}`, []);
-  const [picked, setPicked] = useState<PickedElement | null>(null);
-  const [text, setText] = useState("");
-  const [page, setPage] = useState("");
-  const ref = useRef<HTMLIFrameElement>(null);
-  // 留着在跑的 dev server（3 秒看一次）。
-  const readServers = useCallback(() => {
-    if (!workspaceId || document.visibilityState !== "visible") return;
-    ipc.backgroundList(workspaceId).then((b) => setServers(b.filter((x) => x.kind === "server" && x.status === "running"))).catch(() => {});
-  }, [workspaceId]);
-  useEffect(() => {
-    if (!workspaceId) return;
-    setServers([]);
-    readServers();
-    const t = window.setInterval(readServers, 3000);
-    return () => window.clearInterval(t);
-  }, [workspaceId, readServers]);
-  const detected = servers.find((s) => s.url)?.url ?? "";
-  // 认出 dev server 的地址：没存过地址、或者存着的是别的端口，就换过去（同一个端口上自己写的路径留着）。
-  const port = (u: string) => u.match(/^https?:\/\/[^/]+:(\d+)/)?.[1] ?? "";
-  useEffect(() => { if (detected && port(detected) !== port(url)) { setUrl(detected); setDraftUrl(detected); } }, [detected]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = async (target = draftUrl.trim()) => {
-    if (!target) { say("先写地址，或者起一个 dev server"); return; }
-    try { setFrame(await ipc.previewStart(target)); setUrl(target); setDraftUrl(target); setNonce((n) => n + 1); } catch (e) { say(e); }
-  };
-  useEffect(() => { if (url) void go(url); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const post = (on: boolean) => ref.current?.contentWindow?.postMessage({ peck: "annotate", on }, "*");
-  useEffect(() => {
-    const onMsg = (e: MessageEvent) => {
-      if (!ref.current || e.source !== ref.current.contentWindow) return;
-      const d = e.data as { peck?: string } & Partial<PickedElement> & { title?: string };
-      if (d?.peck === "ready") { setPage(d.url ?? ""); post(annotate); }
-      if (d?.peck === "pick" && d.selector) { setPicked({ selector: d.selector, tag: d.tag ?? "", text: d.text ?? "", url: d.url ?? "" }); setText(""); }
-    };
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, [annotate]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { post(annotate); }, [annotate]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** 头上的小片：点一下停掉这个 dev server（要再起，在对话里跟模型说）。 */
-  const stopServer = async (server: BgInfo) => {
-    try { await ipc.backgroundStop(server.id); say(`dev server「${server.name}」停了`); } catch (e) { say(e); }
-    window.setTimeout(readServers, 300);
-  };
-  const save = () => {
-    if (!picked || !text.trim()) return;
-    setNotes([...notes, { id: `${Date.now()}`, url: picked.url, selector: picked.selector, tag: picked.tag, text: picked.text, note: text.trim() }]);
-    setPicked(null);
-    setText("");
-  };
-  const toTask = () => {
-    const lines = notes.map((n, i) => `${i + 1}. \`${n.selector}\`${n.text ? `（「${n.text.slice(0, 60)}」）` : ""}：${n.note}`);
-    const where = notes.find((n) => n.url.startsWith("http"))?.url ?? url;
-    onToTask(`在预览里看了 ${where}，这几处要改：\n${lines.join("\n")}`);
-    setNotes([]);
-  };
-  const mock = isMockMode();
-  return (
-    <div className="pk-mod col-grow preview-pane">
-      <ModHead label="PREVIEW" note={page && !page.startsWith("about:") ? shortenHomePath(page.replace(/^https?:\/\/127\.0\.0\.1:\d+/, "")) || "/" : frame ? url : undefined}>
-        {project && servers.map((server) => (
-          <button key={server.id} type="button" className="pk-chip pk-chip--sm is-on" aria-pressed
-            title={`dev server「${server.name}」在跑（${server.command}）：任务结束不停，退出 Peck 才停。点一下停掉`}
-            onClick={() => void stopServer(server)}>
-            <i className="pk-dot dot-live" />
-            <span className="pk-chip-label">{server.name.toUpperCase()}</span>
-          </button>
-        ))}
-        <Btn v="ghost" sm icon={wide ? "collapse" : "expand"} onClick={() => onWide(!wide)} aria-label={wide ? "收回右栏" : "展开到宽栏"} />
-      </ModHead>
-      {!project ? <p className="empty-line">选一个项目，这里看它的 dev server。</p> : (
-        <>
-          <form className="preview-bar" onSubmit={(e) => { e.preventDefault(); void go(); }}>
-            <input className="pk-field t-code" aria-label="预览的地址" placeholder="http://localhost:5173" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} />
-            <Btn sm type="submit">GO</Btn>
-            <Btn v="ghost" sm disabled={!frame} onClick={() => setNonce((n) => n + 1)}>RELOAD</Btn>
-            <button type="button" className={cn("pk-chip pk-chip--sm", annotate && "is-on")} aria-pressed={annotate} disabled={!frame} title="开着时点页面上的一个元素，给它写一句批注" onClick={() => setAnnotate(!annotate)}>
-              <span className="pk-chip-label">NOTE</span>
-            </button>
-          </form>
-          {!frame && (
-            <div className="preview-empty">
-              {servers.length > 0 ? (
-                <p className="hint">{detected ? "dev server 在跑，点 GO 打开。" : "dev server 在跑，还没看到地址；自己写一个。"}</p>
-              ) : (
-                <p className="hint">写一个本机地址点 GO<Info text="只开本机地址（localhost、127.0.0.1）。要起 dev server，在对话里跟模型说一声：它起的会留着，任务结束不停，这里头上能看到、能点停。" /></p>
-              )}
-            </div>
-          )}
-          {frame && (
-            <div className={cn("preview-frame", annotate && "is-annotating")}>
-              {mock ? (
-                <iframe key={nonce} ref={ref} title="预览" sandbox="allow-scripts allow-same-origin allow-forms" srcDoc={mockPreviewPage(url)} />
-              ) : (
-                <iframe key={nonce} ref={ref} title="预览" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" src={frame} />
-              )}
-            </div>
-          )}
-          {picked && (
-            <div className="preview-pick">
-              <p className="t-code preview-sel" title={picked.selector}>&lt;{picked.tag}&gt; {picked.text ? `「${picked.text.slice(0, 40)}」` : picked.selector}</p>
-              <textarea autoFocus rows={2} aria-label="给这个元素写一句批注" placeholder="这里要怎么改…（↵ 存，Esc 不要）" value={text} onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
-                  if (e.key === "Escape") { e.preventDefault(); setPicked(null); }
-                }} />
-            </div>
-          )}
-          {notes.length > 0 && (
-            <div className="preview-notes">
-              <div className="pk-bar notes-bar">
-                <Icon name="chat" />
-                <span className="pk-bar-text">{notes.length} 条批注</span>
-                <Btn v="ghost" sm onClick={() => setNotes([])}>CLEAR</Btn>
-                <Btn sm onClick={toTask}>TO TASK</Btn>
-              </div>
-              <ol className="preview-list">
-                {notes.map((n) => (
-                  <li key={n.id}>
-                    <span className="t-code" title={n.selector}>&lt;{n.tag}&gt;{n.text ? ` 「${n.text.slice(0, 24)}」` : ""}</span>
-                    <span className="preview-note">{n.note}</span>
-                    <button type="button" className="dl-act" aria-label="删掉这条批注" onClick={() => setNotes(notes.filter((x) => x.id !== n.id))}><Icon name="x" size={12} /></button>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
-
-/** `?mock` 里没有真的 dev server：给一个演示页，插同一段小脚本。 */
-function mockPreviewPage(url: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>notebook</title><style>html,body{overflow-x:hidden}*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;margin:0;background:#f6f7f9;color:#1d2433}header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:#fff;border-bottom:1px solid #e3e6ec}h1{font-size:18px;margin:0}input{flex:1;min-width:0;padding:6px 10px;border:1px solid #cfd5df;border-radius:6px}ul{list-style:none;margin:16px 20px;padding:0}li{background:#fff;margin-bottom:8px;padding:10px 14px;border-radius:8px;border:1px solid #e3e6ec}small{color:#7a8496}button{padding:6px 12px;border:0;border-radius:6px;background:#2f6fec;color:#fff}</style><script>${PREVIEW_SCRIPT}</script></head><body><header><h1>Notes</h1><input placeholder="Search notes"><button>New</button></header><ul><li><b>周会记录</b><br><small>2026-11-12</small></li><li><b>读书笔记：Designing Data-Intensive Applications</b><br><small>2026-11-10</small></li><li><b>Peck 的待办</b><br><small>2026-11-09</small></li></ul><p style="margin:0 20px;color:#7a8496;font-size:12px">演示页（${url || "没有地址"}）：?mock 里没有真的 dev server。</p></body></html>`;
-}
 
 // ---------- ONE SHOT ----------
 
@@ -587,13 +430,31 @@ const Files: React.FC<Props> = ({ project, run, wide, onWide, filePath, onFilePa
 
 // ---------- TERM ----------
 
-const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, onTermStop, onTermClear }) => {
+const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, onTermStop, onTermClear, say }) => {
   const [draft, setDraft] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [cursor, setCursor] = useState(-1);
   const endRef = useRef<HTMLDivElement>(null);
   const size = term.entries.reduce((n, e) => n + e.output.length, term.entries.length);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [size]);
+  const workspaceId = project?.workspace.id ?? "";
+  const [servers, setServers] = useState<BgInfo[]>([]);
+  // 留着在跑的 dev server（3 秒看一次）。点一下停；要再起，在对话里跟模型说。
+  const readServers = useCallback(() => {
+    if (!workspaceId || document.visibilityState !== "visible") return;
+    ipc.backgroundList(workspaceId).then((b) => setServers(b.filter((x) => x.kind === "server" && x.status === "running"))).catch(() => {});
+  }, [workspaceId]);
+  useEffect(() => {
+    if (!workspaceId) { setServers([]); return; }
+    setServers([]);
+    readServers();
+    const t = window.setInterval(readServers, 3000);
+    return () => window.clearInterval(t);
+  }, [workspaceId, readServers]);
+  const stopServer = async (server: BgInfo) => {
+    try { await ipc.backgroundStop(server.id); say(`dev server「${server.name}」停了`); } catch (e) { say(e); }
+    window.setTimeout(readServers, 300);
+  };
   const running = !!term.runningId;
   const locked = busy;
   const name = project?.workspace.name ?? "";
@@ -616,6 +477,14 @@ const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, o
   return (
     <div className="pk-mod col-grow term">
       <ModHead label="TERM">
+        {project && servers.map((server) => (
+          <button key={server.id} type="button" className="pk-chip pk-chip--sm is-on" aria-pressed
+            title={`dev server「${server.name}」在跑（${server.command}）：任务结束不停，退出 Peck 才停。点一下停掉`}
+            onClick={() => void stopServer(server)}>
+            <i className="pk-dot dot-live" />
+            <span className="pk-chip-label">{server.name.toUpperCase()}</span>
+          </button>
+        ))}
         <Btn v="ghost" sm onClick={onTermClear} disabled={term.entries.length === 0}>CLEAR</Btn>
         <Expand wide={wide} onWide={onWide} />
       </ModHead>

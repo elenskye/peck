@@ -153,7 +153,7 @@ const Compacted: React.FC<{ item: Extract<ViewItem, { kind: "compacted" }> }> = 
 const BackgroundLine: React.FC<{ bg: BackgroundView }> = ({ bg }) => {
   const who = bg.kind === "server" ? "dev server" : "后台命令";
   const live = bg.status === "running" && !bg.past;
-  const state = bg.past || (bg.kind === "server" && bg.status === "running") ? "留着在跑（任务结束不停，右栏 PREVIEW 里看、能停）" : bg.status === "running" ? "在跑" : bg.status === "stopped" ? "已停" : `结束了${bg.exitCode != null ? ` · 退出码 ${bg.exitCode}` : ""}`;
+  const state = bg.past || (bg.kind === "server" && bg.status === "running") ? "留着在跑（任务结束不停，右栏 TERM 头上看、能停）" : bg.status === "running" ? "在跑" : bg.status === "stopped" ? "已停" : `结束了${bg.exitCode != null ? ` · 退出码 ${bg.exitCode}` : ""}`;
   return (
     <p className={cn("agent-line", bg.status === "exited" && bg.exitCode !== 0 && "is-warn")}>
       {live ? <span className="pk-run" /> : <Icon name={bg.status === "stopped" ? "stop" : "term"} size={12} />}
@@ -297,7 +297,7 @@ const SkillCard: React.FC<{ skill: SkillProposalView; runId?: string; running: b
         {runId && <div className="pk-ask-foot">
           <Btn v="ghost" disabled={sent} onClick={() => void decide("skip")}>SKIP</Btn>
           <span className="grow" />
-          <Btn v="ghost" disabled={sent} onClick={() => setEditing(!editing)}>{editing ? "PREVIEW" : "EDIT"}</Btn>
+          <Btn v="ghost" disabled={sent} onClick={() => setEditing(!editing)}>{editing ? "VIEW" : "EDIT"}</Btn>
           <Btn v="primary" disabled={sent || !draft.name.trim() || !draft.description.trim() || !draft.body.trim()} onClick={() => void decide("save")}>SAVE</Btn>
         </div>}
       </div>

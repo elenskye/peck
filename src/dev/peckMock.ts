@@ -6,7 +6,7 @@
 // - 「长任务」：读几个大文件，上下文过了压缩线，自动压缩三步（落盘、清旧输出、交接摘要）以后接着做完；
 // - 「撤销」「撤掉」「回退」：读 Skill → 列任务快照 → 复述 → `restore_snapshot`（高危卡片）；
 // - 「定时」「每周」「每天」「每隔」：读 Skill → 复述确认（ASK）→ `schedule_task`；
-// - 「dev server」：`bash_background` 带 keep 起一个留着的 dev server（右栏 PREVIEW 头上看得到）。
+// - 「dev server」：`bash_background` 带 keep 起一个留着的 dev server（右栏 TERM 头上看得到）。
 // - 「搜一下」「上网」「最新版」：联网搜索两次（v1.1.1），回答里写出处，花费行多「搜 2 次」。
 import type { AgentCaps, EventBody, ToolKind } from "@/lib/agentEvents";
 import type { ReplayEvent } from "@/dev/gatewayMock";
@@ -287,12 +287,12 @@ function scenarioRounds(
   }
   if (scenario === "server") {
     return [
-      [context(o, 600, 0), ...say(1, "起 dev server，留着给你在 PREVIEW 里看。"), usage(4300, 60, 0, 0.0006),
+      [context(o, 600, 0), ...say(1, "起 dev server，留着给你在 TERM 头上看。"), usage(4300, 60, 0, 0.0006),
         tool("d1", "bash_background", "run", "后台跑 pnpm dev", { action: "start", command: "pnpm dev", name: "dev", keep: true }),
         ...(() => { o.onServer?.(); return []; })(),
         { type: "background.updated", id: "srv-dev-demo", name: "dev", command: "pnpm dev", kind: "server", status: "running", exitCode: null },
-        done("d1", "「dev」在跑（1s，id srv-dev-demo）\n留着了：任务结束不停，站主在右栏 PREVIEW 里看、能点停；退出 Peck 才全停。\n  ➜  Local:   http://localhost:5173/")],
-      [context(o, 900, 600), ...say(2, "dev server 起来了：`http://localhost:5173/`，留着在跑，右栏 PREVIEW 点 GO 就能看；不用了在 PREVIEW 头上点一下停。"), usage(300, 70, 4300, 0.0002), context(o, 1100, 600)],
+        done("d1", "「dev」在跑（1s，id srv-dev-demo）\n留着了：任务结束不停，站主在右栏 TERM 头上看、能点停；退出 Peck 才全停。\n  ➜  Local:   http://localhost:5173/")],
+      [context(o, 900, 600), ...say(2, "dev server 起来了：`http://localhost:5173/`，留着在跑，右栏 TERM 头上能看到；不用了在 TERM 头上点一下停。"), usage(300, 70, 4300, 0.0002), context(o, 1100, 600)],
     ];
   }
   const big = (id: string, path: string, kb: number): ReplayEvent[] => [

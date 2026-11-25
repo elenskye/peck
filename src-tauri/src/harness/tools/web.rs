@@ -155,7 +155,7 @@ fn check_url(raw: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
-const LOCAL_NOTE: &str = "本机和内网地址不读；要看本机的 dev server 用 bash_run 跑 curl，或用 PREVIEW。";
+const LOCAL_NOTE: &str = "本机和内网地址不读；要看本机的 dev server 用 bash_run 跑 curl，或用 screenshot_page。留着的在右栏 TERM 头上。";
 
 /// 主机能不能读：名字是本机的拒；解析出来有一个本机或内网地址就拒。返回要钉住的地址（解析不到就交给连接时再找，走代理时常见）。
 async fn check_host(url: &reqwest::Url, allow_local: bool) -> Result<Option<SocketAddr>, String> {

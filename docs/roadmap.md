@@ -21,7 +21,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | Phase | 谁来做 | 内容 | 验收 | 状态 |
 | --- | --- | --- | --- | --- |
 | 1 | Claude Code | 去掉跑完的「下一步」按钮：系统提示里那条、`splitNextSteps`、recap 的按钮和放进输入框、`?mock`、文档里提到的都删 | `pnpm check`、改到的 Rust 测试过；`?mock` 做完一个 PLOOP 任务，recap 没按钮、回答末尾没有 `→` 行 | 完成 |
-| 2 | Grok | 右栏去掉 PREVIEW：页签、组件、本机代理（`preview.rs`、`preview.js`）、批注和相关文档；留着的 dev server 小片挪到 TERM 头上（看得到在跑哪些、点一下停） | `pnpm check`、`cargo test` 过；`?mock`「dev server」任务后 TERM 头上有小片、点了停；⌘1–⌘4 对得上 | 未开始 |
+| 2 | Grok | 右栏去掉预览页：页签、组件、本机代理和批注；留着的 dev server 小片挪到 TERM 头上（看得到在跑哪些、点一下停） | `pnpm check`、`cargo test` 过；`?mock`「dev server」任务后 TERM 头上有小片、点了停；⌘1–⌘3 对得上 | 完成 |
 | 3 | PLOOP | 提示词库：库里新表（全局一份，所有项目通用，schema 12）；右栏新页签 PROMPT：顶上搜索，一行一条（标题加前两行），点一下复制，旁边箭头放进中栏输入框，新增、编辑用小窗，删除点两下 | 迁移测试、`pnpm check` 过；`?mock` 加、改、删、搜、复制、放进输入框 | 未开始 |
 | 4 | PLOOP | 输入框里调提示词：`/` 弹层接上提示词（句首命令在前、提示词在后；句中空格后打 `/` 只列提示词），选中插进光标处；`{占位}` 插进来选中第一个，Tab 跳下一个 | `pnpm check` 过；`?mock` 句首、句中各插一次，两个占位 Tab 跳 | 未开始 |
 | 5 | Codex | 读网页用 WebKit：`web_fetch` 抓到的正文太少（要 JavaScript 才出内容）时，用截图那套 WKWebView 打开、等加载完、取显示出来的文字；不带站主的 Cookie、本机和内网地址照旧拒、限时、能取消 | 本地假服务器（只靠 JS 出正文的页）的测试过；真抓一个要 JS 的公开页 | 未开始 |
