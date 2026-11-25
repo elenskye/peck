@@ -16,9 +16,16 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 分 Phase 的版本（`1.x.0`、`2.0.0`）开工前在这里写表，站主看过再做。只做表里写的，不扩；状态只在「状态」列，四种：`未开始`、`进行中`、`等站主批`、`完成`；一个 Phase 做完改状态、提交。一个版本做完，表换成下一个版本的。
 
-| Phase | 内容 | 验收 | 状态 |
-| --- | --- | --- | --- |
-| （现在没有） | | | |
+**v1.2.0**：站主定的开发方式是 Claude Code 接管电脑、用正式版 Peck 开发，每个 Phase 交给一个引擎（两个 PLOOP、四家 CLI 各一个），真跑里碰到的 Peck 问题由 Claude Code 当场修。版本号、收尾审查、升级测试、装正式版、文档由 Claude Code 在最后做。
+
+| Phase | 谁来做 | 内容 | 验收 | 状态 |
+| --- | --- | --- | --- | --- |
+| 1 | Claude Code | 去掉跑完的「下一步」按钮：系统提示里那条、`splitNextSteps`、recap 的按钮和放进输入框、`?mock`、文档里提到的都删 | `pnpm check`、改到的 Rust 测试过；`?mock` 做完一个 PLOOP 任务，recap 没按钮、回答末尾没有 `→` 行 | 完成 |
+| 2 | Grok | 右栏去掉 PREVIEW：页签、组件、本机代理（`preview.rs`、`preview.js`）、批注和相关文档；留着的 dev server 小片挪到 TERM 头上（看得到在跑哪些、点一下停） | `pnpm check`、`cargo test` 过；`?mock`「dev server」任务后 TERM 头上有小片、点了停；⌘1–⌘4 对得上 | 未开始 |
+| 3 | PLOOP | 提示词库：库里新表（全局一份，所有项目通用，schema 12）；右栏新页签 PROMPT：顶上搜索，一行一条（标题加前两行），点一下复制，旁边箭头放进中栏输入框，新增、编辑用小窗，删除点两下 | 迁移测试、`pnpm check` 过；`?mock` 加、改、删、搜、复制、放进输入框 | 未开始 |
+| 4 | PLOOP | 输入框里调提示词：`/` 弹层接上提示词（句首命令在前、提示词在后；句中空格后打 `/` 只列提示词），选中插进光标处；`{占位}` 插进来选中第一个，Tab 跳下一个 | `pnpm check` 过；`?mock` 句首、句中各插一次，两个占位 Tab 跳 | 未开始 |
+| 5 | Codex | 读网页用 WebKit：`web_fetch` 抓到的正文太少（要 JavaScript 才出内容）时，用截图那套 WKWebView 打开、等加载完、取显示出来的文字；不带站主的 Cookie、本机和内网地址照旧拒、限时、能取消 | 本地假服务器（只靠 JS 出正文的页）的测试过；真抓一个要 JS 的公开页 | 未开始 |
+| 6 | Muse | UI 优化：输入框 `+` 居中；整个界面过一遍图标、文字在按钮里没居中、没对齐的地方（含新的 PROMPT 页签），列出来一起修 | `?mock` 明暗截图前后对比；`pnpm check` 过 | 未开始 |
 
 ## 之后要做的
 
@@ -61,5 +68,5 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.1.12 | Anthropic | Claude Opus 5.5 xhigh | 1 个 PLOOP 任务（$6.20，站主另给 $50） | 站主让 Claude Code 接管电脑、用 PLOOP 续跑完 v1.1.12（任务 189，52 轮；子代理没派） |
-| v1.1.12 | Anthropic | Haiku 5.5 / Opus 5.5 | 4 次（约 $0.02，同上） | 试 `thinking.block_binding`：不带时改了工具说明再带回旧思考块是 400，带 `drop_block` 照常答、`input_transformations` 记一条 |
+| v1.2.0 | 站主另给 | PLOOP：Opus 5.5 xhigh 主角色（子代理照设置） | 0（上限 $50，API 合计） | 两个 Phase（3、4）各一个任务 |
+| v1.2.0 | 站主另给 | Claude Code Sonnet 5.5 extra、Codex Sol 6.2 xhigh、Muse wonder、Grok 4.7 high | 0 | 各开发一个 Phase（1、5、6、2），用站主的订阅 |

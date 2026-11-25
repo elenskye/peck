@@ -656,16 +656,6 @@ export function spillPath(output?: string | null): string | null {
 
 const fmt = (n: number) => (n >= 10_000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : n.toLocaleString());
 
-/** 回答末尾模型建议的下一步（每行 `→ ` 打头，最多 3 条）：拆成正文和下一步。多出来的留在正文里。 */
-export function splitNextSteps(text: string): { body: string; steps: string[] } {
-  const lines = text.replace(/\s+$/, "").split("\n");
-  const steps: string[] = [];
-  while (lines.length && steps.length < 3 && /^\s*(→|->)\s+\S/.test(lines[lines.length - 1])) {
-    steps.unshift(lines.pop()!.replace(/^\s*(→|->)\s+/, "").trim());
-  }
-  return { body: lines.join("\n").replace(/\s+$/, ""), steps };
-}
-
 /** 还有没有等站主批、等站主回答的（只看这几种事件，不整个折一遍；左栏 NOW 每批事件都要算）。
  *  没批的 Skill 提议（v0.10 C3）也算，任务跑完了也还等着。 */
 export function waitingOnYou(events: AgentEvent[]): boolean {

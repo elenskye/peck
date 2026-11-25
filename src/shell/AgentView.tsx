@@ -1,7 +1,7 @@
 // 一次任务的过程（Peck Loop 和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
 import React, { useEffect, useMemo, useState } from "react";
 import type { AgentEvent, ApprovalDecision, AskQuestion, BoardItem, BoardStatus, Control, PlanStep } from "@/lib/agentEvents";
-import { COMPACT_STEP, englishTitle, findCall, foldEvents, liveAgent, splitNextSteps, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
+import { COMPACT_STEP, englishTitle, findCall, foldEvents, liveAgent, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
 import { cn, copyText, span } from "@/lib/utils";
@@ -20,15 +20,11 @@ interface Props {
   runId?: string;
   /** 往这次的事件里追加一条（批完记忆）。 */
   onAppend?: (event: AgentEvent) => void;
-  /** 最后一段回答末尾的「→ 下一步」交给 recap 做成按钮、正文里藏起来（只有任务最新一次的 Peck Loop）。 */
-  nextSteps?: boolean;
 }
 
-export const AgentView: React.FC<Props> = ({ events, running, who, onControl, onShowFile, say, runId, onAppend, nextSteps }) => {
+export const AgentView: React.FC<Props> = ({ events, running, who, onControl, onShowFile, say, runId, onAppend }) => {
   // 任务已经不在跑（App 退出过、引擎没起来）却没有收尾事件：照收尾看，卡片不再能点、工具不再转。
   const view = useMemo(() => foldEvents(events, !running), [events, running]);
-  // 最后一段回答末尾的「→ 下一步」交给 recap 卡片做成按钮，正文里不再显示。
-  const lastText = useMemo(() => [...view.items].reverse().find((i) => i.kind === "text")?.id, [view.items]);
   const now = useNow(running);
   if (events.length === 0) {
     return <p className="empty-line">{running ? "在起…" : "这次没有记下过程。"}</p>;
@@ -40,7 +36,7 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
         : view.plan && view.plan.length > 0 && <Plan steps={view.plan} />}
       {view.items.map((item) => item.kind === "skill"
         ? <SkillCard key={item.id} skill={item.skill} runId={runId} running={running} onAppend={onAppend} say={say} />
-        : <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} hideSteps={!!nextSteps && !!view.ended && item.id === lastText} />)}
+        : <Item key={item.id} item={item} now={now} onShowFile={onShowFile} say={say} />)}
       {view.trust && running && <TrustCard trust={view.trust} onControl={onControl} say={say} />}
       {view.approvals.map((a) => <ApprovalCard key={a.requestId} approval={a} who={who} onControl={onControl} say={say} />)}
       {view.asks.map((a) => <AskCard key={a.requestId} ask={a} who={who} onControl={onControl} say={say} />)}
@@ -50,10 +46,10 @@ export const AgentView: React.FC<Props> = ({ events, running, who, onControl, on
   );
 };
 
-const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void; hideSteps?: boolean }> = ({ item, now, onShowFile, say, hideSteps }) => {
+const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) => void; say: (m: unknown) => void }> = ({ item, now, onShowFile, say }) => {
   switch (item.kind) {
     case "text":
-      return <AnswerText text={hideSteps ? splitNextSteps(item.text).body : item.text} live={!item.done} say={say} />;
+      return <AnswerText text={item.text} live={!item.done} say={say} />;
     case "tools":
       return <ToolGroup calls={item.calls} thoughts={item.thoughts} now={now} onShowFile={onShowFile} say={say} />;
     case "asked":

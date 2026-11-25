@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
-import { CONTEXT_PARTS, addUsage, compactRun, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
+import { CONTEXT_PARTS, addUsage, compactRun, costCell, costRows, foldEvents, minusUsage, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
 import { baseName, imageType, splitAttachments } from "@/lib/attachments";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
@@ -9,7 +9,7 @@ import type { QuotaHint } from "@/lib/quota";
 import type { ClientCard } from "@/lib/usage";
 import { QuotaRing } from "@/shell/QuotaRing";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
-import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath } from "@/lib/utils";
+import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, runState, span, timer, whoDots, whoLabel, shortenHomePath } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, Lightbox, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
@@ -233,7 +233,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
             )}
             <TaskModule
               run={run}
-              // 归档的只能看：不给「继续」、下一步、RETRY，卡片也不能批（拿回左栏才能接着发；v0.10 收尾审查）。
+              // 归档的只能看：不给「继续」、RETRY，卡片也不能批（拿回左栏才能接着发；v0.10 收尾审查）。
               latest={i === runs.length - 1 && !archivedAt}
               readOnly={!!archivedAt}
               shown={run.id === props.shownRunId}
@@ -244,7 +244,6 @@ export const MiddleColumn: React.FC<Props> = (props) => {
               live={props.runningRunId === run.id}
               onControl={(c) => props.onControl(run.id, c)}
               onAppend={(e) => props.onAppendEvent(run.id, e)}
-              onNext={(text) => props.onDraft(props.draft.trim() ? `${props.draft.trimEnd()}\n${text}` : text)}
               say={props.say}
               onRunUpdated={props.onRunUpdated}
             />
@@ -710,7 +709,7 @@ const STATE: Record<string, { word: string; cls: string }> = {
   undone: { word: "UNDONE", cls: "pk-state--off" },
 };
 
-/** 每轮的 recap（v0.7）：做完 / 停下、改了几个文件（花费在过程最后一行，清单进度在头上）；最新的一轮带下一步按钮（模型建议的，点了放进输入框）。 */
+/** 每轮的 recap（v0.7）：做完 / 停下、改了几个文件（花费在过程最后一行，清单进度在头上）。 */
 const Recap: React.FC<{
   run: RunRecord;
   view: ReturnType<typeof foldEvents> | null;
@@ -718,21 +717,15 @@ const Recap: React.FC<{
   events?: AgentEvent[];
   adds: number;
   dels: number;
-  latest: boolean;
-  busy: boolean;
-  onNext: (text: string) => void;
-}> = ({ run, view, events, adds, dels, latest, busy, onNext }) => {
+}> = ({ run, view, events, adds, dels }) => {
   const state = runState(run);
   const rows = useMemo(() => (events ? costRows(events, whoLabel(run)) : []), [events, run]);
   const done = state === "succeeded";
   const last = view ? [...view.items].reverse().find((i) => i.kind === "text") : undefined;
-  // 只有 Peck Loop 被要求写「→ 下一步」；CLI 引擎回答末尾的箭头列表照原样留在正文里。
-  const steps = last && last.kind === "text" && isPeckRun(run) ? splitNextSteps(last.text).steps : [];
   const wt = run.worktree;
   const facts: string[] = [];
   facts.push(run.files.length ? `改了 ${run.files.length} 个文件` : "没改文件");
   if (wt && !wt.appliedAt && !wt.discardedAt) facts.push("在独立工作区，还没搬回");
-  const nexts = steps.length ? steps : done ? [] : ["继续"];
   return (
     <div className={cn("summary recap sel", !done && "recap--stopped")}>
       <div className="summary-top">
@@ -745,11 +738,6 @@ const Recap: React.FC<{
       {/* 事件日志没读到（或者没记下）时，回答只在任务记录里：照写出来。停下、失败的原因上面红条已经写了，不再重复。 */}
       {!last && run.summary && done && <p className="summary-text">{run.summary}</p>}
       {rows.length > 0 && <CostTable rows={rows} ms={(run.finishedAt ?? run.startedAt) - run.startedAt} />}
-      {latest && nexts.length > 0 && (
-        <div className="recap-next">
-          {nexts.map((n, i) => <Btn key={i} sm disabled={busy} onClick={() => onNext(n)}>{n}</Btn>)}
-        </div>
-      )}
     </div>
   );
 };
@@ -799,14 +787,12 @@ const TaskModule: React.FC<{
   live: boolean;
   onControl: (control: Control) => Promise<void>;
   onAppend: (event: AgentEvent) => void;
-  /** recap 的下一步按钮：放进输入框。 */
-  onNext: (text: string) => void;
   say: (message: unknown) => void;
   /** 归档的任务只读：卡片不能批。 */
   readOnly?: boolean;
   /** 独立工作区搬回、丢掉了。 */
   onRunUpdated: (record: RunRecord) => void;
-}> = ({ run, latest, shown, onShow, busy, onShowFile, events, live, onControl, onAppend, onNext, say, readOnly, onRunUpdated }) => {
+}> = ({ run, latest, shown, onShow, busy, onShowFile, events, live, onControl, onAppend, say, readOnly, onRunUpdated }) => {
   const state = runState(run);
   const running = state === "running";
   const now = useNow(running);
@@ -851,7 +837,7 @@ const TaskModule: React.FC<{
         <b className={cn("pk-readout task-clock", state === "succeeded" && "pk-readout--done", !running && state !== "succeeded" && "task-clock--off")}>{timer(elapsed)}</b>
       </div>
       <Blocks lit={lit} still={!running} />
-      <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} nextSteps={latest && isPeckRun(run)} />
+      <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} />
       {(state === "failed" || state === "cancelled") && failNote && (
         <div className={cn("pk-bar", state === "failed" && "pk-bar--bad", "task-bar sel")}>
           <Icon name={state === "failed" ? "x" : "stop"} />
@@ -859,7 +845,7 @@ const TaskModule: React.FC<{
         </div>
       )}
       {!running && state !== "undone" && (
-        <Recap run={run} view={view} events={events} adds={adds} dels={dels} latest={latest} busy={busy} onNext={onNext} />
+        <Recap run={run} view={view} events={events} adds={adds} dels={dels} />
       )}
       {run.worktree && !running && <WorktreeBar run={run} busy={busy} readOnly={readOnly} onRunUpdated={onRunUpdated} say={say} />}
       {state === "undone" && run.undoneAt && (

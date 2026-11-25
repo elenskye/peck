@@ -803,8 +803,6 @@ body { overflow: hidden; }
 .recap { margin-top: var(--space-3); }
 .recap--stopped .summary-top > .pk-i { color: var(--color-warn); }
 .recap-hook { margin-top: var(--space-3); }
-.recap-next { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
-.recap-next .pk-btn { font-family: var(--font-body); font-weight: 400; letter-spacing: 0; text-transform: none; }
 
 /* ⓘ：说明收进这里（v0.7）。图标是云端的占位：一格像素「i」，等本地在方案里画、站主批了再换。 */
 .info-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin: 0 0 0 var(--space-3); padding: 0; border: 0; background: none; vertical-align: -3px; color: var(--color-text-3); cursor: help; }

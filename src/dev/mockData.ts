@@ -169,7 +169,7 @@ export const MOCK_EVENTS: Record<string, AgentEvent[]> = {
     tool("c2", "write_patch", "edit", "改 src/lib/export.ts"), ok("c2", "改好了", { diff: [edited("src/lib/export.ts", 7, 1)] }),
     tool("c3", "write_patch", "edit", "改 src/lib/export.test.ts"), ok("c3", "改好了", { diff: [edited("src/lib/export.test.ts", 11, 0)] }),
     tool("c4", "bash_run", "run", "跑 pnpm vitest run src/lib/export.test.ts"), ok("c4", "Test Files  1 passed (1)\nTests  3 passed (3)", { exitCode: 0 }),
-    say("m1", "导出时把 tags 写进 front matter，补了一个用例。vitest 3 个用例通过。\n\n→ 导入 Markdown 时也读回标签"),
+    say("m1", "导出时把 tags 写进 front matter，补了一个用例。vitest 3 个用例通过。"),
     usage(0.0042),
     turnEnd(),
   ], NOW - 1 * DAY + 2_000, 60_000),

@@ -150,11 +150,6 @@ export async function copyText(text: string): Promise<void> {
   if (!ok) throw new Error("复制不了：剪贴板没开放");
 }
 
-/** Peck Loop（`api:<供应商>/<模型>`）跑的。 */
-export function isPeckRun(run: Pick<RunRecord, "who">): boolean {
-  return !!run.who?.startsWith("api:");
-}
-
 export function runState(run: { status: string; undoneAt?: number | null }): keyof typeof STATUS_WORD {
   return run.undoneAt ? "undone" : run.status;
 }

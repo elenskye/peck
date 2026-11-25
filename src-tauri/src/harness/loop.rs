@@ -427,8 +427,7 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
          - search_tasks finds earlier tasks in this project; <referenced-task> blocks are earlier tasks the user pointed you to.{web_line}\n\
          - When you learn something durable about this project (a convention, a command, a pitfall, a preference the user stated), propose it with memory; the user approves it at the end.{skill_line}\n\
          - Use ask_user only when you cannot continue without the user's decision, and put every question you have now into one call (up to 4).\n\
-         - Answer in the user's language (Chinese if they write Chinese), in Markdown, briefly: what you changed, how you checked it, anything left.\n\
-         - When you finish, end the final answer with up to 3 suggested next steps the user might want, each on its own line starting with `→ ` (short, imperative, in the user's language). Peck shows them as buttons and hides these lines. Skip them when nothing obvious is left.{extras}{delegate}{brief}",
+         - Answer in the user's language (Chinese if they write Chinese), in Markdown, briefly: what you changed, how you checked it, anything left.{extras}{delegate}{brief}",
         root = task.cwd.display(),
         edit_line = if super::tools::uses_v4a(&config.model_id) {
             "Edit with apply_patch (V4A patch format, as described in its tool definition); use write_file for full rewrites."
