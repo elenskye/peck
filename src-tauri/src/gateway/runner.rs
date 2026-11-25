@@ -610,6 +610,8 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
         // 改文件：EDIT、AUTO 本来就不问改项目里的；临时目录 Peck Loop 的沙箱也放开。别处、.git 里的照旧给站主。
         // 一行一个文件（Codex 一次改几个文件时）：每个都在项目里才批。
         ToolKind::Edit => detail.lines().filter(|l| !l.trim().is_empty()).all(|l| edit_in_bounds(std::path::Path::new(l.trim()), root)),
+        // 读文件（v1.2.0）：项目里、临时目录里的替它批（Claude Code 读自己刚截在 /tmp 的图，以前要站主点、无人值守就卡住）；别处照旧给站主。
+        ToolKind::Read => detail.lines().filter(|l| !l.trim().is_empty()).all(|l| read_in_bounds(std::path::Path::new(l.trim()), root)),
         _ => false,
     };
     ok.then(|| request_id.clone())
@@ -682,11 +684,13 @@ pub(crate) fn flag_high_risk(body: &EventBody, root: &std::path::Path) -> Option
 
 /// 改的文件在项目里（不在 .git 里）或者临时目录里。只认绝对路径，带 `..` 的不认。
 fn edit_in_bounds(path: &std::path::Path, root: &std::path::Path) -> bool {
+    !path.components().any(|c| c.as_os_str() == ".git") && read_in_bounds(path, root)
+}
+
+/// 项目里或临时目录里（绝对路径、不带 ..）。
+fn read_in_bounds(path: &std::path::Path, root: &std::path::Path) -> bool {
     use std::path::Component;
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
-        return false;
-    }
-    if path.components().any(|c| c.as_os_str() == ".git") {
         return false;
     }
     let temp = std::env::temp_dir();
@@ -1189,6 +1193,12 @@ mod tests {
         assert!(rule_allows(edit, &ask(ToolKind::Edit, "/p/.git/config", false), root, &none).is_none());
         assert!(rule_allows(edit, &ask(ToolKind::Edit, "/p/../etc/hosts", false), root, &none).is_none());
         assert!(rule_allows(PermissionLevel::Plan, &ask(ToolKind::Edit, "/p/a.ts", false), root, &none).is_none());
+        // 读文件（v1.2.0）：项目里、临时目录里的替它批；别处、带 ..、PLAN 的给站主。
+        assert!(rule_allows(PermissionLevel::Auto, &ask(ToolKind::Read, "/tmp/peck-check/new.png", false), root, &none).is_some());
+        assert!(rule_allows(edit, &ask(ToolKind::Read, "/p/.git/HEAD", false), root, &none).is_some());
+        assert!(rule_allows(edit, &ask(ToolKind::Read, "/Users/x/.ssh/id_ed25519", false), root, &none).is_none());
+        assert!(rule_allows(edit, &ask(ToolKind::Read, "/tmp/../Users/x/.zshrc", false), root, &none).is_none());
+        assert!(rule_allows(PermissionLevel::Plan, &ask(ToolKind::Read, "/tmp/a.png", false), root, &none).is_none());
         // 高危的命令：界面上那一份标红、只给批准一次和不行。
         match flag_high_risk(&ask(ToolKind::Run, "/bin/zsh -lc 'rm -f /etc/a.html'", false), root) {
             Some(EventBody::ApprovalRequested { high_risk: true, options, reason, .. }) => {
