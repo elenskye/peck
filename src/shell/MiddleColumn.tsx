@@ -721,32 +721,35 @@ const Composer: React.FC<Props & {
         <span>{whoShort(who, settings, entries)}</span>
       </button>
       <div className="composer-row">
-        <MenuChip sm up caret={false} disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label="+">
-          {(close) => (
-            <>
-              <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFiles(); close(); }}>
-                <Icon name="file" size={12} /><b>文件</b><span />
-              </button>
-              <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFolder(); close(); }}>
-                <Icon name="folder" size={12} /><b>文件夹</b><span />
-              </button>
-            </>
+        <div className="composer-tools">
+          <MenuChip sm up caret={false} disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label={<Icon name="plus" size={12} />}>
+            {(close) => (
+              <>
+                <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFiles(); close(); }}>
+                  <Icon name="file" size={12} /><b>文件</b><span />
+                </button>
+                <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFolder(); close(); }}>
+                  <Icon name="folder" size={12} /><b>文件夹</b><span />
+                </button>
+              </>
+            )}
+          </MenuChip>
+          <Seg label="权限" sm disabled={busy} items={PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))} value={permission} onChange={onPermission} />
+          {worktreeable && (
+            <button type="button" className={cn("pk-chip pk-chip--sm", worktree && "is-on")} aria-pressed={worktree} disabled={busy}
+              title="独立工作区：在项目的一个 git worktree 里做，项目文件夹不动；做完在对话里 APPLY 搬回或 DISCARD 丢掉"
+              onClick={() => setWorktree(!worktree)}>
+              <span className="pk-chip-label">WORKTREE</span>
+            </button>
           )}
-        </MenuChip>
-        <Seg label="权限" sm disabled={busy} items={PERMISSIONS.map((p) => ({ id: p.id, label: p.label }))} value={permission} onChange={onPermission} />
-        {worktreeable && (
-          <button type="button" className={cn("pk-chip pk-chip--sm", worktree && "is-on")} aria-pressed={worktree} disabled={busy}
-            title="独立工作区：在项目的一个 git worktree 里做，项目文件夹不动；做完在对话里 APPLY 搬回或 DISCARD 丢掉"
-            onClick={() => setWorktree(!worktree)}>
-            <span className="pk-chip-label">WORKTREE</span>
-          </button>
-        )}
-        <span className="grow" />
-        {spent && money != null && <span className="composer-cost t-code" title={usageText(spent)}>{spent.source === "estimated" ? "估 " : ""}{money}</span>}
-        {context && <ContextRing context={context} />}
-        {who && <QuotaRing who={who} clients={clients} settings={settings} stamp={`${runs.length}:${busy}`} />}
-        {!locked && <button type="button" className="kbd kbd-send" aria-label="发出去" title="↵ 发；⇧↵ 换行" disabled={!ready} onClick={send}>↵</button>}
-        {busy && <Btn v="danger" icon="stop" onClick={onStop}>STOP</Btn>}
+        </div>
+        <div className="composer-actions">
+          {spent && money != null && <span className="composer-cost t-code" title={usageText(spent)}>{spent.source === "estimated" ? "估 " : ""}{money}</span>}
+          {context && <ContextRing context={context} />}
+          {who && <QuotaRing who={who} clients={clients} settings={settings} stamp={`${runs.length}:${busy}`} />}
+          {!locked && <button type="button" className="kbd kbd-send" aria-label="发出去" title="↵ 发；⇧↵ 换行" disabled={!ready} onClick={send}>↵</button>}
+          {busy && <Btn v="danger" icon="stop" onClick={onStop}>STOP</Btn>}
+        </div>
       </div>
     </div>
   );

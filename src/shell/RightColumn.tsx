@@ -168,12 +168,11 @@ const OneShot: React.FC<Props & { shown: boolean }> = ({ project, entries, setti
           <span className="pk-prompt">›</span>
           <MarkdownEditor value={question} onChange={setQuestion} onSubmit={() => void ask()} placeholder="问一句…（↵ 发送，⇧↵ 换行）" disabled={running} ariaLabel="ONE SHOT 问一句" />
         </div>
-        <div className="composer-row">
+        <div className="oneshot-controls">
           <WhoPicker entries={options} value={pick} disabled={running} remembered={settings.picks}
             onChange={(oneshotPick) => onSettings({ oneshotPick })}>
             <EffortPicker entry={pick} value={effort} disabled={running} onChange={(e) => pick && onSettings({ efforts: { ...settings.efforts, [pick.id]: e } })} />
           </WhoPicker>
-          <span className="grow" />
           {running ? <Btn v="danger" sm icon="stop" onClick={stop}>STOP</Btn> : <Btn v="primary" sm disabled={!question.trim() || !pick} onClick={() => void ask()}>ASK</Btn>}
         </div>
       </div>

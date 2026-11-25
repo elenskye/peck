@@ -81,7 +81,7 @@ export const UsagePage: React.FC<{ onClose: () => void; say: (message: unknown) 
 
   return (
     <section className="col page" aria-label="额度与花费">
-      <div className="pk-mod col-grow page-mod">
+      <div className="pk-mod col-grow page-mod quota-page">
         <ModHead label="QUOTA" note={isMockMode() ? "浏览器演示数据" : undefined}>
           <Seg<"7" | "30" | "90"> label="看多少天" sm items={[{ id: "7", label: "7D" }, { id: "30", label: "30D" }, { id: "90", label: "90D" }]} value={days} onChange={setDays} />
           <Btn v="ghost" sm onClick={() => void act(async () => { setClients(await usageApi.refresh()); await reloadSpend(); say("刷新过了；没在运行的客户端不会被启动"); })}>REFRESH</Btn>
@@ -118,7 +118,7 @@ const Tile: React.FC<{ label: string; value: string; note: string; meter?: numbe
   return (
     <div className="pk-mod pk-mod--sunk q-tile">
       <p className="lbl">{label}</p>
-      <p className="q-tile-v"><b className="pk-readout pk-readout--num">{value}</b>{action}</p>
+      <p className="q-tile-v"><b className={cn("pk-readout pk-readout--num", value === "—" && "q-tile-empty")}>{value}</b>{action}</p>
       {meter != null && (
         <div className={cn("q-meter", meter >= 1 ? "is-bad" : meter >= 0.8 && "is-warn")} role="meter" aria-valuenow={Math.round(meter * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`用了上限的 ${Math.round(meter * 100)}%`}>
           {Array.from({ length: 20 }, (_, i) => <i key={i} className={cn(i < lit && "is-on")} />)}

@@ -133,7 +133,7 @@ const TOOL_KEYS = [
 
 /** 一块：头一行名字、（Aliyun 的地域、Vertex 的 Location）、状态；下面一行框、SAVE、REMOVE。 */
 const KeyBlock: React.FC<{ name: string; off: boolean; desc?: string; tag: React.ReactNode; option?: React.ReactNode; field: React.ReactNode; save: React.ReactNode; remove: React.ReactNode }> = ({ name, off, desc, tag, option, field, save, remove }) => (
-  <div className="set-block">
+  <div className={cn("set-block", !!option && "set-block--key-option")}>
     <Row name={name} off={off} desc={desc}>{option}<span className="set-tag">{tag}</span></Row>
     <div className="set-line set-line--key">{field}{save}{remove}</div>
   </div>

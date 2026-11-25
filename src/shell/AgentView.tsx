@@ -707,8 +707,8 @@ const AskCard: React.FC<{ ask: AskView; who: string; onControl: Props["onControl
         <div className="pk-ask-foot">
           {paged && (
             <>
-              <Btn v="ghost" sm disabled={at === 0} aria-label="上一个问题" onClick={() => go(at - 1)}>←</Btn>
-              <Btn v="ghost" sm disabled={at === list.length - 1} aria-label="下一个问题" onClick={() => go(at + 1)}>→</Btn>
+              <Btn v="ghost" sm square className="ask-nav" disabled={at === 0} aria-label="上一个问题" onClick={() => go(at - 1)}><span>←</span></Btn>
+              <Btn v="ghost" sm square className="ask-nav" disabled={at === list.length - 1} aria-label="下一个问题" onClick={() => go(at + 1)}><span>→</span></Btn>
             </>
           )}
           <span className="grow" />

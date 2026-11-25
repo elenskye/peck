@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-25。**在做 v1.2.0**（分 Phase，表和状态在 roadmap「Phase」；版本号收尾才改，现在还写 1.1.12）：Phase 1–5 做完、已提交。正式版是 **v1.1.12**，已装进 /Applications（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
+更新：2026-11-25。**v1.2.0 的 Phase 1–6 已完成，待版本收尾**（状态见 roadmap「Phase」）。正式版仍是 **v1.1.12**，已装进 /Applications（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
 
 ## v1.2.0 在做
 
@@ -22,6 +22,9 @@
 
 - **Phase 5 读网页**（Codex）：`web_fetch` 的 HTML 正文太短时自动用离屏 WebKit，也可指定 `render: true`。结果标明 WebKit，失败返回原文和原因。抓取、渲染共用 30 秒，按停结束子进程。缓存、Markdown 和超长落盘见 architecture「联网」。
 - **验证（Phase 5）**：Codex 沙箱外 17 个相关 Rust 测试通过。覆盖 JS 正文、长原文直读、强制渲染、缓存和落盘、跳转、内网子资源、取消后连接关闭、Peck Loop 入口和本机截图。公开的 TodoMVC React 原文是应用空壳，实测 `web_fetch` 返回 JavaScript 生成的 React 介绍文字。Codex 沙箱内 WebKit 进程起不来，带 `PECK_SANDBOX=seatbelt` 跳过的 4 项已在沙箱外补跑。`pnpm check` 通过。全量测试和正式版窗口留到版本收尾。[TodoMVC React](https://todomvc.com/examples/react/dist/)
+
+- **Phase 6 界面对齐**（Muse → Codex）：`+`、↵、输入提示符居中，工具排统一高度，窄窗口整组换行。对齐顶栏和项目行图标、任务计时和 ASK 控件、右栏控件和 PROMPT 行操作、设置与小窗、QUOTA 读数。ONE SHOT 窄栏分两行，窄设置保留 Aliyun 和 Vertex AI 的名字。
+- **验证（Phase 6）**：`?mock` 离屏 WebKit 明暗截图前后对比并复测像素位置，`pnpm check`、`pnpm build` 通过。原生窗口和真实鼠标悬停留待验收。
 
 ## 这一版做了什么（1.1.12）
 
@@ -152,4 +155,4 @@
 
 ## 下一步
 
-v1.2.0 接着做 Phase 6；收尾（版本号、审查、升级测试、装正式版）由 Claude Code 做。这一版之后：自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。
+v1.2.0 收尾（版本号、审查、升级测试、装正式版）由 Claude Code 做。这一版之后是自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。

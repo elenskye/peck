@@ -22,7 +22,8 @@ body { overflow: hidden; }
 .brand b { font-family: var(--font-dots); font-weight: 900; font-size: 30px; letter-spacing: .06em; line-height: 1; }
 .brand-mark { width: 12px; height: 24px; background: var(--color-cyan-block); box-shadow: var(--shadow-glow-text); animation: pk-blink 1s steps(1) infinite; }
 .top-project { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--color-text-2); white-space: nowrap; }
-.top-project b { color: var(--color-text); }
+.top-project b { color: var(--color-text); translate: 0 -1px; }
+.top-project > .pk-i--folder, .pj-head > .pk-i--folder { translate: 0 1px; }
 .top-project em { color: var(--color-text-3); overflow: hidden; text-overflow: ellipsis; }
 .top-project .top-project-none { color: var(--color-text-3); }
 /* 在跑时权限那一格禁用着：选中的还要认得出是哪一档（bundle.css 里禁用的字色盖过了选中的字色） */
@@ -41,8 +42,7 @@ body { overflow: hidden; }
 .col { display: flex; flex-direction: column; gap: var(--space-7); min-width: 0; min-height: 0; }
 .col-grow { flex: 1 1 0; min-height: 0; }
 .pk-mod.col-grow, .pk-mod.left-projects, .pk-mod.left-agents { display: flex; flex-direction: column; }
-.pk-mod-head { flex: none; }
-.pk-mod-head .pk-btn { margin: -6px 0; }
+.pk-mod-head { flex: none; min-height: var(--size-button-sm); }
 .pk-mod-head .pk-mod-note { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; overflow: hidden; }
 /* 模块头的字太长就截断，右边的按钮（收起 / 展开）不被挤出去（v0.10 Refine）。 */
 .pk-mod-head > .pk-mod-label, .pk-mod-head > .fold-btn, .pk-mod-head > .pk-mod-count { flex: none; }
@@ -67,7 +67,7 @@ body { overflow: hidden; }
 .hint { font-size: var(--text-small); line-height: 1.5; color: var(--color-text-3); }
 .kbd { font-size: var(--text-small); color: var(--color-text-3); }
 /* 输入框右下角的 ↵：提示怎么发，也能点。 */
-.kbd-send { width: 22px; height: 22px; padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
+.kbd-send { display: inline-flex; align-items: center; justify-content: center; width: var(--toolbar-h); height: var(--toolbar-h); padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
 .kbd-send:hover:not(:disabled) { color: var(--color-cyan-text); }
 .kbd-send:disabled { cursor: default; opacity: .5; }
 .kbd-send:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
@@ -92,6 +92,7 @@ body { overflow: hidden; }
 
 .menu-anchor { position: relative; display: inline-flex; }
 .menu-pop { min-width: 260px; }
+.pk-menu-item:has(> .pk-i:first-child) { grid-template-columns: auto minmax(0, 1fr) auto; }
 /* 弹层（ui.tsx 的 Float）：固定在窗口上，位置、最大高度由 Float 量好写进来；量好之前不露出来。
    里面那一块（菜单、模块）跟着弹层的最大高度，菜单靠里面的 .pk-menu-scroll 滚。 */
 .float { position: fixed; z-index: 50; visibility: hidden; }
@@ -103,9 +104,8 @@ body { overflow: hidden; }
 .pj-head { display: flex; align-items: center; gap: var(--space-4); width: 100%; height: 32px; padding: 0 var(--space-4); clip-path: var(--pk-clip2); }
 .pj-head .pk-i { color: var(--color-text-2); }
 .pj-head span { margin-left: auto; font-size: var(--text-small); color: var(--color-text-3); white-space: nowrap; }
-/* 项目名（v1.0.1 放大）：像素字 14px，和设置页里的名字一样大。这个字的墨迹落在行框中线偏下（正式版里量过：比文件夹图标低 2px），
-   往上提 2px，字的墨迹框和图标的墨迹框上下居中。 */
-.pj-head b { position: relative; top: -2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 16px; }
+/* 项目名的像素字墨迹和文件夹图标对齐。 */
+.pj-head b { translate: 0 -1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 16px; }
 .pj-head:hover { background: var(--color-raised); }
 .pj-head.is-on { background: var(--color-cyan-soft); }
 .pj-head.is-on .pk-i { color: var(--color-cyan-text); }
@@ -144,7 +144,7 @@ body { overflow: hidden; }
 .head-icon:hover { color: var(--color-cyan-text); }
 .head-icon:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
 .left-projects > .left-path { flex: none; margin-bottom: var(--space-4); }
-.fold-btn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px; margin: 0 calc(-1 * var(--space-2)) 0 var(--space-3); padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }
+.fold-btn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; margin: 0 calc(-1 * var(--space-2)) 0 var(--space-3); padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }
 .fold-btn:hover { color: var(--color-cyan-text); }
 .fold-btn:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
 .agents-body { display: flex; flex-direction: column; gap: var(--space-4); min-height: 0; margin: 0 calc(-1 * var(--space-2)); padding: 0 var(--space-2); }
@@ -177,12 +177,21 @@ body { overflow: hidden; }
 
 .composer { flex: none; display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-7) var(--space-8) var(--space-6); }
 .composer-in { display: flex; align-items: flex-start; gap: var(--space-4); font-size: 13.5px; line-height: 22px; cursor: text; }
-.composer-in .pk-prompt { margin-right: 0; font-size: inherit; line-height: 22px; }
+.composer-in .pk-prompt { margin: 3px 0 0; font-size: inherit; line-height: 22px; }
 .composer-in textarea { flex: 1; min-width: 0; resize: none; line-height: 22px; min-height: 22px; caret-color: var(--color-cyan-block); }
 /* 中栏输入框打的字跟对话正文一样大（v1.1.10）；ONE SHOT 的不变 */
 .composer .composer-in, .composer .composer-in .pk-prompt { font-size: 15px; line-height: 23px; }
+.composer .composer-in .pk-prompt { margin-top: 4px; }
 .composer-in.is-off .pk-prompt { color: var(--color-text-3); }
-.composer-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+/* 窄窗口里，右边的花费、小环和发送一起换行。 */
+.composer-row { --toolbar-h: calc(var(--size-button-sm) + 6px); display: flex; align-items: center; gap: var(--space-3) var(--space-4); flex-wrap: wrap; }
+.composer-tools, .composer-actions { display: flex; align-items: center; gap: var(--space-4); }
+.composer-tools { min-width: 0; flex-wrap: wrap; row-gap: var(--space-3); }
+.composer-actions { margin-inline-start: auto; }
+.composer-row :is(.pk-chip, .ctx-ring, .quota-ring, .pk-btn) { height: var(--toolbar-h); }
+.composer-row :is(.ctx-ring, .quota-ring) { width: var(--toolbar-h); }
+.composer-tools > .menu-anchor .pk-chip { width: var(--toolbar-h); padding: 0; justify-content: center; }
+.composer-tools > .menu-anchor .pk-chip-label { display: flex; }
 
 .task-stack { display: flex; flex-direction: column; gap: var(--space-5); overflow-x: hidden; }
 /* 中栏很宽时（收起了左栏、右栏，v1.1.12）：对话的每一块和输入框最宽 900px、居中，一行字不拉到一千多像素；滚动条还在中栏边上。 */
@@ -206,7 +215,8 @@ body { overflow: hidden; }
 .task--latest { flex: 1 0 auto; }
 .task-st { display: flex; align-items: center; gap: var(--space-7); }
 .task-info { font-size: var(--text-small); color: var(--color-text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-clock { margin-left: auto; font-size: 40px; }
+.task-clock { margin-left: auto; font-size: 40px; translate: 0 -2px; }
+[data-theme="light"] .task-st > .pk-state { padding-block: 1.5px; padding-inline-start: calc(6px + .14em); }
 .task-clock--off { color: var(--color-text-3); text-shadow: none; }
 .task .pk-blocks { margin: var(--space-7) 0 var(--space-6); }
 .step-body { min-width: 0; }
@@ -248,6 +258,7 @@ body { overflow: hidden; }
 .preview-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .preview-meta { color: var(--color-text-2); white-space: nowrap; }
 .preview-acts { flex: none; display: flex; gap: var(--space-1); margin-left: calc(-1 * var(--space-4)); }
+.preview-head .pk-btn--sm, .quota-page > .pk-mod-head .pk-btn--sm { height: 32px; }
 .confirm { display: flex; flex-direction: column; gap: var(--space-4); }
 .confirm-t { display: flex; align-items: center; gap: var(--space-4); color: var(--color-bad); }
 .confirm-t b { color: var(--color-text); }
@@ -266,6 +277,7 @@ body { overflow: hidden; }
 .files-tree { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .files-tree .pk-tree { flex: 0 1 auto; }
 .files-hidden { flex: none; padding: var(--space-2) 0 0 var(--space-3); }
+.files-body .pk-row > .pk-i { translate: 0 1px; }
 /* ALL 开着时，照忽略规则藏着的那些：变暗 */
 .pk-row--dim .pk-row-name { color: var(--color-text-3); }
 .files-preview { flex: 1.4 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); padding-top: var(--space-5); border-top: 1px dotted var(--color-line-strong); }
@@ -290,10 +302,11 @@ body { overflow: hidden; }
 .term-exit.is-bad b { color: var(--color-bad); }
 .term-in { flex: none; display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px dotted var(--color-line-strong); }
 .term-in .term-p { margin-right: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
-.term-in input { flex: 1; min-width: 0; height: var(--size-input); caret-color: var(--color-cyan-block); }
+.app .term-in input { flex: 1; min-width: 0; height: var(--size-button); font-family: var(--font-code); font-size: var(--text-code); caret-color: var(--color-cyan-block); }
 .term-in.is-off .term-p { color: var(--color-text-3); }
 .term-lock { display: flex; align-items: center; gap: var(--space-3); color: var(--color-text-3); }
 .term-note { flex: none; margin-top: var(--space-4); }
+.term > .pk-mod-head :is(.pk-chip, .pk-btn--sm) { height: 32px; }
 
 /* ---------- 整页的东西（L6）：设置、额度与花费，占中栏和右栏合成的宽栏 ---------- */
 .page-mod { padding-bottom: var(--space-9); }
@@ -331,6 +344,7 @@ body { overflow: hidden; }
 .set-block { border-top: 1px dotted var(--color-line-strong); padding-bottom: var(--space-5); }
 .set-block > .set-row { border-top: 0; }
 .set-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-name:only-child { translate: 0 -1px; }
 .set-name > * { vertical-align: middle; }
 .set-name > :not(:first-child) { margin-left: var(--space-4); }
 .set-name > .pk-dot { margin-right: var(--space-4); }
@@ -344,6 +358,7 @@ body { overflow: hidden; }
 .set-scope .pk-field { height: var(--set-ctl-h); min-width: 0; }
 .set-scope .pk-field input { width: 0; flex: 1; min-width: 0; }
 .set-scope .pk-btn--sm { height: var(--set-ctl-h); min-width: var(--set-btn); }
+:is(.page-mod.is-big, .modal) > .pk-mod-head .pk-btn--sm { height: 32px; }
 .set-scope .pk-chip--sm { height: var(--set-ctl-h); }
 .set-scope .pk-seg--sm > button { height: calc(var(--set-ctl-h) - 6px); }
 .set-ctl > :is(.pk-field, .menu-anchor, .set-meter) { flex: none; width: var(--set-w); }
@@ -372,6 +387,10 @@ body { overflow: hidden; }
 /* 按钮多的列表（归档、MCP、价格表）窗口很窄时：每行都变成两行，按钮在下面一行。 */
 @container (max-width: 480px) {
   .set-rows--acts > .set-row, .set-rows--acts > .set-block > .set-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .set-block--key-option > .set-row { gap: var(--space-2) var(--space-4); }
+  .set-block--key-option .set-ctl { display: contents; }
+  .set-block--key-option .set-tag { grid-column: 2; grid-row: 1; width: auto; }
+  .set-block--key-option .set-ctl > :not(.set-tag) { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
 }
 .set-inline { display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
 .set-inline .pk-field { flex: 1 1 200px; min-width: 0; height: var(--set-ctl-h); }
@@ -496,6 +515,13 @@ body { overflow: hidden; }
 .oneshot-body { display: flex; flex-direction: column; gap: var(--space-5); min-height: 0; }
 .oneshot-acts { display: flex; gap: var(--space-4); }
 .oneshot-in { flex: none; display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-5); border-top: 1px dotted var(--color-line-strong); }
+.oneshot-controls { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; align-items: center; gap: var(--space-3) var(--space-4); }
+.oneshot-controls > .menu-anchor:nth-child(2) { grid-column: span 2; min-width: 0; }
+.oneshot-controls > .menu-anchor:nth-child(3) { grid-column: span 2; justify-self: start; }
+.oneshot-controls .pk-chip { max-width: 100%; }
+.oneshot-controls > .pk-btn { grid-column: 3; grid-row: 2; justify-self: end; }
+.right--wide .oneshot-controls { display: flex; flex-wrap: wrap; }
+.right--wide .oneshot-controls > .pk-btn { margin-inline-start: auto; }
 
 /* ---------- 身份色（v0.5 Refine，站主 2026-11-13 要五家 CLI 各有一色） ----------
    方案 peck 0.1.0 只有 Muse 紫、Grok 橙、API 蓝；这三色先放这里，本地改方案时并进 tokens（APCA 色点门槛 45，深浅两套都过：
@@ -536,7 +562,8 @@ body { overflow: hidden; }
 .q-tile { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-6) var(--space-7); }
 .q-tile .lbl { margin: 0; }
 .q-tile-v { display: flex; align-items: center; gap: var(--space-4); }
-.q-tile-v .pk-readout { font-size: 28px; }
+.q-tile-v .pk-readout { font-size: 28px; translate: 0 -1.5px; }
+.q-tile-v .q-tile-empty { translate: 0 -4.5px; }
 .q-tile-v .pk-btn { margin-left: auto; }
 .q-meter { display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); gap: 2px; height: 8px; }
 .q-meter i { background: var(--color-block-off); }
@@ -581,7 +608,8 @@ body { overflow: hidden; }
 
 /* 选项片的字太长（模型名）就截断，悬停看全名；输入框下那一行不再被挤得换行。 */
 .pk-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-row .menu-anchor .pk-chip-label { max-width: 176px; }
+.pk-chip > .pk-i--triD { translate: 1.5px .75px; }
+.oneshot-controls .pk-chip-label { max-width: 176px; }
 .q-window.is-stale .q-meter i.is-on { opacity: .35; }
 .q-window.is-stale .q-window-v, .q-window.is-stale .q-window-l { color: var(--color-text-3); }
 
@@ -763,7 +791,6 @@ body { overflow: hidden; }
 
 /* 右栏 PROMPT（v1.2.0）：顶上搜索；一行一条，标题像素字、正文前两行 Body 小字；点一下复制（标题后绿勾、底色绿一下），
    笔悬停才露、箭头一直在（朝左：放进中栏）。 */
-.prompts > .pk-mod-head { margin-bottom: var(--space-5); }
 .app .prompt-search { flex: none; width: 100%; height: var(--size-input); }
 .app .prompt-search input { width: 0; }
 .prompt-list { flex: 1 1 0; display: flex; flex-direction: column; margin-top: var(--space-4); }
@@ -777,7 +804,7 @@ body { overflow: hidden; }
 .prompt-title b { min-width: 0; font-family: var(--font-name); font-weight: 400; font-size: var(--text-name); line-height: var(--leading-name); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .prompt-title .pk-i { flex: none; color: var(--color-ok); }
 .prompt-line { font-size: var(--text-small); line-height: 1.5; color: var(--color-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.prompt-acts { display: flex; align-items: center; gap: var(--space-1); padding-top: var(--space-2); }
+.prompt-acts { display: flex; align-items: center; gap: var(--space-1); padding-top: 3px; }
 .prompt-to .pk-i { transform: scaleX(-1); }
 .prompt-edit-btn { opacity: 0; }
 .prompt-row:hover .prompt-edit-btn, .prompt-row:focus-within .prompt-edit-btn { opacity: 1; }
@@ -861,9 +888,11 @@ body { overflow: hidden; }
 .ask-tab.is-on { background: var(--color-cyan-soft); color: var(--color-text); }
 .ask-tab.is-done .pk-i { color: var(--color-ok); }
 .ask-tab:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: 2px; }
+.pk-ask-foot .ask-nav { width: var(--size-button); height: var(--size-button); }
+.ask-nav > span { translate: 0 -1.5px; }
 /* Other 那一行：自己的圆圈或方框，后面一格自己写（点别的选项字也留着） */
 .agent-other { align-items: center; cursor: pointer; }
-.agent-card .agent-other :is(.pk-radio, .pk-check) { margin-top: 0; }
+.agent-other :is(.pk-radio, .pk-check) { margin-top: 0; }
 .agent-other-in { width: 100%; min-width: 0; padding: 0; border: 0; border-bottom: 1px dotted var(--color-line); outline: none; background: none; font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-text); }
 .agent-other-in::placeholder { color: var(--color-text-3); }
 .agent-other-in:focus { border-bottom-color: var(--color-cyan); }
@@ -874,7 +903,7 @@ body { overflow: hidden; }
    卡片（ASK、审批、TRUST）的问题和选项、问题的短名、工具调用每步的标题、回答和 YOU 里的 Markdown 标题。 */
 .agent-card .pk-ask-q { margin-bottom: var(--space-3); font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); font-weight: 600; }
 .agent-card .pk-opt-name { font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); }
-.agent-card .pk-opt .pk-radio, .agent-card .pk-opt .pk-check { margin-top: calc((var(--leading-body) - 16px) / 2); }
+.agent-card .pk-opt:not(.agent-other) :is(.pk-radio, .pk-check) { margin-top: calc((var(--leading-body) - 16px) / 2); }
 .ask-q-head.t-label { font-family: var(--font-body); font-size: var(--text-small); font-weight: 600; letter-spacing: 0; }
 .agent-call-title.pk-step-name { font-family: var(--font-body); }
 :is(.task-stack, .agent) .md :is(h1, h2, h3, h4) { font-family: var(--font-body); font-weight: 600; line-height: 1.4; }
@@ -931,7 +960,7 @@ body { overflow: hidden; }
 .quota-bar { flex: none; margin: 0 0 var(--space-4); gap: var(--space-4); }
 /* 斜杠命令（v0.10 C2）：弹层里的一行、输入框上方的结果块。 */
 .mention-pop .pk-menu-item b.slash-name { flex: none; font-weight: 400; letter-spacing: 0; }
-.mention-pop .pk-menu-item b.slash-name em { font-style: normal; color: var(--color-text-3); }
+.mention-pop .pk-menu-item b.slash-name em { position: relative; top: -.5px; font-style: normal; color: var(--color-text-3); }
 .mention-pop .pk-menu-item .slash-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 /* 命令和提示词（v1.2.0）一样排：名字、标题照全，说明、正文第一行占剩下的、放不下省略（以前说明太长会压到名字上）；第二组的小标题和上一组隔开一点。 */
 .mention-pop .pk-menu-item.slash-row { grid-template-columns: 7px auto minmax(0, 1fr); }
