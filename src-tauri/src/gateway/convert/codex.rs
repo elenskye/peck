@@ -18,6 +18,8 @@ pub struct CodexConverter {
     file_changes: std::collections::HashMap<String, Vec<String>>,
     /// 这一次是站主 `/compact` 转过来的（v1.1.7）：压缩那一行写「你让它压的」。
     pub compacting: bool,
+    /// 开始时还没有搜索词的搜网页（v1.2.0）：先不出这一步，搜完用完成那条里的搜索词、网址一起出。
+    searches_waiting: std::collections::HashSet<String>,
 }
 
 impl CodexConverter {
@@ -27,6 +29,7 @@ impl CodexConverter {
             last_quota: None,
             file_changes: Default::default(),
             compacting: false,
+            searches_waiting: Default::default(),
         }
     }
 
@@ -66,7 +69,7 @@ impl CodexConverter {
         relative(path, self.cwd.as_deref())
     }
 
-    fn item(&self, item: &Value, completed: bool) -> Vec<EventBody> {
+    fn item(&mut self, item: &Value, completed: bool) -> Vec<EventBody> {
         let id = str_of(item, "id");
         match item["type"].as_str().unwrap_or("") {
             "agentMessage" if completed => vec![EventBody::MessageCompleted {
@@ -174,25 +177,36 @@ impl CodexConverter {
                     }]
                 }
             }
+            // 搜网页：Codex 开始时 `query` 常是空的，搜完那条里才有搜索词、打开的网址（`action`）。空的先不出，搜完一起出（v1.2.0）。
             "webSearch" => {
-                if completed {
-                    vec![EventBody::ToolCallCompleted {
-                        call_id: id,
-                        status: ToolStatus::Ok,
-                        output: None,
-                        exit_code: None,
-                        diff: vec![],
-                        duration_ms: None,
-                    }]
-                } else {
-                    vec![EventBody::ToolCallStarted {
-                        call_id: id,
-                        name: "webSearch".into(),
-                        kind: ToolKind::Fetch,
-                        title: format!("搜网页 {}", short(item["query"].as_str().unwrap_or(""), 60)),
-                        input: json!({"query": item["query"]}),
-                    }]
+                let query = item["query"].as_str().unwrap_or("").trim();
+                if !completed && query.is_empty() {
+                    self.searches_waiting.insert(id);
+                    return vec![];
                 }
+                let started = || EventBody::ToolCallStarted {
+                    call_id: id.clone(),
+                    name: "webSearch".into(),
+                    kind: ToolKind::Fetch,
+                    title: search_title(item),
+                    input: json!({"query": item["query"], "action": item["action"]}),
+                };
+                if !completed {
+                    return vec![started()];
+                }
+                let mut out = Vec::new();
+                if self.searches_waiting.remove(&id) {
+                    out.push(started());
+                }
+                out.push(EventBody::ToolCallCompleted {
+                    call_id: id.clone(),
+                    status: ToolStatus::Ok,
+                    output: None,
+                    exit_code: None,
+                    diff: vec![],
+                    duration_ms: None,
+                });
+                out
             }
             // 压了一次上下文（v1.1.7）：不报前后多大，用量等下一条 `thread/tokenUsage/updated`。
             "contextCompaction" if completed => vec![super::cli_compacted("Codex", Some(self.compacting), None, None, "")],
@@ -274,6 +288,20 @@ impl CodexConverter {
             provider: "codex".into(),
             windows,
         }]
+    }
+}
+
+/// 搜网页那一步的标题：搜什么、打开哪个网址、在页里找什么（Codex 的 `action`），没有就用 `query`。
+fn search_title(item: &Value) -> String {
+    let action = &item["action"];
+    let text = |k: &str| action[k].as_str().unwrap_or("").trim().to_string();
+    match action["type"].as_str() {
+        Some("openPage") if !text("url").is_empty() => format!("读网页 {}", short(&text("url"), 80)),
+        Some("findInPage") if !text("pattern").is_empty() => format!("在网页里找 {}", short(&text("pattern"), 60)),
+        _ => {
+            let q = item["query"].as_str().unwrap_or("").trim();
+            if q.is_empty() { "搜网页".into() } else { format!("搜网页 {}", short(q, 60)) }
+        }
     }
 }
 
@@ -606,6 +634,22 @@ mod tests {
         assert_eq!(types.last(), Some(&"turn.completed"));
         assert_eq!(types.iter().filter(|t| **t == "approval.requested").count(), 3);
         assert!(!types.contains(&"raw"), "夹具里不该有不认识的事件：{types:?}");
+    }
+
+    #[test]
+    fn a_search_without_a_query_waits_for_the_one_it_ran() {
+        let mut c = CodexConverter::new(None);
+        let item = |method: &str, query: &str, action: Value| json!({"method": method, "params": {"item": {"type": "webSearch", "id": "w1", "query": query, "action": action}}});
+        assert!(c.feed(&item("item/started", "", Value::Null)).is_empty());
+        let done = c.feed(&item("item/completed", "https://a.dev/x", json!({"type": "openPage", "url": "https://a.dev/x"})));
+        let titles: Vec<String> = done.iter().filter_map(|e| match &e.body { EventBody::ToolCallStarted { title, .. } => Some(title.clone()), _ => None }).collect();
+        assert_eq!(titles, vec!["读网页 https://a.dev/x".to_string()]);
+        assert!(matches!(done.last().map(|e| &e.body), Some(EventBody::ToolCallCompleted { .. })));
+        // 开始时就有搜索词的照旧当场出。
+        let mut c = CodexConverter::new(None);
+        let started = c.feed(&item("item/started", "tauri 2.9", json!({"type": "search", "query": "tauri 2.9"})));
+        assert!(matches!(&started[..], [e] if matches!(&e.body, EventBody::ToolCallStarted { title, .. } if title == "搜网页 tauri 2.9")));
+        assert_eq!(c.feed(&item("item/completed", "tauri 2.9", json!({"type": "search", "query": "tauri 2.9"}))).len(), 1);
     }
 
     #[test]
