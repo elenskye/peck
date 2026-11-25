@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-25。**在做 v1.2.0**（分 Phase，表和状态在 roadmap「Phase」；版本号收尾才改，现在还写 1.1.12）：Phase 1–4 做完、已提交。正式版是 **v1.1.12**，已装进 /Applications（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
+更新：2026-11-25。**在做 v1.2.0**（分 Phase，表和状态在 roadmap「Phase」；版本号收尾才改，现在还写 1.1.12）：Phase 1–5 做完、已提交。正式版是 **v1.1.12**，已装进 /Applications（Claude Code 装的；Peck 在跑时自己换包会把自己换掉、签名也要钥匙串，所以不让 PLOOP 装）。第一次打开会连弹几个钥匙串框。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
 
 ## v1.2.0 在做
 
@@ -19,6 +19,9 @@
 - **没验的（Phase 3）**：原生窗口里真走 Rust 的那一遍（只有 Rust 测试和 `?mock`）；笔悬停才露（离屏截图没有鼠标和焦点，只看了样式规则）；系统剪贴板（`?mock` 里换掉了 `navigator.clipboard`）；正式数据的升级测试（版本收尾做）。
 - **验证（Phase 4）**：`pnpm check` 过；纯函数（`slashAt`、`expandPrompt` 含代码里的花括号、`matchPrompts`）用 node 跑了一个临时检查脚本，48 条都过（不进仓库）。auditor 审了一遍，提的真缺陷（占位抢 Tab）和几条建议改了。`?mock` 明暗：句首 `/` 两组小标题、↓ 走到提示词自己滚出来、`/compact` 那行不压字；`/补` ↵ 插进来选中 `{函数名}`、打字替换、Tab 选中 `{边界情况}`、填完再 Tab 不管；句中「改完以后 /补 再提交」只换「/补」、后面照留，句中只列提示词；网址、路径、`a/`、选一段不弹；Esc 关、接着打字再弹；列表里插一段、留着没填的点到上面一行，Tab 是缩进；Esc 退出占位；点进第二个占位再 Tab 不管；撤销插入占位一起没；列表 Tab / ⇧Tab 照旧；假的组字事件下组字时不弹、组完才弹；选 CLI（Claude Code）插一段发出去，YOU 就是那段字。
 - **没验的（Phase 4）**：原生窗口里用真中文输入法打（只有假的 composition 事件；组字时的回车靠 CodeMirror 和原来的判断，没真按过；选中占位后直接用拼音替换也没真打过）；真鼠标点弹层（只用 JS 点过）；`\{` 在复制、箭头里换成 `{` 只有纯函数的检查（样例里没有 `\{`）。
+
+- **Phase 5 读网页**（Codex）：`web_fetch` 的 HTML 正文太短时自动用离屏 WebKit，也可指定 `render: true`。结果标明 WebKit，失败返回原文和原因。抓取、渲染共用 30 秒，按停结束子进程。缓存、Markdown 和超长落盘见 architecture「联网」。
+- **验证（Phase 5）**：Codex 沙箱外 17 个相关 Rust 测试通过。覆盖 JS 正文、长原文直读、强制渲染、缓存和落盘、跳转、内网子资源、取消后连接关闭、Peck Loop 入口和本机截图。公开的 TodoMVC React 原文是应用空壳，实测 `web_fetch` 返回 JavaScript 生成的 React 介绍文字。Codex 沙箱内 WebKit 进程起不来，带 `PECK_SANDBOX=seatbelt` 跳过的 4 项已在沙箱外补跑。`pnpm check` 通过。全量测试和正式版窗口留到版本收尾。[TodoMVC React](https://todomvc.com/examples/react/dist/)
 
 ## 这一版做了什么（1.1.12）
 
@@ -130,7 +133,7 @@
 | 手动压缩是另一次 run：放回的文件登记成「读过」只在那一次里，下一句（新的 run）要整个覆盖还得先读（和平时一样）；`write_patch` 不受影响 | 记着 |
 | Grok 续上的会话不再报窗口：小环用这个任务里它以前报过的那个；从来没报过就只写用了多少 | 记着 |
 | Codex 压缩不报前后多大；Claude Code 的 `post_tokens` 只算对话，不拿来画 | 等下一条用量 |
-| 读网页：要 JavaScript 才出内容的页读不全（会写一句）；走系统代理时只按主机名查地址、不钉 IP | 记着 |
+| 读网页：WebKit 渲染超时、站点需要登录或交互时仍可能读不全。子资源规则按 URL 拦本机和内网，无法检查 DNS 解析出的 IP 或阻止 DNS 重绑定，WebRTC 等连接也不受这层规则约束；原文抓取走系统代理时不钉 IP | 记着 |
 | 读网页的 Markdown 会带转义（`pairs\.` 这类），模型看得懂 | 记着 |
 
 ## 视觉基线要补的
@@ -149,4 +152,4 @@
 
 ## 下一步
 
-v1.2.0 接着做 Phase 5、6；收尾（版本号、审查、升级测试、装正式版）由 Claude Code 做。这一版之后：自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。
+v1.2.0 接着做 Phase 6；收尾（版本号、审查、升级测试、装正式版）由 Claude Code 做。这一版之后：自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。

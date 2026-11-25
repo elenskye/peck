@@ -252,7 +252,7 @@ pub fn cargo_caches(cargo_home: &Path) -> Option<String> {
 
 /// 钥匙串的几个服务（v1.1.11）：命令碰不到钥匙串。`com.apple.SecurityServer` 是老的文件钥匙串，命令的 HOME 是 Peck 给的，
 /// 里面没有钥匙串，不挡的话 Chrome 这类程序一起来系统就连弹「Keychain Not Found」（2026-11-25 PLOOP 起无头 Chrome 时弹了一串）。
-const KEYCHAIN: &str = "(deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd\") (global-name \"com.apple.securityd.xpc\"))";
+pub(super) const KEYCHAIN: &str = "(deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd\") (global-name \"com.apple.securityd.xpc\"))";
 
 /// 出沙箱跑（站主批了）也照样挡钥匙串。
 fn keychain_only_profile() -> String {
