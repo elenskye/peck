@@ -173,6 +173,9 @@ pub fn strip_wrappers(words: &[String]) -> (Vec<String>, bool) {
         let b = base(w);
         if w.contains('=') && !w.starts_with('-') && !w.starts_with('=') && i < words.len() - 1 && !w.contains('/') {
             i += 1;
+        } else if matches!(w, "do" | "then" | "else" | "elif" | "if" | "while" | "until" | "!" | "{") {
+            // shell 关键字后面才是命令（v1.2.0 收尾审查：`for x in a; do rm -rf /别处; done` 以前认不出是删东西）。
+            i += 1;
         } else if matches!(b, "sudo" | "doas") {
             sudo = true;
             i += 1;
@@ -277,22 +280,47 @@ fn delete_targets(cmd: &str, args: &[String]) -> Option<Vec<String>> {
     }
 }
 
-/// 这条命令里只由 `mktemp` 赋值的变量（`T=$(mktemp -d)`、`export T="$(mktemp)"`）：删 `"$T"` 是删它自己建的临时目录（v1.2.0）。
-/// 同一个名字另外还有别的赋值就不算。
+/// 这条命令里只由 `mktemp` 赋值的变量：删 `"$T"` 是删它自己建的临时目录（v1.2.0）。
+/// 收尾审查找到过绕过的写法（前缀赋值 `HOME=$(mktemp -d) rm -rf "$HOME"`、注释里写赋值、`$(mktemp -d; echo ~)`），所以只认最死板的：
+/// - 按 `;`、`&`、`|`、换行拆、去掉注释后，**整段**恰好是 `[export|local|readonly] NAME=$(mktemp [选项、模板])`（可以带双引号）；
+/// - `HOME`、`PWD`、`TMPDIR` 这类名字不认；
+/// - 这个名字在别的段里只能以 `$NAME`、`${NAME}` 出现，别的样子（`read`、`for`、`+=`、`printf -v`、`${NAME:=…}`、再赋值）一律作废；
+/// - 赋值以前就用到 `$NAME` 的也作废。
 fn mktemp_vars(command: &str) -> std::collections::HashSet<String> {
-    let re = regex::Regex::new(r#"(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=("?)(\$\(\s*mktemp\b)?"#).expect("正则");
-    let mut temp = std::collections::HashSet::new();
-    let mut other = std::collections::HashSet::new();
-    for c in re.captures_iter(command) {
-        let name = c[1].to_string();
-        if c.get(3).is_some() {
-            temp.insert(name);
-        } else {
-            other.insert(name);
+    const NEVER: [&str; 7] = ["HOME", "PWD", "OLDPWD", "TMPDIR", "PATH", "CDPATH", "IFS"];
+    let assign = regex::Regex::new(
+        r#"^(?:(?:export|local|readonly)\s+)?([A-Za-z_][A-Za-z0-9_]*)=("?)\$\(\s*mktemp(?:\s+[A-Za-z0-9_./%+@:-]+)*\s*\)("?)$"#,
+    )
+    .expect("正则");
+    let segs = top_segments(command);
+    let mut first: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, seg) in segs.iter().enumerate() {
+        if let Some(c) = assign.captures(seg) {
+            if c[2] != c[3] || NEVER.contains(&&c[1]) {
+                continue;
+            }
+            first.entry(c[1].to_string()).or_insert(i);
         }
     }
-    temp.retain(|n| !other.contains(n));
-    temp
+    first
+        .into_iter()
+        .filter(|(name, at)| {
+            let plain = regex::Regex::new(&format!(r"\$\{{{0}\}}|\${0}(?:[^A-Za-z0-9_]|$)", regex::escape(name))).expect("正则");
+            let word = regex::Regex::new(&format!(r"(?:^|[^A-Za-z0-9_]){0}(?:[^A-Za-z0-9_]|$)", regex::escape(name))).expect("正则");
+            segs.iter().enumerate().all(|(i, seg)| {
+                // 它自己的 mktemp 赋值段（可以有几次）。
+                if assign.captures(seg).is_some_and(|c| &c[1] == name.as_str() && c[2] == c[3]) {
+                    return true;
+                }
+                if i < *at && plain.is_match(seg) {
+                    return false;
+                }
+                // 去掉 `$NAME`、`${NAME}` 以后还剩这个名字：被别的写法碰过。
+                !word.is_match(&plain.replace_all(seg, " "))
+            })
+        })
+        .map(|(name, _)| name)
+        .collect()
 }
 
 /// `$T`、`${T}` 整个是一个 mktemp 变量（不带后缀）。
@@ -815,7 +843,7 @@ mod tests {
 
     #[test]
     fn deleting_outside_or_the_whole_project() {
-        for c in ["rm -rf /Users/x/other", "rm -rf ../other", "cd .. && rm -rf other", "cd /Users/x && rm -rf proj2", "find /Users/x/Documents -name '*.bak' -delete", "rsync -a --delete src/ /Users/x/backup/", "sudo rm /x", "bash -c 'rm -rf /etc/x'"] {
+        for c in ["for x in a; do rm -rf /Users/x/other; done", "if true; then rm -rf /Users/x/other; fi", "{ rm -rf /Users/x/other; }", "! rm -rf ../other", "rm -rf /Users/x/other", "rm -rf ../other", "cd .. && rm -rf other", "cd /Users/x && rm -rf proj2", "find /Users/x/Documents -name '*.bak' -delete", "rsync -a --delete src/ /Users/x/backup/", "sudo rm /x", "bash -c 'rm -rf /etc/x'"] {
             assert!(kinds(c).contains(&RiskKind::Delete), "{c} → {:?}", kinds(c));
         }
         for c in ["rm -rf .", "rm -rf ./", "rm -rf *", "rm -rf .git", "rm -rf .git/hooks", "rm -rf /Users/x/proj", "cd src && rm -rf ..", "git clean -fdx", "git clean -X -f"] {
@@ -836,6 +864,25 @@ mod tests {
         assert!(cli("T=$(mktemp -d); rm -rf \"$T\"/*").contains(&RiskKind::Delete));
         assert!(cli("T=$(mktemp -d); T=$HOME; rm -rf \"$T\"").contains(&RiskKind::Delete));
         assert!(cli("rm -rf \"$T\"").contains(&RiskKind::Delete));
+        // 收尾审查找到的绕过写法：都还要问。
+        for c in [
+            "HOME=$(mktemp -d) rm -rf \"$HOME\"",
+            "rm -rf \"$HOME\" # HOME=$(mktemp -d)",
+            "echo HOME=$(mktemp -d); rm -rf \"$HOME\"",
+            "HOME=$(mktemp -d); rm -rf \"$HOME\"",
+            "T=$(mktemp -d)/../../x; rm -rf \"$T\"",
+            "T=$(mktemp -d; echo ~); rm -rf \"$T\"",
+            "T=$(mktemp -d); read T; rm -rf \"$T\"",
+            "T=$(mktemp -d); for T in ~; do rm -rf \"$T\"; done",
+            "T=$(mktemp -d); T+=/../..; rm -rf \"$T\"",
+            "T=$(mktemp -d); printf -v T %s ~; rm -rf \"$T\"",
+            "T=$(mktemp -d); : ${T:=~}; rm -rf \"$T\"",
+            "rm -rf \"$T\"; T=$(mktemp -d)",
+            "T=$(mktemp \"$HOME\"); rm -rf \"$T\"",
+        ] {
+            assert!(cli(c).contains(&RiskKind::Delete), "{c} → {:?}", cli(c));
+        }
+        assert!(cli("export T=\"$(mktemp -d -t peck)\"; cargo test; rm -rf \"$T\"").is_empty());
         assert!(cli("rm -rf build").is_empty(), "{:?}", cli("rm -rf build"));
     }
 
