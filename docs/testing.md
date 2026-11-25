@@ -59,7 +59,7 @@
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
-- **截清楚的图**（v1.1.11）：内置浏览器的面板常被缩小、截图糊。PLOOP 里用 `screenshot_page`；别处直接跑它的脚本：`osascript -l JavaScript -e "$(cat src-tauri/src/harness/tools/page.js)" <url> <out.png> 1360 860 <light|dark|空> 1 "<一段 JS，async 函数体>" 300`（参数顺序见脚本头）。每次是新开的页面，`?mock` 的状态要在那段 JS 里点出来；离屏时计时器变慢，JS 最多跑 30 秒；离屏的窗口没有焦点和鼠标，`:hover`、`:focus-within` 才露的东西（PROMPT 的笔）截不到；剪贴板在 JS 里换掉 `navigator.clipboard` 再读。
+- **截清楚的图**：内置浏览器的面板常被缩小、截图糊。PLOOP 里用 `screenshot_page`；别处直接跑它的脚本：`osascript -l JavaScript -e "$(cat src-tauri/src/harness/tools/page.js)" <url> <out.png> 1360 860 <light|dark|空> 1 "<一段 JS，async 函数体>" 300`（参数顺序见脚本头）。每次是新开的页面，`?mock` 的状态要在那段 JS 里点出来；离屏时计时器变慢，JS 最多跑 30 秒；离屏的窗口没有焦点和鼠标，`:hover`、`:focus-within` 才露的东西（PROMPT 的笔）截不到；剪贴板在 JS 里换掉 `navigator.clipboard` 再读。
 - **在脚本里改输入框**（CodeMirror）：`.cm-content` 上 `focus()` 以后 `document.execCommand('insertText', false, '…')` 打字；按键在 `.cm-content` 上派 `keydown`（带 `key`、`keyCode`）；读内容和选区用 `document.querySelector('.composer .cm-content').cmTile.root.view.state`。假的 `compositionstart` / `compositionend` 只能验弹不弹：Safari 里 `insertText` 过 20ms CodeMirror 就当组完了，这时派的回车会变成换行（真输入法组字时 CodeMirror 不收按键，要在原生窗口里用真输入法验）。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
 
@@ -102,7 +102,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
   - 通知横幅会抢到最前，之后的点击被拦：把 Peck 重新拉到前面。站主开着台前调度：点到桌面会把窗口全收起来，跨 App 拖文件做不成。
   - 长任务别一直截图：只读查正式库（`runs.record` 的状态、`agent_events` 里的阶段、卡片、`turn.completed`），有卡片再回去点。
   - 退出 Peck 会停掉在跑的任务：换包要等真跑都完了。
-- **Muse** 只在信任的文件夹里才连 Peck 挂在会话上的 MCP（提 Skill 这些）：TRUST 卡片点过的项目带 `--trust-workspace`（v1.1.8；`live_small_task` 里用 `PECK_LIVE_TRUST=1`）。不花额度地验：起 `muse serve [--trust-workspace]`，只发 `initialize`、`session/start`（`config.mcpServers` 指到一个本地假 MCP），看它连不连。
+- **Muse** 只在信任的文件夹里才连 Peck 挂在会话上的 MCP（提 Skill 这些）：TRUST 卡片点过的项目带 `--trust-workspace`（`live_small_task` 里用 `PECK_LIVE_TRUST=1`）。不花额度地验：起 `muse serve [--trust-workspace]`，只发 `initialize`、`session/start`（`config.mcpServers` 指到一个本地假 MCP），看它连不连。
 
 ## 升级测试
 
@@ -125,7 +125,7 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
   - 原生联网搜索：同一个模块的 `live_web_search`（参数同上，只认有原生搜索的模型）：一次带着 Peck 的工具让它搜，一次把带搜索原件的回答放回去再问一句（验回放）。
   - Peck 的 `web_search`：`gateway::search` 的 `live_tavily`（`PECK_TAVILY_KEY`）、`live_deepseek`（`PECK_DEEPSEEK_KEY`），各搜一次。
   - Mathpix（`ocr_pdf`）：`gateway::mathpix` 的 `live_mathpix`，`PECK_MATHPIX_ID`、`PECK_MATHPIX_KEY`（Key 目录的 `mathpix` 第一行、第二行）、`PECK_LIVE_PDF`（一两页的 PDF，按页收费）：识别一次、确认它那边删掉了。
-  - 划文件（v1.1.3）：同一个模块的 `live_ploop_workers_split_files`，参数同下（`PECK_LIVE_SUB_MODEL` 是 worker）：主角色派两个 worker 各建一个文件，主角色最多 5 轮、worker 各 2 轮。
+  - 划文件：同一个模块的 `live_ploop_workers_split_files`，参数同下（`PECK_LIVE_SUB_MODEL` 是 worker）：主角色派两个 worker 各建一个文件，主角色最多 5 轮、worker 各 2 轮。
   - PLOOP 子代理：`harness::r#loop` 的 `live_ploop_spawns_explorers`。`PECK_LIVE_KEYS`、`PECK_LIVE_MODEL`（主角色）、`PECK_LIVE_SUB_MODEL`（explorer）：在临时项目里让主角色一次派两个 explorer、等报告、收尾（主角色约 3 次请求，explorer 各 2–3 次）。
   - CLI：`gateway::engines::{codex,claude_code,muse,acp}` 的 `live_small_task`。`PECK_LIVE_CODEX` / `PECK_LIVE_CLAUDE` / `PECK_LIVE_MUSE` / `PECK_LIVE_ACP`（`cli/bin/…`）、`PECK_LIVE_CWD`、`PECK_LIVE_PROMPT`，可选 `PECK_LIVE_MODE`、`PECK_LIVE_CONFIG_DIR`、`PECK_LIVE_MCP`、`PECK_LIVE_MODEL`、`PECK_LIVE_EFFORT`、`PECK_LIVE_LOG=<文件>`、`PECK_LIVE_TRUST=1`（带信任开关）、`PECK_LIVE_APPEND=<一句话>`（第一步工具开始时追加这一句，验中途插话）。审批一律批准一次，提问答「好」。
   - 收尾 Hook（Codex，花一个小任务、两轮）：`gateway::engines::codex` 的 `live_stop_hook_commits_the_round`，`PECK_LIVE_CODEX`、`PECK_LIVE_CWD=<一个 git 仓库>`（用仓库外的 `projects/git-plan-smoke`）。
