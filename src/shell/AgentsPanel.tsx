@@ -239,19 +239,31 @@ const ApiBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
   );
 };
 
-/** CLI：五家点选，下面是这家的模型和强度。模型列表从 CLI 读（存着，REFRESH 重读）。 */
+const STALE_LIST_MS = 3 * 86_400_000;
+
+/** CLI：四家点选，下面是这家的模型和强度。模型列表从 CLI 读（存着，REFRESH 重读；存了 3 天以上自己重读）。 */
 const CliBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: AppSettings; onSettings: Props["onSettings"]; choose: (id: string) => void; disabled: boolean; say: Props["say"] }> = ({ entries, value, settings, onSettings, choose, disabled, say }) => {
   const engine = cliEngine(value)!;
   const [list, setList] = useState<CliModels | null>(null);
   const [reading, setReading] = useState(false);
-  const read = (refresh: boolean) => {
+  // 存着的清单超过 3 天就在后台重读一次（v1.2.0：Codex 的清单停在 11-13，新出的 gpt-6.2-sol 选不到）；悄悄的，读不到不报。
+  const read = async (refresh: boolean, quiet = false) => {
     setReading(true);
-    ipc.cliModels(engine, refresh)
-      .then((r) => { setList(r); if (refresh && r.error) say(r.error); })
-      .catch(say)
-      .finally(() => setReading(false));
+    try {
+      const r = await ipc.cliModels(engine, refresh);
+      setList(r);
+      if (refresh && r.error && !quiet) say(r.error);
+      if (!refresh && r.source === "cli" && r.readAt && Date.now() - r.readAt > STALE_LIST_MS) {
+        const fresh = await ipc.cliModels(engine, true);
+        if (!fresh.error) setList(fresh);
+      }
+    } catch (e) {
+      if (!quiet) say(e);
+    } finally {
+      setReading(false);
+    }
   };
-  useEffect(() => { setList(null); read(false); }, [engine]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setList(null); void read(false); }, [engine]); // eslint-disable-line react-hooks/exhaustive-deps
   const models = list?.engine === engine ? list.models : [];
   const chosenId = settings.cliModels[engine] ?? "";
   const chosen = models.find((m) => m.id === chosenId) ?? null;
@@ -300,7 +312,7 @@ const CliBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
               {list?.source !== "builtin" && (
                 <>
                   <div className="pk-menu-sep" />
-                  <button type="button" className="pk-menu-action" disabled={reading} onClick={() => { read(true); close(); }}>
+                  <button type="button" className="pk-menu-action" disabled={reading} onClick={() => { void read(true); close(); }}>
                     <Icon name="clock" size={12} />{reading ? "在读…" : "重新读一遍"}<em>{list?.readAt ? `上次 ${ago(list.readAt, Date.now())}` : "还没读过"}</em>
                   </button>
                 </>
