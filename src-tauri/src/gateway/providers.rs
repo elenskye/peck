@@ -268,6 +268,9 @@ fn client() -> Result<reqwest::Client, GatewayError> {
         .retry(reqwest::retry::never())
         .connect_timeout(Duration::from_secs(20))
         .read_timeout(Duration::from_secs(120))
+        // 空闲的连接 30 秒就丢：等子代理一两分钟以后，复用一条已经被中间的 VPN / NAT 掐掉的连接会立刻断
+        // （v1.1.9 验收碰到过一次「连不上供应商」，没查实是不是这个，先避开）。
+        .pool_idle_timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| GatewayError::new(ErrorKind::Internal, "建不了 API 连接。"))
 }
@@ -288,8 +291,20 @@ fn network(e: &reqwest::Error) -> GatewayError {
     if e.is_timeout() {
         GatewayError::new(ErrorKind::Network, "API 请求超时了，没自动重发。")
     } else {
-        GatewayError::new(ErrorKind::Network, "连不上供应商，没自动重发。")
+        GatewayError::new(ErrorKind::Network, format!("连不上供应商，没自动重发{}。", cause(e)))
     }
+}
+
+/// 最里层的原因，括起来一小段（「connection closed before message completed」这类，排查用）。只取 `source`
+/// 链上的，不取 reqwest 自己那句（带地址）；Key 在请求头里，不会出现在这里。
+fn cause(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut last = None;
+    let mut src = e.source();
+    while let Some(s) = src {
+        last = Some(s.to_string());
+        src = s.source();
+    }
+    last.filter(|t| !t.trim().is_empty()).map(|t| format!("（{}）", super::convert::short(t.trim(), 120))).unwrap_or_default()
 }
 
 /// HTTP 错误 → 给站主看的一句话。供应商自己的说明截一段带上（不含 Key）。

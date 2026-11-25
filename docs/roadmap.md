@@ -56,6 +56,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - 一律用这家最便宜、又测得到要测功能的模型，做无关紧要的小任务；测试项目放仓库外的 `personal-cli-studio/projects/`。
 - 用之前和之后都记账；失败不静默重试；用完先停下问站主。
 - 站主另给的额度（比如某一周按钱算）以站主当时说的为准，记在下面。
+- **站主另给（2026-11-25，v1.1.9 验收第二轮）**：Muse 10、Claude Code 3、Codex 5、Grok 10 个小任务，DeepSeek 50 次尝试；百炼（Aliyun）、Vertex、Gemini、Tavily 各 5 次尝试。都从 0 算（不和下面 v1.1.9 前一轮的混算）。DeepSeek 的 50 次用完（超了 1 次）后站主又给了 100 次。
 
 **账本**（只留当前版本）：
 
@@ -66,4 +67,14 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | v1.1.9 | DeepSeek | V4.1 Flash | 3 / 5（$0.0014） | 验收：正式版窗口里 PLOOP 跑着时追加一句，YOU 进过程，回答照那句改了 |
 | v1.1.9 | Grok | grok-4.7-build-fast | 1 / 3（两轮，估 $0.26） | 验收：TRUST 卡片点了，`grok --trust` 记进它的信任表；跑着时发的话排着，这一轮做完自动发成下一句 |
 | v1.1.9 | Claude Code | haiku-5-5 | 3 / 3（估 $0.012） | 验收：一次问两个问题各自答回去、带信任开关；跑着时追加卡住（它把那句并进这一回合、只回一个 `result`），按 STOP 收；一次探针走协议看回显（`--replay-user-messages`）；修完复测追加，自己收尾 |
+| v1.1.9 验收二 | Muse | muse-spark-1.3 xhigh | 2 / 10（估 $0.25） | 记忆 + 开场 Hook + 一次问两个 + 跑着时插话（收尾 Hook 卡片被藏，STOP 收；已修）；后台命令等到 Muse 自己开下一轮 |
+| v1.1.9 验收二 | Claude Code | haiku-5-5 | 3 / 3（估 $0.02） | 记忆 + Hook + 清单（`-p` 下没有清单工具）；一次探针看开场工具列表（发一句「hi」、一出 init 就停，三次）；带上 `CLAUDE_CODE_ENABLE_TODO_TOOLS` 后清单 2/2 画出来了 |
+| v1.1.9 验收二 | Codex | gpt-6-luna low | 2 / 5（估 $0.005） | 记忆 + 开场 Hook；那行 MCP 提示没了；默认模式没有提问工具；收尾 Hook 卡片看得见、批了以后续上会话接着一轮 |
+| v1.1.9 验收二 | Grok | grok-4.7 high | 2 / 10（估 $0.17） | 记忆 + 开场 Hook；发现信任过的文件夹里 Grok 自己也跑项目 Hook（两遍）；修完复测 Peck 不再替它跑 |
+| v1.1.9 验收二 | DeepSeek | V4.1 Flash | 51 / 50（$0.03） | 派两个 explorer + 一个 searcher（DeepSeek 搜索 2 次）17 次；任务板（2 worker + member + auditor）34 次：auditor 跑了十几轮、翻到项目外、要跑 `tmutil` 被拒，主角色最后一次「连不上供应商」失败（计 1 次） |
+| v1.1.9 验收二 | DeepSeek（追加） | V4.1 Flash | 25 / 100（$0.014） | 反悔 + 定时任务 + 留着的 dev server 7 次；读 PDF / Notebook + 按需加载 dw + 收尾 Hook 拦一次 7 次；Git Plan 收尾提交（含问提交说明）6 次；新端口的 dev server（PREVIEW 自己换过去）5 次 |
+| v1.1.9 验收二 | 百炼（Aliyun） | qwen3.8-flash | 3 / 5（$0.002） | 新加坡地域：地址通、北京的 Key 被拒（Invalid API-key）；切回北京问一个要联网的问题（2 次） |
+| v1.1.9 验收二 | Vertex | Claude Haiku 5.5 | 0 / 5 | 填了项目 ID 后模型列出来了；gcloud 换不到令牌（ADC 过期），请求没发出去 |
+| v1.1.9 验收二 | Gemini | gemini-3.8-flash | 1 / 5 | 这把 Key 额度用完（429 quota），原生搜索没测到 |
+| v1.1.9 验收二 | Tavily | — | 1 / 5 | Qwen 当主角色时 `web_search` 走 Tavily 搜一次，回答带出处 |
 | v1.1.8 | Muse、Codex | — | 0 / 3 | 没花额度：`muse serve [--trust-workspace]` 只建会话，用本地假 MCP 看它连不连（带了才连）；`codex -c projects={…} mcp list` 看项目 `.codex/config.toml` 读没读进来（内联表的写法才认） |

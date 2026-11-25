@@ -59,7 +59,7 @@ const Item: React.FC<{ item: ViewItem; now: number; onShowFile: (path: string) =
     case "asked":
       return (
         <div className="agent-asked sel">
-          <p><span className="t-label">ASK</span>{item.ask.question}</p>
+          <AskQuestion text={item.ask.question} label={<span className="t-label">ASK</span>} plain />
           <p className="agent-answer"><Icon name="chat" size={12} />{item.ask.answer}</p>
         </div>
       );
@@ -620,7 +620,7 @@ const AskCard: React.FC<{ ask: AskView; who: string; onControl: Props["onControl
         <ModHead label="ASK" note={<span className="pk-who">{who}</span>} count={several ? `${each.filter((a) => a.length > 0).length}/${list.length}` : undefined} />
         {list.map((q, i) => (
           <div key={i} className={several ? "ask-q" : undefined}>
-            <p className="pk-ask-q">{several && q.header && <b className="t-label ask-q-head">{q.header}</b>}{q.question}</p>
+            <AskQuestion text={q.question} label={several && q.header ? <b className="t-label ask-q-head">{q.header}</b> : null} />
             <AskFields q={q} freeText={ask.freeText} value={picks[i]} own={owns[i]} keys={!several}
               onPick={(o) => setPicks((p) => set(p, i, q.multi ? (p[i].includes(o) ? p[i].filter((v) => v !== o) : [...p[i], o]) : [o]))}
               onOwn={(t) => setOwns((o) => set(o, i, t))} onEnter={() => void submit()} />
@@ -632,5 +632,17 @@ const AskCard: React.FC<{ ask: AskView; who: string; onControl: Props["onControl
         </div>
       </div>
     </section>
+  );
+};
+
+/** 模型问的话：第一行当问题（去掉加粗记号），后面几行（模型常写成列表）按 Markdown 画成小字。 */
+const AskQuestion: React.FC<{ text: string; label?: React.ReactNode; plain?: boolean }> = ({ text, label, plain }) => {
+  const [first = "", ...rest] = text.trim().split("\n");
+  const body = rest.join("\n").trim();
+  return (
+    <>
+      <p className={plain ? undefined : "pk-ask-q"}>{label}{first.replace(/\*\*/g, "")}</p>
+      {body && <Md text={body} className="ask-body" />}
+    </>
   );
 };

@@ -131,7 +131,9 @@ const Preview: React.FC<Props> = ({ project, onToTask, wide, onWide, say }) => {
     return () => window.clearInterval(t);
   }, [workspaceId, readServers]);
   const detected = servers.find((s) => s.url)?.url ?? "";
-  useEffect(() => { if (!url && detected) { setUrl(detected); setDraftUrl(detected); } }, [detected]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 认出 dev server 的地址：没存过地址、或者存着的是别的端口，就换过去（同一个端口上自己写的路径留着）。
+  const port = (u: string) => u.match(/^https?:\/\/[^/]+:(\d+)/)?.[1] ?? "";
+  useEffect(() => { if (detected && port(detected) !== port(url)) { setUrl(detected); setDraftUrl(detected); } }, [detected]); // eslint-disable-line react-hooks/exhaustive-deps
   const go = async (target = draftUrl.trim()) => {
     if (!target) { say("先写地址，或者起一个 dev server"); return; }
     try { setFrame(await ipc.previewStart(target)); setUrl(target); setDraftUrl(target); setNonce((n) => n + 1); } catch (e) { say(e); }

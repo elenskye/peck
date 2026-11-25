@@ -90,6 +90,20 @@ impl ClaudeCodeBackend {
         }
         args
     }
+
+    /// 起进程带的环境变量：项目的、不自动更新、本机 MCP 的令牌；还有清单工具——`claude -p` 默认不给
+    /// `TaskCreate` / `TaskUpdate`，官方的 `CLAUDE_CODE_ENABLE_TODO_TOOLS` 打开（站主 2026-11-25 定，只对这一次进程，
+    /// 不改它的配置；2.1.322 核实）。
+    fn launch_env(task: &AgentTask, setup: &[(String, String)]) -> Vec<(String, String)> {
+        let mut env = super::project_env(task);
+        env.push(("DISABLE_AUTOUPDATER".to_string(), "1".to_string()));
+        env.push(("CLAUDE_CODE_ENABLE_TODO_TOOLS".to_string(), "1".to_string()));
+        if let Some(m) = &task.peck_mcp {
+            env.push(("PECK_MCP_TOKEN".into(), m.token.clone()));
+        }
+        env.extend(setup.iter().cloned());
+        env
+    }
 }
 
 impl AgentBackend for ClaudeCodeBackend {
@@ -107,17 +121,11 @@ impl AgentBackend for ClaudeCodeBackend {
         sink: EventSink,
         control: mpsc::UnboundedReceiver<Control>,
     ) -> BoxFuture<Result<RunOutcome, GatewayError>> {
-        let mut env = super::project_env(&task);
-        env.push(("DISABLE_AUTOUPDATER".to_string(), "1".to_string()));
-        if let Some(m) = &task.peck_mcp {
-            env.push(("PECK_MCP_TOKEN".into(), m.token.clone()));
-        }
-        env.extend(self.setup.env.iter().cloned());
         let launch = Launch {
             bin: self.setup.bin.clone(),
             args: Self::args(&task),
             cwd: task.cwd.clone(),
-            env,
+            env: Self::launch_env(&task, &self.setup.env),
             path: self.setup.path.clone(),
         };
         Box::pin(async move {
@@ -528,6 +536,9 @@ mod tests {
         let joined = args.join(" ");
         assert!(joined.contains("--permission-prompt-tool stdio"));
         assert!(joined.contains("--replay-user-messages"));
+        // 清单工具（`claude -p` 默认不给）只对这一次进程打开。
+        let env = ClaudeCodeBackend::launch_env(&task(), &[]);
+        assert!(env.contains(&("CLAUDE_CODE_ENABLE_TODO_TOOLS".to_string(), "1".to_string())));
         assert!(joined.contains("--permission-mode plan"));
         assert!(joined.contains("--model haiku") && joined.contains("--resume s1"));
         assert!(!joined.contains("--bare") && !joined.contains("--effort"));

@@ -455,7 +455,6 @@ body { overflow: hidden; }
 .agent-asked .t-label { margin-right: var(--space-4); color: var(--color-warn); }
 .agent-answer { display: flex; align-items: flex-start; gap: var(--space-4); color: var(--color-text); white-space: pre-wrap; }
 .agent-answer .pk-i { margin-top: 3px; }
-.agent-asked > p:first-child { white-space: pre-wrap; }
 .agent-usage { font-size: var(--text-small); color: var(--color-text-3); padding-top: var(--space-3); border-top: 1px dotted var(--color-line); }
 .agent-card { position: relative; margin-top: var(--space-3); }
 .agent-card-detail { margin: var(--space-3) 0; padding: var(--space-4) var(--space-6); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-code); color: var(--color-text); }
@@ -811,6 +810,8 @@ body { overflow: hidden; }
 /* ASK 一次问几个（v1.1.9）：一个问题一段，中间一条虚线；问题前面是它的短名 */
 .ask-q + .ask-q { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px dashed var(--color-line); }
 .ask-q-head { margin-right: var(--space-3); color: var(--color-text-3); }
+.ask-body { margin: 0 0 var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
+.agent-asked .ask-body { margin: 0; }
 /* + 附的文档、文件夹（v1.1.8）：一片一个，叉掉 */
 .composer-upload { cursor: default; max-width: 220px; }
 .composer-upload button { display: inline-flex; padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }

@@ -54,7 +54,7 @@ pub struct BgInfo {
     pub url: Option<String>,
 }
 
-/// 输出里头一个本机地址（localhost、127.0.0.1、0.0.0.0、[::1]，带端口）。去掉颜色码。
+/// 输出里头一个本机地址（localhost、127.0.0.1、0.0.0.0、[::1]、[::]，带端口）。去掉颜色码。
 pub fn local_url(text: &str) -> Option<String> {
     let plain: String = {
         let mut out = String::with_capacity(text.len());
@@ -76,11 +76,11 @@ pub fn local_url(text: &str) -> Option<String> {
         }
         out
     };
-    for host in ["http://localhost:", "http://127.0.0.1:", "http://0.0.0.0:", "http://[::1]:"] {
+    for host in ["http://localhost:", "http://127.0.0.1:", "http://0.0.0.0:", "http://[::1]:", "http://[::]:"] {
         if let Some(i) = plain.find(host) {
             let rest = &plain[i..];
             let end = rest.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ',').unwrap_or(rest.len());
-            let url = rest[..end].trim_end_matches(['.', ';']).replace("0.0.0.0", "localhost");
+            let url = rest[..end].trim_end_matches(['.', ';']).replace("0.0.0.0", "localhost").replace("[::]", "localhost");
             if url.len() > host.len() {
                 return Some(url);
             }
@@ -252,7 +252,13 @@ pub struct Spec {
 }
 
 pub fn start(spec: Spec, on_update: Option<OnUpdate>) -> Result<Arc<BgProc>, String> {
-    let ctx = ToolContext::new(&spec.workspace, spec.log_dir.clone(), spec.runtime_dir.clone(), spec.env.clone())?.with_extra(&spec.extra);
+    // 输出要边出边读（dev server 的地址、ready 那句）：Python 不在终端里会攒着不写，带上 `PYTHONUNBUFFERED`
+    // （v1.1.9 验收：`python3 -m http.server` 的地址一直没出来）。项目自己设了就照它的。
+    let mut env = spec.env.clone();
+    if !env.iter().any(|(k, _)| k == "PYTHONUNBUFFERED") {
+        env.push(("PYTHONUNBUFFERED".into(), "1".into()));
+    }
+    let ctx = ToolContext::new(&spec.workspace, spec.log_dir.clone(), spec.runtime_dir.clone(), env)?.with_extra(&spec.extra);
     let cwd = ctx.resolve_path(spec.cwd.as_deref().unwrap_or("."), false)?;
     if !cwd.is_dir() {
         return Err(format!("{} 不是文件夹。", ctx.rel(&cwd)));
@@ -444,6 +450,8 @@ mod tests {
         assert_eq!(local_url("  \u{1b}[32m➜\u{1b}[39m  Local:   \u{1b}[36mhttp://localhost:\u{1b}[1m5173\u{1b}[22m/\u{1b}[39m\n").as_deref(), Some("http://localhost:5173/"));
         assert_eq!(local_url("ready on http://0.0.0.0:3000, ok").as_deref(), Some("http://localhost:3000"));
         assert_eq!(local_url("Listening at http://127.0.0.1:8080.").as_deref(), Some("http://127.0.0.1:8080"));
+        // python3 -m http.server（v1.1.9 验收）
+        assert_eq!(local_url("Serving HTTP on :: port 8765 (http://[::]:8765/) ...").as_deref(), Some("http://localhost:8765/"));
         assert_eq!(local_url("see https://example.com"), None);
     }
 

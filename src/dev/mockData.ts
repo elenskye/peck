@@ -101,7 +101,7 @@ const run8: RunRecord = {
   id: "run-8", number: 8, sessionId: "task-8",
   prompt: "有任务在跑的时候把菜单栏小图标换成带点的那个。",
   status: "failed", startedAt: NOW - 5 * HOUR + 2_000, finishedAt: NOW - 5 * HOUR + 2 * MIN,
-  summary: "没做完：Grok 没登录，在终端跑 grok login 再试。没改文件。",
+  summary: "没做完：Grok 没登录：在终端跑 grok login 再试。",
   steps: [step("run-8", "grok", "Grok", "failed", NOW - 5 * HOUR + 2_000, NOW - 5 * HOUR + 2 * MIN)],
   files: [],
   who: "cli:grok", permission: "edit",

@@ -155,7 +155,7 @@ Peck Loop 和 CLI 引擎同一套显示（`src/shell/AgentView.tsx`）：
 - **工具调用**（学 Claude Code，英文）：连着的折成一组，头上一行「Read 3 files, edited 2 files, ran 1 command · 38s」（按出现的先后：read / listed / searched for / edited / ran / fetched / searched the web / recalled memory / used N skills / ran N subagents / used N tools…），失败的组标 FAIL；点开每步一行，标题也是英文（Run pnpm test、Edit src/a.ts），改的带 Diff 入口和 +/−，跑的带 exit 码、能看输出。各引擎给的中文标题在前端翻（`englishTitle`）。
 - **思考**不算一步、不单独占行，也不打断上下的工具调用：在想时那一组下面一行「Thinking… 3s」，想完就不显示。
 - 英文只到工具调用的组和 Thinking 为止；卡片、recap、提醒行这些细的信息用中文。
-- **卡片**：审批（`[ RISK ]` 高危 / `[ ALLOW? ]`）、ASK（问题 + 选项 + 自己写）；Peck 不在最前面时发通知。任务结束了卡片不能再点。一次问了几个问题（v1.1.9）：一张卡里一个问题一段（前面是它的短名，中间一条虚线），各选各的、各有一格自己写，能多选的是方框；头上写答了几个，都答了才能 SUBMIT；答完过程里一个问题一行「短名：答案」。
+- **卡片**：审批（`[ RISK ]` 高危 / `[ ALLOW? ]`）、ASK（问题 + 选项 + 自己写；模型写成几行的，第一行当问题，后面按 Markdown 画成小字）；Peck 不在最前面时发通知。任务结束了卡片不能再点。一次问了几个问题（v1.1.9）：一张卡里一个问题一段（前面是它的短名，中间一条虚线），各选各的、各有一格自己写，能多选的是方框；头上写答了几个，都答了才能 SUBMIT；答完过程里一个问题一行「短名：答案」。
 - **花费**：每次任务下面一行（进、出、缓存命中、搜了几次、花费；CLI 的标「估」——它自己估的，或者它不报、Peck 按会话的模型查价格表估的；真算不出写「花费未知」）。
 - **追加的话**（v1.1.9）：任务跑着时站主接着说的一句，在过程里当时那一处一行 YOU。
 - **搜网页**：供应商自己搜的、Peck 的 `web_search` 一个样，一次一步「Search the web: …」，输出里列来源。

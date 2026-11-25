@@ -778,6 +778,8 @@ const TaskModule: React.FC<{
   const adds = run.files.reduce((n, f) => n + f.additions, 0);
   const dels = run.files.reduce((n, f) => n + f.deletions, 0);
   const elapsed = (run.finishedAt ?? now) - run.startedAt;
+  // 没做完的那一句：同一个错过程里已经画成红条了，就不再画一遍（v1.1.9 验收）。
+  const failNote = run.summary && !view?.items.some((i) => i.kind === "error" && run.summary!.includes(i.text)) ? run.summary : null;
   const dots = whoDots(run);
 
   return (
@@ -801,10 +803,10 @@ const TaskModule: React.FC<{
       </div>
       <Blocks lit={lit} still={!running} />
       <AgentView events={events ?? []} running={running && (live || !!events?.length)} who={whoLabel(run)} onControl={onControl} onShowFile={onShowFile} say={say} runId={readOnly ? undefined : run.id} onAppend={readOnly ? undefined : onAppend} nextSteps={latest && isPeckRun(run)} />
-      {(state === "failed" || state === "cancelled") && run.summary && (
+      {(state === "failed" || state === "cancelled") && failNote && (
         <div className={cn("pk-bar", state === "failed" && "pk-bar--bad", "task-bar sel")}>
           <Icon name={state === "failed" ? "x" : "stop"} />
-          <span className="pk-bar-text">{run.summary}</span>
+          <span className="pk-bar-text">{failNote}</span>
         </div>
       )}
       {!running && state !== "undone" && (

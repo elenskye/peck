@@ -411,8 +411,10 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
     for (const t of texts.values()) t.done = true;
     for (const t of thoughts.values()) { if (!t.done) t.endedAt = at; t.done = true; }
   }
-  view.approvals = view.ended ? [] : [...approvals.values()].filter((a) => !a.decision);
-  view.asks = view.ended ? [] : [...asks.values()].filter((a) => a.answer == null);
+  // 回合结束时没批、没答的已经在 turn.completed 里作废了；还剩的是回合结束以后才问的（CLI 的收尾 Hook 在 CLI 说完
+  // 以后跑，v1.1.9 验收时发现被藏了、任务卡在「等你」），任务没停就照样画。
+  view.approvals = stopped ? [] : [...approvals.values()].filter((a) => !a.decision);
+  view.asks = stopped ? [] : [...asks.values()].filter((a) => a.answer == null);
   if (view.ended) view.trust = null;
   view.usage = cumulative ?? turnUsage;
   view.cumulativeUsage = cumulative != null;

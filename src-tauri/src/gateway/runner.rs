@@ -353,7 +353,12 @@ pub(crate) fn start_engine_run(
         // 脚本 Hook（v1.1.4）：Peck 替 CLI 跑开场时、发话时（这一句发出去之前，stdout 放在这句前面）和收尾时。
         // 有要跑的，控制通道先交给 `CliHooks`：Hook 卡片的回答归 Peck，别的转给正在跑的那一次引擎。
         let mut control_rx = Some(control_rx);
-        let mut hooks = super::cli_hooks::hooks_for(&engine, &cwd).filter(|_| !compact).map(|set| {
+        // Grok 在它信任过的文件夹里自己跑项目的 Hook，Peck 不再替它跑一遍。
+        let cli_runs_project = match (engine.as_str(), backend.setup()) {
+            ("grok", Some(setup)) => super::trust::grok_trusted(setup, &cwd).await == Some(true),
+            _ => false,
+        };
+        let mut hooks = super::cli_hooks::hooks_for(&engine, &cwd, cli_runs_project).filter(|_| !compact).map(|set| {
             let (remember_store, ws) = (store.clone(), workspace_id.clone());
             super::cli_hooks::CliHooks::new(
                 set,

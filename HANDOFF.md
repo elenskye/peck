@@ -1,6 +1,6 @@
 # 当前交接
 
-更新：2026-11-24 深夜。**v1.1.9 做完、在正式版窗口里验收过，验收时修的也装进 /Applications 了**（连同 1.1.8）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」和 [docs/design.md](./docs/design.md)「输入框」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-25。**v1.1.9 做完、在正式版窗口里验收了两轮，两轮修的都装进 /Applications 了**（连同 1.1.8）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/architecture.md](./docs/architecture.md)「CLI 四家」「额度与花费」和 [docs/design.md](./docs/design.md)「输入框」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
 ## 这一版做了什么（1.1.9）
 
@@ -21,6 +21,17 @@
 4. **`+` 的选窗**：从当前项目文件夹开始（以前停在上次去过的地方）；附文件夹的那个不再写「选一个文件夹加进项目」（那是项目设置的提示）。
 5. **额度弹层**：读数过了重置时间的窗口只写「已重置」、不画旧百分比（Muse 的读数还是 11-16 的），都过了就当读不到、显示 Peck 自己记的近 5 小时 / 7 天；「每周 Fable」「估 $0.181」不再折成两行。
 
+## 验收第二轮修的（11-25，正式版窗口真跑 Muse、Codex、Claude Code、PLOOP 和几家 API）
+
+1. **CLI 的收尾 Hook 卡片看不见、任务卡在「等你」**：CLI 的收尾 Hook 在 CLI 说完以后才问，界面一见回合结束就把还没批的卡片全藏了。现在回合结束时没批的照旧作废，之后才问的照样画，任务真停了才藏。
+2. **Claude Code 在 Peck 里没有清单**：`claude -p` 默认不给 `TaskCreate` / `TaskUpdate`（工具列表里只有 `Task`），站主定了每次带官方的 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（只对那一次进程；CLAUDE.md「边界」写了这个例外）。
+3. **PREVIEW 认不出 `python3 -m http.server` 起的 dev server**：它把地址写成 `http://[::]:8765/`，而且输出不在终端时会攒着不写。后台命令带 `PYTHONUNBUFFERED=1`、`[::]` 也认；认出的端口和存着的地址不一样就换过去（以前只在没存过地址时用）。
+4. **提问卡片里模型写的 Markdown 原样露出来**（`**时间**`、列表挤成一段）：第一行当问题，后面按 Markdown 画成小字；过程里的 ASK 记录一样。
+5. **失败时同一句错画两遍**（过程里一条、底下「没做完：…」又一条）：一样就只画一次。
+6. **设置 → KEYS 还写着 ⌘1 – ⌘5 和 LOG**：改成 ⌘1 – ⌘4。
+7. **Grok 的项目 Hook 跑两遍**：Grok 在它信任过的文件夹里自己也跑项目 `.claude/settings.json` 的 Hook（它的 Claude 兼容），Peck 又替它跑一遍。现在按 `grok inspect` 的 `projectTrusted`：信任了就只替它跑插件带的（和 Claude Code 一样）。
+8. **「连不上供应商」**：任务板那组主角色等 auditor 86 秒后，下一次请求 7 毫秒就断了，原因查不出（直连 DeepSeek 空闲 95 秒也不断）。报错现在带上最里层的原因（不含地址和 Key），连接池的空闲连接 30 秒就丢。
+
 ## 上一版（1.1.8，提交 `7a7fbec`）
 
 说明文字的准则进 CLAUDE.md；输入框 `+`（附文档、文件夹）；TRUST 卡片（四家都管，批了记在项目设置里、以后每次带各家官方的信任开关；Grok 用它自己的 `--trust`）；FILES 的 ALL；Muse、Grok 读不到额度时写明原因。项目设置多了 `trusted`，事件多了 `trust.prompt`、`trust.resolved`。
@@ -38,28 +49,35 @@
 - **`?mock`**（明暗各看过）：三问题卡片；跑着时追加（PLOOP 进过程、Grok 排队后自动发）；两个环和各自的弹层；附图放大；输入框 40 行时长到 413px 开始滚；LOG 页签没了；TRUST 卡片；FILES 的 ALL。
 - **真跑**（账本在 roadmap）：Muse 3 次——后台命令跑完它自己开下一回合（走协议看的），Peck 的引擎等到了那一回合（Spark、带 `--trust-workspace`），额度事件也到了；Codex 1 次——带信任开关，干活中途追加一句（`turn/steer`），最后照那句做了，花费估出来了。
 - **正式版窗口（验收，正式数据）**：QUOTA 页、三家 CLI 和 PLOOP 的额度环、上下文环；⌘1–⌘4 四个页签（LOG 没了、⌘5 不动）；FILES 的 ALL（`.peck` 变暗列出；链接不列是故意的）；`+` 附文件和文件夹、附图放大、40 行输入框长高后滚；真跑——PLOOP（DeepSeek Flash）和 Codex 跑着时追加、照做了，花费标「估」；Grok 的 TRUST 卡片（`grok --trust` 记进它的信任表、项目设置 `trusted` 记上）和排队自动发；Claude Code 一次问两个问题各自答回去、带信任开关、追加（修完复测过）。界面设置在第一次打开新版时已经迁移好（有 PLOOP、subagents）。测试时换过的模型都改回去了。
+- **正式版窗口（验收第二轮，11-25）**：设置页各组（统一排法、GENERAL 的轮数、AGENTS 五块、MEMORY 小窗加一条、PLUGINS 卡片和 Git Plan 小窗、PROVIDERS、ACCESS、LOOK、ARCHIVE、KEYS）；真跑——Muse：项目记忆、开场 Hook、一次问两个、跑着时插话、后台命令等到它自己开下一轮；Codex：记忆、Hook、那行 MCP 提示没了、收尾 Hook 卡片看得见且批了能续上会话；Claude Code：记忆、Hook、清单（带开关后 2/2）；Grok：记忆、Hook、不再跑两遍；PLOOP（DeepSeek）：同时派两个 explorer + 一个 searcher（DeepSeek 搜索）、任务板（2 worker + member + auditor）、反悔（`[RISK]` 卡片）、定时任务（确认 ASK、钟上多一个、删掉）、留着的 dev server 和 PREVIEW（自己换到新端口、能打开、点小片停）、`read_pdf`、`read_notebook`、`tool_search` 按需加载 dw、Peck Loop 的开场 / 收尾 Hook（拦一次）、Git Plan 收尾提交（只提交这一轮的文件）；Qwen + Tavily 搜一次；百炼新加坡地址通（Key 不对）。账本在 roadmap。
 - **没验的**：
-  - Muse 的中途插话（`turn/steer`，代码没动）和三问题卡片在真 Muse 上：这一版 Muse 的 3 次用完了。
-  - Codex 的多问题卡片：Codex 默认模式下不给提问工具，没触发到（Claude Code 的验过）。
-  - Codex 那行 MCP 提示去掉以后没再真跑 Codex 看（单元测试和 `codex mcp list` 核对过）。
-  - 通知横幅截不到，没看。
+  - Codex 的多问题卡片：Codex 默认模式下不给提问工具（真跑问过，它说没有），触发不到。
+  - Gemini 原生搜索：这把 Key 额度用完（429）。Vertex 上的 Claude / Gemini：gcloud 的 ADC 过期、换不到令牌，请求没发出去。百炼新加坡：要国际站的 Key。
+  - Muse 会不会也自己跑项目 `.claude/settings.json` 的 Hook（Grok 会）：没查到它的文档，这次 Muse 任务里看不出跑没跑两遍。
+  - 钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」（这两样要改系统设置）、从访达拖图进输入框（台前调度下做不成）、额度真到 85% 时的提醒、Mathpix（没 Key）、通知横幅（截不到）。
 
 ## 留给站主的
 
-- **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。验收时换了两次包，旧的 `Peck.app.backup-20261124-*` 也在废纸篓。
-- **测试项目 tester** 被批了信任（验收时在 Grok 的 TRUST 卡片上点的）：Grok 自己记进了 `~/.grok/trusted_folders.toml`，Peck 的项目设置 `trusted` 也亮着（项目设置里能关）；tester 里多了一个 `notes.txt`（Claude Code 测多问题时写的）。
+- **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。验收时换了五次包，旧的 `Peck.app.backup-*` 都在废纸篓。
+- **测试项目 tester** 被批了信任（验收时在 Grok 的 TRUST 卡片上点的）：Grok 自己记进了 `~/.grok/trusted_folders.toml`，Peck 的项目设置 `trusted` 也亮着（项目设置里能关）。验收时往里加了一条项目记忆（口令 MAPLE-42）、`notes.txt`、`bg.txt`、`docs/sample.pdf`、`docs/sample.ipynb`；测 Hook 的 `.claude/settings.json` 用完删了（「总是允许」里留着那几条命令的记录）；dw MCP 开过、已关回去。
+- **Vertex**：设置 → PROVIDERS 填了 gcloud 配的项目 ID（`gen-lang-client-…`），模型列表里出来了；要用得先在终端跑 `gcloud auth application-default login`（ADC 过期）。
+- **git-plan-smoke** 加进了项目列表、装了 Git Plan，Git Plan 在那个测试仓库里提交了一笔 `243787f`（没 push）；Peck 认结构补的 `CLAUDE.md` 链接等没跟踪。
 - **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
 - **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
 - **仓库里多了 `.agents/skills`**（指向 `.claude/skills` 的链接）：站主在 Peck 里第一次点开 peck 项目时 Peck 认结构建的，没跟踪、我没动，要不要提交站主定。
 - **Claude Code**：`cli/bin` 那份现在能用了（验收时跑了 3 次）。还没核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
 - **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.9 的全部提交。
-- 以前留下、还没验的：1.1.6 的设置页在正式版窗口里；1.1.5 的 CLI 带记忆在真 CLI 上、正式版窗口；1.1.4 的真模型读 PDF / Notebook、MCP 按需加载、CLI 的三个 Hook 在真 CLI 上；1.1.3 的 member 真跑、任务板和 Claude Code 清单在正式版里；1.1.2 的正式版窗口（AGENTS、真派子代理、脚本 Hook 挂真的 `.claude/settings.json`）、searcher / auditor 真跑、百炼新加坡地域；1.1.1 存 Tavily 的 Key、真搜一次；1.1.0 的插件界面和收尾提交；1.0.3 的轮数设置；钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」、从访达拖图进输入框、额度真到 85% 时的提醒、Muse 在要用的项目文件夹里点一次信任；1.0.2 的反悔、定时任务、dev server 在正式版和真 CLI 上走一遍。Gemini 原生搜索、Vertex 上的 Claude 和 Gemini 还没真跑过。
+- 以前版本留下的没验项，验收第二轮验掉了大部分，剩下的在上面「没验的」。
 
 ## 已知问题
 
 | 问题 | 建议 |
 | --- | --- |
 | 排着的话（Grok）只在内存里，只在正看着那个任务时接着发；切到别的任务、重开 App 就不发了 | 记着 |
+| auditor 只读但不限在项目里：验收时它翻了 `~/Library/Application Support` 里 Peck 的数据、想跑 `tmutil`（被拒），一组就跑了十几轮 | 用一阵看要不要在它的提示里限死项目、少给轮数 |
+| Vertex 和 Anthropic 的同名模型（Claude Haiku 5.5）在主角色那一栏看起来一样 | 记着 |
+| dev server 认出新地址后 PREVIEW 只换地址，要点 GO 才打开 | 记着 |
+| 主角色问提交说明、任务板 auditor 这类多出来的请求也算真跑次数，按次数给的额度要留余量 | 记着 |
 | 任务跑着时追加的话带不了图和附件、用不了斜杠命令 | 记着 |
 | Claude Code 收到追加的话在两步之间并进这一回合，或者说完了再开一回合；它已经在收尾时可能送不进去（会写一行）。不回显的旧版本要多等 15 秒才收 | 记着 |
 | TRUST 卡片等着时任务不往下走：定时任务碰到第一次要问的项目会一直等 | 先手动发一次、点掉 |

@@ -86,7 +86,7 @@ pub async fn grant_grok(setup: &EngineSetup, cwd: &Path) -> Result<(), String> {
 }
 
 /// `grok inspect --json` 的 `projectTrusted`（几十毫秒，不调模型）。
-async fn grok_trusted(setup: &EngineSetup, cwd: &Path) -> Option<bool> {
+pub(crate) async fn grok_trusted(setup: &EngineSetup, cwd: &Path) -> Option<bool> {
     let mut cmd = tokio::process::Command::new(&setup.bin);
     cmd.args(["inspect", "--json"]).current_dir(cwd).env("PATH", &setup.path).kill_on_drop(true);
     for (k, v) in &setup.env {

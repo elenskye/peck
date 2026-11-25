@@ -112,7 +112,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | CLI | 接口 | PLAN / EDIT / AUTO | 审批、ASK、追加、打断 | 用量和额度 | 压缩和上下文用量（v1.1.7） |
 |---|---|---|---|---|---|
 | Codex | `codex app-server`（stdio JSON-RPC） | `read-only` / `workspace-write` / 再加联网 | `requestApproval`、`requestUserInput`、`turn/steer`、`turn/interrupt` | 用量；5 小时、每周 | `/compact` 发 `thread/compact/start`（不收重点）；用量 `thread/tokenUsage/updated` 的 `last.totalTokens / modelContextWindow`；压了一次看 `contextCompaction` 条目 |
-| Claude Code | `claude -p` stream-json 双向 | `plan` / `acceptEdits` / `acceptEdits`（放宽靠 Peck 自动批） | `--permission-prompt-tool stdio`；追加写一行 `user`；`interrupt` | 花费（估）、用量、额度 | `/compact [重点]` 当一句话发（开场的 `slash_commands` 里没有就提示）；用量是主线每条回答的 输入 + 写缓存 + 读缓存（同一个消息 id 只算一次），窗口在 `result.modelUsage` 回合末才有；压了一次看 `compact_boundary`（`trigger`、`pre_tokens`、`user_context`） |
+| Claude Code | `claude -p` stream-json 双向（带 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`：`-p` 默认不给清单工具） | `plan` / `acceptEdits` / `acceptEdits`（放宽靠 Peck 自动批） | `--permission-prompt-tool stdio`；追加写一行 `user`；`interrupt` | 花费（估）、用量、额度 | `/compact [重点]` 当一句话发（开场的 `slash_commands` 里没有就提示）；用量是主线每条回答的 输入 + 写缓存 + 读缓存（同一个消息 id 只算一次），窗口在 `result.modelUsage` 回合末才有；压了一次看 `compact_boundary`（`trigger`、`pre_tokens`、`user_context`） |
 | Muse | `muse serve` | `approvalMode`：`denyUnmatched` / `promptUnmatched` / `onRequest` | `approval/request`、`userInput/request` | 用量；5 小时、每周 | `/compact` 发 `session/compact`（异步：accepted 以后看 `compaction` 条目的 `outcome`，noop 就是没什么可压的；不收重点）；用量 `session/contextUsage`，`pressure` 是 warning / blocked 小环变琥珀 |
 | Grok | ACP（`grok agent stdio`） | 没有模式，Peck 回答审批 | `request_permission`；ASK 走本机 MCP | 用量和花费；读不到余量 | `/compact` 当文字发它广告的 `compact` 命令（不带重点）；用量每条 `session/update` 的 `_meta.totalTokens`，窗口在模型列表的 `_meta.totalContextTokens`（有才知道）；压了一次看 `_x.ai/session_notification` 的 `auto_compact_*`，标准 ACP 的 `usage_update`、`compaction_update` 也认 |
 
@@ -225,7 +225,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 ### 后台命令（`background.rs`）
 
 - **验证交给模型**：Peck 不替模型跑检查。改完跑什么写在项目的 `AGENTS.md` / `CLAUDE.md` 里（「改完跑 `pnpm check`」），模型自己用 `bash_run` 跑；系统提示里写明这是它的事。
-- **后台命令**（`bash_background`）：EDIT 下当「起常驻进程」问一次；一个任务最多 4 个，任务结束一起停。
+- **后台命令**（`bash_background`）：EDIT 下当「起常驻进程」问一次；一个任务最多 4 个，任务结束一起停。 进程带 `PYTHONUNBUFFERED=1`（Python 不在终端里会攒着输出，dev server 的地址读不到）。
 - **留着的 dev server**：起的时候 `keep: true`（PLAN 不给）。任务结束不停、跨任务一直在，退出 Peck 才停；一个项目最多 4 个，同一条命令不起第二份。后来的任务看得到、能读输出、能停；右栏 PREVIEW 头上列出来、点一下停（开着时每 3 秒读一次 `background_list`）。
 
 ### Peck 自己的工具（`extras.rs`）
@@ -305,13 +305,13 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
 - **时刻**：`SessionStart`（v1.1.4：对话的第一句发出去之前跑一次，source `startup`；压成交接摘要之后再跑一次，source `compact`——只有这一步会把开头那份换掉；`matcher` 对 source）、`UserPromptSubmit`（发话时）、`PreToolUse` / `PostToolUse`（调工具前后，`matcher` 是工具名的正则，Peck 的名字和 Claude Code 的叫法都认：`Bash` 对 `bash_run`、`Edit` 对 `write_patch` / `apply_patch`、`Read` 对 `read_file` / `read_pdf` / `ocr_pdf` / `read_notebook` …）、`PreCompact`（压缩前：自动的 `trigger: auto`，`/compact` 的 `trigger: manual` + `custom_instructions` 是重点）、`Stop`（主角色要收尾时）。子代理调工具前后也跑，`SessionStart`、发话时、收尾时不跑；ONE SHOT 不跑。
 - **怎么跑**：`/bin/sh -c`，在项目根、站主 shell 的环境里（去掉像 Key 的变量），不进沙箱；stdin 是 JSON（`hook_event_name`、`tool_name` 用 Claude Code 的叫法、`peck_tool_name`、`tool_input`、`tool_response`、`prompt`、`source`、`model` …；收尾时多一个 `peck_changed_files`：这一轮从任务开头的快照算起改了的文件，相对项目根，`snapshot::changed_since_base`），带 `CLAUDE_PROJECT_DIR`；默认 60 秒、最长 600 秒，超时停掉整组进程。每条命令第一次跑之前弹卡片（ALWAYS 按时刻、matcher、命令原文的指纹记进「总是允许」，规则 `hook:<指纹>`）；拒了这一回合不再问、不跑。插件库自带、一字没改的不问（v1.1.4）。
 - **退出码**（和 Claude Code 一样）：0 照常（stdout 是 JSON 就读 `decision: block` + `reason`、`hookSpecificOutput.permissionDecision: deny`、`additionalContext`；`SessionStart`、`UserPromptSubmit` 的纯文字 stdout 当补充上下文：开场时、发话时放在这句前面，压缩后接在交接摘要后面）；2 拦下，stderr 是原因——发话时这句话不发、调工具前这一步不跑、调工具后原因接在结果后面给模型、收尾时交给它接着干（一回合最多拦 3 次）；`SessionStart`、`PreCompact` 拦不住，只记一笔。别的码、超时只记一笔、照常往下。
-- **CLI 引擎**（v1.1.4，`gateway/cli_hooks.rs`）：Peck 只跑它控制得了的三个——开场时（新会话的第一句，不是续上的）、发话时在这一句发出去之前跑，stdout 放在这句前面，发话时退出码 2 就不发；收尾时在 CLI 做完以后跑（失败、停下的不跑），退出码 2 就续上它的会话、把原因当一句新话发过去让它接着干（事件照常进这个任务的记录），一回合最多 3 次，排在 Git Plan 的收尾提交之前；续不了会话的写一行。Claude Code 自己会跑项目 `.claude/settings.json` 里的，Peck 只替它跑插件带的，免得跑两遍。卡片的请求号 `hook-approve-<n>`：有要跑的 Hook 时控制通道先到 `CliHooks`，这些归 Peck（不按命令的规则替站主批），别的转给正在跑的那一次引擎（每次续上是新的一条通道），引擎没在跑时追加的话攒着给下一次。
+- **CLI 引擎**（v1.1.4，`gateway/cli_hooks.rs`）：Peck 只跑它控制得了的三个——开场时（新会话的第一句，不是续上的）、发话时在这一句发出去之前跑，stdout 放在这句前面，发话时退出码 2 就不发；收尾时在 CLI 做完以后跑（失败、停下的不跑），退出码 2 就续上它的会话、把原因当一句新话发过去让它接着干（事件照常进这个任务的记录），一回合最多 3 次，排在 Git Plan 的收尾提交之前；续不了会话的写一行。Claude Code 自己会跑项目 `.claude/settings.json` 里的，Grok 在它信任过的文件夹里也会（`grok inspect` 的 `projectTrusted`），这两种 Peck 只替它跑插件带的，免得跑两遍。卡片的请求号 `hook-approve-<n>`：有要跑的 Hook 时控制通道先到 `CliHooks`，这些归 Peck（不按命令的规则替站主批），别的转给正在跑的那一次引擎（每次续上是新的一条通道），引擎没在跑时追加的话攒着给下一次。
 - **界面**：拦下的、出错的、有输出的发一条带时刻的 `hook.ran`，写在过程里当时那一处；静默成功的不显示。
 
 ## 审阅和预览
 
 - **FILES**（`files.rs`、`src/lib/highlight.ts`）：CodeMirror 语言包按需加载；html 在 `sandbox=""` 的 iframe 里看；Office 这类用 `qlmanage` 出缩略图。
-- **PREVIEW**（`preview.rs` + `preview.js`）：地址默认是留着的 dev server 输出里头一个本机地址，也能自己写（只认本机 http）。iframe 开的是 Peck 在 `127.0.0.1` 上起的代理：只认发给自己的 `Host`（挡 DNS rebinding），HTML 里插 `preview.js`（批注用）；iframe 带 `sandbox`，不能导走顶层窗口。一条连接办一个请求，回应边读边转（SSE、分块的流式输出来一段到一段）；HTML 攒到 `</head>` 插好脚本就放行。
+- **PREVIEW**（`preview.rs` + `preview.js`）：地址默认是留着的 dev server 输出里头一个本机地址（`[::]`、`0.0.0.0` 换成 localhost；端口和存着的地址不一样就换过去），也能自己写（只认本机 http）。iframe 开的是 Peck 在 `127.0.0.1` 上起的代理：只认发给自己的 `Host`（挡 DNS rebinding），HTML 里插 `preview.js`（批注用）；iframe 带 `sandbox`，不能导走顶层窗口。一条连接办一个请求，回应边读边转（SSE、分块的流式输出来一段到一段）；HTML 攒到 `</head>` 插好脚本就放行。
 - **OPEN / FINDER**（IPC `open_path`）：用设置 → LOOK 的「编辑器」（空着用系统默认；会运行的文件不直接打开）或 `open -R`；只认项目和其他文件夹里的。
 
 ## 本机

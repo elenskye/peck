@@ -243,8 +243,8 @@ function scenarioRounds(
       [context(o, 600, 0), ...say(1, "", "站主要定时做一件事：先读 Peck 自带的 Skill。"), usage(4300, 60, 0, 0.0006),
         tool("t1", "load_skill", "read", "读 Skill peck-schedules", { name: "peck-schedules" }), done("t1", "# 定时任务\n…")],
       [context(o, 900, 1500), ...say(2, said), usage(700, 120, 4300, 0.0003),
-        tool("t2", "ask_user", "other", "问你", { question: "照这样设吗？", options: ["可以", "改一下"] }),
-        { type: "user_input.requested", requestId: "ask-1", question: "照这样设吗？", options: ["可以", "改一下"], freeText: true },
+        tool("t2", "ask_user", "other", "问你", { question: "照这样设吗？\n- **时间**：每周一 09:00\n- **做什么**：检查依赖有没有能升级的版本，只列出来不改", options: ["可以", "改一下"] }),
+        { type: "user_input.requested", requestId: "ask-1", question: "照这样设吗？\n- **时间**：每周一 09:00\n- **做什么**：检查依赖有没有能升级的版本，只列出来不改", options: ["可以", "改一下"], freeText: true },
         done("t2", "站主回答：（见上）")],
       (state) => (state.answer.includes("改") ? [...say(3, "好，要改哪一样？时间、那句话，还是谁来干？"), usage(200, 40, 5200, 0.0001)] : [
         ...say(3, ""), usage(300, 60, 5200, 0.0002),
