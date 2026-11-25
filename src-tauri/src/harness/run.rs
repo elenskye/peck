@@ -207,8 +207,10 @@ pub async fn harness_run_start(
     // 子代理（v1.1.2）：照设置 → AGENTS 准备好这个任务能派的几类。
     let (team, team_notes) = super::agents::prepare(&state, &model_id).await;
     let images = checked_images(images)?;
+    // 附的图也存成文件、路径写在这一句后面（v1.1.11）：对话里照它画小图；对话压缩掉图以后模型还能 read_file 再看。
+    let image_paths = save_attachments(&session_id, &images);
     let saved_uploads = save_uploads(&session_id, &uploads.unwrap_or_default())?;
-    let prompt = format!("{prompt}{}", uploads_note(&saved_uploads));
+    let prompt = format!("{prompt}{}{}", attachment_note(&image_paths), uploads_note(&saved_uploads));
     start_peck_run(
         PeckRun {
             store: state.store.clone(),
@@ -245,7 +247,7 @@ pub(crate) fn checked_images(images: Option<Vec<crate::gateway::ImageInput>>) ->
     images.into_iter().map(|i| i.checked()).collect()
 }
 
-/// CLI 引擎看不到 Peck 给的图：存成文件（这个任务的输出目录里），在这一句后面写上路径让它自己读。
+/// 附的图存成文件（这个对话的附件目录里），在这一句后面写上路径：CLI 引擎自己读，Peck Loop 图照发、路径留着再看。
 pub(crate) fn save_attachments(session_id: &str, images: &[crate::gateway::ImageInput]) -> Vec<PathBuf> {
     let dir = spill_root().join(session_id).join("attachments");
     if images.is_empty() || std::fs::create_dir_all(&dir).is_err() {
@@ -263,7 +265,7 @@ pub(crate) fn save_attachments(session_id: &str, images: &[crate::gateway::Image
         .collect()
 }
 
-/// 附图的路径写在这一句后面（给 CLI 引擎）。
+/// 附图的路径写在这一句后面。格式别改：对话里照它把路径画成小图（`src/lib/attachments.ts`）。
 pub(crate) fn attachment_note(paths: &[PathBuf]) -> String {
     if paths.is_empty() {
         return String::new();
@@ -332,7 +334,7 @@ pub(crate) fn save_uploads(session_id: &str, uploads: &[String]) -> Result<Saved
     Ok(saved)
 }
 
-/// 附的文档和文件夹写在这一句后面（CLI 和 Peck Loop 都看）。
+/// 附的文档和文件夹写在这一句后面（CLI 和 Peck Loop 都看）。格式别改：对话里照它画成小片（`src/lib/attachments.ts`）。
 pub(crate) fn uploads_note(saved: &SavedUploads) -> String {
     let mut out = String::new();
     if !saved.files.is_empty() {
@@ -770,6 +772,65 @@ pub async fn harness_image_read(path: String) -> Result<String, String> {
         return Err("图太大了。".into());
     }
     Ok(crate::files::data_url(&name, &bytes))
+}
+
+/// 输入框 `+` 选到的是图（v1.1.11）：读成附图（和贴进来的一样发给模型），大的先缩到长边 2560。
+#[tauri::command]
+pub async fn upload_read_image(path: String) -> Result<crate::gateway::ImageInput, String> {
+    tokio::task::spawn_blocking(move || read_picked_image(Path::new(&path))).await.map_err(|e| e.to_string())?
+}
+
+fn read_picked_image(path: &Path) -> Result<crate::gateway::ImageInput, String> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if !path.is_absolute() {
+        return Err(format!("只收本机选框挑的绝对路径：{}", path.display()));
+    }
+    let lower = name.to_lowercase();
+    let mut media = match lower.rsplit('.').next() {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => return Err(format!("{name} 不是图。")),
+    };
+    let meta = std::fs::metadata(path).map_err(|_| format!("找不到了：{name}"))?;
+    if meta.len() > 40 * 1024 * 1024 {
+        return Err(format!("{name} 太大了。"));
+    }
+    let mut bytes = std::fs::read(path).map_err(|_| format!("读不到 {name}。"))?;
+    // 贴图的上限是 6MB：大的（Retina 截图常见）缩一份再发，原图不动。
+    if bytes.len() > 4 * 1024 * 1024 && cfg!(target_os = "macos") {
+        let dir = spill_root().join("staging").join(uuid::Uuid::new_v4().simple().to_string());
+        let _ = std::fs::create_dir_all(&dir);
+        let small = dir.join("small.png");
+        let ok = std::process::Command::new("/usr/bin/sips").args(["-Z", "2560", "-s", "format", "png"]).arg(path).arg("--out").arg(&small).output().is_ok_and(|o| o.status.success());
+        if let Some(b) = ok.then(|| std::fs::read(&small).ok()).flatten() {
+            bytes = b;
+            media = "image/png";
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    crate::gateway::ImageInput { media_type: media.into(), data: crate::files::base64(&bytes) }.checked()
+}
+
+/// 拖进输入框的文档（v1.1.11）：浏览器给不了本机路径，先把内容存一份，回一个路径，和 `+` 附的一样发。
+#[tauri::command]
+pub async fn upload_stage(name: String, data: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || stage_upload(&spill_root(), &name, &data)).await.map_err(|e| e.to_string())?
+}
+
+fn stage_upload(root: &Path, name: &str, data: &str) -> Result<String, String> {
+    let clean: String = name.chars().filter(|c| !matches!(c, '/' | '\\' | '\0')).collect::<String>().trim().trim_start_matches('.').to_string();
+    let clean = if clean.is_empty() { "文档".to_string() } else { clean };
+    let bytes = crate::files::base64_decode(data).ok_or("读不出这个文件。")?;
+    if bytes.len() > 10 * 1024 * 1024 {
+        return Err(format!("{clean} 超过 10MB，拆小一点再附。"));
+    }
+    let dir = root.join("staging").join(uuid::Uuid::new_v4().simple().to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| format!("放不下：{e}"))?;
+    let path = dir.join(&clean);
+    std::fs::write(&path, bytes).map_err(|e| format!("放不下：{e}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 fn read_spill(root: &Path, path: &Path) -> Result<String, String> {

@@ -6,7 +6,8 @@
 //! | EDIT（默认） | 全部 | 装依赖、起常驻进程前问一次（能选「这个项目总是允许」） |
 //! | AUTO | 全部 | 除了高危都不问 |
 //!
-//! 高危（`risk.rs`）不管哪档都弹卡片，只有「批准」「不行」，不能总是允许。
+//! 高危（`risk.rs`）不管哪档都弹卡片，只有「批准」「不行」，不能总是允许。CLI 的命令不在 Peck 的沙箱里，
+//! 按 [`check_cli_command`] 多看两类（写到项目外、看不出会跑什么）。
 
 use super::risk::{self, Risk};
 use super::tools::bash::Sandbox;
@@ -145,9 +146,17 @@ pub fn confirms(command: &str) -> Vec<Confirm> {
     out
 }
 
-/// 跑这条命令之前要不要问。`allowed` 是这个项目「总是允许」过的类。
+/// Peck Loop 跑这条命令之前要不要问。`allowed` 是这个项目「总是允许」过的类。
 pub fn check_command(level: PermissionLevel, command: &str, root: &Path, allowed: &HashSet<String>) -> Ask {
-    let risks = risk::assess(command, root);
+    check_with(level, risk::assess(command, root), command, allowed)
+}
+
+/// CLI 要跑的命令（Peck 替它批之前看）：不在 Peck 的沙箱里，高危按 [`risk::assess_cli`]。
+pub fn check_cli_command(level: PermissionLevel, command: &str, root: &Path, allowed: &HashSet<String>) -> Ask {
+    check_with(level, risk::assess_cli(command, root), command, allowed)
+}
+
+fn check_with(level: PermissionLevel, risks: Vec<Risk>, command: &str, allowed: &HashSet<String>) -> Ask {
     if !risks.is_empty() {
         return Ask::HighRisk(risks);
     }
@@ -196,7 +205,8 @@ mod tests {
     fn high_risk_asks_in_every_level() {
         let root = Path::new("/p");
         for level in [PermissionLevel::Plan, PermissionLevel::Edit, PermissionLevel::Auto] {
-            assert!(matches!(check_command(level, "rm -rf dist", root, &none()), Ask::HighRisk(_)));
+            assert!(matches!(check_command(level, "rm -rf /etc/x", root, &none()), Ask::HighRisk(_)));
+            assert_eq!(check_command(level, "rm -rf dist", root, &none()), Ask::No, "项目里删东西不问（v1.1.11）");
             assert!(matches!(check_command(level, "git push", root, &none()), Ask::HighRisk(_)));
         }
         let allowed: HashSet<String> = ["install-deps".to_string()].into();

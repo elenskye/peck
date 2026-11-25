@@ -27,7 +27,7 @@
 
 | 场景 | 怎么触发 | 看什么 |
 | --- | --- | --- |
-| Peck Loop 主线（`peckMock.ts`） | 任何一个 API 模型 | 看目录、读、搜、改（FILES 里标出来）、长输出命令、`rm -rf dist` 高危卡片、清单、ASK、recap 和下一步按钮、花费、「想记住这几条」 |
+| Peck Loop 主线（`peckMock.ts`） | 任何一个 API 模型 | 看目录、读、搜、改（FILES 里标出来）、长输出命令（标题是那句说明「跑一遍测试」，点开先一行 `$ pnpm test`）、推上去的 `[ RISK ]` 卡片（标题「把这次的改动推到 GitHub」、红标签「推送或改 Git 历史」、「看命令」点了才露出命令）、清单、ASK、recap 和下一步按钮、花费、「想记住这几条」；任务头「第 N/40 轮」 |
 | 上下文 | 「长任务」；`/compact 重点`（PLOOP 做过的任务，比如 peck 的「设置面板加通知开关」） | 自动压缩三步；手动的那一次是一行「COMPACT 压缩上下文 · 重点：…」，下面三步、花费、「上下文压缩好了」 |
 | CLI 的用量和 `/compact` | 选一个 CLI 在 edge-gateway 的任务里发一句（回放带用量），再 `/compact 重点` | 输入框旁小环亮起，点开「压缩由 Codex 自己管」；`/compact` 那一次「Codex 不接收重点」一行、「CLI 自己压：Codex 自己压了一次上下文（你让它压的）」 |
 | 快照回退 | 「撤销」「撤掉」「回退」；`/undo` | 读 Skill → 列快照 → 复述 → `[ RISK ]`「回到任务 N 开始前（2 个文件）」→ ALLOW / DENY |
@@ -37,16 +37,16 @@
 | 花费上限 | 设置里上限设得比 0.42 低 | 发出去就停、写明原因 |
 | CLI 引擎 | 选一个 CLI | 回放 `src-tauri/tests/fixtures/gateway/` 的录音，碰到审批停下 |
 | 任务板（`agentsMock.ts`） | PLOOP 下句子带「任务板」或「member」（在没有任务在跑的项目里，比如 peck） | 过程最上面「任务板」：worker 1、2 和 member 1 在跑、worker 3（和 worker 1 划的同一个文件）排队，worker 1 做完它才跑；点 member 1 展开它的几步，它派的 explorer 再挂一层；设置 → AGENTS 五块、member 默认 40 轮同时 2 个 |
-| 子代理（`agentsMock.ts`） | PLOOP 下句子带「派」「子代理」 | 两步「Spawn explorer: …」同时在跑，各自的几步挂在下面（头上「explorer · 模型名」），两个都完了主线才接着改 |
+| 子代理（`agentsMock.ts`） | PLOOP 下句子带「派」「子代理」 | 两步「Spawn explorer: …」同时在跑，各自的几步挂在下面（头上「explorer · 模型名」，右边「1/30 轮」），两个都完了主线才接着改；任务头上「子代理 2 在跑」，点了滚到它们 |
 | 联网搜索、读网页 | 句子带「搜一下」「上网」「最新版」 | 「Searched the web 2 times, fetched 2 pages」一组：两步「Search the web: …」带来源，两步「Fetch …」（一步读到正文，点开头上的网址能用浏览器打开；一步跳到别的网站、失败）；回答写出处；花费行「搜 2 次」 |
 | 额度提醒 | 选一个 CLI；QUOTA 卡片里 Claude Code 每周 90% | 输入框上方「Claude Code 每周已用 90%，换成 Codex？」 |
 | 换引擎接着发 | PLOOP 做完的任务里换成 CLI 再发 | 一行「换成 X 接着做：前面 1 次……带过去了」 |
 | 独立工作区 | peck 项目点亮 WORKTREE；带「冲突」 | 对话里 recap 下面 APPLY / DISCARD；冲突时 APPLY ANYWAY |
-| 截图、贴图 | 带「截图」；输入框粘贴或拖进图 | 演示图；小图，发出去一行「这一句带了 1 张图」 |
-| `+` 附文档 | 输入框 `+` → 文件 / 文件夹（浏览器里给演示路径） | 上面排出小片（文件、文件夹图标不同）、能叉掉；发出去清掉 |
+| 截图、贴图 | 带「截图」；输入框粘贴或拖进图（整个输入框都收，拖着时描一圈虚线） | 演示图；小图，发出去一行「这一句带了 1 张图」，YOU 下面一张小图，点了放大 |
+| `+` 附文档 | 输入框 `+` → 文件 / 文件夹（浏览器里给两个文档和一张图的演示路径） | 文档、文件夹在上面排成小片（图标不同）、能叉掉；图进上面那排小图；发出去清掉，YOU 下面照样画成小图和小片（不显示路径那段话）；拖进来的文档也进小片 |
 | TRUST 卡片 | peck 项目里选一个 CLI 发一句（刷新后头一次） | 任务开头 `[ TRUST ]`：点 TRUST 留一行「信任了这个文件夹」再接着回放，项目设置里「CLI 信任这个文件夹」亮了；点 NOT NOW 直接回放，这次打开不再问 |
 | FILES 的 ALL | 右栏 FILES 头上点 ALL | 藏着的 `dist`、`node_modules` 变暗列出来，点开 `node_modules` 读出一层 |
-| 一次问几个问题 | PLOOP 下句子带「几个问题」 | `[ ASK ]` 里三段（VER、TRUST 单选，FILES 多选），头上 2/3；都答了 SUBMIT，过程里一个问题一行 |
+| 一次问几个问题 | PLOOP 下句子带「几个问题」 | `[ ASK ]` 一张卡片一次一个问题：头上 VER、TRUST、FILES 三个页签（答了带勾）、← → 翻，单选的点了自动翻到下一个；最后一行 Other 有自己的圆圈，选着一项时写的字算补充；都答了 SUBMIT，过程里一个问题一行 |
 | 跑着时发话 | 任务在跑（比如停在卡片上）时在输入框打一句 ↵ | PLOOP、Codex、Claude Code、Muse：过程里多一行 YOU；Grok：输入框上面排一片，这一轮做完自动发成下一句 |
 | 两个环 | 输入框右下角 | 左边 12 个点是上下文，右边实心弧是额度：PLOOP 点开「本月 $0.42 / $20」；Claude Code、Codex 点开两个窗口；Muse、Grok 读不到，虚线、点开原因加近 5 小时 / 7 天 |
 | 附图放大 | 输入框贴一张图，点小图 | 盖住窗口的大图，点一下或 Esc 关 |
@@ -57,6 +57,7 @@
 - 终端只认 `ls`、`cd`、`pwd`、`git status`、`git diff`、`pnpm check`、`pnpm test`（失败）、`pnpm dev`（一直跑）。
 - 切明暗：内置浏览器 `resize_window` 的 `colorScheme`，或在控制台改 `document.documentElement.dataset.theme`；截图只放会话临时目录。
 - **内置浏览器的坑**：面板隐藏时 CSS 动画停在第一帧（菜单、弹层截图里看不见，用 JS 读 DOM、点按钮）；按 ref 点会点偏，用截图坐标或 JS 点；关键结果用 `read_page` 或 JS 读页面确认；控制台记录跨刷新还在，看时间戳。
+- **截清楚的图**（v1.1.11）：内置浏览器的面板常被缩小、截图糊。PLOOP 里用 `screenshot_page`；别处直接跑它的脚本：`osascript -l JavaScript -e "$(cat src-tauri/src/harness/tools/page.js)" <url> <out.png> 1360 860 <light|dark|空> 1 "<一段 JS，async 函数体>" 300`（参数顺序见脚本头）。每次是新开的页面，`?mock` 的状态要在那段 JS 里点出来；离屏时计时器变慢，JS 最多跑 30 秒。
 - `?mock` 不代替原生、钥匙串、真实 API 的验收。
 
 ## 类型和构建

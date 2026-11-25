@@ -1,5 +1,5 @@
 // `?mock` 里 Peck Loop 的剧本（主线和 Rust 的 ScriptedModel::peck_demo 同一个流程）：
-// 看目录 → 读 → 搜 → 改 → 跑一条输出很长的命令（落盘）→ 删 dist（高危卡片）→ 清单 → 想记住两条 → 问一句 → 收尾。
+// 看目录 → 读 → 搜 → 改 → 跑一条输出很长的命令（落盘）→ 推上去（高危卡片：标题是命令那句说明，原因是小标签，命令收着）→ 清单 → 想记住两条 → 问一句 → 收尾。
 // 一轮是一次模型请求：先报上下文多大，再出思考和字、报用量和花费，然后是这一轮要的工具。
 //
 // 别的场景按这句话里的字挑（testing.md 写着）：
@@ -153,17 +153,17 @@ export function peckDemo(runId: string, files: Record<string, string>, prompt = 
       context(o, 2100, 4300),
       ...say(5, "跑一下测试。"),
       usage(300, 40, 7100, 0.00013),
-      tool("c5", "bash_run", "run", "跑 pnpm test", { command: "pnpm test", timeout_sec: 120 }),
+      tool("c5", "bash_run", "run", "跑：跑一遍测试", { command: "pnpm test", description: "跑一遍测试", timeout_sec: 120 }),
       ...chunks(testLog.slice(0, 1800), 300).map((text): ReplayEvent => ({ type: "tool_call.output_delta", callId: "c5", text })),
       done("c5", shown, { exitCode: 0, durationMs: 6400 }),
     ],
     [
       context(o, 2400, 8200),
-      ...say(6, "测试过了。顺手把旧的构建产物 dist/ 删掉。"),
+      ...say(6, "测试过了。把这次的改动推上去。"),
       usage(500, 60, 7300, 0.00017),
-      tool("c6", "bash_run", "run", "跑 rm -rf dist", { command: "rm -rf dist" }),
-      { type: "approval.requested", requestId: "approve-1", callId: "c6", kind: "run", title: "高危：删文件", detail: "rm -rf dist", highRisk: true, options: ["allow_once", "deny_once"] },
-      done("c6", "退出码 0（0.1s）", { exitCode: 0, durationMs: 120 }),
+      tool("c6", "bash_run", "run", "跑：把这次的改动推到 GitHub", { command: "git push origin main", description: "把这次的改动推到 GitHub" }),
+      { type: "approval.requested", requestId: "approve-1", callId: "c6", kind: "run", title: "把这次的改动推到 GitHub", detail: "git push origin main", highRisk: true, options: ["allow_once", "deny_once"], reason: "推送或改 Git 历史" },
+      done("c6", "退出码 0（1.2s）\nTo github.com:me/notebook.git\n   3f2a1c0..9b8e7d6  main -> main", { exitCode: 0, durationMs: 1200 }),
     ],
     [
       context(o, 2700, 8400),

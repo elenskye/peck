@@ -184,6 +184,13 @@ body { overflow: hidden; }
 /* `/compact` 那一次（v1.1.7）：不画 YOU，一行「压缩上下文」。 */
 /* 任务跑着时追加的一句（v1.1.9）：在过程里当时那一处 */
 .you--mid { padding: var(--space-3) 0; }
+/* YOU 那一句附的（v1.1.11）：小图、文档和文件夹的小片排在话下面，不再贴路径 */
+.you-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.you-body > .you-text { flex: none; }
+.you-attached { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.you-shot { padding: 0; border: 0; cursor: zoom-in; }
+/* 拖着文件到输入框上：整块描一圈青色虚线 */
+.composer.is-drop { outline: 1px dashed var(--color-cyan); outline-offset: -6px; }
 .you-compact { flex: none; display: flex; align-items: center; gap: var(--space-4); margin: 0; padding: 0 var(--space-2); font-size: var(--text-small); color: var(--color-text-2); }
 .you-compact .t-label, .you-compact .pk-i { color: var(--color-text-3); }
 .you-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -559,12 +566,10 @@ body { overflow: hidden; }
 .q-clients { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(380px, calc((100% - var(--space-5)) / 2)), 1fr)); gap: var(--space-5); margin-top: var(--space-6); }
 .q-client { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-7); }
 .q-client-head { display: flex; align-items: center; gap: var(--space-4); }
-.q-window { display: grid; grid-template-columns: 80px minmax(60px, 1fr) 44px 72px 96px; align-items: center; gap: var(--space-5); font-size: var(--text-small); }
+.q-window { display: grid; grid-template-columns: 80px minmax(60px, 1fr) 44px 96px; align-items: center; gap: var(--space-5); font-size: var(--text-small); }
 .q-window-l { width: 80px; flex: none; color: var(--color-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q-window-v { font-family: var(--font-code); font-weight: 400; text-align: right; color: var(--color-text); }
 .q-window-r { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
-.q-spark { flex: none; }
-.q-spark--none { display: inline-block; width: 72px; height: 22px; border-bottom: 1px dotted var(--color-line); }
 
 /* 选项片的字太长（模型名）就截断，悬停看全名；输入框下那一行不再被挤得换行。 */
 .pk-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -796,6 +801,13 @@ body { overflow: hidden; }
 .info-i::before { top: 2px; height: 1px; }
 .info-i::after { top: 4px; height: 4px; }
 .agent-card-more { align-self: flex-start; margin-top: var(--space-2); font-size: var(--text-small); }
+/* 审批卡片（v1.1.11 学 Claude Code Desktop）：标题是一句人话，下面一个小标签说为什么要批，命令点「看命令」才露出来 */
+.agent-card-reason { margin: 0 0 var(--space-3); }
+.agent-card-reason .pk-tag { font-family: var(--font-body); font-weight: 600; letter-spacing: 0; }
+/* 命令那一步点开：先一行命令原文，再是输出 */
+.agent-call .out-cmd { margin: 0 0 var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-2); }
+/* 子代理那一步：右边写它到第几轮了 */
+.agent-sub-round { margin-left: auto; padding-left: var(--space-4); font-style: normal; color: var(--color-text-3); white-space: nowrap; }
 .float.info-pop { z-index: 70; width: 280px; overflow-y: auto; padding: var(--space-4) var(--space-6); background: var(--color-panel-2); box-shadow: 0 0 0 1px var(--color-cyan-line); clip-path: var(--pk-clip2); font-family: var(--font-body); font-size: var(--text-small); line-height: 1.6; color: var(--color-text-2); white-space: normal; letter-spacing: 0; text-transform: none; user-select: text; }
 .lbl .info-btn, .pk-mod-head .info-btn { vertical-align: -2px; }
 
@@ -808,7 +820,18 @@ body { overflow: hidden; }
 .composer-shot button { position: absolute; top: 2px; right: 2px; display: inline-flex; padding: 1px; border: 0; background: var(--color-panel); color: var(--color-text-2); cursor: pointer; }
 .composer-shot button:hover { color: var(--color-bad); }
 /* ASK 一次问几个（v1.1.9）：一个问题一段，中间一条虚线；问题前面是它的短名 */
-.ask-q + .ask-q { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px dashed var(--color-line); }
+/* ASK 一次问几个（v1.1.11 学 Claude Code Desktop）：一排短名当页签（答了的带勾），一次一个问题，← → 翻 */
+.ask-tabs { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 0 var(--space-5); }
+.ask-tab { display: inline-flex; align-items: center; gap: var(--space-2); height: 26px; padding: 0 var(--space-4); border: 0; clip-path: var(--pk-clip2); background: var(--color-raised); color: var(--color-text-2); font-family: var(--font-body); font-size: var(--text-small); cursor: pointer; }
+.ask-tab.is-on { background: var(--color-cyan-soft); color: var(--color-text); }
+.ask-tab.is-done .pk-i { color: var(--color-ok); }
+.ask-tab:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: 2px; }
+/* Other 那一行：自己的圆圈或方框，后面一格自己写（点别的选项字也留着） */
+.agent-other { align-items: center; cursor: pointer; }
+.agent-card .agent-other :is(.pk-radio, .pk-check) { margin-top: 0; }
+.agent-other-in { width: 100%; min-width: 0; padding: 0; border: 0; border-bottom: 1px dotted var(--color-line); outline: none; background: none; font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-text); }
+.agent-other-in::placeholder { color: var(--color-text-3); }
+.agent-other-in:focus { border-bottom-color: var(--color-cyan); }
 .ask-q-head { margin-right: var(--space-3); color: var(--color-text-3); }
 .ask-body { margin: 0 0 var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
 .agent-asked .ask-body { margin: 0; }
@@ -825,6 +848,9 @@ body { overflow: hidden; }
 :is(.task-stack, .agent) .md :is(h3, h4) { font-size: 1em; }
 /* + 附的文档、文件夹（v1.1.8）：一片一个，叉掉 */
 .composer-upload { cursor: default; max-width: 220px; }
+/* 任务头上（v1.1.11）：PLOOP 到第几轮了，到八成变琥珀；子代理在跑几个、排队几个，点了跳过去 */
+.task-round--warn { color: var(--color-warn); }
+.task-agents { flex: none; }
 .composer-upload button { display: inline-flex; padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }
 .composer-upload button:hover { color: var(--color-bad); }
 /* 回答的 COPY 挂在回答右上角的外面（原来压在第一行字上，Phase 13 改）；代码块的照旧在块里。 */
@@ -900,7 +926,7 @@ body { overflow: hidden; }
 
 /* 交出去的子任务（v0.9 B1）：挂在那一步下面，左边一道虚线。 */
 .agent-sub { margin-top: var(--space-2); padding-left: var(--space-4); border-left: 1px dashed var(--color-line); }
-.agent-sub-head { font-size: var(--text-small); color: var(--color-text-2); }
+.agent-sub-head { width: 100%; font-size: var(--text-small); color: var(--color-text-2); }
 .agent-sub .agent-calls { margin-top: var(--space-2); }
 
 /* 定时任务（v1.0.2）：PROJECTS 头上的钟（几个、有没有错过的），点开一个个看；错过的在项目里弹卡片。 */

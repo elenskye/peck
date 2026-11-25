@@ -551,7 +551,6 @@ async fn start_run(state: &AppState, schedule: &Schedule, session_id: &str, resu
             effort: schedule.effort.clone(),
             resume,
             worktree: false,
-            attachments: vec![],
             compact: false,
         },
         backend,

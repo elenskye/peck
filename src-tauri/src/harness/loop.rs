@@ -19,7 +19,7 @@ use super::compact;
 use super::context::{self, EnvInput, ProjectLayer};
 use super::permission::{self, Ask};
 use super::spill;
-use super::tools::{self, bash, ToolContext};
+use super::tools::{self, bash, command_description, ToolContext};
 use crate::gateway::caps::AgentCaps;
 use crate::gateway::catalog::{self, Thinking};
 use crate::gateway::event::{
@@ -409,7 +409,7 @@ fn system_prompt(task: &AgentTask, level: PermissionLevel, oneshot: bool, config
          - Use bash_background for dev servers, watchers and long test suites instead of bash_run, then read their output. When the user wants a dev server to look at (the PREVIEW panel), start it with keep=true so it stays up after the task ends.\n\
          - search_tasks finds earlier tasks in this project; <referenced-task> blocks are earlier tasks the user pointed you to.{web_line}\n\
          - When you learn something durable about this project (a convention, a command, a pitfall, a preference the user stated), propose it with memory; the user approves it at the end.{skill_line}\n\
-         - Use ask_user only when you cannot continue without the user's decision.\n\
+         - Use ask_user only when you cannot continue without the user's decision, and put every question you have now into one call (up to 4).\n\
          - Answer in the user's language (Chinese if they write Chinese), in Markdown, briefly: what you changed, how you checked it, anything left.\n\
          - When you finish, end the final answer with up to 3 suggested next steps the user might want, each on its own line starting with `→ ` (short, imperative, in the user's language). Peck shows them as buttons and hides these lines. Skip them when nothing obvious is left.{extras}{delegate}{brief}",
         root = task.cwd.display(),
@@ -745,7 +745,7 @@ impl Run {
                         detail.push_str(&format!("\n环境变量：{}", c.env.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join("、")));
                     }
                     detail.push_str("\n\n这是项目 .mcp.json 里写的程序：在 Peck 的沙箱外跑，能读写你能读写的东西。.mcp.json 改了会再问。");
-                    let d = self.approve_as(ToolKind::Mcp, &format!("mcp-start-{}", c.name), format!("起项目里的 MCP 服务器 {}？", c.name), detail, false).await;
+                    let d = self.approve_as(ToolKind::Mcp, &format!("mcp-start-{}", c.name), format!("起项目里的 MCP 服务器 {}？", c.name), detail, false, None).await;
                     if d == ApprovalDecision::AllowAlways {
                         self.allowed.insert(rule.clone());
                         if let Some(hook) = &self.hook {
@@ -1122,6 +1122,7 @@ impl Run {
             let (_, raw) = self.report_context(names, window);
             self.last_sent = raw;
             round += 1;
+            self.emit(EventBody::RoundStarted { round, max: self.config.max_rounds });
             let request = ModelRequest { messages: self.messages.clone(), ..base_request.clone() };
             let response = match self.ask_model(request, round).await {
                 Ok(r) => r,
@@ -1597,7 +1598,7 @@ impl Run {
                 Some(ok) => ok,
                 None if hook.trusted || self.allowed.contains(&rule) => true,
                 None => {
-                    let decision = self.approve_as(ToolKind::Run, call_id, format!("跑项目的 Hook：{}", hook.title()), format!("来自 {}\n{}", hook.source, hook.command), false).await;
+                    let decision = self.approve_as(ToolKind::Run, call_id, format!("跑项目的 Hook：{}", hook.title()), format!("来自 {}\n{}", hook.source, hook.command), false, None).await;
                     if decision == ApprovalDecision::AllowAlways {
                         self.allowed.insert(rule.clone());
                         if let Some(remember) = &self.hook {
@@ -1699,6 +1700,11 @@ impl Run {
             tools::ASK_USER => self.ask_user(input).await,
             tools::TOOL_SEARCH => self.tool_search(input),
             tools::WEB_SEARCH => self.web_search(input).await,
+            tools::READ_FILE if tools::fs::is_image(input) => {
+                let out = read_job(self.read_kit(), name.to_string(), input.clone()).await;
+                self.shots.extend(out.images);
+                (out.status, out.text, None, vec![])
+            }
             tools::WEB_FETCH | tools::READ_PDF | tools::OCR_PDF | tools::READ_NOTEBOOK => {
                 let out = read_job(self.read_kit(), name.to_string(), input.clone()).await;
                 self.charge(out.fee);
@@ -1707,6 +1713,18 @@ impl Run {
             }
             agents::SPAWN_AGENT => self.spawn_agent(call_id, input).await,
             n if n.starts_with("mcp__") => self.mcp_call(call_id, n, input).await,
+            tools::SCREENSHOT_PAGE => {
+                let ctx = self.ctx.clone();
+                let input = input.clone();
+                match tokio::task::spawn_blocking(move || tools::page::screenshot_page(&ctx, &input)).await {
+                    Ok(Ok((text, image))) => {
+                        self.shots.push(image);
+                        (ToolStatus::Ok, text, None, vec![])
+                    }
+                    Ok(Err(e)) => (ToolStatus::Failed, e, None, vec![]),
+                    Err(_) => (ToolStatus::Failed, "截网页出错了。".into(), None, vec![]),
+                }
+            }
             tools::SCREENSHOT_APP => {
                 let ctx = self.ctx.clone();
                 let input = input.clone();
@@ -1720,14 +1738,7 @@ impl Run {
                 }
             }
             tools::APPLY_PATCH => {
-                // 删文件不管哪一档都要站主批（和 rm 一样算高危）。
-                let gone = tools::v4a::deletes(input);
-                if !gone.is_empty() {
-                    let decision = self.approve(call_id, format!("补丁要删 {} 个文件", gone.len()), gone.join("\n"), true).await;
-                    if !decision.allows() {
-                        return (ToolStatus::Denied, "站主没批删文件，补丁一处都没打。不删文件再试，或者说明为什么要删。".into(), None, vec![]);
-                    }
-                }
+                // 补丁删的是项目里的文件（有任务前快照），和 rm 一样不问（v1.1.11）。
                 let ctx = self.ctx.clone();
                 let input = input.clone();
                 let r = tokio::task::spawn_blocking(move || tools::run_sync(&ctx, tools::APPLY_PATCH, &input))
@@ -1742,7 +1753,7 @@ impl Run {
                 // EDIT 问一次（能「这个项目总是允许」）；AUTO 不问。提交改不了文件，不算高危。
                 if self.level == PermissionLevel::Edit && !self.allowed.contains(super::git::RULE) {
                     let (title, detail) = super::git::card(input);
-                    let d = self.approve_as(ToolKind::Other, call_id, title, detail, false).await;
+                    let d = self.approve_as(ToolKind::Other, call_id, title, detail, false, None).await;
                     if d == ApprovalDecision::AllowAlways {
                         self.allowed.insert(super::git::RULE.to_string());
                         if let Some(hook) = &self.hook {
@@ -1842,7 +1853,7 @@ impl Run {
             Ok(Err(e)) => return fail(e),
             Err(_) => return fail("算要回退哪些文件时出错了。".into()),
         };
-        let decision = self.approve_as(ToolKind::Edit, call_id, plan.title.clone(), plan.detail.clone(), true).await;
+        let decision = self.approve_as(ToolKind::Edit, call_id, plan.title.clone(), plan.detail.clone(), true, None).await;
         if !decision.allows() {
             return (ToolStatus::Denied, "站主没批这次回退，文件都没动。".into(), None, vec![]);
         }
@@ -1909,7 +1920,7 @@ impl Run {
                 match permission::check_command(self.level, &command, &self.ctx.root, &self.allowed) {
                     Ask::HighRisk(risks) => {
                         let kinds: Vec<&str> = risks.iter().map(|r| r.kind.label()).collect();
-                        let decision = self.approve(call_id, format!("高危：{}", kinds.join("、")), command.clone(), true).await;
+                        let decision = self.approve_command(call_id, input, kinds.join("、"), true).await;
                         if !decision.allows() {
                             return (ToolStatus::Denied, format!("站主没批这条命令（{}）。", kinds.join("、")), None, vec![]);
                         }
@@ -1925,7 +1936,7 @@ impl Run {
                             kinds.push(long);
                         }
                         for kind in kinds {
-                            let decision = self.approve(call_id, format!("{}：要在后台跑吗？", kind.label()), command.clone(), false).await;
+                            let decision = self.approve_command(call_id, input, format!("{}（后台）", kind.label()), false).await;
                             if decision == ApprovalDecision::AllowAlways {
                                 self.allowed.insert(kind.rule().to_string());
                                 if let Some(hook) = &self.hook {
@@ -2306,12 +2317,12 @@ impl Run {
         let rule = format!("mcp:{}", tool.server);
         let detail = super::tools::clip_bytes(&serde_json::to_string_pretty(input).unwrap_or_default(), 4000).to_string();
         if tool.destructive {
-            let d = self.approve_as(ToolKind::Mcp, call_id, format!("高危：MCP {} · {}（会删改东西）", tool.server, tool.name), detail, true).await;
+            let d = self.approve_as(ToolKind::Mcp, call_id, format!("MCP {} · {}", tool.server, tool.name), detail, true, Some("会删改东西".into())).await;
             if !d.allows() {
                 return (ToolStatus::Denied, "站主没批这个 MCP 工具。".into(), None, vec![]);
             }
         } else if self.level == PermissionLevel::Edit && !tool.read_only && !self.allowed.contains(&rule) {
-            let d = self.approve_as(ToolKind::Mcp, call_id, format!("用 MCP {} · {}？", tool.server, tool.name), detail, false).await;
+            let d = self.approve_as(ToolKind::Mcp, call_id, format!("用 MCP {} · {}？", tool.server, tool.name), detail, false, None).await;
             if d == ApprovalDecision::AllowAlways {
                 self.allowed.insert(rule.clone());
                 if let Some(hook) = &self.hook {
@@ -2350,32 +2361,47 @@ impl Run {
     }
 
     async fn ask_user(&mut self, input: &Value) -> (ToolStatus, String, Option<i32>, Vec<crate::gateway::event::FileDiff>) {
-        let Some(question) = input.get("question").and_then(Value::as_str).filter(|q| !q.trim().is_empty()) else {
-            return (ToolStatus::Failed, "缺 question。".into(), None, vec![]);
-        };
-        let options: Vec<String> = input
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|o| o.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
+        let mut list = ask_questions(input);
+        if list.is_empty() {
+            return (ToolStatus::Failed, "缺 questions（每个要有 question）。".into(), None, vec![]);
+        }
+        list.truncate(4);
         self.approvals += 1;
         let request_id = format!("{}ask-{}", self.config.subtask.as_deref().unwrap_or(""), self.approvals);
-        self.emit(EventBody::UserInputRequested { request_id: request_id.clone(), question: question.to_string(), options, free_text: true, questions: vec![] });
+        // 只有一个单选的问题照旧放在 question、options 上；几个问题（v1.1.11 PLOOP 也能一次问几个）或能多选的放进 questions。
+        let several = list.len() > 1 || list[0].multi;
+        let first = list[0].clone();
+        self.emit(EventBody::UserInputRequested {
+            request_id: request_id.clone(),
+            question: first.question.clone(),
+            options: if several { vec![] } else { first.options.clone() },
+            free_text: true,
+            questions: if several { list.clone() } else { vec![] },
+        });
         match self.ctl.wait_for(&request_id).await {
-            Some(Control::Answer { answer, .. }) => {
+            Some(Control::Answer { answer, answers, .. }) => {
                 self.emit(EventBody::UserInputResolved { request_id, answer: answer.clone() });
-                (ToolStatus::Ok, format!("站主回答：{answer}"), None, vec![])
+                let text = if several && answers.len() == list.len() {
+                    let lines: Vec<String> = list.iter().zip(&answers).map(|(q, a)| format!("- {}：{}", q.question, a.join("、"))).collect();
+                    format!("站主回答：\n{}", lines.join("\n"))
+                } else {
+                    format!("站主回答：{answer}")
+                };
+                (ToolStatus::Ok, text, None, vec![])
             }
             _ => (ToolStatus::Cancelled, "站主没回答（任务停了）。".into(), None, vec![]),
         }
     }
 
-    /// 弹一张审批卡片，等站主点。高危只有批准、不行。
-    async fn approve(&mut self, call_id: &str, title: String, detail: String, high_risk: bool) -> ApprovalDecision {
-        self.approve_as(ToolKind::Run, call_id, title, detail, high_risk).await
+    /// 一条命令要站主批（v1.1.11 学 Claude Code Desktop）：卡片标题是模型写的那句说明（`description`），
+    /// `reason` 是小标签（为什么要批），命令本身收起来。高危只有批准、不行。
+    async fn approve_command(&mut self, call_id: &str, input: &Value, reason: String, high_risk: bool) -> ApprovalDecision {
+        let command = input.get("command").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let title = command_description(input).unwrap_or_else(|| "跑一条命令".to_string());
+        self.approve_as(ToolKind::Run, call_id, title, command, high_risk, Some(reason)).await
     }
 
-    async fn approve_as(&mut self, kind: ToolKind, call_id: &str, title: String, detail: String, high_risk: bool) -> ApprovalDecision {
+    async fn approve_as(&mut self, kind: ToolKind, call_id: &str, title: String, detail: String, high_risk: bool, reason: Option<String>) -> ApprovalDecision {
         self.approvals += 1;
         let request_id = format!("{}approve-{}", self.config.subtask.as_deref().unwrap_or(""), self.approvals);
         let options = if high_risk {
@@ -2384,6 +2410,7 @@ impl Run {
             vec![ApprovalDecision::AllowOnce, ApprovalDecision::AllowAlways, ApprovalDecision::DenyOnce]
         };
         self.emit(EventBody::ApprovalRequested {
+            reason,
             request_id: request_id.clone(),
             call_id: Some(call_id.to_string()),
             kind,
@@ -2419,13 +2446,13 @@ impl Run {
             Ask::No => {}
             Ask::HighRisk(risks) => {
                 let kinds: Vec<&str> = risks.iter().map(|r| r.kind.label()).collect();
-                let decision = self.approve(call_id, format!("高危：{}", kinds.join("、")), command.clone(), true).await;
+                let decision = self.approve_command(call_id, input, kinds.join("、"), true).await;
                 if !decision.allows() {
                     return (ToolStatus::Denied, format!("站主没批这条命令（{}）。换个办法，或者说明为什么非这样不可。", kinds.join("、")), None, vec![]);
                 }
             }
             Ask::Confirm(kind) => {
-                let decision = self.approve(call_id, format!("{}：要跑吗？", kind.label()), command.clone(), false).await;
+                let decision = self.approve_command(call_id, input, kind.label().to_string(), false).await;
                 if decision == ApprovalDecision::AllowAlways {
                     self.allowed.insert(kind.rule().to_string());
                     if let Some(hook) = &self.hook {
@@ -2446,11 +2473,11 @@ impl Run {
             Err(e) => return (ToolStatus::Failed, e, None, vec![]),
         };
         if outcome.sandbox_denied() && self.level != PermissionLevel::Plan {
-            let title = match &self.scope {
-                Some(scope) => format!("高危：要写到划给它的范围（{}）以外，沙箱拦下了。出沙箱再跑一次？", scope.join("、")),
-                None => "高危：写到项目外（沙箱拦下了），出沙箱再跑一次？".into(),
+            let reason = match &self.scope {
+                Some(scope) => format!("要写到划给它的范围（{}）以外，出沙箱再跑", scope.join("、")),
+                None => "要写到项目外，出沙箱再跑".into(),
             };
-            let decision = self.approve(call_id, title, command.clone(), true).await;
+            let decision = self.approve_command(call_id, input, reason, true).await;
             if decision.allows() {
                 match self.exec(call_id, input, bash::Sandbox::Off).await {
                     Ok(o) => outcome = o,
@@ -2496,6 +2523,23 @@ impl Run {
                 }
             }
         }
+    }
+}
+
+/// `ask_user` 的问题：`questions`（v1.1.11，一次几个）或旧的 `question` + `options`。没写问题的丢掉。
+fn ask_questions(input: &Value) -> Vec<crate::gateway::event::AskQuestion> {
+    let strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array).map(|a| a.iter().filter_map(|o| o.as_str().map(str::trim).filter(|o| !o.is_empty()).map(str::to_string)).collect()).unwrap_or_default()
+    };
+    let one = |q: &Value| -> Option<crate::gateway::event::AskQuestion> {
+        let question = q.get("question").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty())?.to_string();
+        let header = q.get("header").and_then(Value::as_str).map(str::trim).filter(|h| !h.is_empty()).map(|h| h.chars().take(16).collect());
+        let multi = q.get("multi_select").or_else(|| q.get("multiSelect")).and_then(Value::as_bool).unwrap_or(false);
+        Some(crate::gateway::event::AskQuestion { header, question, options: strings(q.get("options")), multi })
+    };
+    match input.get("questions").and_then(Value::as_array) {
+        Some(qs) if !qs.is_empty() => qs.iter().filter_map(one).collect(),
+        _ => one(input).into_iter().collect(),
     }
 }
 
@@ -2632,6 +2676,11 @@ async fn read_job(kit: ReadKit, name: String, input: Value) -> ReadOut {
             ReadOut::from(r)
         }
         tools::OCR_PDF => ocr_job(kit, input).await,
+        tools::READ_FILE if tools::fs::is_image(&input) => {
+            let (ctx, vision) = (kit.ctx.clone(), kit.vision);
+            let r = tokio::task::spawn_blocking(move || tools::fs::read_image(&ctx, &input, vision)).await.unwrap_or_else(|_| Err("读图出错了。".into()));
+            ReadOut::from(r)
+        }
         // 读网页（v1.1.7）：失败（跳到别的网站、本机地址、类型不支持）写成普通的失败一步。
         tools::WEB_FETCH => ReadOut::from(kit.fetcher.fetch(&kit.ctx, &input, kit.cancel.clone()).await.map(|t| (t, vec![]))),
         _ => {
@@ -3919,13 +3968,17 @@ mod tests {
         for level in [PermissionLevel::Auto, PermissionLevel::Edit] {
             let model = Arc::new(ScriptedModel::new(
                 "deepseek/deepseek-flash",
-                vec![turn("", vec![("bash_run", json!({"command":"rm keep.txt"}))]), turn("好，不删。", vec![])],
+                vec![turn("", vec![("bash_run", json!({"command":"rm keep.txt && git push", "description": "删掉 keep.txt 再推上去"}))]), turn("好，不删。", vec![])],
                 Duration::ZERO,
             ));
             let backend = PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]);
             let (outcome, events) = drive(&backend, task(&p, level, "清理"), |e| match e {
-                EventBody::ApprovalRequested { request_id, high_risk, options, .. } => {
+                EventBody::ApprovalRequested { request_id, high_risk, options, title, reason, detail, .. } => {
                     assert!(*high_risk);
+                    // 卡片标题是模型写的那句说明，原因是小标签，命令收在 detail 里（v1.1.11）。
+                    assert_eq!(title, "删掉 keep.txt 再推上去");
+                    assert_eq!(reason.as_deref(), Some("推送或改 Git 历史"));
+                    assert_eq!(detail.as_deref(), Some("rm keep.txt && git push"));
                     assert!(!options.contains(&ApprovalDecision::AllowAlways), "高危不能总是允许");
                     Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::DenyOnce })
                 }
@@ -4320,9 +4373,9 @@ mod tests {
         ));
         let mut asked = 0;
         let (_, events) = drive(&PeckBackend::new(model, config(&p, "deepseek/deepseek-flash"), vec![]), task(&p, PermissionLevel::Edit, "x"), |e| match e {
-            EventBody::ApprovalRequested { request_id, title, .. } => {
+            EventBody::ApprovalRequested { request_id, reason, .. } => {
                 asked += 1;
-                assert!(title.contains("起常驻进程"));
+                assert!(reason.as_deref().is_some_and(|r| r.contains("起常驻进程")), "{reason:?}");
                 Some(Control::Approve { request_id: request_id.clone(), decision: ApprovalDecision::DenyOnce })
             }
             _ => None,
@@ -4446,6 +4499,42 @@ mod tests {
         let ocr = serde_json::to_string(&reqs[2].messages.last().unwrap()).unwrap();
         assert!(ocr.contains("Mathpix 识别了第 1 页") && ocr.contains("模拟模式"), "{ocr}");
         assert!(!events.iter().any(|e| matches!(&e.body, EventBody::UsageUpdated { model: Some(m), .. } if m == "mathpix")), "模拟的不记费用");
+    }
+
+    /// v1.1.11：一次问几个问题（各自的答案逐条送回）、read_file 读图把图附上、每轮发一条 round.started。
+    #[tokio::test]
+    async fn asks_several_questions_at_once_reads_images_and_counts_rounds() {
+        let p = TempProject::new();
+        std::fs::write(p.dir.join("shot.png"), b"\x89PNG\r\n\x1a\nfake").unwrap();
+        let model_id = "anthropic/claude-haiku-5-5";
+        let model = Arc::new(ScriptedModel::new(
+            model_id,
+            vec![
+                turn("", vec![("ask_user", json!({"questions": [{"question": "哪个版本？", "header": "VER", "options": ["1.1.11", "1.2.0"]}, {"question": "哪些要换？", "options": ["卡片", "标题"], "multi_select": true}]}))]),
+                turn("", vec![("read_file", json!({"path": "shot.png"}))]),
+                turn("好了。", vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let requests = model.requests.clone();
+        let (outcome, events) = drive(&PeckBackend::new(model, config(&p, model_id), vec![]), task(&p, PermissionLevel::Plan, "问问"), |e| match e {
+            EventBody::UserInputRequested { request_id, questions, .. } => {
+                assert_eq!(questions.len(), 2);
+                assert!(questions[1].multi && questions[0].header.as_deref() == Some("VER"));
+                Some(Control::Answer { request_id: request_id.clone(), answer: "VER：1.1.11\n哪些要换？：卡片、标题".into(), answers: vec![vec!["1.1.11".into()], vec!["卡片".into(), "标题".into()]] })
+            }
+            _ => None,
+        })
+        .await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        let reqs = requests.lock().unwrap();
+        let asked = serde_json::to_string(reqs[1].messages.last().unwrap()).unwrap();
+        assert!(asked.contains("哪个版本？：1.1.11") && asked.contains("哪些要换？：卡片、标题"), "{asked}");
+        let looked = reqs[2].messages.last().unwrap();
+        assert!(matches!(&looked.parts[0], Part::ToolResult { output, .. } if output.contains("是一张图")), "{:?}", looked.parts[0]);
+        assert!(matches!(&looked.parts[1], Part::Image { media_type, .. } if media_type == "image/png"), "图跟在工具结果后面");
+        let rounds: Vec<(u32, u32)> = events.iter().filter_map(|e| match e.body { EventBody::RoundStarted { round, max } => Some((round, max)), _ => None }).collect();
+        assert_eq!(rounds, [(1, DEFAULT_MAX_ROUNDS), (2, DEFAULT_MAX_ROUNDS), (3, DEFAULT_MAX_ROUNDS)]);
     }
 
     #[tokio::test]

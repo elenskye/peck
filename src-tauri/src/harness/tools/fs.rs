@@ -62,6 +62,47 @@ pub fn list_directory(ctx: &ToolContext, input: &Value) -> Result<ToolResult, St
     Ok(ToolResult::ok(text))
 }
 
+/// `read_file` 读的是图（v1.1.11）：附给能看图的模型（站主 `+` 附的截图、项目里的图）。
+pub fn is_image(input: &Value) -> bool {
+    str_arg(input, "path").map(|p| p.trim().to_ascii_lowercase()).is_some_and(|p| [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|e| p.ends_with(e)))
+}
+
+/// 读一张图：大的先缩到长边 1568（存一份在落盘目录，原图不动），返回（给模型的一句，图）。
+pub fn read_image(ctx: &ToolContext, input: &Value, vision: bool) -> Result<(String, Vec<crate::gateway::ImageInput>), String> {
+    let raw = str_arg(input, "path").ok_or("缺 path。")?;
+    let given = Path::new(raw.trim());
+    let file = if given.is_absolute() && ctx.is_spill(given) && !raw.contains("..") { given.to_path_buf() } else { ctx.resolve_path(raw, false)? };
+    let size = std::fs::metadata(&file).map(|m| m.len()).map_err(|_| format!("读不到 {}（不存在或没权限）。", ctx.rel(&file)))?;
+    if !vision {
+        return Ok((format!("{} 是一张图（{} KB），这个模型看不了图。", ctx.rel(&file), size / 1024), vec![]));
+    }
+    if size > 30 * 1024 * 1024 {
+        return Err(format!("{} 太大了（{} MB），看不了。", ctx.rel(&file), size / 1024 / 1024));
+    }
+    let lower = file.to_string_lossy().to_ascii_lowercase();
+    let mut media = match lower.rsplit('.').next() {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    };
+    let mut bytes = std::fs::read(&file).map_err(|_| format!("读不到 {}。", ctx.rel(&file)))?;
+    if bytes.len() > 1024 * 1024 && cfg!(target_os = "macos") {
+        let _ = std::fs::create_dir_all(&ctx.spill_dir);
+        let n = ctx.spill_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let small = ctx.spill_dir.join(format!("{n}-view.png"));
+        let ok = std::process::Command::new("/usr/bin/sips").args(["-Z", "1568", "-s", "format", "png"]).arg(&file).arg("--out").arg(&small).output().is_ok_and(|o| o.status.success());
+        if let Some(b) = ok.then(|| std::fs::read(&small).ok()).flatten() {
+            bytes = b;
+            media = "image/png";
+        }
+    }
+    if bytes.len() > 5 * 1024 * 1024 {
+        return Err(format!("{} 缩完还是太大，看不了。", ctx.rel(&file)));
+    }
+    Ok((format!("{} 是一张图（{} KB），图在这一轮结果后面。", ctx.rel(&file), size / 1024), vec![crate::gateway::ImageInput { media_type: media.into(), data: crate::files::base64(&bytes) }]))
+}
+
 pub fn read_file(ctx: &ToolContext, input: &Value) -> Result<ToolResult, String> {
     read_file_within(ctx, input, WHOLE_FILE)
 }

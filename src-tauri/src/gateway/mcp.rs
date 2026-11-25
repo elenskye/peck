@@ -493,7 +493,7 @@ async fn extras_call(x: Arc<crate::harness::extras::Extras>, name: &str, args: V
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     super::runner::register_sub_control(&x.run_id, &prefix, tx);
     let options = vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce];
-    sink.emit(EventBody::ApprovalRequested { request_id: request_id.clone(), call_id: None, kind: ToolKind::Edit, title: plan.title.clone(), detail: Some(plan.detail.clone()), high_risk: true, options });
+    sink.emit(EventBody::ApprovalRequested { reason: None, request_id: request_id.clone(), call_id: None, kind: ToolKind::Edit, title: plan.title.clone(), detail: Some(plan.detail.clone()), high_risk: true, options });
     // 等站主点；按了停、任务收尾（`interrupt_subs`）、通道断了都算没批。
     let decision = loop {
         match rx.recv().await {
@@ -526,7 +526,7 @@ async fn git_call(g: GitOffer, x: Arc<crate::harness::extras::Extras>, args: Val
         super::runner::register_sub_control(&x.run_id, &prefix, tx);
         let (title, detail) = git::card(&args);
         let options = vec![ApprovalDecision::AllowOnce, ApprovalDecision::AllowAlways, ApprovalDecision::DenyOnce];
-        sink.emit(EventBody::ApprovalRequested { request_id: request_id.clone(), call_id: None, kind: ToolKind::Other, title, detail: Some(detail), high_risk: false, options: options.clone() });
+        sink.emit(EventBody::ApprovalRequested { reason: None, request_id: request_id.clone(), call_id: None, kind: ToolKind::Other, title, detail: Some(detail), high_risk: false, options: options.clone() });
         let decision = loop {
             match rx.recv().await {
                 Some(super::Control::Approve { decision, .. }) => break Some(if options.contains(&decision) { decision } else if decision.allows() { ApprovalDecision::AllowOnce } else { ApprovalDecision::DenyOnce }),

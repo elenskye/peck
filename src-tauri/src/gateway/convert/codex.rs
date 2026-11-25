@@ -344,6 +344,7 @@ impl CodexConverter {
                     let shown = params["commandActions"][0]["command"].as_str().or(full.as_deref()).unwrap_or("");
                     let reason = params["reason"].as_str().map(str::trim).filter(|r| !r.is_empty());
                     vec![EventBody::ApprovalRequested {
+                        reason: None,
                         request_id,
                         call_id: params["itemId"].as_str().map(str::to_string),
                         kind: ToolKind::Run,
@@ -361,6 +362,7 @@ impl CodexConverter {
                     let paths = params["itemId"].as_str().and_then(|id| self.file_changes.get(id)).cloned().unwrap_or_default();
                     let rels: Vec<String> = paths.iter().map(|p| self.rel(p)).collect();
                     vec![EventBody::ApprovalRequested {
+                        reason: None,
                         request_id,
                         call_id: params["itemId"].as_str().map(str::to_string),
                         kind: ToolKind::Edit,
@@ -383,6 +385,7 @@ impl CodexConverter {
                         && !meta["tool_annotations"]["readOnlyHint"].as_bool().unwrap_or(false);
                     let detail = serde_json::to_string_pretty(&meta["tool_params"]).ok().filter(|d| d != "null");
                     vec![EventBody::ApprovalRequested {
+                        reason: None,
                         request_id,
                         call_id: None,
                         kind: ToolKind::Mcp,

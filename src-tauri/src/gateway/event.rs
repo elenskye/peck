@@ -155,10 +155,14 @@ pub enum EventBody {
         /// 命令原文、路径之类。
         #[serde(default)]
         detail: Option<String>,
-        /// 高危（删文件、推送、写到项目外、改系统设置）：不管哪档都弹卡片。
+        /// 高危（删项目外的东西、推送、改系统设置……）：不管哪档都弹卡片。
         #[serde(default)]
         high_risk: bool,
         options: Vec<ApprovalDecision>,
+        /// 为什么要站主批（v1.1.11）：卡片上一个小标签（「删项目外的东西」「装依赖」「要出沙箱」）。
+        /// 有它时 `title` 是模型写的一句人话，命令收在 `detail` 里。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     #[serde(rename = "approval.resolved")]
     ApprovalResolved {
@@ -215,6 +219,9 @@ pub enum EventBody {
         subagent_id: String,
         status: ToolStatus,
     },
+    /// Peck Loop 开始第几轮（v1.1.11）：一轮是问一次模型。任务头上写「第 N/上限 轮」；子代理的带 `subagentId`，写在它那一行。
+    #[serde(rename = "round.started")]
+    RoundStarted { round: u32, max: u32 },
 
     // ── 用量、额度 ──
     #[serde(rename = "usage.updated")]
@@ -388,6 +395,7 @@ impl EventBody {
             Self::UserAppended { .. } => "user.appended",
             Self::SubagentStarted { .. } => "subagent.started",
             Self::SubagentCompleted { .. } => "subagent.completed",
+            Self::RoundStarted { .. } => "round.started",
             Self::AgentsRoster { .. } => "agents.roster",
             Self::BoardUpdated { .. } => "board.updated",
             Self::UsageUpdated { .. } => "usage.updated",
@@ -410,7 +418,7 @@ impl EventBody {
 
     /// 全部类型名（给 TS 对照测试和文档用）。
     #[cfg(test)]
-    pub const TYPE_NAMES: [&'static str; 37] = [
+    pub const TYPE_NAMES: [&'static str; 38] = [
         "session.started",
         "session.config_changed",
         "turn.started",
@@ -431,6 +439,7 @@ impl EventBody {
         "user.appended",
         "subagent.started",
         "subagent.completed",
+        "round.started",
         "agents.roster",
         "board.updated",
         "usage.updated",
@@ -861,6 +870,7 @@ mod tests {
         let samples = vec![
             EventBody::TurnStarted { turn_id: "t".into() },
             EventBody::UserAppended { text: "顺便".into() },
+            EventBody::RoundStarted { round: 3, max: 40 },
             EventBody::TrustPrompt { request_id: "trust-r".into(), engine: "muse".into(), label: "Muse".into() },
             EventBody::TrustResolved { request_id: "trust-r".into(), trusted: true },
             EventBody::Notice {

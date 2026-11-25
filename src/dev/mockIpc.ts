@@ -477,7 +477,7 @@ export const mockIpc = {
     if (!args.who.startsWith("cli:") || !replay) throw new Error("这个入口只跑 CLI 引擎（cli:…）。");
     if (!args.prompt.trim()) throw new Error("先写一句话。");
     const label = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who)?.label ?? engine;
-    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", label);
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, withAttachments(args.prompt, args.images, args.uploads), args.who, args.permission ?? "edit", label);
     if (args.worktree) {
       record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
       worktreeState[runId] = { files: {}, conflicts: [] };
@@ -538,7 +538,23 @@ export const mockIpc = {
   },
   async harnessImageRead(path: string): Promise<string> {
     if (!path.startsWith("/mock/")) throw new Error("只能打开 Peck 存下来的图。");
-    return demoPicture(`截图 · ${path.split("/").pop() ?? path}`, true);
+    return attachedImages.get(path) ?? demoPicture(`截图 · ${path.split("/").pop() ?? path}`, true);
+  },
+  async uploadReadImage(path: string): Promise<{ mediaType: string; data: string }> {
+    // 演示图是 SVG：画到 canvas 上转成 PNG（后端给的也是 PNG、JPEG 这几种）。
+    const img = new Image();
+    img.src = demoPicture(path.split("/").pop() ?? path);
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth || 480;
+    c.height = img.naturalHeight || 300;
+    c.getContext("2d")?.drawImage(img, 0, 0);
+    const url = c.toDataURL("image/png");
+    return { mediaType: "image/png", data: url.slice(url.indexOf(",") + 1) };
+  },
+  async uploadStage(name: string, data: string): Promise<string> {
+    if (data.length > 14 * 1024 * 1024) throw new Error(`${name} 超过 10MB，拆小一点再附。`);
+    return `/mock/拖进来的/${name}`;
   },
   async openPath(_workspaceId: string, path: string, _how: "editor" | "finder", _app?: string): Promise<void> {
     if (path.includes("..")) throw new Error("只能打开项目里的文件。");
@@ -704,7 +720,7 @@ export const mockIpc = {
     const model = args.who.slice(4);
     const entry = MOCK_MODEL_ENTRIES.find((e) => e.id === args.who);
     const label = `Peck · ${entry?.label ?? model}`;
-    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, args.prompt, args.who, args.permission ?? "edit", label);
+    const { runId, record, workspaceId } = createAgentRecord(args.sessionId, withAttachments(args.prompt, args.images, args.uploads), args.who, args.permission ?? "edit", label);
     if (args.worktree) record.worktree = { path: `/mock/worktrees/${workspaceId}/${runId}`, appliedAt: null, discardedAt: null };
     const files = (filesState[workspaceId] ??= {});
     const project = (memoryState[workspaceId]?.length ?? 0) > 0 || "AGENTS.md" in files || "CLAUDE.md" in files;
@@ -902,6 +918,25 @@ const DEMO_PDF = "JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW
 const worktreeState: Record<string, { files: Record<string, string>; conflicts: string[] }> = {};
 
 /** 演示用的图（SVG 的 data URL）：深海底、青色的像素鸟格子。 */
+/** 发出去的图（v1.1.11）：照后端的格式记在这一句后面，对话里画成小图；图本身留在内存里给小图用。 */
+const attachedImages = new Map<string, string>();
+function withAttachments(prompt: string, images?: Array<{ mediaType: string; data: string }>, uploads?: string[]): string {
+  let out = prompt;
+  if (images?.length) {
+    const paths = images.map((img, i) => {
+      const path = `/mock/harness-output/attachments/${Date.now().toString(36)}-${i + 1}.${img.mediaType.split("/")[1] ?? "png"}`;
+      attachedImages.set(path, `data:${img.mediaType};base64,${img.data}`);
+      return path;
+    });
+    out += `\n\n（站主附了 ${paths.length} 张图，存在这些本机文件里，需要就读：\n${paths.map((p) => `- ${p}`).join("\n")}）`;
+  }
+  const files = (uploads ?? []).filter((p) => /\.[^/.]+$/.test(p));
+  const folders = (uploads ?? []).filter((p) => !files.includes(p));
+  if (files.length) out += `\n\n（站主附了 ${files.length} 个文档，拷在这些本机文件里，需要就读：\n${files.map((p) => `- ${p}`).join("\n")}）`;
+  if (folders.length) out += `\n\n（站主还给了 ${folders.length} 个文件夹（只读，别改里面；只看要紧的，别全扫）：\n${folders.map((p) => `- ${p}`).join("\n")}）`;
+  return out;
+}
+
 function demoPicture(label: string, page = false): string {
   const w = page ? 600 : 480;
   const h = page ? 780 : 300;
@@ -1068,6 +1103,8 @@ async function replayAgent(
       break;
     }
     const round = rounds[i];
+    // Peck Loop 每问一次模型发一条（v1.1.11，任务头上「第 N/上限 轮」）。
+    if (opts.countSpend) send({ type: "round.started", round: i + 1, max: 40 } as ReplayEvent);
     for (const ev of typeof round === "function" ? round(state) : round) {
       if (run.stopped) break;
       await pause(ev.type.endsWith(".delta") ? 35 : 150);

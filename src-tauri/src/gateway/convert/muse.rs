@@ -249,6 +249,7 @@ impl MuseConverter {
             }
         }
         vec![EventBody::ApprovalRequested {
+            reason: None,
             request_id: Self::approval_id(approval),
             call_id: p["toolCallId"].as_str().or(p["itemId"].as_str()).map(str::to_string),
             kind,

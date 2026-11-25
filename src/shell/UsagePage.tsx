@@ -258,7 +258,7 @@ const Breakdown: React.FC<{ points: SpendPoint[]; label: (key: string, engine: s
   );
 };
 
-/** 一个客户端的订阅额度：每个窗口一条刻度条，旁边近 7 天的折线。 */
+/** 一个客户端的订阅额度：每个窗口一条刻度条（v1.1.11 站主让去掉旁边的折线）。 */
 const ClientQuota: React.FC<{ card: ClientCard; history: QuotaPoint[]; say: (m: unknown) => void; onCard: (c: ClientCard) => void }> = ({ card: c, history, say, onCard }) => {
   const [manualOpen, setManualOpen] = useState(false);
   const [m, setM] = useState({ pct: "", note: "", reset: "" });
@@ -271,7 +271,6 @@ const ClientQuota: React.FC<{ card: ClientCard; history: QuotaPoint[]; say: (m: 
   const windows = fromClient
     ? c.windows.map((w) => ({ key: w.label, name: windowName(w.label, w.windowDurationMins), used: w.usedPercent, remaining: w.remainingAmount, reset: w.resetAtMs }))
     : [...latest.values()].map((q) => ({ key: q.label, name: windowName(q.label, null), used: q.usedPercent as number | null, remaining: null as number | null, reset: q.resetsAt }));
-  const weekAgo = Date.now() - 7 * 86_400_000;
   const tag = fromClient ? STATUS[c.status] ?? c.status : windows.length ? "任务里报的" : STATUS[c.status] ?? c.status;
   return (
     <div className="pk-mod pk-mod--sunk q-client">
@@ -288,7 +287,6 @@ const ClientQuota: React.FC<{ card: ClientCard; history: QuotaPoint[]; say: (m: 
         const stale = w.reset != null && w.reset <= Date.now();
         const left = w.used == null ? null : 100 - Math.max(0, Math.min(100, w.used));
         const lit = left == null ? 0 : Math.round(left / 5);
-        const line = history.filter((q) => q.label === w.key && q.at >= weekAgo);
         return (
           <div key={w.key} className={cn("q-window", stale && "is-stale")}>
             <span className="q-window-l" title={w.key}>{w.name}</span>
@@ -296,7 +294,6 @@ const ClientQuota: React.FC<{ card: ClientCard; history: QuotaPoint[]; say: (m: 
               {Array.from({ length: 20 }, (_, i) => <i key={i} className={cn(i < lit && "is-on")} />)}
             </span>
             <b className="q-window-v">{w.remaining != null ? `剩 ${w.remaining}` : left == null ? "未知" : `剩 ${Math.round(left)}%`}</b>
-            <Spark points={line} color={fill(s)} />
             <span className="hint q-window-r" title={w.reset ? `重置时间 ${when(w.reset)}` : undefined}>{stale ? "旧读数" : w.reset ? `${resetIn(w.reset)}重置` : ""}</span>
           </div>
         );
@@ -322,18 +319,4 @@ function balanceText(amount: string, currency: string): string {
   return c ? `${amount} ${c}` : amount;
 }
 
-/** 近 7 天还剩百分之几的折线（2 像素的线，0–100 固定刻度）。 */
-const Spark: React.FC<{ points: QuotaPoint[]; color: string }> = ({ points, color }) => {
-  const W = 72, H = 22;
-  if (points.length < 2) return <span className="q-spark q-spark--none" title="近 7 天的读数不够画线" />;
-  const t0 = points[0].at, t1 = points[points.length - 1].at || t0 + 1;
-  const left = (p: QuotaPoint) => 100 - Math.max(0, Math.min(100, p.usedPercent));
-  const xy = points.map((p) => [((p.at - t0) / Math.max(1, t1 - t0)) * (W - 4) + 2, H - 2 - (left(p) / 100) * (H - 4)]);
-  return (
-    <svg className="q-spark" width={W} height={H} role="img" aria-label={`近 7 天还剩的从 ${Math.round(left(points[0]))}% 到 ${Math.round(left(points[points.length - 1]))}%`}>
-      <polyline points={xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
-      <circle cx={xy[xy.length - 1][0]} cy={xy[xy.length - 1][1]} r={2.5} fill={color} />
-    </svg>
-  );
-};
 

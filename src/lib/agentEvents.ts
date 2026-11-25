@@ -217,6 +217,8 @@ export type EventBody =
       /** 高危：不管哪档都弹卡片。 */
       highRisk: boolean;
       options: ApprovalDecision[];
+      /** 为什么要批（v1.1.11）：卡片上的小标签。有它时 title 是一句人话、命令在 detail 里。 */
+      reason?: string | null;
     }
   | { type: "approval.resolved"; requestId: string; decision: ApprovalDecision; by: ResolvedBy }
   | {
@@ -235,6 +237,8 @@ export type EventBody =
   | { type: "agents.roster"; members: RosterMember[] }
   | { type: "board.updated"; items: BoardItem[] }
   | { type: "subagent.completed"; subagentId: string; status: ToolStatus }
+  /** Peck Loop 开始第几轮（v1.1.11）；子代理的带 subagentId。 */
+  | { type: "round.started"; round: number; max: number }
   | { type: "usage.updated"; usage: TokenUsage; cost: Cost; scope: UsageScope; model?: string | null }
   | { type: "quota.updated"; provider: string; windows: QuotaWindow[] }
   // ── 上下文（v0.6）──

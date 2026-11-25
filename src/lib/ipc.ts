@@ -155,8 +155,18 @@ export const ipc = {
   },
   /** 系统选文件的窗（v1.1.8，+ 按钮，多选，从 `from` 开始，只返回路径；浏览器里给两条演示）。 */
   async pickUploads(from?: string): Promise<string[]> {
-    if (isMockMode()) return ["/mock/需求文档.md", "/mock/接口说明.pdf"];
+    if (isMockMode()) return ["/mock/需求文档.md", "/mock/接口说明.pdf", "/mock/截图 2026-11-25.png"];
     return invoke<string[]>("dialog_pick_uploads", { from });
+  },
+  /** + 选到的是图（v1.1.11）：读成附图，大的后端先缩一份。 */
+  async uploadReadImage(path: string): Promise<ImageInput> {
+    if (isMockMode()) return mockIpc.uploadReadImage(path);
+    return invoke<ImageInput>("upload_read_image", { path });
+  },
+  /** 拖进输入框的文档（v1.1.11）：内容（base64）先存一份，回一个本机路径，和 + 附的一样发。 */
+  async uploadStage(name: string, data: string): Promise<string> {
+    if (isMockMode()) return mockIpc.uploadStage(name, data);
+    return invoke<string>("upload_stage", { name, data });
   },
   /** Quick Look 的缩略图（Word、Excel 这类，PNG 的 data URL）。只在 Mac 上有。 */
   async filesQuicklook(workspaceId: string, path: string): Promise<string> {

@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(forwarded.lock().unwrap().len(), 1);
         assert!(matches!(forwarded.lock().unwrap()[0], EventBody::UsageUpdated { .. }));
         // 它想动手（要审批）：打断，不等；没答出来就是没有。
-        let wants = EventBody::ApprovalRequested { request_id: "a1".into(), call_id: None, kind: ToolKind::Run, title: "跑 git commit".into(), detail: None, high_risk: false, options: vec![] };
+        let wants = EventBody::ApprovalRequested { reason: None, request_id: "a1".into(), call_id: None, kind: ToolKind::Run, title: "跑 git commit".into(), detail: None, high_risk: false, options: vec![] };
         let cli = FakeCli { caps: AgentCaps::codex(), events: vec![wants], seen: seen.clone(), waits: true };
         assert_eq!(ask_cli(&cli, "codex", task(Some("s1")), "一行", forward(forwarded.clone())).await, None);
         // 没有会话号可续：不问，引擎都不起。

@@ -208,6 +208,7 @@ impl CliHooks {
         let request_id = format!("{PREFIX}{}", self.approvals);
         let options = vec![ApprovalDecision::AllowOnce, ApprovalDecision::AllowAlways, ApprovalDecision::DenyOnce];
         self.sink.emit(EventBody::ApprovalRequested {
+            reason: None,
             request_id: request_id.clone(),
             call_id: None,
             kind: ToolKind::Run,

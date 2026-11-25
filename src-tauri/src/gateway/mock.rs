@@ -552,6 +552,7 @@ mod tests {
                 input: json!({"command": "rm a.txt"}),
             },
             EventBody::ApprovalRequested {
+                reason: None,
                 request_id: "r1".into(),
                 call_id: Some("c1".into()),
                 kind: ToolKind::Run,

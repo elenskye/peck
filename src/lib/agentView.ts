@@ -25,7 +25,7 @@ export interface ToolView {
   approval?: { title: string; decision?: ApprovalDecision; by?: ResolvedBy; highRisk: boolean };
   subagentId?: string;
   /** 这一步交出去的子任务（委派、Claude Code 的 Task）：它的那几步挂在这一步下面（v0.9 B1）。 */
-  sub?: { title: string; model?: string | null; calls: ToolView[]; status?: ToolStatus };
+  sub?: { title: string; model?: string | null; calls: ToolView[]; status?: ToolStatus; round?: number; max?: number };
 }
 
 export interface ApprovalView {
@@ -36,6 +36,8 @@ export interface ApprovalView {
   detail?: string | null;
   highRisk: boolean;
   options: ApprovalDecision[];
+  /** 为什么要批（v1.1.11）。 */
+  reason?: string | null;
   decision?: ApprovalDecision;
   by?: ResolvedBy;
 }
@@ -150,6 +152,10 @@ export interface AgentView {
   background: BackgroundView[];
   /** 插件的收尾 Hook 跑完的结果（v1.1.0，写在 recap 里）：提交了哪一笔、或者为什么没提交。 */
   hooks: Array<{ ok: boolean; text: string }>;
+  /** Peck Loop 主角色到第几轮了（v1.1.11）。 */
+  round: { round: number; max: number } | null;
+  /** 派出去的子代理（v1.1.11）：在跑的、还在排队的（派了、还没开始）。 */
+  agents: { running: number; queued: number; first: string | null };
 }
 
 const LIVE_TAIL = 8 * 1024;
@@ -164,7 +170,7 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], trust: null, plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], hooks: [] };
+  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], trust: null, plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], hooks: [], round: null, agents: { running: 0, queued: 0, first: null } };
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
@@ -278,7 +284,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         view.board = e.items;
         break;
       case "approval.requested": {
-        const a: ApprovalView = { requestId: e.requestId, callId: e.callId, kind: e.kind, title: e.title, detail: e.detail, highRisk: e.highRisk, options: e.options };
+        const a: ApprovalView = { requestId: e.requestId, callId: e.callId, kind: e.kind, title: e.title, detail: e.detail, highRisk: e.highRisk, options: e.options, reason: e.reason };
         approvals.set(e.requestId, a);
         const call = e.callId ? tools.get(e.callId) : undefined;
         if (call) call.approval = { title: e.title, highRisk: e.highRisk };
@@ -381,6 +387,12 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         if (parent?.sub) parent.sub.status = e.status;
         break;
       }
+      case "round.started": {
+        if (!e.subagentId) { view.round = { round: e.round, max: e.max }; break; }
+        const parent = parentOf(e.subagentId);
+        if (parent?.sub) { parent.sub.round = e.round; parent.sub.max = e.max; }
+        break;
+      }
       case "turn.started":
         // 又开了一轮（Claude Code 的后台子代理做完、把主线叫醒，v0.9）：上一轮的「结束了」不算数。
         if (!e.subagentId) view.ended = null;
@@ -427,7 +439,22 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
       item.bg = item.bg.kind === "server" ? { ...item.bg, past: true } : { ...item.bg, status: "stopped" };
     }
   }
+  // 派出去的子代理（v1.1.11，任务头上的小片）：交出去的那一步还在跑——开始了的在跑，派了还没开始的在排队。
+  if (!view.ended) {
+    for (const c of tools.values()) {
+      if (c.status !== "running" || !(c.sub || c.name === "spawn_agent")) continue;
+      if (c.sub && !c.sub.status) view.agents.running += 1;
+      else if (!c.sub) view.agents.queued += 1;
+      else continue;
+      view.agents.first ??= c.callId;
+    }
+  }
   return view;
+}
+
+/** 这一步是不是还在跑的子代理（任务头上点小片跳到这里）。 */
+export function liveAgent(c: ToolView): boolean {
+  return c.status === "running" && (c.sub ? !c.sub.status : c.name === "spawn_agent");
 }
 
 function usageLine(u: TokenUsage, c: Cost): UsageLine {
@@ -537,6 +564,10 @@ export function groupSpan(calls: ToolView[], now: number, thoughts: ThoughtView[
 // 各引擎给的步骤标题是中文、一个字的动词打头（Peck Loop 在 harness/tools、CLI 在 gateway/convert）。
 // 在这里翻成英文，旧记录也一样；认不出的照原样。
 const TITLE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
+  // 命令带了模型写的一句说明（v1.1.11）：只写那句说明，命令点开看。
+  [/^跑：(.*)$/s, "$1"],
+  [/^后台跑：(.*)$/s, "$1 · in background"],
+  [/^截网页 (.*)$/s, "Screenshot $1"],
   [/^后台跑 (.*)$/s, "Run in background $1"],
   [/^停后台命令 ?(.*)$/s, "Stop background command $1"],
   [/^看后台命令 ?(.*)$/s, "Check background command $1"],

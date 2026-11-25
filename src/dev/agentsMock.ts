@@ -47,8 +47,12 @@ export function spawnRound(runId: string, model: string, editPath: string): Repl
       { type: "subagent.started", subagentId: a, parentCallId: a, title: "explorer · Claude Fable 5.2", model, kind: "explorer" } as ReplayEvent,
       tool(b, "spawn_agent", "other", `派 explorer：${taskB}`, { type: "explorer", task: taskB }),
       { type: "subagent.started", subagentId: b, parentCallId: b, title: "explorer · Claude Fable 5.2", model, kind: "explorer" } as ReplayEvent,
+      // 子代理自己到第几轮了（v1.1.11，写在那一步右边）。
+      { type: "round.started", round: 1, max: 30, subagentId: a } as ReplayEvent,
+      { type: "round.started", round: 1, max: 30, subagentId: b } as ReplayEvent,
       tool(`${a}-1`, "search_text", "search", "搜「title」", { pattern: "title" }, a),
       tool(`${b}-1`, "read_file", "read", "读 package.json", { path: "package.json" }, b),
+      { type: "round.started", round: 2, max: 30, subagentId: a } as ReplayEvent,
       done(`${a}-1`, `${editPath}:1: …\n${editPath}:12: …`, a),
       done(`${b}-1`, "{ \"scripts\": { \"test\": \"vitest\" } }", b),
       ...say(`${a}-m`, `标题用在 ${editPath} 第 1 行和第 12 行，都只是显示。`, a),

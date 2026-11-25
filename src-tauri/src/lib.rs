@@ -148,6 +148,8 @@ pub fn run() {
             harness::run::harness_compact,
             harness::run::harness_output_read,
             harness::run::harness_image_read,
+            harness::run::upload_read_image,
+            harness::run::upload_stage,
             commands::open_path,
             commands::open_url,
             preview::preview_start,

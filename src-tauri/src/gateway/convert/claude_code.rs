@@ -112,9 +112,13 @@ impl ClaudeCodeConverter {
             "Edit" | "MultiEdit" => (ToolKind::Edit, format!("改 {}", path("file_path"))),
             "Write" => (ToolKind::Edit, format!("写 {}", path("file_path"))),
             "NotebookEdit" => (ToolKind::Edit, format!("改 {}", path("notebook_path"))),
+            // Claude Code 的 Bash 带一句 description（v1.1.11）：和 PLOOP 一样拿它当标题，命令点开看。
             "Bash" | "BashOutput" => (
                 ToolKind::Run,
-                format!("跑 {}", short(input["command"].as_str().unwrap_or(""), 80)),
+                match input["description"].as_str().map(str::trim).filter(|d| !d.is_empty()) {
+                    Some(d) => format!("跑：{}", short(d, 80)),
+                    None => format!("跑 {}", short(input["command"].as_str().unwrap_or(""), 80)),
+                },
             ),
             "Grep" => (
                 ToolKind::Search,
@@ -600,6 +604,7 @@ impl LineConverter for ClaudeCodeConverter {
                         options.push(ApprovalDecision::DenyOnce);
                         out.push(
                             EventBody::ApprovalRequested {
+                                reason: None,
                                 request_id: raw["request_id"].as_str().unwrap_or("").into(),
                                 call_id: request["tool_use_id"].as_str().map(str::to_string),
                                 kind,
@@ -692,7 +697,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(titles, ["读 notes.txt", "改 notes.txt", "跑 echo done > stamp.txt"]);
+        assert_eq!(titles, ["读 notes.txt", "改 notes.txt", "跑：Write done to stamp.txt"], "Bash 带 description 时拿它当标题（v1.1.11）");
         let edit = events.iter().find_map(|e| match &e.body {
             EventBody::ToolCallCompleted { diff, .. } if !diff.is_empty() => Some(diff[0].clone()),
             _ => None,

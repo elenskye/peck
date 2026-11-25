@@ -7,6 +7,7 @@
 pub mod bash;
 pub mod fs;
 pub mod notebook;
+pub mod page;
 pub mod patch;
 pub mod pdf;
 pub mod search;
@@ -38,6 +39,8 @@ pub const BASH_BACKGROUND: &str = "bash_background";
 pub const APPLY_PATCH: &str = "apply_patch";
 /// 截一个 App 的窗口（v0.8，只在 Mac 上、只给能看图的模型）。
 pub const SCREENSHOT_APP: &str = "screenshot_app";
+/// 截一个本机网页（v1.1.11，`page.rs`）：后台开一个看不见的 WebKit 窗口，不要屏幕录制权限。只在 Mac 上、只给能看图的模型。
+pub const SCREENSHOT_PAGE: &str = "screenshot_page";
 /// 读一个 Skill 的全文（v0.10 C2）：项目里有 Skills 才给（哪一档都有，它只读）。
 pub const LOAD_SKILL: &str = "load_skill";
 /// 提议存一条 Skill（v0.10 C3）：只是提议，站主批了才写盘（见 `skill_propose`）。有项目根才给，ONE SHOT、子任务不给。
@@ -59,7 +62,7 @@ pub const TOOL_SEARCH: &str = "tool_search";
 /// 一次回答里要的工具全是这些（加上派子代理）就同时跑（v1.1.2）：都只读、不弹卡片。混进别的就按顺序。
 pub const PARALLEL_SAFE: [&str; 11] = [LIST_DIRECTORY, READ_FILE, SEARCH_TEXT, FIND_FILES, LOAD_SKILL, SEARCH_TASKS, WEB_SEARCH, WEB_FETCH, READ_PDF, OCR_PDF, READ_NOTEBOOK];
 
-pub const ALL: [&str; 19] = [
+pub const ALL: [&str; 20] = [
     LIST_DIRECTORY,
     READ_FILE,
     SEARCH_TEXT,
@@ -74,6 +77,7 @@ pub const ALL: [&str; 19] = [
     SEARCH_TASKS,
     APPLY_PATCH,
     SCREENSHOT_APP,
+    SCREENSHOT_PAGE,
     WEB_SEARCH,
     WEB_FETCH,
     READ_PDF,
@@ -360,7 +364,7 @@ pub fn tail_bytes(text: &str, limit: usize) -> &str {
 
 pub fn kind_of(name: &str) -> ToolKind {
     match name {
-        LIST_DIRECTORY | READ_FILE | SCREENSHOT_APP | LOAD_SKILL | READ_PDF | OCR_PDF | READ_NOTEBOOK | super::extras::LIST_SCHEDULES => ToolKind::Read,
+        LIST_DIRECTORY | READ_FILE | SCREENSHOT_APP | SCREENSHOT_PAGE | LOAD_SKILL | READ_PDF | OCR_PDF | READ_NOTEBOOK | super::extras::LIST_SCHEDULES => ToolKind::Read,
         SEARCH_TEXT | FIND_FILES | SEARCH_TASKS | TOOL_SEARCH => ToolKind::Search,
         WRITE_FILE | WRITE_PATCH | APPLY_PATCH => ToolKind::Edit,
         BASH_RUN | BASH_BACKGROUND => ToolKind::Run,
@@ -372,6 +376,12 @@ pub fn kind_of(name: &str) -> ToolKind {
 }
 
 /// 给人看的一行：「读 src/App.tsx」「跑 npm test」。
+/// 命令那句说明（`bash_run`、`bash_background` 的 `description`，v1.1.11）：过程里那一步的标题、审批卡片的标题都用它。
+pub fn command_description(input: &Value) -> Option<String> {
+    let d = input.get("description").and_then(Value::as_str)?.trim();
+    (!d.is_empty()).then(|| d.chars().take(80).collect())
+}
+
 pub fn title_of(name: &str, input: &Value) -> String {
     let s = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
     let short = |t: String| {
@@ -423,9 +433,16 @@ pub fn title_of(name: &str, input: &Value) -> String {
                 n => format!("改 {} 等 {n} 个文件", paths[0]),
             }
         }
-        BASH_RUN => format!("跑 {}", short(s("command"))),
+        // 有说明就只写说明（前端认得「跑：」「后台跑：」开头的，不翻成 Run）。
+        BASH_RUN => match command_description(input) {
+            Some(d) => format!("跑：{d}"),
+            None => format!("跑 {}", short(s("command"))),
+        },
         BASH_BACKGROUND => match s("action").as_str() {
-            "start" => format!("后台跑 {}", short(s("command"))),
+            "start" => match command_description(input) {
+                Some(d) => format!("后台跑：{d}"),
+                None => format!("后台跑 {}", short(s("command"))),
+            },
             "stop" => format!("停后台命令 {}", s("id")),
             "read" => format!("看后台命令 {}", s("id")),
             _ => "看后台命令".into(),
@@ -433,6 +450,7 @@ pub fn title_of(name: &str, input: &Value) -> String {
         UPDATE_PLAN => "更新任务清单".into(),
         super::agents::SPAWN_AGENT => super::agents::title(&s("type"), &Some(s("title")).filter(|t| !t.trim().is_empty()).unwrap_or_else(|| s("task"))),
         SCREENSHOT_APP => format!("截 {} 的窗口", s("app")),
+        SCREENSHOT_PAGE => format!("截网页 {}", short(s("url"))),
         LOAD_SKILL => match s("file") {
             f if !f.is_empty() => format!("读 Skill {} 的 {f}", s("name")),
             _ => format!("读 Skill {}", s("name")),
@@ -488,7 +506,7 @@ pub fn names_for(level: PermissionLevel, oneshot: bool) -> Vec<&'static str> {
     match level {
         PermissionLevel::Plan => {
             let mut v = read_only.to_vec();
-            v.extend([BASH_BACKGROUND, UPDATE_PLAN, ASK_USER, MEMORY, SCREENSHOT_APP]);
+            v.extend([BASH_BACKGROUND, UPDATE_PLAN, ASK_USER, MEMORY, SCREENSHOT_APP, SCREENSHOT_PAGE]);
             v
         }
         PermissionLevel::Edit | PermissionLevel::Auto => ALL.iter().copied().filter(|n| *n != APPLY_PATCH).collect(),
@@ -515,7 +533,7 @@ pub fn write_targets(name: &str, input: &Value) -> Vec<String> {
 pub fn for_model(mut names: Vec<&'static str>, model_id: &str) -> Vec<&'static str> {
     let vision = crate::gateway::catalog::catalog().model(model_id).is_some_and(|m| m.vision);
     if !vision || !cfg!(target_os = "macos") {
-        names.retain(|n| *n != SCREENSHOT_APP);
+        names.retain(|n| *n != SCREENSHOT_APP && *n != SCREENSHOT_PAGE);
     }
     if uses_v4a(model_id) {
         for n in names.iter_mut() {
@@ -541,7 +559,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
             }}),
         ),
         READ_FILE => (
-            "Read a text file with line numbers (6-wide, then a tab). Up to 2000 lines / 50KB per call; when truncated the result says where to continue. Also reads the full output files that bash_run saved.",
+            "Read a text file with line numbers (6-wide, then a tab). Up to 2000 lines / 50KB per call; when truncated the result says where to continue. Also reads the full output files that bash_run saved and the files the user attached. Images (png, jpg, gif, webp) come back as the picture itself, so you can look at screenshots.",
             json!({"type":"object","properties":{
                 "path":{"type":"string"},
                 "start_line":{"type":"integer","minimum":1,"description":"1-based. Default 1."},
@@ -608,18 +626,20 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["edits"]}),
         ),
         BASH_RUN => (
-            "Run a shell command in the project. Network is on. It can only write inside the project, the temp dir and its own HOME; .git is read-only. stdin is empty; CI=1, PAGER=cat, NO_COLOR=1. Output over 16KB is saved to a file and you get the head, the tail and the file path (read it with read_file). Long-running servers are stopped when the command finishes or times out.",
+            "Run a shell command in the project. Network is on. It runs in a sandbox: it can only write inside the project, the temp dir and its own HOME (HOME and TMPDIR point to scratch folders Peck gives it, not the user's home); .git is read-only; the keychain is out of reach. stdin is empty; CI=1, PAGER=cat, NO_COLOR=1. Output over 16KB is saved to a file and you get the head, the tail and the file path (read it with read_file). Long-running servers are stopped when the command finishes or times out. Don't launch browsers or other GUI apps; to look at a local page use screenshot_page.",
             json!({"type":"object","properties":{
                 "command":{"type":"string"},
+                "description":{"type":"string","description":"One short sentence in the user's language saying what this command does, in plain words (e.g. 「跑一遍类型检查」「删掉刚才的临时截图」). The user sees it instead of the command."},
                 "cwd":{"type":"string","description":"Relative to the project root. Default: the root."},
                 "timeout_sec":{"type":"integer","minimum":1,"maximum":600,"description":"Default 120."}
-            },"required":["command"]}),
+            },"required":["command","description"]}),
         ),
         BASH_BACKGROUND => (
             "Run a long-running command in the background (dev server, watcher, long test suite) without blocking, then check on it. action=start (command, cwd?, name?) returns an id and the first output; action=read (id, wait_sec? up to 60) returns the new output since your last read and whether it is still running; action=stop (id); action=list. Same sandbox and approval rules as bash_run, no timeout. Your background commands are stopped when the task ends, unless you start one with keep=true: that is for a dev server the user wants to keep looking at (the PREVIEW panel shows it and can stop it); it stays up across tasks until someone stops it or Peck quits, and later tasks see it in list and can read or stop it. Don't keep anything that isn't a server.",
             json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["start","read","stop","list"]},
                 "command":{"type":"string","description":"start: the shell command."},
+                "description":{"type":"string","description":"start: one short sentence in the user's language saying what it does, in plain words. The user sees it instead of the command."},
                 "cwd":{"type":"string","description":"start: relative to the project root. Default: the root."},
                 "name":{"type":"string","description":"start: a short label."},
                 "keep":{"type":"boolean","description":"start: keep it running after the task ends (dev servers only). Default false."},
@@ -692,12 +712,28 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "window":{"type":"string"}
             },"required":["app"]}),
         ),
-        ASK_USER => (
-            "Ask the user a question and wait for the answer. Use only when you cannot proceed without their decision.",
+        SCREENSHOT_PAGE => (
+            "Look at a local web page: Peck opens it in a hidden WebKit window on the user's Mac, optionally runs your script in the page, and attaches a screenshot. Use it to check UI you are building (start the dev server with bash_background first). Only local URLs (localhost, 127.0.0.1). Each call loads the page fresh. Never launch Chrome or other browsers yourself for this.",
             json!({"type":"object","properties":{
-                "question":{"type":"string"},
-                "options":{"type":"array","items":{"type":"string"},"description":"Suggested answers. The user can also write their own."}
-            },"required":["question"]}),
+                "url":{"type":"string","description":"e.g. http://localhost:5173/settings"},
+                "width":{"type":"integer","minimum":320,"maximum":2560,"description":"Viewport width in CSS pixels. Default 1360."},
+                "height":{"type":"integer","minimum":320,"maximum":2400,"description":"Viewport height. Default 860."},
+                "color_scheme":{"type":"string","enum":["light","dark"],"description":"Force light or dark appearance (prefers-color-scheme). Default: the Mac's current one."},
+                "script":{"type":"string","description":"JavaScript run in the page after it loads, as the body of an async function: click, type, wait (await new Promise(r => setTimeout(r, 500))), and `return` something to read it back (JSON-encoded). Runs up to 30 s."},
+                "wait_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Wait this long after the script before the screenshot. Default 300."},
+                "animations":{"type":"boolean","description":"Keep CSS animations and transitions. Default false: they are turned off, because a hidden window doesn't advance them and you'd capture their first frame."}
+            },"required":["url"]}),
+        ),
+        ASK_USER => (
+            "Ask the user and wait for the answers. Use only when you cannot proceed without their decision. Put every question you need answered now into one call (up to 4) instead of asking one at a time: the user sees them in one card and answers them all together. For each question give 2-4 options, the recommended one first; the user can also write their own answer or add a note to an option.",
+            json!({"type":"object","properties":{
+                "questions":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","properties":{
+                    "question":{"type":"string","description":"The full question, in the user's language."},
+                    "header":{"type":"string","description":"A very short label for the question (up to 12 characters), shown as its tab."},
+                    "options":{"type":"array","items":{"type":"string"},"description":"Suggested answers, recommended first."},
+                    "multi_select":{"type":"boolean","description":"The user may pick several options. Default false."}
+                },"required":["question"]}}
+            },"required":["questions"]}),
         ),
         _ => return None,
     };
@@ -837,8 +873,8 @@ mod tests {
         assert!(!names_for(PermissionLevel::Plan, false).contains(&WRITE_PATCH));
         assert!(names_for(PermissionLevel::Plan, false).contains(&ASK_USER));
         assert!(names_for(PermissionLevel::Plan, false).contains(&MEMORY));
-        assert_eq!(names_for(PermissionLevel::Edit, false).len(), 18);
-        assert_eq!(names_for(PermissionLevel::Auto, false).len(), 18);
+        assert_eq!(names_for(PermissionLevel::Edit, false).len(), 19);
+        assert_eq!(names_for(PermissionLevel::Auto, false).len(), 19);
         assert!(names_for(PermissionLevel::Plan, true).contains(&READ_PDF) && names_for(PermissionLevel::Plan, true).contains(&READ_NOTEBOOK), "读 PDF、Notebook 只读，ONE SHOT 也有");
         let oneshot = names_for(PermissionLevel::Plan, true);
         assert!(!oneshot.contains(&ASK_USER) && !oneshot.contains(&WRITE_PATCH) && !oneshot.contains(&MEMORY) && !oneshot.contains(&BASH_BACKGROUND));

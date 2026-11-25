@@ -207,12 +207,21 @@ pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, 
          (deny file-write*)\
          (allow file-write* {})\
          (deny file-write* {})\
-         (deny mach-lookup (global-name \"com.apple.securityd\") (global-name \"com.apple.securityd.xpc\"))\
+         {KEYCHAIN}\
          (deny lsopen)\
          (deny appleevent-send)",
         writable.join(" "),
         git.join(" "),
     )
+}
+
+/// 钥匙串的几个服务（v1.1.11）：命令碰不到钥匙串。`com.apple.SecurityServer` 是老的文件钥匙串，命令的 HOME 是 Peck 给的，
+/// 里面没有钥匙串，不挡的话 Chrome 这类程序一起来系统就连弹「Keychain Not Found」（2026-11-25 PLOOP 起无头 Chrome 时弹了一串）。
+const KEYCHAIN: &str = "(deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd\") (global-name \"com.apple.securityd.xpc\"))";
+
+/// 出沙箱跑（站主批了）也照样挡钥匙串。
+fn keychain_only_profile() -> String {
+    format!("(version 1)(allow default){KEYCHAIN}")
 }
 
 /// 增量的输出：按 UTF-8 切好，不切坏多字节字符。
@@ -293,9 +302,10 @@ pub async fn run_command(
     std::fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
 
     let real_home = ctx.env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| PathBuf::from(v));
-    let mut cmd = if cfg!(target_os = "macos") && sandbox != Sandbox::Off {
+    let mut cmd = if cfg!(target_os = "macos") {
+        let profile = if sandbox == Sandbox::Off { keychain_only_profile() } else { sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra(), scope) };
         let mut c = tokio::process::Command::new("/usr/bin/sandbox-exec");
-        c.args(["-p", &sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra(), scope), "/bin/sh", "-c", &command]);
+        c.args(["-p", &profile, "/bin/sh", "-c", &command]);
         c
     } else {
         let mut c = tokio::process::Command::new("/bin/sh");
@@ -500,6 +510,22 @@ mod tests {
         let ro = sandbox_profile(root, Path::new("/t/tmp-1"), Path::new("/t/home"), Sandbox::ReadOnly, &[PathBuf::from("/other/lib")], &[], None);
         assert!(!ro.contains("(subpath \"/Users/x/proj\")") && ro.contains("/t/tmp-1"));
         assert!(!ro.contains("(subpath \"/other/lib\")"), "PLAN 里其他文件夹也不能写");
+        // 钥匙串（v1.1.11）：老的文件钥匙串服务也挡，出沙箱的那份也挡。
+        for profile in [&p, &ro, &keychain_only_profile()] {
+            assert!(profile.contains("com.apple.SecurityServer") && profile.contains("com.apple.securityd.xpc"), "{profile}");
+        }
+    }
+
+    /// 真起一次：挡了钥匙串服务以后 `security` 连钥匙串列表都拿不到（连得上时至少列出系统钥匙串）。只读查询，不弹框。
+    #[tokio::test]
+    #[cfg(target_os = "macos")]
+    async fn keychain_is_out_of_reach() {
+        let p = TempProject::new();
+        let ctx = p.ctx();
+        for sandbox in [Sandbox::Project, Sandbox::Off] {
+            let out = run(&ctx, &json!({"command": "security list-keychains 2>&1"}), sandbox, None, watch::channel(false).1, |_| {}).await.unwrap();
+            assert!(!out.output.contains("System.keychain"), "{sandbox:?}: 钥匙串还连得上：{}", out.output);
+        }
     }
 
     #[tokio::test]

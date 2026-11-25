@@ -166,21 +166,6 @@ pub fn targets(input: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 补丁要删哪些文件（循环里先问站主）。
-pub fn deletes(input: &Value) -> Vec<String> {
-    patch_text(input)
-        .and_then(|t| parse(t).ok())
-        .map(|ops| {
-            ops.into_iter()
-                .filter_map(|o| match o {
-                    Op::Delete { path } => Some(path),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// 在 `lines[from..]` 里找 `want` 这一串：先精确，再忽略行尾空白，再忽略两头空白。`eof` 先试文件末尾。
 fn seek(lines: &[String], want: &[String], from: usize, eof: bool) -> Option<usize> {
     if want.is_empty() {
@@ -377,7 +362,6 @@ mod tests {
         assert_eq!(p.read("b.md"), "b\n");
         assert!(!p.dir.join("a.md").exists() && !p.dir.join("old.txt").exists());
         assert_eq!(r.diff.len(), 5);
-        assert_eq!(deletes(&json!({ "input": patch })), vec!["old.txt".to_string()]);
     }
 
     #[test]

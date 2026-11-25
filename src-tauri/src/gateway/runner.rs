@@ -63,7 +63,8 @@ pub async fn gateway_run_start(
     let images = crate::harness::run::checked_images(images)?;
     let attachments = crate::harness::run::save_attachments(&session_id, &images);
     let saved_uploads = crate::harness::run::save_uploads(&session_id, &uploads.unwrap_or_default())?;
-    let prompt = format!("{prompt}{}", crate::harness::run::uploads_note(&saved_uploads));
+    // 附的图、文档的路径写在这一句后面，任务记录里也是这一句（v1.1.11：对话里照它画成小图和小片）。
+    let prompt = format!("{prompt}{}{}", crate::harness::run::attachment_note(&attachments), crate::harness::run::uploads_note(&saved_uploads));
     start_engine_run(
         EngineRun {
             store: state.store.clone(),
@@ -79,7 +80,6 @@ pub async fn gateway_run_start(
             effort,
             resume,
             worktree: worktree.unwrap_or(false),
-            attachments,
             compact: false,
         },
         backend,
@@ -136,7 +136,6 @@ pub async fn gateway_compact(
             effort,
             resume: Some(resume),
             worktree: false,
-            attachments: vec![],
             compact: true,
         },
         backend,
@@ -162,8 +161,6 @@ pub(crate) struct EngineRun {
     pub resume: Option<String>,
     /// 在独立工作区（git worktree）里做。
     pub worktree: bool,
-    /// 附图存成的文件（v0.8）：路径写在引擎看到的这一句后面。
-    pub attachments: Vec<PathBuf>,
     /// 转发 `/compact`（v1.1.7）：续上 `resume`、让 CLI 自己压一次；不带引用、记忆、文件夹说明，Peck 替它跑的 Hook 也不跑。
     pub compact: bool,
 }
@@ -188,7 +185,6 @@ pub(crate) fn start_engine_run(
         effort,
         resume,
         worktree,
-        attachments,
         compact,
     } = run;
     // 任务记录：占一个号、一个项目一次一个（和 Peck Loop 共用，`run.rs`）。
@@ -224,7 +220,7 @@ pub(crate) fn start_engine_run(
     }
     let fork_note = fork.as_ref().filter(|_| !compact).map(|f| crate::harness::history::fork_notice(f, &label));
     let engine_prompt = if refs.is_empty() { prompt.clone() } else { format!("{}\n\n{prompt}", refs.join("\n\n")) };
-    let engine_prompt = if compact { prompt.clone() } else { format!("{engine_prompt}{}{}", crate::harness::run::attachment_note(&attachments), folders_note(&folders, level)) };
+    let engine_prompt = if compact { prompt.clone() } else { format!("{engine_prompt}{}", folders_note(&folders, level)) };
     let project_env = settings.env_pairs();
     // 脚本 Hook（v1.1.4，`cli_hooks.rs`）的「总是允许」和 Peck Loop 共用；引擎的审批规则那一份要交给 sink。
     let hook_allowed = allowed.clone();
@@ -587,7 +583,7 @@ pub(crate) fn folders_note(folders: &[(PathBuf, bool)], level: PermissionLevel) 
 /// 能批给回 request_id。PLAN 不替它批（CLI 自己的只读模式说了算）；改文件、MCP 这些也照旧给站主。
 pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::path::Path, allowed: &std::collections::HashSet<String>) -> Option<String> {
     use super::event::ToolKind;
-    use crate::harness::permission::{check_command, Ask};
+    use crate::harness::permission::{check_cli_command, Ask};
     let EventBody::ApprovalRequested { request_id, kind, title, detail, high_risk: false, options, .. } = body else {
         return None;
     };
@@ -610,7 +606,7 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
         return None;
     };
     let ok = match kind {
-        ToolKind::Run => matches!(check_command(level, detail, root, allowed), Ask::No),
+        ToolKind::Run => matches!(check_cli_command(level, detail, root, allowed), Ask::No),
         // 改文件：EDIT、AUTO 本来就不问改项目里的；临时目录 Peck Loop 的沙箱也放开。别处、.git 里的照旧给站主。
         // 一行一个文件（Codex 一次改几个文件时）：每个都在项目里才批。
         ToolKind::Edit => detail.lines().filter(|l| !l.trim().is_empty()).all(|l| edit_in_bounds(std::path::Path::new(l.trim()), root)),
@@ -637,17 +633,18 @@ pub(crate) enum HintAction {
 pub(crate) fn mcp_hint(level: PermissionLevel, body: &EventBody, hints: &McpHints, allowed: &std::collections::HashSet<String>) -> Option<HintAction> {
     use super::event::{ApprovalDecision, ToolKind};
     use crate::harness::mcp_client::ToolHint;
-    let EventBody::ApprovalRequested { request_id, call_id, kind: ToolKind::Mcp, title, detail, high_risk, options } = body else {
+    let EventBody::ApprovalRequested { reason: _, request_id, call_id, kind: ToolKind::Mcp, title, detail, high_risk, options } = body else {
         return None;
     };
     let (server, tool) = title.strip_prefix("MCP ")?.split_once(" · ")?;
     let hint = *hints.get(server)?.get(tool)?;
     match hint {
         ToolHint::Destructive if !*high_risk => Some(HintAction::Flag(EventBody::ApprovalRequested {
+            reason: Some("会删改东西".into()),
             request_id: request_id.clone(),
             call_id: call_id.clone(),
             kind: ToolKind::Mcp,
-            title: format!("高危：{title}（会删改东西）"),
+            title: title.clone(),
             detail: detail.clone(),
             high_risk: true,
             options: options.iter().copied().filter(|o| matches!(o, ApprovalDecision::AllowOnce | ApprovalDecision::DenyOnce)).collect(),
@@ -664,13 +661,15 @@ pub(crate) fn mcp_hint(level: PermissionLevel, body: &EventBody, hints: &McpHint
 /// CLI 要跑的命令按 Peck 的规则是高危、引擎自己没标的：给界面的那一份标成高危，选项只留批准一次、不行。
 pub(crate) fn flag_high_risk(body: &EventBody, root: &std::path::Path) -> Option<EventBody> {
     use super::event::{ApprovalDecision, ToolKind};
-    let EventBody::ApprovalRequested { request_id, call_id, kind: ToolKind::Run, title, detail: Some(command), high_risk: false, options } = body else {
+    let EventBody::ApprovalRequested { reason: _, request_id, call_id, kind: ToolKind::Run, title, detail: Some(command), high_risk: false, options } = body else {
         return None;
     };
-    if crate::harness::risk::assess(command, root).is_empty() {
+    let risks = crate::harness::risk::assess_cli(command, root);
+    if risks.is_empty() {
         return None;
     }
     Some(EventBody::ApprovalRequested {
+        reason: Some(risks.iter().map(|r| r.kind.label()).collect::<Vec<_>>().join("、")),
         request_id: request_id.clone(),
         call_id: call_id.clone(),
         kind: ToolKind::Run,
@@ -899,7 +898,6 @@ mod tests {
             effort: None,
             resume: None,
             worktree: false,
-            attachments: vec![],
             compact: false,
         };
         let run_id = start_engine_run(run, backend.clone(), move |e| {
@@ -922,7 +920,6 @@ mod tests {
             effort: None,
             resume: None,
             worktree: false,
-            attachments: vec![],
             compact: false,
         };
         assert!(start_engine_run(again, backend, |_| {}).unwrap_err().contains("一次跑一个"));
@@ -1027,7 +1024,6 @@ mod tests {
             effort: None,
             resume: Some("s0".into()),
             worktree: false,
-            attachments: vec![],
             compact: true,
         };
         start_engine_run(run, backend, move |e| {
@@ -1101,7 +1097,6 @@ mod tests {
             effort: None,
             resume: None,
             worktree: false,
-            attachments: vec![],
             compact: false,
         };
         let run_id = start_engine_run(run, backend, move |e| {
@@ -1156,6 +1151,7 @@ mod tests {
     fn peck_approves_plain_cli_commands_by_its_own_rules() {
         use super::super::event::{ApprovalDecision, ToolKind};
         let ask = |kind: ToolKind, cmd: &str, high_risk: bool| EventBody::ApprovalRequested {
+            reason: None,
             request_id: "r1".into(),
             call_id: None,
             kind,
@@ -1178,7 +1174,9 @@ mod tests {
         assert!(rule_allows(edit, &ask(ToolKind::Run, "pnpm install", false), root, &deps).is_some());
         assert!(rule_allows(PermissionLevel::Auto, &ask(ToolKind::Run, "pnpm dev", false), root, &none).is_some());
         // 高危、引擎自己标了高危、PLAN、不是命令的：都给站主。
-        assert!(rule_allows(edit, &ask(ToolKind::Run, "rm -rf build", false), root, &none).is_none());
+        assert!(rule_allows(edit, &ask(ToolKind::Run, "rm -rf /etc/x", false), root, &none).is_none());
+        // 项目里删东西不问（v1.1.11），替 CLI 批掉。
+        assert!(rule_allows(edit, &ask(ToolKind::Run, "rm -rf build", false), root, &none).is_some());
         assert!(rule_allows(PermissionLevel::Auto, &ask(ToolKind::Run, "git push", false), root, &none).is_none());
         assert!(rule_allows(edit, &ask(ToolKind::Run, "cat a", true), root, &none).is_none());
         assert!(rule_allows(PermissionLevel::Plan, &ask(ToolKind::Run, "cat a", false), root, &none).is_none());
@@ -1191,10 +1189,15 @@ mod tests {
         assert!(rule_allows(edit, &ask(ToolKind::Edit, "/p/../etc/hosts", false), root, &none).is_none());
         assert!(rule_allows(PermissionLevel::Plan, &ask(ToolKind::Edit, "/p/a.ts", false), root, &none).is_none());
         // 高危的命令：界面上那一份标红、只给批准一次和不行。
-        match flag_high_risk(&ask(ToolKind::Run, "/bin/zsh -lc 'rm -f /tmp/a.html'", false), root) {
-            Some(EventBody::ApprovalRequested { high_risk: true, options, .. }) => assert_eq!(options, vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce]),
+        match flag_high_risk(&ask(ToolKind::Run, "/bin/zsh -lc 'rm -f /etc/a.html'", false), root) {
+            Some(EventBody::ApprovalRequested { high_risk: true, options, reason, .. }) => {
+                assert_eq!(options, vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce]);
+                assert_eq!(reason.as_deref(), Some("删项目外的东西"));
+            }
             other => panic!("{other:?}"),
         }
+        // 临时目录里删东西不算高危（v1.1.11）。
+        assert!(flag_high_risk(&ask(ToolKind::Run, "/bin/zsh -lc 'rm -f /tmp/a.html'", false), root).is_none());
         assert!(flag_high_risk(&ask(ToolKind::Run, "cat a", false), root).is_none());
         assert!(rule_allows(edit, &ask(ToolKind::Mcp, "dw.write_board", false), root, &none).is_none());
     }
@@ -1314,6 +1317,7 @@ mod route_tests {
         let mut hints: McpHints = HashMap::new();
         hints.insert("dw".into(), [("list".to_string(), ToolHint::Read), ("write_board".to_string(), ToolHint::Write), ("wipe".to_string(), ToolHint::Destructive)].into_iter().collect());
         let ask = |title: &str, options: Vec<ApprovalDecision>| EventBody::ApprovalRequested {
+            reason: None,
             request_id: "r1".into(),
             call_id: None,
             kind: ToolKind::Mcp,
@@ -1335,9 +1339,9 @@ mod route_tests {
         assert_eq!(mcp_hint(PermissionLevel::Plan, &write, &hints, &allowed), None);
         // 会删改的：标红、只留批准一次和不行，哪一档都给站主。
         match mcp_hint(PermissionLevel::Auto, &ask("MCP dw · wipe", all.clone()), &hints, &allowed) {
-            Some(HintAction::Flag(EventBody::ApprovalRequested { high_risk: true, options, title, .. })) => {
+            Some(HintAction::Flag(EventBody::ApprovalRequested { high_risk: true, options, reason, .. })) => {
                 assert_eq!(options, vec![ApprovalDecision::AllowOnce, ApprovalDecision::DenyOnce]);
-                assert!(title.starts_with("高危："));
+                assert_eq!(reason.as_deref(), Some("会删改东西"));
             }
             other => panic!("{other:?}"),
         }
@@ -1350,6 +1354,7 @@ mod route_tests {
     fn peck_approves_calls_to_its_own_mcp_tools_only() {
         use crate::gateway::event::{ApprovalDecision, ToolKind};
         let ask = |title: &str| EventBody::ApprovalRequested {
+            reason: None,
             request_id: "q1".into(),
             call_id: None,
             kind: ToolKind::Mcp,
@@ -1366,6 +1371,7 @@ mod route_tests {
         assert_eq!(rule_allows(PermissionLevel::Plan, &ask("用 MCP peck · git_commit？"), root, &none), None);
         // Codex 改项目里的文件（一行一个路径）：EDIT 批；有一个在项目外就给站主。
         let edit = |detail: &str| EventBody::ApprovalRequested {
+            reason: None,
             request_id: "q1".into(),
             call_id: None,
             kind: ToolKind::Edit,

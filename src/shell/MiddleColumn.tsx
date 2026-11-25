@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, compactRun, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
+import { baseName, imageType, splitAttachments } from "@/lib/attachments";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
 import type { AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
@@ -106,6 +107,52 @@ export function chosenEntry(entries: ModelEntry[], settings: AppSettings): Model
   return list.find((e) => e.id === settings.pick && e.group !== "peck") ?? list.find((e) => e.id === PLOOP_ID) ?? list.find((e) => e.group === "cli") ?? null;
 }
 
+/** 站主说的那一句（v1.1.11）：附的图画成小图（点了放大），文档、文件夹画成小片，不再把路径那段话贴出来。 */
+const YouSaid: React.FC<{ prompt: string }> = ({ prompt }) => {
+  const a = useMemo(() => splitAttachments(prompt), [prompt]);
+  const any = a.images.length + a.files.length + a.folders.length > 0;
+  return (
+    <div className="you sel">
+      <span className="t-label">YOU</span>
+      <div className="you-body">
+        {a.text && <Md text={a.text} className="you-text" />}
+        {any && (
+          <div className="you-attached" aria-label="附的图和文档">
+            {a.images.map((p) => <AttachedImage key={p} path={p} />)}
+            {[...a.files.map((p) => [p, "file"] as const), ...a.folders.map((p) => [p, "folder"] as const)].map(([p, kind]) => (
+              <span key={p} className="pk-chip pk-chip--sm composer-upload" title={p}>
+                <Icon name={kind} size={12} />
+                <span className="pk-chip-label">{baseName(p)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/** 对话里一张附图：小图，点了盖住窗口看大的。图不在了只留一个小片。 */
+const AttachedImage: React.FC<{ path: string }> = ({ path }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [gone, setGone] = useState(false);
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    let live = true;
+    ipc.harnessImageRead(path).then((u) => { if (live) setUrl(u); }).catch(() => { if (live) setGone(true); });
+    return () => { live = false; };
+  }, [path]);
+  if (gone) return <span className="pk-chip pk-chip--sm composer-upload" title={path}><Icon name="file" size={12} /><span className="pk-chip-label">{baseName(path)}</span></span>;
+  return (
+    <>
+      <button type="button" className="composer-shot you-shot" title={baseName(path)} aria-label="看大图" onClick={() => setBig(true)}>
+        {url && <img src={url} alt={baseName(path)} />}
+      </button>
+      {big && url && <Lightbox src={url} alt={baseName(path)} onClose={() => setBig(false)} />}
+    </>
+  );
+};
+
 /** 项目文件夹不在了：任务记录和快照都还在，换个文件夹接上，或者移出列表。 */
 const MissingFolder: React.FC<{ project: ProjectOverview; onRelocate: (id: string) => void; onRemove: (id: string) => void }> = ({ project, onRelocate, onRemove }) => {
   const [armed, setArmed] = useState(false);
@@ -182,10 +229,7 @@ export const MiddleColumn: React.FC<Props> = (props) => {
             {compactRun(run.prompt) ? (
               <p className="you-compact"><Icon name="collapse" size={12} /><span className="t-label">COMPACT</span>压缩上下文{compactRun(run.prompt)!.focus ? ` · 重点：${compactRun(run.prompt)!.focus}` : ""}</p>
             ) : (
-              <div className="you sel">
-                <span className="t-label">YOU</span>
-                <Md text={run.prompt} className="you-text" />
-              </div>
+              <YouSaid prompt={run.prompt} />
             )}
             <TaskModule
               run={run}
@@ -466,20 +510,48 @@ const Composer: React.FC<Props & {
   const [shots, setShots] = useState<Array<ImageInput & { url: string; name: string }>>([]);
   // 点一张附图看大的（v1.1.9）。
   const [zoom, setZoom] = useState<number | null>(null);
-  const addFiles = (files: File[]) => {
-    const images = files.filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
-    if (!images.length) return false;
-    for (const f of images) {
-      if (f.size > 6 * 1024 * 1024) { say(`${f.name || "这张图"}太大了（超过 6MB）`); continue; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = String(reader.result ?? "");
-        const data = url.slice(url.indexOf(",") + 1);
-        setShots((prev) => (prev.length >= 6 ? (say("一句话最多带 6 张图"), prev) : [...prev, { mediaType: f.type, data, url, name: f.name || "贴进来的图" }]));
-      };
-      reader.readAsDataURL(f);
+  const addShot = (img: ImageInput, name: string) =>
+    setShots((prev) => (prev.length >= 6 ? (say("一句话最多带 6 张图"), prev) : [...prev, { ...img, url: `data:${img.mediaType};base64,${img.data}`, name }]));
+  const readAs = (f: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => { const url = String(reader.result ?? ""); resolve(url.slice(url.indexOf(",") + 1)); };
+    reader.onerror = () => reject(new Error(`读不了 ${f.name}`));
+    reader.readAsDataURL(f);
+  });
+  /** 贴进来、拖进来的文件（v1.1.11）：图（按类型或扩展名认）进附图；拖进来的文档先存一份，和 + 附的一样。 */
+  const addFiles = (files: File[], docs: boolean) => {
+    if (!files.length) return false;
+    let took = false;
+    for (const f of files) {
+      const type = imageType(f.name, f.type);
+      if (type) {
+        took = true;
+        if (f.size > 6 * 1024 * 1024) { say(`${f.name || "这张图"}太大了（超过 6MB），用 + 附它，Peck 会先缩小`); continue; }
+        void readAs(f).then((data) => addShot({ mediaType: type, data }, f.name || "贴进来的图")).catch(say);
+      } else if (docs) {
+        took = true;
+        if (f.size > 10 * 1024 * 1024) { say(`${f.name} 超过 10MB，拆小一点再附`); continue; }
+        void readAs(f).then((data) => ipc.uploadStage(f.name, data)).then((path) => addUploads([path], false)).catch(say);
+      }
     }
-    return true;
+    return took;
+  };
+  // 拖到整个输入框上都收（v1.1.11：以前只认打字那一行，落在附件那几排上就什么都没有）。
+  const [dropping, setDropping] = useState(false);
+  const onDragOver = (e: React.DragEvent) => {
+    if (busy || ![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDropping(true);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    setDropping(false);
+    if (busy || ![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const files = [...e.dataTransfer.files];
+    if (!files.length) { say("没拿到拖进来的文件，用 + 附"); return; }
+    if (!addFiles(files, true)) say("这个附不上");
   };
   // + 按钮（v1.1.8）：附文档和文件夹（文件多选、文件夹一次一个）。只记本机路径，发出去时后端把文件拷进附件目录、文件夹只带路径。
   const [uploads, setUploads] = useState<Array<{ path: string; dir: boolean }>>([]);
@@ -492,13 +564,20 @@ const Composer: React.FC<Props & {
       return next.slice(0, 10);
     });
   };
+  // + 选到的图当附图发（v1.1.11：以前当文档，模型看不到、也点不开大图）。
   const pickUploadFiles = async () => {
-    try { addUploads(await ipc.pickUploads(project.workspace.path), false); } catch (e) { say(e); }
+    try {
+      const picked = await ipc.pickUploads(project.workspace.path);
+      const docs = picked.filter((p) => !imageType(p));
+      addUploads(docs, false);
+      for (const p of picked.filter((p) => imageType(p))) {
+        try { addShot(await ipc.uploadReadImage(p), baseName(p)); } catch (e) { say(e); }
+      }
+    } catch (e) { say(e); }
   };
   const pickUploadFolder = async () => {
     try { const p = await ipc.pickFolder(project.workspace.path, true); if (p) addUploads([p], true); } catch (e) { say(e); }
   };
-  const baseName = (p: string) => p.replace(/\/$/, "").split("/").pop() || p;
   // ↵：弹层开着就插选中的那个；不然发出去。
   const submit = () => {
     if (popKind === "mention") { pick(others[Math.min(active, others.length - 1)]); return; }
@@ -515,7 +594,7 @@ const Composer: React.FC<Props & {
   const context = useMemo(() => (task ? taskContext(runs, agentEvents) : null), [task, runs, agentEvents]);
   const money = spent ? usd(spent.usd) : null;
   return (
-    <div className="pk-mod composer" ref={boxRef}>
+    <div className={cn("pk-mod composer", dropping && "is-drop")} ref={boxRef} onDragOverCapture={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false); }} onDropCapture={onDrop}>
       {quota && !busy && <QuotaLine quota={quota} />}
       {note && <SlashNoteBar note={note} onClose={() => setNote(null)} />}
       {popKind === "slash" && (
@@ -580,9 +659,7 @@ const Composer: React.FC<Props & {
         </div>
       )}
       <div className={cn("composer-in", locked && "is-off")}
-        onPasteCapture={(e) => { if (!e.clipboardData.getData("text/plain") && addFiles([...e.clipboardData.files])) e.preventDefault(); }}
-        onDragOver={(e) => { if ([...e.dataTransfer.items].some((i) => i.type.startsWith("image/"))) e.preventDefault(); }}
-        onDrop={(e) => { if (addFiles([...e.dataTransfer.files])) e.preventDefault(); }}>
+        onPasteCapture={(e) => { if (!e.clipboardData.getData("text/plain") && addFiles([...e.clipboardData.files], false)) e.preventDefault(); }}>
         <span className="pk-prompt">›</span>
         <MarkdownEditor value={draft} onChange={onDraft} onSubmit={submit} onKey={onKey} placeholder={placeholder} disabled={locked} ariaLabel="一句话说要做什么" />
       </div>
@@ -762,7 +839,15 @@ const TaskModule: React.FC<{
         <span className={cn("pk-state", STATE[state].cls)}>{STATE[state].word}</span>
         <span className="task-info">
           任务 {run.number} · {clock(run.startedAt)} 开始{running && run.files.length > 0 ? ` · 改了 ${run.files.length} 个文件` : ""}
+          {/* PLOOP 到第几轮了（v1.1.11，用到八成变琥珀）。 */}
+          {running && view?.round && <> · <span className={cn(view.round.round >= view.round.max * 0.8 && "task-round--warn")}>第 {view.round.round}/{view.round.max} 轮</span></>}
         </span>
+        {running && view && view.agents.running + view.agents.queued > 0 && (
+          <button type="button" className="pk-chip pk-chip--sm task-agents" title="跳到在跑的子代理"
+            onClick={(e) => e.currentTarget.closest(".task")?.querySelector("[data-agent-live]")?.scrollIntoView({ block: "center", behavior: "smooth" })}>
+            <span className="pk-chip-label">子代理 {[view.agents.running && `${view.agents.running} 在跑`, view.agents.queued && `${view.agents.queued} 排队`].filter(Boolean).join(" · ")}</span>
+          </button>
+        )}
         <b className={cn("pk-readout task-clock", state === "succeeded" && "pk-readout--done", !running && state !== "succeeded" && "task-clock--off")}>{timer(elapsed)}</b>
       </div>
       <Blocks lit={lit} still={!running} />

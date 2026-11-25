@@ -449,6 +449,7 @@ impl AcpConverter {
                     options.retain(|d| matches!(d, ApprovalDecision::AllowOnce | ApprovalDecision::DenyOnce));
                 }
                 out.push(EventBody::ApprovalRequested {
+                    reason: None,
                     request_id: Self::request_id(&self.engine, id),
                     call_id: tc["toolCallId"].as_str().map(str::to_string),
                     kind,
