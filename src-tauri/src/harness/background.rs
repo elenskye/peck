@@ -457,6 +457,9 @@ mod tests {
 
     #[tokio::test]
     async fn runs_past_the_old_timeout_streams_and_stops_with_the_task() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let updates = Arc::new(Mutex::new(Vec::<BackgroundStatus>::new()));
         let u = updates.clone();
@@ -491,6 +494,9 @@ mod tests {
 
     #[tokio::test]
     async fn servers_survive_the_task_and_exit_codes_are_kept() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let server = start(spec(&p, "sleep 30", BackgroundKind::Server, None), None).unwrap();
         stop_owned("any-run");

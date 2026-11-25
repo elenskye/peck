@@ -308,7 +308,7 @@ impl WireStream for ResponsesStream {
             return Err(e);
         }
         let Some(status) = this.status else {
-            return Err("回答在结束前断开了，没自动重发。".into());
+            return Err("回答在结束前断开了。".into());
         };
         let output = this
             .output

@@ -251,7 +251,7 @@ export function Float({ anchor, point, side, align, gap, matchWidth, inset, floa
 }
 
 /** 选项片 + 弹出的菜单（K10）：默认往上弹，放不下自己翻；再点一下收起，点外面也收起。 */
-export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLabel, title }: {
+export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLabel, title, caret = true }: {
   label: React.ReactNode;
   /** 悬停看全名（字是元素不是字符串时要给）。 */
   title?: string;
@@ -261,6 +261,8 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
   up?: boolean;
   disabled?: boolean;
   ariaLabel: string;
+  /** 右边的下箭头（输入框的 + 不要）。 */
+  caret?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -269,7 +271,7 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
       <button type="button" disabled={disabled} className={cn("pk-chip", sm && "pk-chip--sm", open && "is-on")} aria-haspopup="menu" aria-expanded={open} aria-label={ariaLabel} title={title ?? (typeof label === "string" ? label : undefined)} onClick={() => setOpen((v) => !v)}>
         {dot !== undefined && <Dot kind={dot} />}
         <span className="pk-chip-label">{label}</span>
-        <Icon name="triD" size={12} />
+        {caret && <Icon name="triD" size={12} />}
       </button>
       {open && (
         <Float anchor={ref} side={up ? "top" : "bottom"} onClose={() => setOpen(false)} className="pk-anim-reveal-s menu-pop menu-pop--fixed">

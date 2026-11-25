@@ -220,7 +220,7 @@ impl WireStream for ChatStream {
             return Err(e);
         }
         let Some(finish) = this.finish else {
-            return Err("回答在结束前断开了，没自动重发。".into());
+            return Err("回答在结束前断开了。".into());
         };
         let mut parts = Vec::new();
         if !this.reasoning.is_empty() {

@@ -225,10 +225,10 @@ const General: React.FC<Props> = ({ settings, onSettings, apiStatus, onRefreshAp
       </Row>
       <SpendRow cap={settings.costCap} />
       <Row name="每个任务最多几轮">
-        <BoundedNumber unit="轮" label="Peck Loop 每个任务最多几轮" min={5} max={400} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} />
+        <BoundedNumber unit="轮" label="Peck Loop 每个任务最多几轮" min={5} max={1000} value={settings.maxRounds ?? 40} onCommit={(v) => onSettings({ maxRounds: v })} />
       </Row>
       <Row name="ONE SHOT 最多几轮">
-        <BoundedNumber unit="轮" label="ONE SHOT 最多几轮" min={5} max={400} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} />
+        <BoundedNumber unit="轮" label="ONE SHOT 最多几轮" min={5} max={1000} value={settings.oneshotRounds ?? 12} onCommit={(v) => onSettings({ oneshotRounds: v })} />
       </Row>
       <Row name="额度提醒" off={settings.quotaWarn == null}>
         <Switch label="额度提醒" on={settings.quotaWarn != null} onChange={(on) => onSettings({ quotaWarn: on ? 85 : null })} />
@@ -653,7 +653,7 @@ const AgentsSettings: React.FC<Props> = ({ settings, onSettings, entries }) => {
               <div className="set-line set-line--agent">
                 <ModelChip label={`${k.id} 用哪个模型`} entries={apis} value={chosen?.id ?? ""} off="跟主角色" disabled={!!s.off} onChange={(id) => patch(k.id, { model: id })} />
                 <span>{effort(chosen ?? main)}</span>
-                <BoundedNumber unit="轮" label={`${k.id} 最多几轮`} min={5} max={400} off={!!s.off} value={s.rounds ?? k.rounds} onCommit={(v) => patch(k.id, { rounds: v })} />
+                <BoundedNumber unit="轮" label={`${k.id} 最多几轮`} min={5} max={1000} off={!!s.off} value={s.rounds ?? k.rounds} onCommit={(v) => patch(k.id, { rounds: v })} />
                 <span>{k.parallel !== null && <BoundedNumber unit="个同时" label={`${k.id} 同时最多几个`} min={1} max={8} off={!!s.off} value={s.parallel ?? k.parallel} onCommit={(v) => patch(k.id, { parallel: v })} />}</span>
               </div>
             </div>

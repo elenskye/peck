@@ -351,7 +351,7 @@ impl super::WireStream for AnthropicStream {
 
     fn finish(self: Box<Self>) -> Result<ModelResponse, String> {
         if self.error.is_none() && self.stop.is_none() {
-            return Err("回答在结束前断开了，没自动重发。".into());
+            return Err("回答在结束前断开了。".into());
         }
         AnthropicStream::finish(*self)
     }
@@ -429,7 +429,13 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, vertex
     }
     match (model.thinking, request.thinking) {
         (Thinking::Always, _) | (Thinking::Switch, true) => {
-            body["thinking"] = json!({"type": "adaptive", "display": "summarized"})
+            body["thinking"] = json!({"type": "adaptive", "display": "summarized"});
+            // 思考块绑着对话前缀（v1.1.12）：system、tools、前面的消息一变（换了版本工具说明不一样、中途加载 MCP 工具、
+            // 去掉旧图、压缩），带回去的旧思考块就对不上，不说就整个请求 400（2026-11-25 续跑 PLOOP 时碰到）。
+            // 让 API 丢掉对不上的那些、照常答。要 beta 头（`BINDING_BETA`，providers.rs 按这个字段带上）；Vertex 上没确认，不带。
+            if !vertex {
+                body["thinking"]["block_binding"] = json!({"prefix_mismatch_behavior": "drop_block"});
+            }
         }
         (Thinking::Switch, false) => body["thinking"] = json!({"type": "disabled"}),
         (Thinking::Never, _) => {}
@@ -439,6 +445,9 @@ pub fn encode(request: &ModelRequest, model: &ModelSpec, origin: &Origin, vertex
     }
     body
 }
+
+/// 思考块绑定的开关要的 beta 头（`thinking.block_binding`）。
+pub const BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
 
 /// 站主这一条 → content 块：工具结果放前面（Messages 要求），再放文字。
 fn user_blocks(message: &Message) -> Vec<Value> {
@@ -614,6 +623,21 @@ mod tests {
             max_output_tokens: 1000,
             web_search: true,
         }
+    }
+
+    /// 思考块对不上对话前缀时让 API 丢掉、照常答（v1.1.12）；不思考的不带，Vertex 上不带。
+    #[test]
+    fn thinking_drops_blocks_bound_to_an_older_prefix() {
+        let user = Message { role: Role::User, parts: vec![Part::Text { text: "看看".into() }] };
+        let opus = catalog().model("anthropic/claude-opus-5-5").unwrap();
+        let body = encode(&ask("anthropic/claude-opus-5-5", vec![user.clone()]), opus, &origin_for("anthropic/claude-opus-5-5").unwrap(), false);
+        assert_eq!(body["thinking"], json!({"type": "adaptive", "display": "summarized", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}));
+        let haiku = catalog().model(MODEL).unwrap();
+        let body = encode(&ask(MODEL, vec![user.clone()]), haiku, &origin_for(MODEL).unwrap(), false);
+        assert_eq!(body["thinking"], json!({"type": "disabled"}), "没开思考的不带");
+        let vertex = catalog().model("vertex-anthropic/claude-opus-5-5@default").unwrap();
+        let body = encode(&ask("vertex-anthropic/claude-opus-5-5@default", vec![user]), vertex, &origin_for("vertex-anthropic/claude-opus-5-5@default").unwrap(), true);
+        assert!(body["thinking"].get("block_binding").is_none());
     }
 
     #[test]

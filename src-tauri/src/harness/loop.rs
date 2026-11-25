@@ -3,7 +3,8 @@
 //! - 模型经 Gateway 的 [`ModelProvider`] 调（真 API 或假模型），对话用和供应商无关的 `Message` / `Part`；
 //!   思考的私有数据原样挂在 `Part::Reasoning.opaque` 上，下一轮原样放回（换了供应商由 provider 丢掉）。
 //! - 事件经 `EventSink` 发：和 CLI 引擎同一套（`session.started` 打头、`turn.completed` 收尾）。
-//! - 上限：默认 40 轮；花费上限到了在下一次请求前停；供应商没报用量也停。失败、取消、重开都不自动重发。
+//! - 上限：默认 40 轮；花费上限到了在下一次请求前停；供应商没报用量也停。问模型时断线、限流这类等一会儿重发
+//!   （`RETRY_WAITS`）；任务失败、取消、重开不自动重发。
 //! - 上下文（v0.6）：系统提示分两层（Peck 的说明、项目说明 + 记忆，都打缓存断点）；每次发一句话带上环境块和
 //!   引用的旧任务（`context.rs`、`history.rs`）；每次请求前估一遍大小（`context.updated`），到压缩线自动压缩
 //!   三步（`compact.rs`），压完还超过 95% 才停。
@@ -42,6 +43,9 @@ use tokio::sync::{mpsc, watch};
 /// 轮数上限的默认值（设置 → GENERAL 能调，见 `run::max_rounds`）：一个任务、ONE SHOT。子代理的在设置 → AGENTS。
 pub const DEFAULT_MAX_ROUNDS: u32 = 40;
 pub const DEFAULT_ONESHOT_ROUNDS: u32 = 12;
+/// 轮数能调的范围（任务、ONE SHOT、子代理都是）：v1.1.12 起最多 1000（以前 400）。
+pub const MIN_ROUNDS: u32 = 5;
+pub const MAX_ROUNDS_CAP: u32 = 1000;
 
 /// 花费上限：这个月已经花了多少，上限多少（美元）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,6 +56,13 @@ pub struct Budget {
 
 /// 这个月 Peck Loop 和 ONE SHOT 一共花了多少（从事件日志现算，包括别的任务同时花的）。读不到为空。
 pub type SpendProbe = std::sync::Arc<dyn Fn() -> Option<f64> + Send + Sync>;
+
+/// 现在的轮数上限（v1.1.12）：主角色每一轮前读一次，站主中途在设置里改了，跑着的任务也跟着变。
+pub type RoundsProbe = Arc<dyn Fn() -> u32 + Send + Sync>;
+
+/// 模型请求出错（断线、超时、限流、供应商 5xx）自动重发几次、每次等多久（v1.1.12，学 Claude Code）。
+/// 2026-11-25 PLOOP 开发 Peck 跑了 24 分钟，一次「Broken pipe」就整个停了。
+const RETRY_WAITS: [u64; 5] = [2, 5, 15, 30, 60];
 
 /// `search_tasks`：（关键词，任务号）→ 给模型看的结果。
 pub type HistoryProbe = Arc<dyn Fn(Option<String>, Option<u64>) -> Result<String, String> + Send + Sync>;
@@ -83,6 +94,8 @@ pub struct LoopConfig {
     /// 目录里的模型 id（`deepseek/deepseek-flash`）。
     pub model_id: String,
     pub max_rounds: u32,
+    /// 主角色才有：每一轮前现读轮数上限（ONE SHOT、子代理照开工时的）。
+    pub rounds_probe: Option<RoundsProbe>,
     pub budget: Option<Budget>,
     /// 每次请求前现算这个月花了多少；空着就用开工时的 `budget.spent_usd` 加上这个任务自己花的。
     pub live_spend: Option<SpendProbe>,
@@ -342,6 +355,8 @@ struct Run {
     repeats: std::collections::HashMap<u64, u32>,
     /// 第 5 次以后要它收尾：下一次回答再要工具就不跑、停下。
     spin: bool,
+    /// 子代理到了轮数上限（v1.1.12）：多给一轮让它按查到的写报告，这一轮再要工具就不跑、停下。
+    capped: bool,
     /// 按需加载（v1.1.4）：用 `tool_search` 加载过的外部 MCP 工具（按加载的顺序），从下一次请求起放进工具列表。
     /// 开头从这个对话的记录里认回来（调过的、加载过的），一个对话里一直留着，缓存不来回变。
     loaded: Vec<String>,
@@ -509,6 +524,7 @@ impl Run {
             stop_blocks: 0,
             repeats: Default::default(),
             spin: false,
+            capped: false,
             loaded: Vec::new(),
             locks: Arc::default(),
             scope: None,
@@ -1095,8 +1111,22 @@ impl Run {
             }
             // 交齐了的子代理报告：放进对话，叫醒主角色（一批一次）。
             self.deliver_reports();
+            prune_old_images(&mut self.messages, IMAGE_BYTES_BUDGET, IMAGE_COUNT_BUDGET);
+            if let Some(probe) = &self.config.rounds_probe {
+                self.config.max_rounds = probe();
+            }
             if round >= self.config.max_rounds {
-                return End::limit(format!("到了 {} 轮的上限，先停下。文件和过程都留着，接着说一句就能继续。", self.config.max_rounds));
+                // 子代理到了上限：多给一轮按查到的写报告（不然主角色只拿到一句「到了上限」，白跑）。
+                if self.config.subtask.is_none() || self.capped {
+                    return End::limit(if self.capped {
+                        format!("到了 {} 轮的上限。", self.config.max_rounds)
+                    } else {
+                        format!("到了 {} 轮的上限，先停下。文件和过程都留着，接着说一句就能继续。", self.config.max_rounds)
+                    });
+                }
+                self.capped = true;
+                self.emit(EventBody::Notice { level: NoticeLevel::Info, text: format!("到了 {} 轮的上限，让它按查到的写报告。", self.config.max_rounds) });
+                self.push_user(vec![Part::Text { text: "<peck-note>You have reached your round limit. Do not call any more tools. Write your report now from what you already found: answer what you can, and say plainly what you did not get to check.</peck-note>".into() }]);
             }
             if let Some(end) = self.over_budget(round == 0) {
                 return end;
@@ -1123,13 +1153,30 @@ impl Run {
             self.last_sent = raw;
             round += 1;
             self.emit(EventBody::RoundStarted { round, max: self.config.max_rounds });
-            let request = ModelRequest { messages: self.messages.clone(), ..base_request.clone() };
-            let response = match self.ask_model(request, round).await {
-                Ok(r) => r,
-                Err(e) if e.kind == ErrorKind::Cancelled || self.ctl.interrupted => return End::interrupted(),
-                Err(e) => {
-                    self.emit(EventBody::Error { message: e.message.clone(), fatal: true });
-                    return End { reason: TurnEndReason::Error, error: Some(e.message) };
+            let mut attempt = 0usize;
+            let response = loop {
+                let request = ModelRequest { messages: self.messages.clone(), ..base_request.clone() };
+                match self.ask_model(request, round, attempt).await {
+                    Ok(r) => break r,
+                    Err(e) if e.kind == ErrorKind::Cancelled || self.ctl.interrupted => return End::interrupted(),
+                    // 断线、超时、限流、供应商 5xx：等一会儿原样再发（不算轮数），写一行提醒；按停马上停。
+                    Err(e) if e.retryable && attempt < RETRY_WAITS.len() => {
+                        let wait = RETRY_WAITS[attempt];
+                        attempt += 1;
+                        self.emit(EventBody::Error { message: format!("{}，{wait} 秒后重发（{attempt}/{}）", e.message.trim_end_matches('。'), RETRY_WAITS.len()), fatal: false });
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(wait)) => {}
+                            _ = self.ctl.until_interrupt(), if !self.ctl.interrupted => {}
+                        }
+                        if self.ctl.interrupted {
+                            return End::interrupted();
+                        }
+                    }
+                    Err(e) => {
+                        let message = if attempt > 0 { format!("{}，重发了 {attempt} 次也没成。", e.message.trim_end_matches('。')) } else { e.message };
+                        self.emit(EventBody::Error { message: message.clone(), fatal: true });
+                        return End { reason: TurnEndReason::Error, error: Some(message) };
+                    }
                 }
             };
             // 用量、花费
@@ -1229,9 +1276,12 @@ impl Run {
                 return End::done();
             }
             // 原地打转（v1.1.2）：上一轮已经要它收尾了，还要工具就不跑、停下。
-            if self.spin {
+            if self.spin || self.capped {
                 let skipped = calls.iter().map(|(call_id, _, _)| Part::ToolResult { call_id: call_id.clone(), output: "已经要求收尾，这一步没跑。".into(), is_error: true }).collect();
                 self.push_user(skipped);
+                if self.capped {
+                    return End::limit(format!("到了 {} 轮的上限。", self.config.max_rounds));
+                }
                 return End::limit("原地打转：同一个工具、同样的参数、同样的结果出现了 5 次，要它收尾以后还在调工具，先停下。文件和过程都留着，换个说法接着说一句就能继续。");
             }
             if !usage_known {
@@ -1251,18 +1301,26 @@ impl Run {
     }
 
     /// 发一次请求：边收边发增量；站主打断就让 provider 停下。
-    async fn ask_model(&mut self, request: ModelRequest, round: u32) -> Result<crate::gateway::ModelResponse, GatewayError> {
+    async fn ask_model(&mut self, request: ModelRequest, round: u32, attempt: usize) -> Result<crate::gateway::ModelResponse, GatewayError> {
         let (tx, mut rx) = mpsc::unbounded_channel::<ModelEvent>();
         let mut fut = self.provider.complete(request, tx, self.cancel_rx.clone());
-        let reasoning_id = format!("r{round}");
-        let message_id = format!("m{round}");
+        // 重发的那一次另起一段（v1.1.12），断掉的那一段留在界面上、收好尾。
+        let suffix = if attempt == 0 { String::new() } else { format!(".{attempt}") };
+        let reasoning_id = format!("r{round}{suffix}");
+        let message_id = format!("m{round}{suffix}");
         let mut open = true;
+        let (mut said, mut thought) = (String::new(), String::new());
+        let mut keep = |e: &ModelEvent| match e {
+            ModelEvent::TextDelta { text } => said.push_str(text),
+            ModelEvent::ReasoningDelta { text } => thought.push_str(text),
+            _ => {}
+        };
         let result = loop {
             tokio::select! {
                 biased;
                 r = &mut fut => break r,
                 e = rx.recv(), if open => match e {
-                    Some(e) => self.forward(e, &reasoning_id, &message_id),
+                    Some(e) => { keep(&e); self.forward(e, &reasoning_id, &message_id) }
                     None => open = false,
                 },
                 _ = self.ctl.until_interrupt(), if !self.ctl.interrupted => {
@@ -1271,7 +1329,17 @@ impl Run {
             }
         };
         while let Ok(e) = rx.try_recv() {
+            keep(&e);
             self.forward(e, &reasoning_id, &message_id);
+        }
+        if result.is_err() {
+            // 说到一半断了：已经显示的那一段收个尾（不然一直像在写）。
+            if !thought.trim().is_empty() {
+                self.emit(EventBody::ReasoningCompleted { item_id: reasoning_id.clone(), text: thought, opaque: None });
+            }
+            if !said.trim().is_empty() {
+                self.emit(EventBody::MessageCompleted { item_id: message_id.clone(), text: format!("{said}…") });
+            }
         }
         // 供应商那边开了头、没报完的（断了、停了、没给来源）：收个尾，界面上不留一直在转的一步。
         for (call_id, (started, searching)) in std::mem::take(&mut self.server_calls) {
@@ -1387,6 +1455,7 @@ impl Run {
             fetcher: self.fetcher.clone(),
             cancel: self.cancel_rx.clone(),
             vision: self.model_spec().is_some_and(|m| m.vision),
+            pdf_images: self.model_spec().filter(|m| m.vision).map_or(0, |m| tools::pdf::image_budget(m.context_window)),
             ocr: self.config.search.mathpix(),
         }
     }
@@ -2083,6 +2152,7 @@ impl Run {
         // member（v1.1.3）还能派 explorer、searcher（和主角色共用同时几个的名额）；别的不派。
         config.team = (kind == Kind::Member).then(|| self.config.team.as_ref().map(|t| Arc::new(agents::Team { members: t.members.iter().filter(|m| matches!(m.kind, Kind::Explorer | Kind::Searcher)).cloned().collect() }))).flatten();
         config.max_rounds = member.rounds;
+        config.rounds_probe = None;
         config.session_ref = None;
         config.oneshot = false;
         // 子代理不提 Skill、不碰快照和定时任务、不问提交说明：那是主角色的事。
@@ -2608,6 +2678,8 @@ struct ReadKit {
     cancel: watch::Receiver<bool>,
     /// 这个模型能看图（读 PDF、Notebook 时附图）。
     vision: bool,
+    /// `read_pdf` 一次最多附几张页面图（按这个模型的窗口，v1.1.12；看不了图是 0）。
+    pdf_images: usize,
     /// `ocr_pdf` 找谁（没填 Mathpix 的 Key 是空的）。
     ocr: Option<crate::gateway::mathpix::Mathpix>,
 }
@@ -2666,8 +2738,8 @@ async fn read_job(kit: ReadKit, name: String, input: Value) -> ReadOut {
             }
         }
         tools::READ_PDF => {
-            let (ctx, vision, ocr) = (kit.ctx.clone(), kit.vision, kit.ocr.is_some());
-            let r = tokio::task::spawn_blocking(move || tools::pdf::read_pdf(&ctx, &input, vision, ocr)).await.unwrap_or_else(|_| Err("读 PDF 出错了。".into()));
+            let (ctx, images, ocr) = (kit.ctx.clone(), kit.pdf_images, kit.ocr.is_some());
+            let r = tokio::task::spawn_blocking(move || tools::pdf::read_pdf(&ctx, &input, images, ocr)).await.unwrap_or_else(|_| Err("读 PDF 出错了。".into()));
             ReadOut::from(r)
         }
         tools::READ_NOTEBOOK => {
@@ -2749,6 +2821,47 @@ async fn web_search_job(backends: Vec<search::Backend>, input: Value, mut cancel
     }
 }
 
+/// 一次请求里带的图最多多大、几张（v1.1.12）：按最紧的几家定——Gemini 内联数据、Vertex 上的 Gemini 一次 20 MB，
+/// Anthropic 200k 窗口的模型一次 100 张。base64 的长度算。
+const IMAGE_BYTES_BUDGET: usize = 15 * 1024 * 1024;
+const IMAGE_COUNT_BUDGET: usize = 80;
+
+/// 对话里的图超了预算就去掉早先的（一次读 20 页扫描件就是 20 张，读几次就会超），换成一句话。
+/// 一次去到预算的一半左右：改前面的消息会让提示缓存从那里断掉，每轮只去一张就每轮都断；这样要再放进
+/// 半个预算的图才断下一次。最新的那一张总留着；开始去以后更早的一并去掉。只动对话，落盘的图文件不动；给回去掉了几张。
+fn prune_old_images(messages: &mut [Message], max_bytes: usize, max_count: usize) -> usize {
+    let (total_bytes, total_count) = messages
+        .iter()
+        .flat_map(|m| &m.parts)
+        .filter_map(|p| match p {
+            Part::Image { data, .. } => Some(data.len()),
+            _ => None,
+        })
+        .fold((0usize, 0usize), |(b, c), n| (b + n, c + 1));
+    if total_bytes <= max_bytes && total_count <= max_count {
+        return 0;
+    }
+    let (keep_bytes, keep_count) = (max_bytes / 2, (max_count / 2).max(1));
+    let (mut bytes, mut count, mut cutting, mut cut) = (0usize, 0usize, false, 0usize);
+    for m in messages.iter_mut().rev() {
+        for p in m.parts.iter_mut().rev() {
+            if let Part::Image { media_type, data } = p {
+                if !cutting && count > 0 && (bytes + data.len() > keep_bytes || count + 1 > keep_count) {
+                    cutting = true;
+                }
+                if cutting {
+                    *p = Part::Text { text: format!("[这里原来有一张图（{media_type}）：请求里的图太多、太大，早先的去掉了；要再看就重新读]") };
+                    cut += 1;
+                } else {
+                    bytes += data.len();
+                    count += 1;
+                }
+            }
+        }
+    }
+    cut
+}
+
 pub fn without_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
@@ -2827,6 +2940,46 @@ mod tests {
         TokenUsage { input: Some(input), output: Some(output), cache_read: Some(0), cache_write: Some(0), ..Default::default() }
     }
 
+    /// 一次请求里的图超了预算（v1.1.12）：一次去到一半左右、留最新的，早先的换成一句话；没超不动。
+    #[test]
+    fn old_images_are_dropped_past_the_budget() {
+        let img = |n: usize| Part::Image { media_type: "image/jpeg".into(), data: "A".repeat(n) };
+        let images = |ms: &[Message]| ms.iter().flat_map(|m| &m.parts).filter(|p| matches!(p, Part::Image { .. })).count();
+        let mut messages = vec![
+            Message { role: Role::User, parts: vec![Part::Text { text: "看图".into() }, img(400)] },
+            Message { role: Role::User, parts: vec![img(400), img(400)] },
+            Message { role: Role::User, parts: vec![img(400)] },
+        ];
+        let untouched = messages.clone();
+        assert_eq!(prune_old_images(&mut messages, 10_000, 10), 0);
+        assert_eq!(prune_old_images(&mut messages, 1_600, 10), 0, "刚好到预算不算超");
+        assert_eq!(messages, untouched);
+        // 超了：一次去到预算的一半（750）——只留最新的一张。
+        assert_eq!(prune_old_images(&mut messages, 1_500, 10), 3);
+        assert!(matches!(&messages[2].parts[0], Part::Image { .. }));
+        assert!(matches!(&messages[1].parts[0], Part::Text { text } if text.contains("早先的去掉了")));
+        assert!(matches!(&messages[0].parts[1], Part::Text { .. }) && matches!(&messages[0].parts[0], Part::Text { text } if text == "看图"));
+        // 之后几轮没再超就不动前面的消息（缓存不断）。
+        let settled = messages.clone();
+        assert_eq!(prune_old_images(&mut messages, 1_500, 10), 0);
+        messages.push(Message { role: Role::User, parts: vec![img(400), img(400)] });
+        assert_eq!(prune_old_images(&mut messages, 1_500, 10), 0, "1200 还没超");
+        assert_eq!(messages[..3], settled[..]);
+        messages.push(Message { role: Role::User, parts: vec![img(400)] });
+        assert_eq!(prune_old_images(&mut messages, 1_500, 10), 3, "再超一次才又去一批");
+        assert_eq!(images(&messages), 1);
+        assert!(matches!(&messages[4].parts[0], Part::Image { .. }));
+        // 按张数：10 张、上限 8，留最新的 4 张。
+        let mut many: Vec<Message> = (0..10).map(|_| Message { role: Role::User, parts: vec![img(10)] }).collect();
+        assert_eq!(prune_old_images(&mut many, 10_000, 8), 6);
+        assert_eq!(images(&many), 4);
+        assert!(matches!(&many[9].parts[0], Part::Image { .. }) && matches!(&many[5].parts[0], Part::Text { .. }));
+        // 最新的一张比半个预算还大也留着。
+        let mut big = vec![Message { role: Role::User, parts: vec![img(10)] }, Message { role: Role::User, parts: vec![img(2_000)] }];
+        assert_eq!(prune_old_images(&mut big, 1_500, 10), 1);
+        assert!(matches!(&big[1].parts[0], Part::Image { .. }) && matches!(&big[0].parts[0], Part::Text { .. }));
+    }
+
     fn turn(text: &str, calls: Vec<(&str, Value)>) -> ScriptTurn {
         ScriptTurn {
             reasoning: None,
@@ -2840,6 +2993,7 @@ mod tests {
         LoopConfig {
             model_id: model.into(),
             max_rounds: DEFAULT_MAX_ROUNDS,
+            rounds_probe: None,
             budget: None,
             oneshot: false,
             allowed: HashSet::new(),
@@ -2896,11 +3050,14 @@ mod tests {
         let fut = backend.run(task, sink2, rx);
         tokio::pin!(fut);
         let outcome = loop {
+            // 先处理已经到了的事件再让任务往下走：随机挑分支时，任务可能在回答（追加的话、审批）送进去之前
+            // 就跑到下一轮，全量并发跑时偶尔失败。
             tokio::select! {
-                r = &mut fut => break r.unwrap(),
+                biased;
                 Some(e) = seen_rx.recv() => {
                     if let Some(c) = answer(&e.body) { let _ = tx.send(c); }
                 }
+                r = &mut fut => break r.unwrap(),
             }
         };
         let events = events.lock().unwrap().clone();
@@ -2909,6 +3066,125 @@ mod tests {
 
     fn types(events: &[AgentEvent]) -> Vec<&'static str> {
         events.iter().map(|e| e.body.type_name()).collect()
+    }
+
+    /// 前几次出错的假模型（v1.1.12）：第一次说了半句就断，之后照 `errors` 给的错，再往后答「好了」。
+    struct Flaky {
+        errors: Mutex<std::collections::VecDeque<GatewayError>>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl ModelProvider for Flaky {
+        fn complete(&self, _request: ModelRequest, events: mpsc::UnboundedSender<ModelEvent>, _cancel: watch::Receiver<bool>) -> BoxFuture<Result<crate::gateway::ModelResponse, GatewayError>> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let err = self.errors.lock().unwrap().pop_front();
+            Box::pin(async move {
+                if let Some(e) = err {
+                    if n == 0 {
+                        let _ = events.send(ModelEvent::TextDelta { text: "我先看".into() });
+                    }
+                    return Err(e);
+                }
+                let _ = events.send(ModelEvent::TextDelta { text: "好了".into() });
+                Ok(crate::gateway::ModelResponse {
+                    message: Message { role: Role::Assistant, parts: vec![Part::Text { text: "好了".into() }] },
+                    stop: StopReason::EndTurn,
+                    usage: TokenUsage { input: Some(10), output: Some(2), ..Default::default() },
+                    cost: crate::gateway::event::Cost { usd: Some(0.001), source: crate::gateway::event::CostSource::Priced },
+                    response_model: None,
+                })
+            })
+        }
+    }
+
+    /// 断线、限流这类（v1.1.12）：等一会儿原样重发，写一行提醒；断在半句的那一段收好尾，重发的另起一段。
+    /// 请求被拒（400 这类）不重发。
+    #[tokio::test]
+    async fn transient_errors_are_sent_again() {
+        let p = TempProject::new();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let flaky = Arc::new(Flaky { errors: Mutex::new([GatewayError::new(ErrorKind::Network, "连不上供应商（Broken pipe (os error 32)）。")].into()), calls: calls.clone() });
+        let backend = PeckBackend::new(flaky, config(&p, "deepseek/deepseek-flash"), vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Plan, "看看"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let said: Vec<(String, String)> = events.iter().filter_map(|e| match &e.body {
+            EventBody::MessageCompleted { item_id, text } => Some((item_id.clone(), text.clone())),
+            _ => None,
+        }).collect();
+        assert_eq!(said, [("m1".to_string(), "我先看…".to_string()), ("m1.1".to_string(), "好了".to_string())]);
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::Error { message, fatal: false } if message.contains("Broken pipe") && message.contains("2 秒后重发（1/5）"))));
+        assert_eq!(events.iter().filter(|e| matches!(e.body, EventBody::RoundStarted { .. })).count(), 1, "重发不算一轮");
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let refused = Arc::new(Flaky { errors: Mutex::new([GatewayError::new(ErrorKind::BadRequest, "Anthropic 拒绝了这次请求。")].into()), calls: calls.clone() });
+        let backend = PeckBackend::new(refused, config(&p, "deepseek/deepseek-flash"), vec![]);
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Plan, "看看"), |_| None).await;
+        assert_eq!(outcome.reason, TurnEndReason::Error);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(events.iter().any(|e| matches!(&e.body, EventBody::Error { message, fatal: true } if message == "Anthropic 拒绝了这次请求。")));
+    }
+
+    /// 站主中途在设置里改了轮数上限（v1.1.12）：跑着的主角色下一轮就照新的。
+    #[tokio::test]
+    async fn the_round_cap_follows_the_setting_mid_run() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n");
+        let read = || turn("", vec![("read_file", json!({"path": "a.txt"}))]);
+        let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![read(), read(), read(), turn("读完了", vec![])], Duration::ZERO));
+        let cap = Arc::new(std::sync::atomic::AtomicU32::new(2));
+        let mut cfg = config(&p, "deepseek/deepseek-flash");
+        cfg.max_rounds = 2;
+        let live = cap.clone();
+        cfg.rounds_probe = Some(Arc::new(move || live.load(std::sync::atomic::Ordering::SeqCst)));
+        let backend = PeckBackend::new(model, cfg, vec![]);
+        let raise = cap.clone();
+        let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Plan, "读 a.txt"), move |e| {
+            if matches!(e, EventBody::RoundStarted { round: 1, .. }) {
+                raise.store(10, std::sync::atomic::Ordering::SeqCst);
+            }
+            None
+        })
+        .await;
+        assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+        let maxes: Vec<u32> = events.iter().filter_map(|e| match e.body { EventBody::RoundStarted { max, .. } => Some(max), _ => None }).collect();
+        assert_eq!(maxes.len(), 4);
+        assert_eq!(maxes.last(), Some(&10), "{maxes:?}");
+    }
+
+    /// 子代理到了轮数上限（v1.1.12）：多给一轮按查到的写报告，报告照样交给主角色；那一轮还要工具就不跑、停下。
+    #[tokio::test]
+    async fn a_subagent_at_its_round_cap_still_reports() {
+        let p = TempProject::new();
+        p.write("a.txt", "一\n");
+        let read = || turn("", vec![("read_file", json!({"path": "a.txt"}))]);
+        for (last, ok) in [(turn("报告：a.txt 写的是一。没来得及看别的。", vec![]), true), (read(), false)] {
+            let main = Arc::new(ScriptedModel::new(
+                "deepseek/deepseek-flash",
+                vec![turn("", vec![("spawn_agent", json!({"type": "explorer", "task": "看 a.txt"}))]), turn("等报告。", vec![]), turn("收到。", vec![])],
+                Duration::ZERO,
+            ));
+            let explorer = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![read(), read(), last], Duration::from_millis(50)));
+            let (main_requests, sub_requests) = (main.requests.clone(), explorer.requests.clone());
+            let member = agents::Member { kind: Kind::Explorer, model_id: "deepseek/deepseek-flash".into(), provider: explorer, effort: None, rounds: 2, parallel: 1, slots: Arc::new(tokio::sync::Semaphore::new(1)) };
+            let mut cfg = config(&p, "deepseek/deepseek-flash");
+            cfg.team = Some(Arc::new(agents::Team { members: vec![member] }));
+            let backend = PeckBackend::new(main, cfg, vec![]);
+            let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Plan, "看看项目"), |_| None).await;
+            assert_eq!(outcome.reason, TurnEndReason::Done, "{:?}", types(&events));
+            let sub = sub_requests.lock().unwrap().clone();
+            assert_eq!(sub.len(), 3, "上限 2 轮，多给一轮写报告");
+            assert!(texts(&sub, 2).contains("round limit"));
+            let woke = texts(&main_requests.lock().unwrap(), 2);
+            let status = events.iter().find_map(|e| match &e.body { EventBody::SubagentCompleted { status, .. } => Some(*status), _ => None }).unwrap();
+            if ok {
+                assert!(woke.contains("报告：a.txt 写的是一"), "{woke}");
+                assert_eq!(status, ToolStatus::Ok);
+            } else {
+                assert!(woke.contains("到了 2 轮的上限。") && !woke.contains("接着说一句"), "{woke}");
+                assert_eq!(status, ToolStatus::Failed);
+            }
+        }
     }
 
     /// 有原生搜索的模型（v1.1.1）：请求里开 web_search；供应商那边搜的显示成一步；搜到一半先停（pause_turn）就原样再发一次。
@@ -3082,6 +3358,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_demo_script_reads_searches_edits_runs_plans_asks_and_finishes() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         p.write("src/App.tsx", "export default () => <h1>Todo</h1>;\n")
             .write("package.json", "{\"scripts\":{\"test\":\"echo ok\"}}\n");
@@ -3994,6 +4273,9 @@ mod tests {
 
     #[tokio::test]
     async fn edit_asks_before_installing_and_remembers_always_allow() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let script = || {
             vec![
@@ -4333,6 +4615,9 @@ mod tests {
 
     #[tokio::test]
     async fn background_commands_do_not_block_and_stop_with_the_task() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let model = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
@@ -4683,6 +4968,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_kept_dev_server_outlives_the_task_and_a_later_task_can_stop_it() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let start = json!({"action":"start","command":"echo up; sleep 30","name":"dev","keep":true});
         let model = Arc::new(ScriptedModel::new("deepseek/deepseek-flash", vec![turn("", vec![("bash_background", start.clone())]), turn("起了。", vec![])], Duration::ZERO));

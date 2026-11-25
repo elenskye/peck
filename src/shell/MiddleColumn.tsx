@@ -669,7 +669,7 @@ const Composer: React.FC<Props & {
         <span>{whoShort(who, settings, entries)}</span>
       </button>
       <div className="composer-row">
-        <MenuChip sm up disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label="+">
+        <MenuChip sm up caret={false} disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label="+">
           {(close) => (
             <>
               <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFiles(); close(); }}>

@@ -418,15 +418,18 @@ export const LeftColumn: React.FC<Omit<Shared, "all" | "onSelectProject"> & {
   agents: React.ReactNode;
   folded: boolean;
   onFold: (folded: boolean) => void;
-}> = ({ inbox, all, agents, folded, onFold, onOpen, schedules, ...list }) => {
+  /** 顶栏上收起了左栏（v1.1.12）：藏起来不卸掉。 */
+  hidden?: boolean;
+}> = ({ inbox, all, agents, folded, onFold, onOpen, schedules, hidden, ...list }) => {
   const [pathOpen, setPathOpen] = useState(false);
-  if (all) return <section className="col" aria-label="谁来干">{agents}</section>;
-  const { projects, projectId, native, onSelectProject, onSelectTask } = list;
+  const cls = cn("col", hidden && "is-hidden");
+  if (all) return <section className={cls} aria-label="谁来干" aria-hidden={hidden || undefined}>{agents}</section>;
+  const { projects, native, onSelectProject, onSelectTask } = list;
   return (
-    <section className="col" aria-label="项目和任务">
+    <section className={cls} aria-label="项目和任务" aria-hidden={hidden || undefined}>
       {inbox.length > 0 && !folded && <Inbox items={inbox} taskId={list.taskId} onSelectTask={onSelectTask} />}
       <div className={cn("pk-mod left-projects", folded && "is-folded")}>
-        <ModHead label="PROJECTS" after={<button type="button" className="head-icon" aria-label="新增环境：打开一个项目文件夹" title="新增环境：打开一个项目文件夹" onClick={() => (native ? onOpen() : setPathOpen((v) => !v))}><Icon name="folder" size={12} /></button>} note={folded ? projects.find((p) => p.workspace.id === projectId)?.workspace.name : undefined}>
+        <ModHead label="PROJECTS" after={<button type="button" className="head-icon" aria-label="新增环境：打开一个项目文件夹" title="新增环境：打开一个项目文件夹" onClick={() => (native ? onOpen() : setPathOpen((v) => !v))}><Icon name="folder" size={12} /></button>}>
           <ScheduleChip {...schedules} projects={projects} end />
           <button type="button" className="head-icon head-icon--end" aria-label="全部项目" title="全部项目" onClick={() => onSelectProject(null)}><Icon name="expand" size={12} /></button>
           <FoldBtn name="PROJECTS" folded={folded} onFold={onFold} />

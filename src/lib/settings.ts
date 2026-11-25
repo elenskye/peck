@@ -38,8 +38,8 @@ export interface AppSettings {
   cliModels: Record<string, string>;
   /** 选的那个模型叫什么（显示用，比如「Opus 5.5」）。 */
   cliModelNames: Record<string, string>;
-  /** 左栏收起的模块（PROJECTS、AGENTS）。 */
-  fold: { projects?: boolean; agents?: boolean };
+  /** 左栏收起的模块（PROJECTS、AGENTS）；`left`、`right` 是顶栏上收起的整栏（v1.1.12）。 */
+  fold: { projects?: boolean; agents?: boolean; left?: boolean; right?: boolean };
   /** 每个模型上次选的思考强度（`off` 是不思考；CLI 的 `default` 是不指定、用 CLI 自己的）。 */
   efforts: Record<string, string>;
   /** ONE SHOT 上次选的谁来答。 */

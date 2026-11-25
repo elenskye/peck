@@ -1061,7 +1061,8 @@ mod tests {
         let ws_dir = root.join("ws");
         std::fs::create_dir_all(ws_dir.join(".claude")).unwrap();
         let stop = format!(
-            "cat > {input}; if [ -f {flag} ]; then exit 0; fi; touch {flag}; echo 先补上测试 >&2; exit 2",
+            // 路径加引号：在 Peck 里跑时临时目录在「Application Support」下面，带空格。
+            "cat > '{input}'; if [ -f '{flag}' ]; then exit 0; fi; touch '{flag}'; echo 先补上测试 >&2; exit 2",
             input = root.join("stop-input.json").display(),
             flag = root.join("done.flag").display()
         );

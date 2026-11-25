@@ -215,6 +215,36 @@ pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, 
     )
 }
 
+/// Peck 给沙箱里的命令设的记号（v1.1.12，照 Codex 的 `CODEX_SANDBOX`）：macOS 不让沙箱里的进程再套一层沙箱，
+/// Peck 自己的测试看到它就跳过要套沙箱的那几个（2026-11-25 PLOOP 开发 Peck 时全量测试在沙箱里卡住、一直没跑完）。
+pub const SANDBOX_ENV: &str = "PECK_SANDBOX";
+
+/// 测试用：在 Peck 的沙箱里跑（套不了第二层沙箱）就说一声、返回 true，调用的测试直接结束。
+#[cfg(test)]
+pub(crate) fn nested_sandbox() -> bool {
+    let inside = std::env::var_os(SANDBOX_ENV).is_some();
+    if inside {
+        eprintln!("跳过：在 Peck 的沙箱里，套不了第二层沙箱（在外面跑全量测试才验得到）");
+    }
+    inside
+}
+
+/// cargo 的下载缓存（v1.1.12）：EDIT、AUTO 的命令用站主自己的 `~/.cargo`，只放开它的下载缓存和锁（`bin`、配置照样不能写）。
+/// 以前给的是 Peck 那个 HOME 里的 `.cargo`：依赖的源码路径和站主平时的不一样，cargo 每换一边就把全部依赖重编一遍
+/// （2026-11-25 PLOOP 开发 Peck 时一次全量测试跑了 12 分钟还没出结果）。路径里有引号就不放开。
+pub fn cargo_caches(cargo_home: &Path) -> Option<String> {
+    let s = cargo_home.to_string_lossy();
+    if s.contains('"') {
+        return None;
+    }
+    Some(format!(
+        "(allow file-write* (subpath {}) (subpath {}) (regex #\"^{}/\\.(package-cache|package-cache-mutate|global-cache)\"))",
+        sb(&cargo_home.join("registry")),
+        sb(&cargo_home.join("git")),
+        escape_regex(&s),
+    ))
+}
+
 /// 钥匙串的几个服务（v1.1.11）：命令碰不到钥匙串。`com.apple.SecurityServer` 是老的文件钥匙串，命令的 HOME 是 Peck 给的，
 /// 里面没有钥匙串，不挡的话 Chrome 这类程序一起来系统就连弹「Keychain Not Found」（2026-11-25 PLOOP 起无头 Chrome 时弹了一串）。
 const KEYCHAIN: &str = "(deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd\") (global-name \"com.apple.securityd.xpc\"))";
@@ -302,8 +332,14 @@ pub async fn run_command(
     std::fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
 
     let real_home = ctx.env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| PathBuf::from(v));
+    // 站主有 `~/.cargo` 就用它（见 `cargo_caches`）；PLAN 写不了缓存，照旧用 Peck 给的。
+    let real_cargo = real_home.as_ref().map(|h| h.join(".cargo")).filter(|c| sandbox != Sandbox::ReadOnly && c.is_dir());
+    let cargo_home = real_cargo.clone().unwrap_or_else(|| home.join(".cargo"));
     let mut cmd = if cfg!(target_os = "macos") {
-        let profile = if sandbox == Sandbox::Off { keychain_only_profile() } else { sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra(), scope) };
+        let mut profile = if sandbox == Sandbox::Off { keychain_only_profile() } else { sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra(), scope) };
+        if sandbox == Sandbox::Project {
+            profile.push_str(&real_cargo.as_deref().and_then(cargo_caches).unwrap_or_default());
+        }
         let mut c = tokio::process::Command::new("/usr/bin/sandbox-exec");
         c.args(["-p", &profile, "/bin/sh", "-c", &command]);
         c
@@ -322,12 +358,15 @@ pub async fn run_command(
         .env("GIT_PAGER", "cat")
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
-        .env("CARGO_HOME", home.join(".cargo"))
+        .env("CARGO_HOME", &cargo_home)
         .env("COREPACK_ENABLE_AUTO_PIN", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if sandbox != Sandbox::Off {
+        cmd.env(SANDBOX_ENV, "seatbelt");
+    }
     if let Some(real) = &real_home {
         if real.join(".rustup").is_dir() {
             cmd.env("RUSTUP_HOME", real.join(".rustup"));
@@ -520,6 +559,9 @@ mod tests {
     #[tokio::test]
     #[cfg(target_os = "macos")]
     async fn keychain_is_out_of_reach() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let ctx = p.ctx();
         for sandbox in [Sandbox::Project, Sandbox::Off] {
@@ -530,6 +572,9 @@ mod tests {
 
     #[tokio::test]
     async fn runs_streams_and_reports_exit_codes() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         p.write("a.txt", "hello\n");
         let ctx = p.ctx();
@@ -549,6 +594,9 @@ mod tests {
 
     #[tokio::test]
     async fn timeouts_and_stops_end_the_whole_group() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let ctx = p.ctx();
         let started = Instant::now();
@@ -604,6 +652,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_scoped_sandbox_still_runs_builds() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         p.write("mine/a.txt", "x");
         let ctx = p.ctx();
@@ -616,6 +667,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn the_sandbox_blocks_writes_outside_but_not_the_network() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         let ctx = p.ctx();
         let outside = std::env::var("HOME").unwrap() + "/peck-sandbox-probe.txt";
@@ -633,9 +687,32 @@ mod tests {
         assert!(!net.output.contains("Operation not permitted"), "{}", net.output);
     }
 
+    /// cargo 的下载缓存（v1.1.12）：只放开 registry、git 和那几个锁，`bin`、配置照样写不了。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cargo_caches_open_only_the_download_cache() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
+        let cargo = std::env::temp_dir().canonicalize().unwrap().join(format!("peck-cargo-{}", uuid::Uuid::new_v4())).join(".cargo");
+        for d in ["registry/src", "git", "bin"] {
+            std::fs::create_dir_all(cargo.join(d)).unwrap();
+        }
+        let profile = format!("(version 1)(allow default)(deny file-write*){}", cargo_caches(&cargo).unwrap());
+        let sh = |cmd: &str| std::process::Command::new("/usr/bin/sandbox-exec").args(["-p", &profile, "/bin/sh", "-c", cmd]).current_dir(&cargo).status().unwrap().success();
+        assert!(sh("echo x > registry/src/a && echo x > git/b && echo x > .package-cache && echo x > .global-cache-journal"));
+        assert!(!sh("echo x > bin/evil") && !cargo.join("bin/evil").exists(), "bin 不能写");
+        assert!(!sh("echo x > config.toml") && !cargo.join("config.toml").exists(), "配置不能写");
+        assert!(cargo_caches(Path::new("/a\"b")).is_none());
+        let _ = std::fs::remove_dir_all(cargo.parent().unwrap());
+    }
+
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn the_sandbox_guards_nested_git_and_read_only_folders() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let p = TempProject::new();
         // 只读的其他文件夹放在 /private/tmp 下（那里本来谁都能写）
         let ro = std::path::PathBuf::from(format!("/private/tmp/peck-ro-{}", uuid::Uuid::new_v4()));

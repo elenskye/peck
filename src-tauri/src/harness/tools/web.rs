@@ -267,7 +267,7 @@ fn page_of(ctx: &ToolContext, url: &reqwest::Url, content_type: &str, body: Vec<
         std::fs::write(&path, &body).map_err(|e| format!("存不了这份 PDF：{e}"))?;
         let total = pdf::page_count(&path)?;
         let pages: Vec<u32> = (1..=total.min(pdf::MAX_PAGES as u32)).collect();
-        let read = pdf::read_pages(&path, &pages, None)?;
+        let read = pdf::read_pages(&path, &pages, None, 0)?;
         let (text, _) = pdf::format_pages(&path.to_string_lossy(), total, &read, false, false);
         return Ok(Page { text, pdf: Some(path.to_string_lossy().into_owned()), ..base });
     }

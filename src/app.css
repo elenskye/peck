@@ -29,9 +29,15 @@ body { overflow: hidden; }
 .pk-seg > .is-on:disabled { color: var(--color-on-cyan); text-shadow: none; opacity: .55; }
 .pk-btn.is-here { color: var(--color-cyan-text); background: var(--color-cyan-soft); }
 .top-gear { width: var(--size-button); }
+.top-side { width: var(--size-button); }
 
 .app-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--width-left) minmax(0, 1fr) var(--width-right); gap: var(--width-gap); }
 .app-grid--wide { grid-template-columns: var(--width-left) minmax(0, 1fr); }
+/* 顶栏收起了左栏 / 右栏（v1.1.12）：那一栏藏起来（不卸掉），中间占满。 */
+.col.is-hidden { display: none; }
+.app-grid.no-left { grid-template-columns: minmax(0, 1fr) var(--width-right); }
+.app-grid.no-right { grid-template-columns: var(--width-left) minmax(0, 1fr); }
+.app-grid--wide.no-left, .app-grid.no-left.no-right { grid-template-columns: minmax(0, 1fr); }
 .col { display: flex; flex-direction: column; gap: var(--space-7); min-width: 0; min-height: 0; }
 .col-grow { flex: 1 1 0; min-height: 0; }
 .pk-mod.col-grow, .pk-mod.left-projects, .pk-mod.left-agents { display: flex; flex-direction: column; }
@@ -604,6 +610,12 @@ body { overflow: hidden; }
 
 /* 归档（v0.9，方案里还没有，先照像素图标的画法画一个箱子）。 */
 .pk-i--archive{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 0h8v1h-8zM0 1h1v1h-1zM7 1h1v1h-1zM0 2h8v1h-8zM1 3h1v1h-1zM6 3h1v1h-1zM1 4h1v1h-1zM3 4h2v1h-2zM6 4h1v1h-1zM1 5h1v1h-1zM6 5h1v1h-1zM1 6h6v1h-6z'/%3E%3C/svg%3E")}
+
+/* 顶栏收起 / 展开左栏、右栏（v1.1.12，方案里还没有）：一个框，靠边那一条实心是栏开着、空心是收起了。 */
+.pk-i--side-l{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 1h8v1h-8zM0 2h3v4h-3zM7 2h1v4h-1zM0 6h8v1h-8z'/%3E%3C/svg%3E")}
+.pk-i--side-l-off{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 1h8v1h-8zM0 2h1v4h-1zM2 2h1v4h-1zM7 2h1v4h-1zM0 6h8v1h-8z'/%3E%3C/svg%3E")}
+.pk-i--side-r{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 1h8v1h-8zM0 2h1v4h-1zM5 2h3v4h-3zM0 6h8v1h-8z'/%3E%3C/svg%3E")}
+.pk-i--side-r-off{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 1h8v1h-8zM0 2h1v4h-1zM5 2h1v4h-1zM7 2h1v4h-1zM0 6h8v1h-8z'/%3E%3C/svg%3E")}
 
 /* 右栏页签只有图标、选中的带名字：没选中的按内容宽，选中的占剩下的。 */
 .pk-tabs--icons > button { flex: 0 0 auto; padding: 0 var(--space-6); }

@@ -15,7 +15,7 @@
 
 ## 一个任务怎么跑
 
-一句话对应一个**任务**（代码里叫 Run），开始前、结束后各拍一份**快照**，一直留着；要回退跟模型说（见「Peck 自己的工具」）。一个项目同时只跑一个任务（要写的文件夹一样或套着也算，`ActiveRunContext::touches`），不同项目能同时跑。失败、取消、重开都不自动重发。
+一句话对应一个**任务**（代码里叫 Run），开始前、结束后各拍一份**快照**，一直留着；要回退跟模型说（见「Peck 自己的工具」）。一个项目同时只跑一个任务（要写的文件夹一样或套着也算，`ActiveRunContext::touches`），不同项目能同时跑。任务失败、取消、重开都不自动重发（Peck Loop 问模型时断线、限流这类另算，见「Peck Loop」的重发）。
 
 分清两种干法：**CLI 引擎**是整包干，Peck 只当外壳（显示每一步、替它审批、记花费、给本机 MCP 里的几样工具），不进 Peck 的工作流；CLI 之间交接靠换引擎接着发一句或 `/review`。**Peck Loop** 是 Peck 自己的循环，Peck 深度参与：PLOOP（一个 API 模型当主角色，能派四类子代理，见「PLOOP」）。v1.1.2 起没有 API 单干。
 
@@ -94,7 +94,7 @@
 
 ### API 七家（`providers.rs` + `convert/{anthropic,responses,chat,gemini}.rs`）
 
-Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说明，不带 Key。思考块只在供应商、线协议、模型都一样时回放。
+Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重发（`GatewayError::retryable`：断线、超时、限流、供应商 5xx 能，402 余额不足和请求被拒不能），谁调谁定；错误是一句中文加供应商的说明，不带 Key。思考块只在供应商、线协议、模型都一样时回放。Anthropic 开着思考时带 `thinking.block_binding: {prefix_mismatch_behavior: drop_block}`（v1.1.12，beta 头 `BINDING_BETA`；Vertex 上没确认，不带）：对话前缀变了（换版本后工具说明不同、加载 MCP 工具、去掉旧图、压缩）的旧思考块由 API 丢掉，不再整个 400。
 
 | 供应商 | 线协议 | 认证 | 要点 |
 |---|---|---|---|
@@ -132,7 +132,8 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 ## Peck Loop（`src-tauri/src/harness/`）
 
 - **循环**（`loop.rs`，`PeckBackend`，引擎 id `peck`）：问模型 → 跑工具 → 结果放回，直到不再要工具。对话存 `harness_conversations`。
-- **上限**：设置 → GENERAL 能调，5–400 轮：每个任务默认 40（主角色、定时任务都按它）、ONE SHOT 默认 12；子代理每类各自的（设置 → AGENTS，默认 24）。存在 `app_settings` 的 `ui` 那一行（`maxRounds`、`oneshotRounds`、`subagents`），`harness/run.rs` 每次发任务时读。
+- **上限**：设置 → GENERAL 能调，5–1000 轮（v1.1.12 起，以前 400；子代理一样）：每个任务默认 40（主角色、定时任务都按它）、ONE SHOT 默认 12；子代理每类各自的（设置 → AGENTS，默认 24）。存在 `app_settings` 的 `ui` 那一行（`maxRounds`、`oneshotRounds`、`subagents`），`harness/run.rs` 发任务时读；任务的上限每轮开头再读一次（`rounds_probe`，v1.1.12），设置里改了跑着的下一轮就跟着变，子代理、ONE SHOT 按开始时的。
+- **重发**（v1.1.12，学 Claude Code）：问模型出了能重发的错（见「API 七家」），等 2、5、15、30、60 秒原样再发，最多 5 次；不算轮数，过程里一行「X 秒后重发（n/5）」，断在半句的那一段收好尾、重发的另起一段；等的时候按停马上停。子代理一样。起因：PLOOP 开发 Peck 跑到第 86 轮，一次 Broken pipe 整个停了。
 - **第几轮**（v1.1.11）：每问一次模型前发一条 `round.started`（`round`、`max`；子代理的带 `subagentId`），任务头上「第 N/上限 轮」、子代理那一步右边「N/上限 轮」照它画。
 - **一批工具**：一次回答里要的全是只读的（`list_directory`、`read_file`、`search_text`、`find_files`、`load_skill`、`search_tasks`、`web_search`、`web_fetch`、`read_pdf`、`ocr_pdf`、`read_notebook`；`spawn_agent` 也算，它马上回）就同时跑（`tools::PARALLEL_SAFE`），谁先完先报，结果按调用的顺序放回对话；混进改文件、跑命令、MCP 的就按顺序一个一个来。
 - **原地打转**：同一个工具、同样的参数、同样的结果（`ask_user`、`spawn_agent`、`update_plan` 不算），第 3 次在结果后面提醒它换办法（界面一行琥珀提示），第 5 次要它收尾、别再调工具；下一次回答还要工具就不跑，停下写明原因（`limit`）。
@@ -151,10 +152,10 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 | `bash_run`、`bash_background` | 必填一句 `description`（v1.1.11）：站主语言的一句人话，过程里那一步的标题（`跑：…`）、审批卡片的标题都用它，命令收起来 |
 | `update_plan`、`ask_user` | 任务清单；停下来问站主。`ask_user` 收 `questions`（v1.1.11，一次最多 4 个，各带 `header`、`options`、`multi_select`；旧的 `question` + `options` 也认），一张卡片翻着答，回答一个问题一行送回 |
 | `screenshot_app`（`shot.rs`） | Mac、能看图的模型，PLAN 也有：截这个 App 最前面的窗口（要屏幕录制权限） |
-| `screenshot_page`（`page.rs`，v1.1.11） | Mac、能看图的模型，PLAN 也有：截一个本机网页（只认 localhost、127.0.0.1、`*.localhost`）。`osascript -l JavaScript` 跑 `page.js`：屏幕外一个无边框窗口里的 WKWebView，不抢焦点、不要屏幕录制权限、不碰钥匙串；能先跑一段 JS（async 函数体，`return` 的值送回，最多 30 秒）、指定宽高和明暗，默认关掉 CSS 动画（离屏窗口里动画停在第一帧）。缩到长边 1568、存进输出目录。起因：PLOOP 没办法看自己改的界面，起了无头 Chrome，HOME 是 Peck 给的、Chrome 找不到钥匙串，系统连弹「Keychain Not Found」 |
+| `screenshot_page`（`page.rs`，v1.1.11） | Mac、能看图的模型，PLAN 也有：截一个本机网页（只认 localhost、127.0.0.1、`*.localhost`）。`osascript -l JavaScript` 跑 `page.js`：屏幕外一个无边框窗口里的 WKWebView，不抢焦点、不要屏幕录制权限、不碰钥匙串；能先跑一段 JS（async 函数体，`return` 的值送回，最多 30 秒）、指定宽高和明暗，默认关掉 CSS 动画（离屏窗口里动画停在第一帧）。缩到长边 1568、存进输出目录。只给 Peck Loop（CLI 用它们自己的） |
 | `web_search` | 没有原生搜索的模型才有，PLAN、ONE SHOT 也有（见「联网」） |
 | `web_fetch`（`tools/web.rs`，v1.1.7） | 读网页：所有模型、哪一档、ONE SHOT 都有，不弹卡片、不花钱（见「联网」） |
-| `read_pdf`（`pdf.rs`，v1.1.4） | macOS 自带的 PDFKit（经 `osascript -l JavaScript`，不加依赖）在本机一页页抽文字；`pages` 写 `3`、`1-5`、`1,3-4`，一次最多 20 页。没文字层的页（扫描件）给能看图的模型附这一页的 JPEG（最长边 1568，一次最多 6 张，存在本任务的输出目录） |
+| `read_pdf`（`pdf.rs`，v1.1.4） | macOS 自带的 PDFKit（经 `osascript -l JavaScript`，不加依赖）在本机一页页抽文字；`pages` 写 `3`、`1-5`、`1,3-4`，一次最多 20 页。没文字层的页（扫描件）给能看图的模型附这一页的 JPEG（最长边 1568，存在本任务的输出目录）。一次几张按模型的窗口（v1.1.12，`pdf::image_budget`）：每 5 万 token 一张、2–20 张，100 万的一次 20 页给满 20 张，不知道窗口的 6 张 |
 | `ocr_pdf`（v1.1.4） | Mathpix（`gateway/mathpix.rs`）：先用 PDFKit 把要的几页拆成一份小 PDF，只送这几页（`POST /v3/pdf`，轮询到 `completed` 取 `.mmd`：公式 LaTeX、表格 tabular），读完 `DELETE` 掉它那边的（删不掉的结果里写一句）；每页 $0.005 按送去的页数记在 `mathpix` 名下。两样 Key 都填了才给（模拟模式也给、不联网、不记费用）。两个读 PDF 的工具模型看说明自己挑 |
 | `read_notebook`（`notebook.rs`，v1.1.4） | `.ipynb`：每个单元的类型、代码或文字和输出（文字、出错去掉颜色、图给能看图的模型附上）；`cells` 选范围。改 Notebook 照旧 `read_file` 读原文、改文件的工具改 JSON |
 | `spawn_agent`（`agents.rs`） | PLOOP 的主角色派子代理，worker、member 要写 `paths`（见「PLOOP」） |
@@ -193,10 +194,12 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 ### 命令（`tools/bash.rs`）
 
 - `sandbox-exec`，默认联网；EDIT / AUTO 只能写项目、临时目录和 Peck 给的 HOME，`.git` 只读；PLAN 只写临时目录；不能开别的 App、发 Apple Events。沙箱拒了写项目外就弹高危卡片，批了出沙箱再跑。
-- **钥匙串**（v1.1.11）：沙箱挡掉 `com.apple.SecurityServer`（老的文件钥匙串）、`com.apple.securityd`、`com.apple.securityd.xpc` 三个服务；出沙箱跑的那次也套一层只挡这三个的配置。命令的 HOME 是 Peck 给的、里面没有钥匙串，不挡的话 Chrome 这类程序一起来系统就连弹「Keychain Not Found」（2026-11-25 PLOOP 起无头 Chrome 时弹了一串，点哪个都不消失，要 `killall SecurityAgent`）。
+- **钥匙串**（v1.1.11）：沙箱挡掉 `com.apple.SecurityServer`（老的文件钥匙串）、`com.apple.securityd`、`com.apple.securityd.xpc` 三个服务；出沙箱跑的那次也套一层只挡这三个的配置。命令的 HOME 是 Peck 给的、里面没有钥匙串，不挡的话 Chrome 这类程序一起来系统就连弹「Keychain Not Found」（点不掉，要 `killall SecurityAgent`）。
 - 划了文件的 worker、member（v1.1.3）：项目里只放开划给它的几块，加上构建、缓存目录（`BUILD_DIRS`：`target`、`node_modules`、`dist`、`.next`、`__pycache__` 这些，任何一层；`*.tsbuildinfo`、`.eslintcache`）和 git 忽略着的文件夹，构建、测试照样能跑。要写别处同样弹高危卡片（写明是它那块以外）。项目在临时目录里时这一层不起作用（临时目录本来整个能写），文件工具那一层照样管。
 - 环境是站主 shell 的，去掉名字像 Key、令牌、密码、Cookie、Session 的变量和 `SSH_AUTH_SOCK`。
 - 默认 120 秒、最长 600 秒，结束整个进程组。输出太长整份落盘（`spill.rs`），上下文留开头、结尾和路径。
+- **cargo**（v1.1.12）：EDIT、AUTO 的命令 `CARGO_HOME` 是站主自己的 `~/.cargo`，沙箱只放开它的 `registry`、`git` 和锁（`bin`、配置照样写不了，`bash::cargo_caches`）；PLAN 照旧用 Peck 给的 HOME 里的。以前一律用 Peck 给的，依赖源码的路径和平时不一样，每次全量重编 300 多个依赖。
+- **`PECK_SANDBOX=seatbelt`**（v1.1.12，照 Codex 的 `CODEX_SANDBOX`）：在沙箱里跑的命令都带。macOS 不让沙箱里的进程再套一层沙箱，要套的程序（Peck 自己的那几个测试）看到它就跳过（见 testing「后端」）。
 
 ### 权限和高危（`permission.rs`、`risk.rs`）
 
@@ -217,6 +220,7 @@ Key 从钥匙串取。不自动重发；错误是一句中文加供应商的说�
 
 - **系统提示**两块，都打缓存断点：Peck 的说明 + 工具定义；项目层 = 项目根的 `AGENTS.md`（没有就 `CLAUDE.md`）+ 站主批过的记忆 + Skills 的名字和描述。
 - **环境块** `<peck-context>` 放在这一句前面：系统和项目根、本机时间（带星期几和时区）、git、任务清单、之前几次改过的文件、在跑的后台命令。
+- **对话里的图**（v1.1.12，`loop.rs` 的 `prune_old_images`）：每次请求前数一遍，base64 超过 15 MB 或 80 张就从新往旧留到一半（7.5 MB、40 张，最新的一张总留），更早的换成一句「早先的去掉了，要再看就重新读」。一次去一批：改前面的消息会让提示缓存从那里断，每轮只去一张就每轮都断。预算按最紧的几家定（Gemini 内联数据、Vertex 上的 Gemini 一次 20 MB，Anthropic 200k 窗口的模型一次 100 张）。落盘的图不动；存对话时图一律去掉。
 - **压缩**（`compact.rs`）三步：① 长的工具输出落盘；② 最近两轮以外的输出换成一句「做过什么」（`tool_search` 的输出留着「已加载：…」那一行）、去掉旧的思考和环境块；③ 让模型写交接摘要（同样的系统提示和工具，走缓存），对话换成一条：交接摘要 → 站主说过的话 → 新的环境块 → 加载过的 MCP 工具（`<peck-loaded-tools>`，下一句从这里认回来）→ 放回的文件（`<peck-restored-files>`）→ 「接着干，放回的不用再读」；`SessionStart` 的 compact Hook 接在最后。
   - **自动**：到窗口 80% 时，下一次请求前依次做，降到 60% 以下就停；同一轮压过还满、压完还满都停下写明原因。`PreCompact` 的 `trigger: auto`。
   - **手动**（v1.1.7，`/compact [重点]`，`harness_compact`）：落成这个任务的一次新记录，三步都做（前两步先做，写摘要那次请求小一点）；重点接在写摘要的要求后面、进 `PreCompact` 的 `custom_instructions`（`trigger: manual`）。用这个对话存的模型，它用不了就报原因、不换；叫一次模型，花费照记、算进上限。不起外部 MCP 服务器（这一次缓存可能不中）。
@@ -299,7 +303,7 @@ PLOOP 是 Peck Loop 的工作方式（v1.1.2 起）：一个 API 模型当**主�
   - **强制**：文件工具（`write_file`、`write_patch`、`apply_patch`）改划给它以外的直接拒；命令的沙箱只放开划给它的几块和构建、缓存目录（见「命令」）。报告里的「改了哪些文件」也只算它那几块。MCP 工具管不到。
   - **主角色**：用文件工具改正划给 worker / member 的地方（在跑或排着队）直接拒，告诉它归谁、等报告回来再改；它的命令不拦。
 - **任务板**（v1.1.3，`agents::Board`，事件 `board.updated` 整份）：主角色派的 worker、member 一项一个（做什么、谁、第几个、划的文件、模型）。模型只写派给谁、做什么，进度由 Peck 照子代理的事件填：排队 → 在跑（排完队、拿到名额）→ 等你批（它的审批卡片没答）→ 做完 / 没做完 / 停了，带开始、做完的时刻。只管这一个任务回合，不做跨任务的。主角色自己那几步还是 `update_plan`，界面上和任务板放在一起。
-- **子代理**：同一个项目（独立工作区里就是那个工作区）、同一组 MCP；不问站主、不写清单和记忆、不碰快照和定时任务；只有 member 能再派（只派 explorer、searcher）。审批照样弹给站主（编号带 `agent-<n>-` 前缀，member 派的是 `agent-<n>-agent-<m>-`，按最长的前缀转给它的控制通道）。事件带 `subagentId`（= 派的那一步的调用 id），挂在那一步下面；`subagent.started` / `completed` 一律从主线发（它们自己就带 `subagentId`）。派的那一步等它做完才算完。用量带它的模型、算进任务和花费上限。停下、出错时一起叫停；member 收尾时它派的没回来就只叫停它下面的。
+- **子代理**：同一个项目（独立工作区里就是那个工作区）、同一组 MCP；不问站主、不写清单和记忆、不碰快照和定时任务；只有 member 能再派（只派 explorer、searcher）。到了轮数上限多给一轮（v1.1.12）：叫它别再调工具、按查到的写报告（以前 explorer 跑满 24 轮报告就丢了）。审批照样弹给站主（编号带 `agent-<n>-` 前缀，member 派的是 `agent-<n>-agent-<m>-`，按最长的前缀转给它的控制通道）。事件带 `subagentId`（= 派的那一步的调用 id），挂在那一步下面；`subagent.started` / `completed` 一律从主线发（它们自己就带 `subagentId`）。派的那一步等它做完才算完。用量带它的模型、算进任务和花费上限。停下、出错时一起叫停；member 收尾时它派的没回来就只叫停它下面的。
 - **缓存**：系统提示和工具说明只写怎么派、有哪几类，不写是哪个模型；名单（`agents.roster`，开头发一次）只进事件日志（右栏的 LOG v1.1.9 去掉了）。换了设置，下一个任务的提示也不变。
 - **换引擎接着发**（`history::fork_context`）：Peck Loop 所有模型算一家，每个 CLI 一家。这一家上次以后别家做的几次做成 `<peck-fork>` 放在这句前面；原来的会话留着，换回去接得上。
 

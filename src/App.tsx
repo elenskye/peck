@@ -8,7 +8,7 @@ import { involvedIds, quotaHint, swapPatch } from "@/lib/quota";
 import { usageApi, type ClientCard } from "@/lib/usage";
 import { applyTheme } from "@/lib/theme";
 import type { Permission, ProjectOverview, RunRecord, TermEvent } from "@/lib/types";
-import { plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
+import { cn, plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
 import { waitingOnYou } from "@/lib/agentView";
 import { TopBar } from "@/shell/TopBar";
 import { LeftColumn, ProjectsPage } from "@/shell/LeftColumn";
@@ -19,7 +19,7 @@ import { ProjectPage } from "@/shell/ProjectPage";
 import type { InboxItem, LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
 import { AgentsPanel } from "@/shell/AgentsPanel";
-import { PLOOP_ID, cliModelOf, ploopMain, sendEffort } from "@/shell/ModelPicker";
+import { PLOOP_ID, cliModelOf, labelOf, ploopMain, sendEffort } from "@/shell/ModelPicker";
 import { Icon } from "@/ui";
 
 export interface TermEntry {
@@ -383,6 +383,7 @@ const App: React.FC = () => {
     const ploop = who === PLOOP_ID || who.startsWith("api:");
     const main = ploop ? (who.startsWith("api:") ? entries.find((e) => e.id === who) ?? null : ploopMain(entries, s)) : null;
     if (ploop && !main) { say("PLOOP 还没有能用的主角色：先在设置里配一家的 Key"); return false; }
+    if (main && !main.available) { say(`${labelOf(main)} 现在用不了${main.unavailableReason ? `：${main.unavailableReason}` : ""}`); return false; }
     try {
       let target = taskId;
       if (!target) {
@@ -572,6 +573,14 @@ const App: React.FC = () => {
     if (next === "term" && projectId) patchTerm(projectId, (view) => ({ ...view, unread: "" }));
   }, [projectId, patchTerm]);
 
+  /** 收起 / 展开左栏、右栏（v1.1.12）。右栏收起时一起收回宽栏（不然中间是空的）。 */
+  const setSide = useCallback((side: "left" | "right", shown: boolean) => {
+    const fold = settingsRef.current.fold;
+    if (!fold[side] === shown) return;
+    updateSettings({ fold: { ...fold, [side]: !shown } });
+    if (side === "right" && !shown) setWide(false);
+  }, [updateSettings]);
+
   /** 进一个项目：它有自己的默认谁来干、默认权限，就换成它的。 */
   const applyProjectDefaults = (id: string | null) => {
     const ws = projects.find((p) => p.workspace.id === id)?.workspace;
@@ -653,8 +662,8 @@ const App: React.FC = () => {
 
   // 键盘（v0.8）：⌘N 新任务、⌘. 停、⌘, 设置、⌘1–4 右栏页签、⌘L 到输入框、⌘[ ⌘] 上一个 / 下一个任务、Esc 收回宽栏和设置页。
   // ⌘N、⌘[ ⌘] 只认左栏里的项目（看归档的任务时不在归档里翻）。
-  const keysRef = useRef({ project: listed, taskId, page, wide, stop, selectTask, selectTab });
-  keysRef.current = { project: listed, taskId, page, wide, stop, selectTask, selectTab };
+  const keysRef = useRef({ project: listed, taskId, page, wide, stop, selectTask, selectTab, setSide });
+  keysRef.current = { project: listed, taskId, page, wide, stop, selectTask, selectTab, setSide };
   useEffect(() => {
     const TABS: RightTab[] = ["files", "oneshot", "preview", "term"];
     const onKey = (e: KeyboardEvent) => {
@@ -673,7 +682,7 @@ const App: React.FC = () => {
       else if (key === "." && !e.shiftKey) { e.preventDefault(); void k.stop(); }
       else if (key === "," && !e.shiftKey) { e.preventDefault(); setSettingsAt(undefined); setPage((p) => (p === "settings" ? "" : "settings")); }
       else if (key === "l" && !e.shiftKey) { e.preventDefault(); setPage(""); window.setTimeout(() => document.querySelector<HTMLElement>(".md-editor .cm-content")?.focus(), 0); }
-      else if (/^[1-4]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); }
+      else if (/^[1-4]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); k.setSide("right", true); }
       else if ((key === "[" || key === "]") && k.project) {
         const list = k.project.tasks;
         if (!list.length) return;
@@ -690,6 +699,9 @@ const App: React.FC = () => {
   if (!ready) return <div className="pk pk-dots app" />;
 
   const native = !isMockMode();
+  // 左右栏收起（v1.1.12）：存在界面设置的 fold 里，重开 App 还是那样。
+  const showLeft = !settings.fold.left;
+  const showRight = !settings.fold.right;
   const schedule = { list: schedules ?? [], entries, onGo: goSchedule, onRemove: (id: string) => act(async () => { await ipc.scheduleDelete(id); refreshSchedules(); say("定时任务取消了"); }) };
   return (
     <div className="pk pk-dots app">
@@ -699,9 +711,14 @@ const App: React.FC = () => {
         project={project?.workspace ?? null}
         page={page === "project" ? "" : page}
         onPage={(next) => setPage((p) => (p === next ? "" : next))}
+        left={showLeft}
+        right={showRight}
+        onLeft={() => setSide("left", !showLeft)}
+        onRight={() => setSide("right", !showRight)}
       />
-      <main className={page || wide ? "app-grid app-grid--wide" : "app-grid"}>
+      <main className={cn("app-grid", (page || wide) && "app-grid--wide", !showLeft && "no-left", !showRight && "no-right")}>
         <LeftColumn
+          hidden={!showLeft}
           inbox={inbox}
           projects={projects}
           projectId={projectId}
@@ -802,7 +819,7 @@ const App: React.FC = () => {
                 }}
                 onStop={stop}
                 onOpenSettings={() => { setSettingsAt(undefined); setPage("settings"); }}
-                onShowAgents={() => { if (settingsRef.current.fold.agents) updateSettings({ fold: { ...settingsRef.current.fold, agents: false } }); setAgentsFlash((n) => n + 1); }}
+                onShowAgents={() => { const f = settingsRef.current.fold; if (f.agents || f.left) updateSettings({ fold: { ...f, agents: false, left: false } }); setAgentsFlash((n) => n + 1); }}
                 onRelocate={relocateProject}
                 onRemoveProject={removeProject}
                 onRestoreTask={(id) => act(async () => { await restoreArchived(id, true); say("拿回左栏了，可以接着发"); })}
@@ -817,13 +834,14 @@ const App: React.FC = () => {
                 onNewTask={() => { if (project) selectTask(project.workspace.id, null); }}
                 clients={clients}
                 shownRunId={run?.id ?? null}
-                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("files"); }}
+                onShowRun={(id, path) => { setShownRunId(id); setFilePath(path ?? null); setTab("files"); setSide("right", true); }}
                 onRunUpdated={(record) => { setRunsByTask((prev) => ({ ...prev, [record.sessionId]: (prev[record.sessionId] ?? []).map((r) => (r.id === record.id ? { ...r, ...record } : r)) })); void refreshProjects(); }}
                 missed={(schedules ?? []).filter((x) => x.workspaceId === project.workspace.id && !!x.missedAt)}
                 onMissed={onMissed}
               />
             )}
             <RightColumn
+              hidden={!showRight}
               project={project}
               run={run}
               tab={tab}

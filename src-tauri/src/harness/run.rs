@@ -358,7 +358,7 @@ fn oneshot_rounds(store: &Arc<Mutex<Store>>) -> u32 {
     rounds_setting(store, "oneshotRounds", DEFAULT_ONESHOT_ROUNDS)
 }
 
-/// 读界面设置里存的轮数，5–400 之间；没存、存坏了用默认的。
+/// 读界面设置里存的轮数，5–1000 之间；没存、存坏了用默认的。
 fn rounds_setting(store: &Arc<Mutex<Store>>, key: &str, default: u32) -> u32 {
     let saved = store.lock().ok().and_then(|db| db.setting("ui").ok().flatten());
     rounds_from(saved.as_deref(), key, default)
@@ -368,7 +368,7 @@ fn rounds_from(saved: Option<&str>, key: &str, default: u32) -> u32 {
     saved
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
         .and_then(|v| v.get(key).and_then(serde_json::Value::as_u64))
-        .map(|n| n.clamp(5, 400) as u32)
+        .map(|n| n.clamp(u64::from(super::r#loop::MIN_ROUNDS), u64::from(super::r#loop::MAX_ROUNDS_CAP)) as u32)
         .unwrap_or(default)
 }
 
@@ -528,6 +528,10 @@ pub(crate) fn start_peck_run(
     let config = LoopConfig {
         model_id: model_id.clone(),
         max_rounds: max_rounds(&store),
+        rounds_probe: Some({
+            let store = store.clone();
+            Arc::new(move || max_rounds(&store))
+        }),
         budget: budget(&store, cost_cap),
         live_spend: Some(live_spend(&store)),
         oneshot: false,
@@ -679,6 +683,7 @@ pub async fn harness_oneshot(
         let config = LoopConfig {
             model_id,
             max_rounds: oneshot_rounds(&state.store),
+            rounds_probe: None,
             budget: budget(&state.store, cost_cap),
             live_spend: Some(live_spend(&state.store)),
             oneshot: true,
@@ -975,7 +980,8 @@ mod tests {
         assert_eq!(task(Some(r#"{"costCap":20}"#)), DEFAULT_MAX_ROUNDS);
         assert_eq!(task(Some(r#"{"maxRounds":80}"#)), 80);
         assert_eq!(task(Some(r#"{"maxRounds":1}"#)), 5);
-        assert_eq!(task(Some(r#"{"maxRounds":9999}"#)), 400);
+        assert_eq!(task(Some(r#"{"maxRounds":1000}"#)), 1000);
+        assert_eq!(task(Some(r#"{"maxRounds":9999}"#)), 1000);
         assert_eq!(task(Some("不是 JSON")), DEFAULT_MAX_ROUNDS);
         // ONE SHOT、子任务各读各的，没存用各自的默认（v1.0.3）。
         let saved = Some(r#"{"maxRounds":80,"oneshotRounds":30}"#);
@@ -1101,6 +1107,9 @@ mod tests {
 
     #[tokio::test]
     async fn writable_other_folders_show_in_changes_and_undo_with_the_task() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
         let (root, store, mut ws) = temp_store();
         let lib = root.join("lib");
         std::fs::create_dir_all(&lib).unwrap();

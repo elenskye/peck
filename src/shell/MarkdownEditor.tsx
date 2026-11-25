@@ -1,8 +1,8 @@
 // 输入框：CodeMirror 6 + Markdown，边打边渲染（标题加粗变大、`代码` 等宽、**粗体**、> 引用、列表符号变淡）。
-// ↵ 发送，⇧↵ 或 ⌘↵ 换行（列表里换行接着列表）；中文输入法照常（组字时的回车是选字，不发）；
-// 不拼写检查、不自动改字。样子照 Peck 的输入格。
+// ↵ 发送，⇧↵ 或 ⌘↵ 换行（列表里换行接着列表）；列表里 Tab 缩进一级、⇧Tab 退一级（v1.1.12）；
+// 中文输入法照常（组字时的回车是选字，不发）；不拼写检查、不自动改字。样子照 Peck 的输入格。
 import React, { useEffect, useRef } from "react";
-import { Compartment, EditorState, Prec } from "@codemirror/state";
+import { Compartment, EditorState, Prec, type ChangeSpec } from "@codemirror/state";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkup, markdown } from "@codemirror/lang-markdown";
@@ -22,6 +22,104 @@ const peckMarkdown = HighlightStyle.define([
   { tag: tags.quote, color: "var(--color-text-2)" },
   { tag: [tags.processingInstruction, tags.contentSeparator, tags.list], color: "var(--color-text-3)" },
 ]);
+
+// ---------- 列表缩进（v1.1.12） ----------
+
+/** 列表项那一行（`- `、`* `、`+ `、`1. `、`1) `）：标记前面几个空格、正文从第几格起、有序列表的编号（和它几位）。 */
+const LIST_ITEM = /^( *)([-*+]|(\d{1,9})[.)])( +|$)/;
+interface ListItem { indent: number; content: number; num: number | null; digits: number }
+function listItem(text: string): ListItem | null {
+  const m = LIST_ITEM.exec(text);
+  if (!m) return null;
+  const gap = m[4].length;
+  return { indent: m[1].length, content: m[1].length + m[2].length + (gap >= 1 && gap <= 4 ? gap : 1), num: m[3] ? Number(m[3]) : null, digits: m[3]?.length ?? 0 };
+}
+
+/** 有序列表项换了一级以后的编号：那一级上一项是有序的就接着它，是这一级的第一项就从 1 起。无序的不动。位置算改之前的。 */
+function renumber(line: { from: number }, item: ListItem, prev: ListItem | null): ChangeSpec[] {
+  if (item.num == null) return [];
+  const next = prev?.num != null ? prev.num + 1 : prev ? null : 1;
+  if (next == null || next === item.num) return [];
+  const from = line.from + item.indent;
+  return [{ from, to: from + item.digits, insert: String(next) }];
+}
+
+/** 选区碰到的行（选区停在下一行行首时不算那一行），按顺序、不重复。 */
+function touchedLines(state: EditorState) {
+  const seen = new Map<number, ReturnType<EditorState["doc"]["line"]>>();
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from).number;
+    let last = state.doc.lineAt(r.to).number;
+    if (r.to > r.from && last > first && state.doc.lineAt(r.to).from === r.to) last--;
+    for (let n = first; n <= last; n++) if (!seen.has(n)) seen.set(n, state.doc.line(n));
+  }
+  return [...seen.values()].sort((a, b) => a.number - b.number);
+}
+
+/** 第一个列表项及其上面的列表项（空行、续行跳过）。 */
+function listContext(state: EditorState) {
+  const lines = touchedLines(state);
+  for (const line of lines) {
+    const item = listItem(line.text);
+    if (!item) continue;
+    const above = function* () {
+      for (let n = line.number - 1; n >= 1; n--) {
+        const it = listItem(state.doc.line(n).text);
+        if (it) yield it;
+      }
+    };
+    return { lines, line, item, above };
+  }
+  return null;
+}
+
+/** Tab：选到的行里有列表项就整体缩进一级——缩到同一级上一项的正文那一格（成为它的子项，`1. ` 下面是 3 格、`- ` 下面 2 格），
+ *  没有上一项就按自己的标记宽；有序的顺手改编号。不在列表里交给别人（跟以前一样）。 */
+function indentList(view: EditorView): boolean {
+  const { state } = view;
+  const ctx = listContext(state);
+  if (!ctx) return false;
+  let target = ctx.item.content;
+  let parent = false;
+  const deeper: ListItem[] = [];
+  for (const it of ctx.above()) {
+    if (it.indent === ctx.item.indent) { target = it.content; parent = true; break; }
+    if (it.indent < ctx.item.indent) break;
+    deeper.push(it);
+  }
+  // 新的那一级里的上一项：父项下面已经有的子项里离得最近、缩进一样的。
+  let prev: ListItem | null = null;
+  for (const it of deeper) {
+    if (it.indent === target) { prev = it; break; }
+    if (it.indent < target) break;
+  }
+  const pad = " ".repeat(Math.max(1, target - ctx.item.indent));
+  const changes: ChangeSpec[] = ctx.lines.filter((l) => l.text.trim() || l.number === ctx.line.number).map((l) => ({ from: l.from, insert: pad }));
+  if (parent) changes.push(...renumber(ctx.line, ctx.item, prev));
+  const set = state.changes(changes);
+  view.dispatch({ changes: set, selection: state.selection.map(set, 1), scrollIntoView: true, userEvent: "input.indent" });
+  return true;
+}
+
+/** ⇧Tab：退到父项那一级（上面缩进更少的那一项，有序的接着它的编号），没有就退到最左；已经在最外层不动。 */
+function outdentList(view: EditorView): boolean {
+  const { state } = view;
+  const ctx = listContext(state);
+  if (!ctx) return false;
+  if (ctx.item.indent === 0) return true;
+  let target = 0;
+  let parent: ListItem | null = null;
+  for (const it of ctx.above()) if (it.indent < ctx.item.indent) { target = it.indent; parent = it; break; }
+  const by = ctx.item.indent - target;
+  const changes: ChangeSpec[] = [];
+  for (const l of ctx.lines) {
+    const cut = Math.min(by, /^ */.exec(l.text)![0].length);
+    if (cut) changes.push({ from: l.from, to: l.from + cut });
+  }
+  if (parent) changes.push(...renumber(ctx.line, ctx.item, parent));
+  view.dispatch({ changes, scrollIntoView: true, userEvent: "delete.dedent" });
+  return true;
+}
 
 const theme = EditorView.theme({
   // 最高多高外面定（`--md-max`）：中栏的输入框放到半个窗口（v1.1.9，学 Claude Code Desktop），ONE SHOT 的矮一点。
@@ -78,6 +176,7 @@ export const MarkdownEditor: React.FC<Props> = ({ value, onChange, onSubmit, onK
             },
           })),
           keymap.of([...defaultKeymap.filter((b) => b.key !== "Mod-[" && b.key !== "Mod-]"), ...historyKeymap]),
+          Prec.high(keymap.of([{ key: "Tab", run: indentList, shift: outdentList }])),
           markdown(),
           syntaxHighlighting(peckMarkdown),
           EditorView.lineWrapping,

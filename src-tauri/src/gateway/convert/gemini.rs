@@ -355,7 +355,7 @@ impl WireStream for GeminiStream {
             return Err(e);
         }
         if this.finish.is_none() && this.blocked.is_none() {
-            return Err("回答在结束前断开了，没自动重发。".into());
+            return Err("回答在结束前断开了。".into());
         }
         let mut parts = Vec::new();
         let mut has_call = false;

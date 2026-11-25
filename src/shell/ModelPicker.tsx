@@ -77,7 +77,8 @@ function apiNote(e: ModelEntry): string {
 }
 
 export function labelOf(e: ModelEntry): string {
-  const name = e.label.toUpperCase();
+  // Vertex 上的和供应商自己的同名（v1.1.12）：不标出来分不清，选错了也看不出来。
+  const name = e.provider.startsWith("vertex") ? `${e.label.toUpperCase()} · VERTEX` : e.label.toUpperCase();
   return e.account ? `${name} · ${e.account}` : name;
 }
 
@@ -250,10 +251,11 @@ export function sendEffort(e: ModelEntry | null, settings: { efforts: Record<str
   return effortFor(e, settings.efforts);
 }
 
-/** PLOOP 的主角色（选的那个现在用不了就是列表里第一个 API 模型）。 */
+/** PLOOP 的主角色：选过的就是它，哪怕现在用不了（钥匙串还没点、Key 还在读）；没选过、或者选的那个已经不在模型目录里，
+ *  才用列表里第一个能用的 API 模型（v1.1.12：以前选的暂时用不了就换成第一个，换的还存进设置，悄悄换了一家）。 */
 export function ploopMain(entries: ModelEntry[], settings: { ploop?: { main?: string } }): ModelEntry | null {
-  const list = ploopable(entries);
-  return list.find((e) => e.id === settings.ploop?.main) ?? list[0] ?? null;
+  const chosen = entries.find((e) => e.group === "peck" && e.id === settings.ploop?.main);
+  return chosen ?? ploopable(entries)[0] ?? null;
 }
 
 /** 短的一行（输入框下、AGENTS 收起时）：PLOOP 写「PLOOP · 主角色」，CLI 写它的名字。 */

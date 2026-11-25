@@ -1,7 +1,7 @@
 //! 读 PDF（v1.1.4）：两个工具，模型看说明自己挑。
 //!
 //! - `read_pdf`：macOS 自带的 PDFKit（经 `osascript -l JavaScript`，和截图一样不加依赖），在本机一页页抽文字，不花钱、
-//!   马上出。没有文字层的页（扫描件）给能看图的模型附这一页的图（JPEG，最长边 1568），一次最多 6 张。
+//!   马上出。没有文字层的页（扫描件）给能看图的模型附这一页的图（JPEG，最长边 1568），一次几张按窗口算（[`image_budget`]）。
 //! - `ocr_pdf`：Mathpix（设置 → PROVIDERS → TOOL KEYS 填了 Key 才给，`gateway/mathpix.rs`）：扫描件、公式（出 LaTeX）、表格；
 //!   按页收费，PDF 会传到 Mathpix，读完 Peck 把它那边的删掉。
 //!
@@ -14,12 +14,23 @@ use std::path::{Path, PathBuf};
 
 /// 一次最多读几页。
 pub const MAX_PAGES: usize = 20;
-/// 一次最多附几张页面图。
-const MAX_IMAGES: usize = 6;
+/// 不知道窗口多大时一次最多附几张页面图。
+const DEFAULT_IMAGES: usize = 6;
+/// 窗口每这么多 token 给一张页面图（一张约 1600 token，合起来约占窗口的 3%）。
+const TOKENS_PER_IMAGE: u64 = 50_000;
 /// 一页少于这么多个字就当没有文字层。
 const TEXT_MIN: usize = 20;
 /// 给模型的文字最多多长（超了停在那一页，告诉它从哪接着读）。
 const TEXT_BYTES: usize = 100 * 1024;
+
+/// 一次最多附几张页面图（v1.1.12）：按模型的上下文窗口，每 5 万 token 一张，至少 2 张、最多 [`MAX_PAGES`] 张——
+/// 100 万的一次 20 页给满 20 张，20 万的 4 张；不知道窗口的 6 张。
+pub fn image_budget(window: Option<u64>) -> usize {
+    match window {
+        Some(w) => usize::try_from(w / TOKENS_PER_IMAGE).unwrap_or(MAX_PAGES).clamp(2, MAX_PAGES),
+        None => DEFAULT_IMAGES,
+    }
+}
 
 /// `pages` → 页码（从 1 起，按顺序、不重复）。空的是从第 1 页起最多 `max` 页。
 pub fn parse_pages(spec: Option<&str>, total: u32, max: usize) -> Result<Vec<u32>, String> {
@@ -163,11 +174,11 @@ pub fn split(file: &Path, pages: &[u32], to: &Path) -> Result<u32, String> {
     Ok(v["written"].as_u64().unwrap_or(0) as u32)
 }
 
-/// 读这几页；`render` 给了就把没有文字层的页渲染到这个文件夹（最多 [`MAX_IMAGES`] 张）。
-pub fn read_pages(file: &Path, pages: &[u32], render: Option<&Path>) -> Result<Vec<Page>, String> {
+/// 读这几页；`render` 给了就把没有文字层的页渲染到这个文件夹（最多 `max_images` 张）。
+pub fn read_pages(file: &Path, pages: &[u32], render: Option<&Path>, max_images: usize) -> Result<Vec<Page>, String> {
     let list: Vec<String> = pages.iter().map(u32::to_string).collect();
     let dir = render.map(|d| d.to_string_lossy().into_owned()).unwrap_or_else(|| "-".into());
-    let v = pdfkit(&["read", &file.to_string_lossy(), &list.join(","), &dir, &MAX_IMAGES.to_string(), &TEXT_MIN.to_string()])?;
+    let v = pdfkit(&["read", &file.to_string_lossy(), &list.join(","), &dir, &max_images.to_string(), &TEXT_MIN.to_string()])?;
     Ok(v["pages"]
         .as_array()
         .into_iter()
@@ -185,12 +196,14 @@ pub fn has_text(text: &str) -> bool {
     text.chars().filter(|c| !c.is_whitespace()).count() >= TEXT_MIN
 }
 
-/// `read_pdf`：给模型的文字和附的页面图。`vision` 是这个模型能不能看图；`ocr` 是这个任务有没有 `ocr_pdf`。
-pub fn read_pdf(ctx: &ToolContext, input: &Value, vision: bool, ocr: bool) -> Result<(String, Vec<ImageInput>), String> {
+/// `read_pdf`：给模型的文字和附的页面图。`images` 是这次最多附几张（模型看不了图是 0，见 [`image_budget`]）；
+/// `ocr` 是这个任务有没有 `ocr_pdf`。
+pub fn read_pdf(ctx: &ToolContext, input: &Value, images: usize, ocr: bool) -> Result<(String, Vec<ImageInput>), String> {
     let file = resolve_pdf(ctx, input)?;
     let rel = ctx.rel(&file);
     let total = page_count(&file)?;
     let pages = parse_pages(str_arg(input, "pages"), total, MAX_PAGES)?;
+    let vision = images > 0;
     let render = if vision {
         let n = ctx.spill_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let dir = ctx.spill_dir.join(format!("{n}-pdf"));
@@ -198,7 +211,7 @@ pub fn read_pdf(ctx: &ToolContext, input: &Value, vision: bool, ocr: bool) -> Re
     } else {
         None
     };
-    let read = read_pages(&file, &pages, render.as_deref())?;
+    let read = read_pages(&file, &pages, render.as_deref(), images)?;
     let (text, images) = format_pages(&rel, total, &read, vision, ocr);
     if let Some(dir) = &render {
         // 没出图的话空文件夹不留着。
@@ -269,6 +282,17 @@ mod tests {
     }
 
     #[test]
+    fn image_budget_follows_the_window() {
+        assert_eq!(image_budget(Some(1_000_000)), 20, "100 万的一次给满 20 张");
+        assert_eq!(image_budget(Some(1_048_576)), 20, "多出来的不超过一次读的页数");
+        assert_eq!(image_budget(Some(400_000)), 8);
+        assert_eq!(image_budget(Some(200_000)), 4);
+        assert_eq!(image_budget(Some(128_000)), 2);
+        assert_eq!(image_budget(Some(32_000)), 2, "再小也给 2 张");
+        assert_eq!(image_budget(None), 6, "不知道窗口的照旧 6 张");
+    }
+
+    #[test]
     fn pages_without_text_say_so_and_carry_images() {
         let dir = std::env::temp_dir().join(format!("peck-pdf-fmt-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -303,7 +327,7 @@ mod tests {
         let file = dir.join("a.pdf");
         std::fs::write(&file, &out.stdout).unwrap();
         assert_eq!(page_count(&file).unwrap(), 1);
-        let pages = read_pages(&file, &[1], Some(&dir)).unwrap();
+        let pages = read_pages(&file, &[1], Some(&dir), 20).unwrap();
         assert!(pages[0].text.contains("Hello PDF page one"), "{pages:?}");
         assert!(pages[0].image.is_none(), "有文字的页不出图");
         assert_eq!(split(&file, &[1], &dir.join("part.pdf")).unwrap(), 1);

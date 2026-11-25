@@ -794,7 +794,10 @@ mod tests {
         }
         // 沙箱里 HOME 是 Peck 给的临时 HOME；CLI 的 HOME 是站主的家目录。
         assert!(kinds("rm -rf ~/Library/Caches/x").is_empty());
-        assert!(cli("rm -rf ~/Library/Caches/x").contains(&RiskKind::Delete));
+        // 这一句看的是测试进程自己的 HOME：在 Peck 的沙箱里跑时 HOME 是 Peck 给的，不算（v1.1.12）。
+        if std::env::var_os(crate::harness::tools::bash::SANDBOX_ENV).is_none() {
+            assert!(cli("rm -rf ~/Library/Caches/x").contains(&RiskKind::Delete));
+        }
         // CLI：看不出删什么的问。
         assert!(cli("echo a | xargs rm").contains(&RiskKind::Delete));
         assert!(cli("rm -rf build").is_empty(), "{:?}", cli("rm -rf build"));

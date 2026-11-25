@@ -1,60 +1,56 @@
 # 当前交接
 
-更新：2026-11-25。**v1.1.10、v1.1.11 做完、已提交、已装进 /Applications**（旧包进了废纸篓；第一次打开可能连弹几个钥匙串框）。站主写明了版本号（「Peck v1.1.10 & 1.1.11」）、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)「权限」「过程」「输入框」和 [docs/architecture.md](./docs/architecture.md)「Peck Loop」，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
+更新：2026-11-25。**v1.1.12 做完、已提交，还没装进 /Applications**：站主自己装（Peck 在跑时换包会把自己换掉，签名也要钥匙串）。站主写明了版本号、不分 Phase。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。没有在做的版本。
 
-## 1.1.10（站主用 PLOOP 开发 Peck 的那一轮）
+## 这一版做了什么（1.1.12）
 
-PLOOP（Claude Opus 5.5 当主角色，AUTO）做的：NEW TASK 去掉 WHO；QUOTA 撑满居中、额度卡片两列；中栏正文 15px；要读的换 Body、装饰的留像素字（规则进 design.md「字」，方案 `peck` 里还是旧的，`app.css` 盖掉）。它跑满 100 轮停在写 HANDOFF 前，我审过、补完文档和检查后提交。
+站主列的 6 条（另 2 条只汇报：看网页的能力、PREVIEW）加上中途追加的轮数。PLOOP（Claude，AUTO）做到第 86 轮断线（Broken pipe）停了；Claude Code 审了日志和改动，修了 Peck 自己的几处问题（下面 7–11），PLOOP 再接着做完。
 
-**那一轮的经过（日志在正式库任务 184）**：四个决策点一个一个问（四张 ASK 卡）；改完前端以后约 40 轮花在「怎么截 `?mock` 的图」上：截 App 窗口没有屏幕录制权限 → 起无头 Chrome（命令的 HOME 是 Peck 给的，Chrome 找不到钥匙串，系统连弹「Keychain Not Found」，就是站主截图里点不掉的那一串；渲染进程在沙箱里也崩了）→ 最后自己写了个 Swift 小程序用 WebKit 截、转成 PDF 用 `read_pdf` 看。中间弹了 6 张高危卡片（`rmdir` 空文件夹、删 Peck 给的 HOME 里的临时目录、写一个 heredoc 脚本都算高危），有一张等了 76 分钟。站主拖进去的第二张截图没进来（下面第 2 条）。这些都在 1.1.11 修了。
-
-## 这一版做了什么（1.1.11）
-
-站主列的 11 条加上从日志里看出来的，站主在提问里定了四件事（高危学 Claude Code 的 Auto、EDIT 一起放宽；命令照 Claude Code Desktop 那样显示；加截网页的工具；Other 里写的字算补充），中途又加了一条（轮数和子代理）。
-
-1. **附件**：`+` 挑到的图当附图（进小图那排、能放大、发给能看图的模型；大于 4 MB 先缩，`upload_read_image`）。拖放整个输入框都收（以前只认打字那一行，落在附件那几排上就没了；浏览器没给类型的按扩展名认），拖进来的文档也能附（先存进 `harness-output/staging/`，`upload_stage`）；附不上写一句原因。
-2. **对话里的附件**：YOU 下面画小图（点了放大）和文档、文件夹小片，不再显示「（站主附了 N 个文档，拷在这些本机文件里…）」。后端照旧把路径写在这一句后面（模型照它读），前端按格式拆（`src/lib/attachments.ts`）；PLOOP 的附图也存成文件、写进这一句。
-3. **PLOOP 能看图**：`read_file` 读到 png、jpg、gif、webp 把图附给模型（以前回「二进制文件」，`+` 附的截图它其实看不到）。
-4. **ASK 卡片**：一次问几个时一张卡片翻着答（头上一排短名当页签、← →、单选点了自动翻）；PLOOP 的 `ask_user` 收 `questions`（一次最多 4 个），系统提示让它一次问完。Other 有自己的圆圈或方框；选着一项时写的字算补充（「选的那项、补充：…」），点 Other 才是只送写的，一项没选时写字自动选上；点来点去字都留着。
-5. **高危放宽**（EDIT、AUTO 都一样）：项目里、临时目录里、Peck 给的 HOME 里删东西不问，看不出会做什么的不问，补丁删文件不问。只问删项目外的、删整个项目或 `.git` 或 `git clean -x`、推送和改历史、改系统设置、`curl … | sh`、出沙箱。heredoc 写进文件的内容和注释不再当命令看。CLI 的命令不在 Peck 的沙箱里，另走 `assess_cli`（多看写到项目外、拼出来的命令）。
-6. **审批卡片**：`bash_run`、`bash_background` 必填一句 `description`，卡片标题就是它，下面一个小标签写为什么要批（事件多了 `reason`），命令收在「看命令」后面；过程里那一步的标题也是这句（点开先一行 `$ 命令`）。
-7. **钥匙串**：命令的沙箱挡掉 `com.apple.SecurityServer`（以前只挡了新的两个），出沙箱跑的那次也挡。原因见上面那一轮的经过。
-8. **截网页 `screenshot_page`**：Peck 用 `osascript` 在屏幕外开一个 WebKit 窗口截本机网页（能先跑一段 JS、指定明暗、默认关动画），不用 Chrome、不要屏幕录制权限。工具说明和 `bash_run` 的说明里都写了别自己起浏览器。
-9. **轮数和子代理**（站主中途加的）：PLOOP 在跑时任务头「第 37/100 轮」（八成起琥珀），子代理在跑时一个小片「子代理 2 在跑 · 1 排队」点了滚过去，子代理那一步右边「12/30 轮」。新事件 `round.started`。
-10. **QUOTA** 订阅额度卡片的折线去掉。
-- 数据库没动（schema 11），没加依赖。事件多了 `round.started`，`approval.requested` 多了 `reason`；`EngineRun` 去掉了 `attachments`（附图说明并进了这一句）。
+1. **`read_pdf` 的页面图按窗口给**（`pdf::image_budget`）：每 5 万 token 一张、2–20 张，100 万窗口的一次 20 页给满 20 张，不知道窗口的 6 张。
+2. **对话里的图有总预算**（`loop.rs` 的 `prune_old_images`）：超过 15 MB 或 80 张，一次去到一半（最新的一张总留），旧的换成一句话。各家上限是 searcher 查的（Gemini 内联、Vertex 上的 Gemini 一次 20 MB 最紧）。Claude Code 审时指出每轮去一张会每轮断缓存，改成了一次去一批。
+3. **输入框**：`+` 去掉下箭头（`MenuChip` 的 `caret`）；列表里 Tab / ⇧Tab 缩进一级（缩到上一项正文那一格，有序的改编号，`MarkdownEditor.tsx`）。
+4. **PROJECTS 收起**只剩模块头，不再写项目名。
+5. **收起左栏、右栏**：顶栏两头各一个按钮（新像素图标），存在界面设置的 `fold.left` / `fold.right`；点输入框下面的「谁」展开左栏，点改过的文件、⌘1–⌘4 展开右栏；收右栏时宽栏一起收回。栏是藏起来不卸掉（PREVIEW 不重开）。
+6. **轮数上限** 5–1000（以前 400；任务、ONE SHOT、子代理都是）。
+7. （Claude Code）问模型时断线、超时、限流、5xx 自动重发 5 次（2/5/15/30/60 秒），不算轮数。
+8. （Claude Code）子代理到了上限多给一轮写报告；设置里改轮数，跑着的任务下一轮就跟着变。
+9. （Claude Code）命令的 `CARGO_HOME` 用站主的 `~/.cargo`（以前每次全量重编）；沙箱里的命令带 `PECK_SANDBOX=seatbelt`，要套第二层沙箱的 14 个测试在沙箱里跳过（以前全量测试卡住跑不完）。
+10. （Claude Code）PLOOP 主角色选过的不再被悄悄换成第一个能用的（这一轮被换成了 Vertex 上的 Opus、令牌过期起不来）；Vertex 上的名字后面带 `· VERTEX`。
+11. （Claude Code）Anthropic 的思考带 `block_binding: drop_block`：换了版本工具说明变了，旧思考块不再让请求整个 400。
+- 修了三个测试：worker 的轮数（上限改了）；CLI 收尾 Hook（Peck 给的临时目录带空格，测试拼的命令没加引号）；追加的那句（测试的 `drive` 改成先处理事件，以前全量并发时偶尔先跑到下一轮）。
+- 数据库没动（schema 11），没加依赖。
 
 ## 验证
 
-- **自动测试**：全量 `cargo test` 过（366 个；新加：高危新规则（PLOOP 这一轮那几条都不再算高危、删项目外 / 整个项目 / 推送 / 下载脚本照问、CLI 另一套）、钥匙串挡住了（真起 `security list-keychains`）、截网页（真起一个本机小服务、跑 JS、截图）、一次问几个问题 + 读图 + 每轮一条 `round.started`；改了：卡片标题和原因、补丁删文件不问）；`pnpm check`、`pnpm build` 过。
-- **原型**：`page.js` 截 `?mock` 四种情况（点 QUOTA 后截、JS 抛错、地址打不开、语法错）都对，明暗都截过。
-- **`?mock`**（明暗）：ASK 三个问题翻页、自动翻、Other 写字自动选上、点别的字留着、多选加补充、SUBMIT 后过程里的回答；推送卡片（标题、红标签、看命令、ALLOW 以后那一步点开 `$ git push origin main`）；`+` 选到的图进小图、拖一张没类型的 png 和一个 md 到附件那排都收下；发出去 YOU 下面小图加小片、没有路径那段话、小图点开放大；任务头的轮数；派子代理时的小片和「1/30 轮」；QUOTA 没有折线。
+- **自动测试**：在 Peck 的沙箱里全量 `cargo test` 连跑三遍都过（373 个；要套沙箱的 14 个在沙箱里跳过，这一版没在终端里跑）；`pnpm check`、`pnpm build` 过。新加：页面图按窗口、对话里的图一次去一批（没超不动、再超才去下一批、按张数、最新的一张总留）、轮数到 1000。
+- **`?mock`**（明暗）：PROJECTS 收起只剩头；`+` 没箭头；收左栏、收右栏、两个都收（中栏占满）、设置页里收；点「谁」展开左栏、⌘1 展开右栏；列表 Tab、⇧Tab、有序列表改编号。
+- **这一轮续跑**就是带着 `block_binding` 发的，没再 400。
 - **没验的**：
-  - **正式版窗口**：从访达、截图浮窗拖图进输入框（站主说的「第二次拖就没了」没复现，修的是两个最可能的原因：落点不在打字那一行、浏览器没给图的类型）；`+` 选图的系统选窗；装包后第一次打开的钥匙串框。
-  - **真模型**：PLOOP 会不会照做——每条命令写 `description`、一次问完几个问题、要看界面时用 `screenshot_page` 不起 Chrome。都在工具说明和系统提示里写了，没花额度真跑。
-  - 挡住 `com.apple.SecurityServer` 以后真起 Chrome 不再弹框：只验了 `security` 连不上钥匙串（没敢在站主屏幕上再起一次 Chrome）。
-  - Codex 的多问题卡片：Codex 默认模式下不给提问工具（真跑问过，它说没有），触发不到。
-  - Gemini 原生搜索：这把 Key 额度用完（429）。Vertex 上的 Claude / Gemini：gcloud 的 ADC 过期、换不到令牌，请求没发出去。百炼新加坡：要国际站的 Key。
-  - Muse 会不会也自己跑项目 `.claude/settings.json` 的 Hook（Grok 会）：没查到它的文档，这次 Muse 任务里看不出跑没跑两遍。
-  - 钥匙串里的 MCP 环境变量、截图要的屏幕录制权限、「减弱动态效果」（这两样要改系统设置）、从访达拖图进输入框（台前调度下做不成）、额度真到 85% 时的提醒、Mathpix（没 Key）、通知横幅（截不到）。
+  - 正式版窗口里的这一版（站主装）：收起的栏重开 App 还收着没有。
+  - 真模型：一次读 20 页扫描件（手上没有扫描件）；真断线时的重发（只有假模型的测试）。
+  - 1.1.11 留下的：从访达、截图浮窗拖图进输入框，`+` 的系统选窗；PLOOP 会不会每条命令写 `description`、一次问完、看界面用 `screenshot_page`；挡住钥匙串后真起 Chrome 不弹框；Codex 的多问题卡片（默认模式不给提问工具）。
+  - 更早的：Gemini 原生搜索（Key 额度用完）、Vertex（ADC 过期）、百炼新加坡（要国际站 Key）、Muse 会不会自己跑项目 Hook、钥匙串里的 MCP 变量、额度真到 85% 的提醒、Mathpix（没 Key）、通知横幅。
 
 ## 留给站主的
 
-- **废纸篓**里有 `agy-…`（223 MB，Antigravity 的程序）和 `agy-link-…`（链接）：确认不要了自己清空。它的登录信息在你家目录里它自己的位置，我没碰。验收时换了五次包，旧的 `Peck.app.backup-*` 都在废纸篓。
-- **测试项目 tester** 被批了信任（验收时在 Grok 的 TRUST 卡片上点的）：Grok 自己记进了 `~/.grok/trusted_folders.toml`，Peck 的项目设置 `trusted` 也亮着（项目设置里能关）。验收时往里加了一条项目记忆（口令 MAPLE-42）、`notes.txt`、`bg.txt`、`docs/sample.pdf`、`docs/sample.ipynb`；测 Hook 的 `.claude/settings.json` 用完删了（「总是允许」里留着那几条命令的记录）；dw MCP 开过、已关回去。
-- **Vertex**：设置 → PROVIDERS 填了 gcloud 配的项目 ID（`gen-lang-client-…`），模型列表里出来了；要用得先在终端跑 `gcloud auth application-default login`（ADC 过期）。
-- **git-plan-smoke** 加进了项目列表、装了 Git Plan，Git Plan 在那个测试仓库里提交了一笔 `243787f`（没 push）；Peck 认结构补的 `CLAUDE.md` 链接等没跟踪。
-- **第一次打开新版**：可能弹钥匙串授权框；界面设置会在这时从 v1.1.1 以前的样子迁移过来（单干选的那个当 PLOOP 主角色）。
-- **1.1.4 留下的**：装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查（设置 → PLUGINS 点开 Git Plan 能一次看全部项目）；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS 填。
-- **仓库里多了 `.agents/skills`**（指向 `.claude/skills` 的链接）：站主在 Peck 里第一次点开 peck 项目时 Peck 认结构建的，没跟踪、我没动，要不要提交站主定。
-- **Claude Code**：`cli/bin` 那份现在能用了（验收时跑了 3 次）。还没核对 `/compact 重点` 的重点有没有生效：在一个 Claude Code 任务里 `/compact 某个重点`，压缩那一行写了「重点：…」就是生效了。
-- **push**：本地 `main` 比 `origin/main` 多 1.0.2 到 1.1.9 的全部提交。
-- 以前版本留下的没验项，验收第二轮验掉了大部分，剩下的在上面「没验的」。
+- **装正式版**：`pnpm app:install`（第一次打开可能弹钥匙串授权框）。push 也是你做：`origin/main` 到 1.1.11，1.1.12 这一笔没推。
+- **废纸篓**：`agy-…`（Antigravity 的程序，223 MB）、`agy-link-…` 和以前的 `Peck.app.backup-*`，确认不要了自己清空。
+- **测试项目 tester** 批过信任（Grok 记进了 `~/.grok/trusted_folders.toml`，项目设置里 `trusted` 能关），里面有验收时加的记忆和几个样例文件。**git-plan-smoke** 里 Git Plan 提交过一笔 `243787f`（没 push）。
+- **Vertex**：要用先在终端跑 `gcloud auth application-default login`（ADC 过期）。
+- **仓库里没跟踪的 `.agents/skills`**（指向 `.claude/skills` 的链接，Peck 认结构建的）：要不要提交你定。
+- **Claude Code** 的 `/compact 重点` 还没核对重点有没有生效：压缩那一行写了「重点：…」就是生效了。
+- 装了 Git Plan 1.0.0 的项目要点 UPDATE 才有 HANDOFF 检查；Mathpix 的 Key 在设置 → PROVIDERS → TOOL KEYS。
 
 ## 已知问题
 
 | 问题 | 建议 |
 | --- | --- |
+| 对话里的图超了预算，去掉的旧图模型要再看得自己重新读（落盘的还在） | 记着 |
+| 真用完额度的 429 也会等满 5 次重发（约 2 分钟）才停 | 用一阵看要不要分开「限流」和「额度用完」 |
+| Vertex 上的 Claude 没带 `block_binding`：换了版本后续跑旧对话可能还是 400 | 开了 Vertex 再试 |
+| 列表 Tab 只认空格缩进、只看上面的项：有序列表缩进以后，下面的同级项编号不跟着改 | 记着 |
+| Gemini 内联数据的上限官方文档自相矛盾（20 MB / 100 MB），图的预算按 20 MB 定 | 记着 |
+| PREVIEW 只开本机地址，Peck 没有能看外网的浏览器；模型看外网只有 `web_fetch` 的文字 | 要做再定 |
 | 高危放宽后，项目里被 .gitignore 忽略的文件（`.env`、`node_modules`）用 `rm` 删了不问，任务前快照里也没有，救不回来；`git clean -x` 照问 | 用一阵看要不要把删 `.env` 这类单独算高危 |
 | `screenshot_page` 每次是新开的页面：只在内存里的状态（`?mock`）要在 script 里点出来；离屏时页面的计时器变慢，等动画、轮询的要多给时间 | 记着 |
 | 拖进来的文档先存在 `harness-output/staging/`，没发出去的也留着（14 天没动的随输出目录一起清） | 记着 |
@@ -62,7 +58,6 @@ PLOOP（Claude Opus 5.5 当主角色，AUTO）做的：NEW TASK 去掉 WHO；QUO
 | CLI 的审批卡片标题照各家转换器给的：Claude Code 的 Bash 带说明（英文），别家还是「跑 命令」 | 记着 |
 | 排着的话（Grok）只在内存里，只在正看着那个任务时接着发；切到别的任务、重开 App 就不发了 | 记着 |
 | auditor 只读但不限在项目里：验收时它翻了 `~/Library/Application Support` 里 Peck 的数据、想跑 `tmutil`（被拒），一组就跑了十几轮 | 用一阵看要不要在它的提示里限死项目、少给轮数 |
-| Vertex 和 Anthropic 的同名模型（Claude Haiku 5.5）在主角色那一栏看起来一样 | 记着 |
 | dev server 认出新地址后 PREVIEW 只换地址，要点 GO 才打开 | 记着 |
 | 主角色问提交说明、任务板 auditor 这类多出来的请求也算真跑次数，按次数给的额度要留余量 | 记着 |
 | 任务跑着时追加的话带不了图和附件、用不了斜杠命令 | 记着 |
@@ -115,7 +110,7 @@ PLOOP（Claude Opus 5.5 当主角色，AUTO）做的：NEW TASK 去掉 WHO；QUO
 
 ## 视觉基线要补的
 
-方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.11 新加的：审批卡片的原因标签（`.agent-card-reason`）和「看命令」、ASK 的页签（`.ask-tab`）和 Other 那一行（`.agent-other`）、YOU 下面的小图和小片（`.you-attached`、`.you-shot`）、输入框拖放时的虚线（`.composer.is-drop`）、任务头的轮数和子代理小片（`.task-round--warn`、`.task-agents`）、子代理那一步的「N/上限 轮」、命令那一步点开的 `$ 命令` 行（`.out-cmd`）。1.1.10 新加的：中栏 15px 正文、卡片和标题换 Body（方案里还是像素字）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
+方案 `peck` 里还没有、现在取了沉静一边的样子（样式都在 `src/app.css`），要在方案里画、站主批、发新版本再同步：ⓘ 图标（现在是占位）和弹层、`[ NOW ]`、recap 和下一步按钮、`[ SKILL ]` / `[ MEMORY ]` / `[ CONTEXT ]` 卡片、`/` 和 `@` 弹层、归档图标和归档条、按段花费表、PREVIEW 的地址栏和批注列、设置里的 MCP、QUOTA、AGENTS 几组、项目设置的各节、代码配色 `--code-*`、菜单栏「在跑 N 个」、全部项目页、PROJECTS 头上的放大图标、输入框右下角的 ↵、设置里的进度条、PREVIEW 头上的 dev server 小片、「Thinking…」行、PROJECTS 头上的钟和它的详情弹层、`[ MISSED ]` 卡片、对话里的独立工作区条。1.1.0 新加的：recap 里收尾提交的那一行。 1.1.2 新加的：设置 → AGENTS 的 SUBAGENTS 几块（开关、「跟主角色」、「同时 N 个」）。1.1.3 新加的：任务板（`.board-*`：状态字的颜色、`WORKER 2` 标签、划的文件那一行、展开的步骤）。1.1.12 新加的：顶栏收起左右栏的按钮和图标（`.top-side`、`.pk-i--side-l`、`.pk-i--side-r` 和 `-off`）、不带箭头的 `+`。1.1.11 新加的：审批卡片的原因标签（`.agent-card-reason`）和「看命令」、ASK 的页签（`.ask-tab`）和 Other 那一行（`.agent-other`）、YOU 下面的小图和小片（`.you-attached`、`.you-shot`）、输入框拖放时的虚线（`.composer.is-drop`）、任务头的轮数和子代理小片（`.task-round--warn`、`.task-agents`）、子代理那一步的「N/上限 轮」、命令那一步点开的 `$ 命令` 行（`.out-cmd`）。1.1.10 新加的：中栏 15px 正文、卡片和标题换 Body（方案里还是像素字）。1.1.9 新加的：额度环（`.quota-ring`、`.quota-rows`）、ASK 里一个问题一段（`.ask-q`）、追加的那一行 YOU（`.you--mid`）、排着的话的小片、附图放大（`.lightbox`）。1.1.8 新加的：`[ TRUST ]` 卡片、FILES 的 ALL 和变暗的行（`.pk-row--dim`）、`+` 附的小片（`.composer-upload`）。1.1.7 新加的：`/compact` 那一行（`.you-compact`）、CLI 的小环（待更新变暗 `.is-stale`、弹层里「压缩由 X 自己管」）、读网页那一步的网址行（`.web-head`、`.web-link`）。1.1.6 新加的：设置页的统一排法（`.set-scope` 的行高、控件宽、两行的块 `.set-line`、组头 `.set-head`、框里的单位 `.field-unit`）、小窗（`.modal`、`.modal-scrim`）、插件卡片和像素图标（`.plug-card`、`.plug-icon`、`.plug-hero`、小窗里的清单 `.plugin-detail`）、记忆小窗（`.memo-*`）。
 
 ## 留意
 

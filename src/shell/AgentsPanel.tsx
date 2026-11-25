@@ -98,11 +98,12 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
     if (!e) return;
     onSettings({ pick: id, picks: { ...settings.picks, [flowOf(e)]: id } });
   };
-  // PLOOP 主角色没选过（或选的那个现在用不了）时显示的是第一项：把它真的存下来，发任务和输入框下那行才对得上。
+  // PLOOP 主角色没选过（或选的那个已经不在模型目录里）时显示的是第一项：把它真的存下来。选过的暂时用不了不动它（v1.1.12）。
   useEffect(() => {
     if (flow !== "ploop" || !main || main.id === settings.ploop.main) return;
+    if (settings.ploop.main && entries.some((e) => e.id === settings.ploop.main)) return;
     onSettings({ ploop: { ...settings.ploop, main: main.id } });
-  }, [flow, main, settings.ploop, onSettings]);
+  }, [flow, main, settings.ploop, onSettings, entries]);
   // 头上一行放不下就截断，收起 / 展开的按钮不会被挤出去（站主 11-17 的 Bug：接力的长名字把按钮挤没了，重启也打不开）。
   const note = folded ? whoShort(value, settings, entries, false) : disabled ? "在跑，跑完再换" : undefined;
 

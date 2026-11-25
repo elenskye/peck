@@ -233,7 +233,7 @@ pub async fn prepare(state: &crate::state::AppState, main_model: &str) -> (Team,
 }
 
 pub fn member(kind: Kind, model_id: String, provider: Arc<dyn ModelProvider>, s: &KindSettings, efforts: &HashMap<String, String>) -> Member {
-    let rounds = s.rounds.unwrap_or(kind.default_rounds()).clamp(5, 400);
+    let rounds = s.rounds.unwrap_or(kind.default_rounds()).clamp(super::r#loop::MIN_ROUNDS, super::r#loop::MAX_ROUNDS_CAP);
     let parallel = if kind.parallel_allowed() { s.parallel.unwrap_or(kind.default_parallel()).clamp(1, 8) } else { 1 };
     Member { kind, effort: effort_for(&model_id, efforts), model_id, provider, rounds, parallel, slots: Arc::new(Semaphore::new(parallel as usize)) }
 }
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn settings_default_on_follow_the_main_model_and_clamp() {
-        let (s, efforts) = settings_from(Some(r#"{"subagents":{"searcher":{"off":true},"worker":{"model":"api:deepseek/deepseek-flash","rounds":900},"explorer":{"parallel":20}},"efforts":{"api:deepseek/deepseek-flash":"high","api:anthropic/claude-opus-5-5":"nope"}}"#));
+        let (s, efforts) = settings_from(Some(r#"{"subagents":{"searcher":{"off":true},"worker":{"model":"api:deepseek/deepseek-flash","rounds":9000},"explorer":{"parallel":20}},"efforts":{"api:deepseek/deepseek-flash":"high","api:anthropic/claude-opus-5-5":"nope"}}"#));
         assert!(s[&Kind::Searcher].off && !s[&Kind::Auditor].off);
         assert_eq!(bare(&s[&Kind::Worker].model), "deepseek/deepseek-flash");
         assert_eq!(effort_for("deepseek/deepseek-flash", &efforts).as_deref(), Some("high"));
@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(effort_for("anthropic/claude-sonnet-5-5", &efforts).as_deref(), Some("medium"), "没选过用中间那一档");
         let p: Arc<dyn ModelProvider> = Arc::new(crate::gateway::mock::ScriptedModel::new("x", vec![], std::time::Duration::ZERO));
         let w = member(Kind::Worker, "deepseek/deepseek-flash".into(), p.clone(), &s[&Kind::Worker], &efforts);
-        assert_eq!((w.rounds, w.parallel), (400, 3), "worker 默认同时 3 个（v1.1.3）");
+        assert_eq!((w.rounds, w.parallel), (1000, 3), "worker 默认同时 3 个（v1.1.3），轮数最多 1000（v1.1.12）");
         let m = member(Kind::Member, "x".into(), p.clone(), &KindSettings::default(), &efforts);
         assert_eq!((m.rounds, m.parallel), (40, 2), "member 默认同时 2 个、40 轮");
         let a = member(Kind::Auditor, "x".into(), p.clone(), &KindSettings { parallel: Some(5), ..Default::default() }, &efforts);

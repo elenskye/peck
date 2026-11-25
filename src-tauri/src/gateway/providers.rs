@@ -162,9 +162,10 @@ impl HttpProvider {
             .json(&body);
         req = match &i.credential {
             Credential::Key(key) => match (i.provider.wire, i.provider.id.as_str()) {
-                (Wire::Messages, _) => req
-                    .header("x-api-key", key.as_str())
-                    .header("anthropic-version", ANTHROPIC_VERSION),
+                (Wire::Messages, _) => {
+                    let r = req.header("x-api-key", key.as_str()).header("anthropic-version", ANTHROPIC_VERSION);
+                    if body["thinking"]["block_binding"].is_object() { r.header("anthropic-beta", super::convert::anthropic::BINDING_BETA) } else { r }
+                }
                 (Wire::Gemini, _) => req.header("x-goog-api-key", key.as_str()),
                 _ => req.bearer_auth(key.as_str()),
             },
@@ -217,9 +218,9 @@ impl HttpProvider {
                 _ = cancelled(&mut cancel) => return Err(GatewayError::cancelled()),
                 c = response.chunk() => c.map_err(|e| {
                     if e.is_timeout() {
-                        GatewayError::new(ErrorKind::Network, "读回答超时了，没自动重发。")
+                        GatewayError::new(ErrorKind::Network, "读回答超时了。")
                     } else {
-                        GatewayError::new(ErrorKind::Network, "回答读到一半连接断了，没自动重发。")
+                        GatewayError::new(ErrorKind::Network, "回答读到一半连接断了。")
                     }
                 })?,
             };
@@ -289,9 +290,9 @@ async fn cancelled(cancel: &mut watch::Receiver<bool>) {
 
 fn network(e: &reqwest::Error) -> GatewayError {
     if e.is_timeout() {
-        GatewayError::new(ErrorKind::Network, "API 请求超时了，没自动重发。")
+        GatewayError::new(ErrorKind::Network, "API 请求超时了。")
     } else {
-        GatewayError::new(ErrorKind::Network, format!("连不上供应商，没自动重发{}。", cause(e)))
+        GatewayError::new(ErrorKind::Network, format!("连不上供应商{}。", cause(e)))
     }
 }
 
@@ -320,10 +321,10 @@ fn http_error(status: u16, body: &str, provider: &ProviderSpec) -> GatewayError 
         ),
         401 | 403 => (ErrorKind::Auth, format!("{label} 拒绝了 Key：到设置里看看 Key 和账户权限{detail}")),
         402 => (ErrorKind::RateLimit, format!("{label} 账户余额不足{detail}")),
-        429 => (ErrorKind::RateLimit, format!("{label} 限流或额度用完了，没自动重发{detail}")),
+        429 => (ErrorKind::RateLimit, format!("{label} 限流或额度用完了{detail}")),
         400 | 404 | 422 => (ErrorKind::BadRequest, format!("{label} 拒绝了这次请求{detail}")),
-        500..=599 => (ErrorKind::Upstream, format!("{label} 那边出错了（HTTP {status}），没自动重发{detail}")),
-        _ => (ErrorKind::Upstream, format!("{label} 返回 HTTP {status}，没自动重发{detail}")),
+        500..=599 => (ErrorKind::Upstream, format!("{label} 那边出错了（HTTP {status}）{detail}")),
+        _ => (ErrorKind::Upstream, format!("{label} 返回 HTTP {status}{detail}")),
     };
     let mut e = GatewayError::new(kind, message);
     if status == 402 {

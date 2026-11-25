@@ -40,6 +40,8 @@ interface Props {
   onSettings: (patch: Partial<AppSettings>) => void;
   /** 把 ONE SHOT 的回答、PREVIEW 里攒的批注放进中栏输入框 */
   onToTask: (text: string) => void;
+  /** 顶栏上收起了右栏（v1.1.12）：藏起来不卸掉，PREVIEW、ONE SHOT 的状态留着。 */
+  hidden?: boolean;
 }
 
 const Expand: React.FC<{ wide: boolean; onWide: (wide: boolean) => void }> = ({ wide, onWide }) => (
@@ -50,7 +52,7 @@ const Expand: React.FC<{ wide: boolean; onWide: (wide: boolean) => void }> = ({ 
 
 /** 右栏：顶上一条页签，一次开一个；从不自己切走正在看的页签。 */
 export const RightColumn: React.FC<Props> = (props) => {
-  const { run, tab, onTab, wide, onWide, busy, term } = props;
+  const { run, tab, onTab, wide, onWide, busy, term, hidden } = props;
   const state = run ? runState(run) : null;
   // 页签只有图标，选中的那个带名字（站主 2026-11-13 定）；悬停看名字。
   const tabs: Array<{ id: RightTab; label: string; icon: IconName; extra?: React.ReactNode }> = [
@@ -71,7 +73,7 @@ export const RightColumn: React.FC<Props> = (props) => {
     },
   ];
   return (
-    <section className={cn("col right", wide && "right--wide")} aria-label="右栏">
+    <section className={cn("col right", wide && "right--wide", hidden && "is-hidden")} aria-label="右栏" aria-hidden={hidden || undefined}>
       {wide && run && state !== "running" && run.finishedAt && Date.now() - run.finishedAt < 60_000 && (
         <div className={cn("pk-bar", state === "succeeded" ? "pk-bar--ok" : "pk-bar--bad")}>
           <Icon name={state === "succeeded" ? "check" : "x"} />
