@@ -259,7 +259,9 @@ impl AcpConverter {
             .filter(|c| c["type"] == "diff")
             .map(|c| file_diff(&self.rel(c["path"].as_str().unwrap_or("")), c["oldText"].as_str(), c["newText"].as_str().unwrap_or("")))
             .collect();
-        let status = if status == ToolStatus::Ok && exit_code.is_some_and(|c| c != 0) { ToolStatus::Failed } else { status };
+        // 搜索没搜到（grep 的退出码 1）不算失败（v1.2.0：Grok 确认「没有残留」的搜索以前整组标 FAIL）。
+        let search_miss = raw_output["type"] == "GrepSearch" && exit_code == Some(1);
+        let status = if status == ToolStatus::Ok && exit_code.is_some_and(|c| c != 0) && !search_miss { ToolStatus::Failed } else { status };
         out.push(EventBody::ToolCallCompleted {
             call_id: id.into(),
             status,
@@ -626,6 +628,18 @@ mod tests {
         assert_eq!(c.describe(&perm).2, "问站主");
         let dw = json!({"toolCallId": "c2", "title": "use_tool", "rawInput": {"tool_name": "dw__new_canvas", "tool_input": {"canvas": "x"}}});
         assert_eq!(c.describe(&dw).2, "MCP dw · new_canvas");
+    }
+
+    #[test]
+    fn a_search_with_no_matches_is_not_a_failure() {
+        let mut c = AcpConverter::new("grok", Some("/proj".into()));
+        let update = |id: &str, raw: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s", "update": {
+            "sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed",
+            "content": [{"type": "content", "content": {"type": "text", "text": "found 0 matches"}}], "rawOutput": raw}}});
+        let status = |events: Vec<EventBody>| events.into_iter().find_map(|b| match b { EventBody::ToolCallCompleted { status, .. } => Some(status), _ => None });
+        assert_eq!(status(c.convert(&update("g1", json!({"type": "GrepSearch", "exit_code": 1, "match_count": 0})))), Some(ToolStatus::Ok));
+        assert_eq!(status(c.convert(&update("g2", json!({"type": "GrepSearch", "exit_code": 2})))), Some(ToolStatus::Failed));
+        assert_eq!(status(c.convert(&update("r1", json!({"type": "Bash", "exit_code": 1})))), Some(ToolStatus::Failed));
     }
 
     #[test]
