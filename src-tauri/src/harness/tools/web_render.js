@@ -74,6 +74,19 @@ function run(argv) {
     for (const prefix of local) rules.push(block('^' + protocol + '://' + prefix));
     rules.push(block('^' + protocol + '://[^/]*@'));
   }
+  // 能把响应读回页面的请求（fetch、XHR、WebSocket、ping）只准发给这个网站自己（v1.2.0 收尾审查：上面的规则只看网址里写的
+  // 主机名，解析到本机、内网的域名能绕过去；图片、脚本、样式、字体照样能从 CDN 来）。DNS 重绑仍挡不住，见 HANDOFF。
+  const reads = ['fetch', 'raw', 'websocket', 'ping', 'other'];
+  rules.push({ trigger: { 'url-filter': '.*', 'resource-type': reads }, action: { type: 'block' } });
+  for (const host of allowedHosts.split(',')) {
+    // url-filter 不认 `|`：每个协议一条。
+    for (const protocol of [scheme, 'wss?']) {
+      rules.push({
+        trigger: { 'url-filter': '^' + protocol + '://' + literal(host) + '[:/]', 'resource-type': reads },
+        action: { type: 'ignore-previous-rules' },
+      });
+    }
+  }
   if (localOrigin) {
     // Rust 的 allow_local 仅在测试中给出一个夹具的 origin。
     rules.push({ trigger: { 'url-filter': '^' + literal(localOrigin) + '/' }, action: { type: 'ignore-previous-rules' } });
