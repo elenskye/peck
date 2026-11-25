@@ -277,6 +277,30 @@ fn delete_targets(cmd: &str, args: &[String]) -> Option<Vec<String>> {
     }
 }
 
+/// 这条命令里只由 `mktemp` 赋值的变量（`T=$(mktemp -d)`、`export T="$(mktemp)"`）：删 `"$T"` 是删它自己建的临时目录（v1.2.0）。
+/// 同一个名字另外还有别的赋值就不算。
+fn mktemp_vars(command: &str) -> std::collections::HashSet<String> {
+    let re = regex::Regex::new(r#"(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=("?)(\$\(\s*mktemp\b)?"#).expect("正则");
+    let mut temp = std::collections::HashSet::new();
+    let mut other = std::collections::HashSet::new();
+    for c in re.captures_iter(command) {
+        let name = c[1].to_string();
+        if c.get(3).is_some() {
+            temp.insert(name);
+        } else {
+            other.insert(name);
+        }
+    }
+    temp.retain(|n| !other.contains(n));
+    temp
+}
+
+/// `$T`、`${T}` 整个是一个 mktemp 变量（不带后缀）。
+fn is_temp_var(target: &str, vars: &std::collections::HashSet<String>) -> bool {
+    let name = target.strip_prefix("${").and_then(|t| t.strip_suffix('}')).or_else(|| target.strip_prefix('$'));
+    name.is_some_and(|n| vars.contains(n))
+}
+
 /// 一段命令在哪个目录跑（`cd` 之后）。
 #[derive(Debug, Clone, PartialEq)]
 enum Cwd {
@@ -651,6 +675,7 @@ fn assess_with(command: &str, root: &Path, sandboxed: bool) -> Vec<Risk> {
             }
         }
     }
+    let temp_vars = mktemp_vars(&main);
     let mut cwd = Cwd::In(PathBuf::new());
     for segment in segments(&main) {
         let w = words(&segment);
@@ -716,7 +741,11 @@ fn assess_with(command: &str, root: &Path, sandboxed: bool) -> Vec<Risk> {
         }
         if let Some(targets) = delete_targets(&cmd, args) {
             // 看不出删什么（`xargs rm`、`rm $(cat list)`）：沙箱里的写不到外面，不问；CLI 的问。
-            let spots: Vec<Spot> = if targets.is_empty() { vec![Spot::Unknown] } else { targets.iter().map(|t| locate(t, &cwd, root, sandboxed)).collect() };
+            let spots: Vec<Spot> = if targets.is_empty() {
+                vec![Spot::Unknown]
+            } else {
+                targets.iter().map(|t| if is_temp_var(t, &temp_vars) { Spot::Scratch } else { locate(t, &cwd, root, sandboxed) }).collect()
+            };
             let whole = spots.contains(&Spot::Whole) && cmd != "find";
             if whole {
                 add(RiskKind::Wipe, &segment);
@@ -800,6 +829,13 @@ mod tests {
         }
         // CLI：看不出删什么的问。
         assert!(cli("echo a | xargs rm").contains(&RiskKind::Delete));
+        // 删自己 mktemp 建的临时目录不问（v1.2.0，Grok 跑全量测试的写法）；带后缀、另外赋过值的照旧问。
+        let grok = "set -o pipefail\nT=$(mktemp -d)\necho \"TMP=$T\"\nPECK_DATA_DIR=\"$T/data\" cargo test\nec=$?\nrm -rf \"$T\"\nexit $ec";
+        assert!(cli(grok).is_empty(), "{:?}", cli(grok));
+        assert!(cli("D=\"$(mktemp -d /tmp/x.XXXX)\" && rm -rf \"${D}\"").is_empty());
+        assert!(cli("T=$(mktemp -d); rm -rf \"$T\"/*").contains(&RiskKind::Delete));
+        assert!(cli("T=$(mktemp -d); T=$HOME; rm -rf \"$T\"").contains(&RiskKind::Delete));
+        assert!(cli("rm -rf \"$T\"").contains(&RiskKind::Delete));
         assert!(cli("rm -rf build").is_empty(), "{:?}", cli("rm -rf build"));
     }
 
