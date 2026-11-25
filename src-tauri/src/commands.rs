@@ -315,8 +315,7 @@ pub async fn term_state(
 #[tauri::command]
 pub async fn shell_set_activity(activity: String, count: Option<u32>, app: tauri::AppHandle) -> Result<(), String> {
     let activity = crate::tray::Activity::parse(&activity).ok_or("没有这个状态。")?;
-    crate::tray::set_activity(&app, activity);
-    crate::tray::set_running_count(&app, count.unwrap_or(0));
+    crate::tray::update(&app, activity, count.unwrap_or(0));
     Ok(())
 }
 
