@@ -3,12 +3,12 @@ import type { AgentEvent, Control, ModelEntry } from "@/lib/agentEvents";
 import { CONTEXT_PARTS, addUsage, compactRun, costCell, costRows, foldEvents, minusUsage, splitNextSteps, tokenCell, tokens, usageText, usd, type ContextView, type CostRow, type UsageLine } from "@/lib/agentView";
 import { ipc, type ImageInput, type Schedule, type SlashList } from "@/lib/ipc";
 import { CLI_ONLY, PECK_COMMANDS, lastChanged, matchSlash, parseSlash, reviewPrompt, slashAt, undoPrompt, type SlashItem } from "@/lib/slash";
-import { SUBAGENT_KINDS, type AppSettings } from "@/lib/settings";
+import type { AppSettings } from "@/lib/settings";
 import type { QuotaHint } from "@/lib/quota";
 import type { ClientCard } from "@/lib/usage";
 import { QuotaRing } from "@/shell/QuotaRing";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
-import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath, type DotKind } from "@/lib/utils";
+import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, isPeckRun, runState, span, timer, whoDots, whoLabel, shortenHomePath } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, Lightbox, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
@@ -106,30 +106,6 @@ export function chosenEntry(entries: ModelEntry[], settings: AppSettings): Model
   return list.find((e) => e.id === settings.pick && e.group !== "peck") ?? list.find((e) => e.id === PLOOP_ID) ?? list.find((e) => e.group === "cli") ?? null;
 }
 
-/** 一项怎么干（NEW TASK 上的一行）。 */
-function describeOne(entry: ModelEntry): { name: string; dot: DotKind; does: string } {
-  if (entry.group === "peck") {
-    return { name: `Peck · ${entry.label}`, dot: "api", does: "Peck Loop：读、搜、改（整批一起改）、跑命令、任务清单、问你，都用 Peck 的工具；每一步看得见，花费按价格表算，算进花费上限。" };
-  }
-  return {
-    name: entry.label,
-    dot: engineDot(entry.id.slice(4)),
-    does: `整包引擎：用它自己的工具和订阅额度；Peck 显示每一步、替它审批、记花费${entry.account ? `（账号：${entry.account}）` : ""}。`,
-  };
-}
-
-/** 选了谁，NEW TASK 上写它怎么干：PLOOP 一行主角色、一行子代理（开着的几类）。 */
-function describe(entry: ModelEntry, entries: ModelEntry[], settings: AppSettings): Array<{ name: string; dot: DotKind; does: string; model?: string }> {
-  if (entry.id !== PLOOP_ID) return [describeOne(entry)];
-  const main = ploopMain(entries, settings);
-  const out: Array<{ name: string; dot: DotKind; does: string; model?: string }> = [
-    main ? { ...describeOne(main), name: `主角色 · ${main.label}` } : { name: "主角色", dot: "", does: "在 AGENTS 里选一个 API 模型。" },
-  ];
-  const kinds = SUBAGENT_KINDS.filter((k) => !settings.subagents[k.id]?.off);
-  if (kinds.length) out.push({ name: `子代理 · ${kinds.map((k) => k.id).join("、")}`, dot: "api", does: "主角色需要时派出去，在后台跑：同一次派的一批都做完，报告一起交回来。worker、member 只改划给它的文件，进度在任务板上。每类的模型、强度、轮数在设置 → AGENTS（PLAN 不派 worker、member）。" });
-  return out;
-}
-
 /** 项目文件夹不在了：任务记录和快照都还在，换个文件夹接上，或者移出列表。 */
 const MissingFolder: React.FC<{ project: ProjectOverview; onRelocate: (id: string) => void; onRemove: (id: string) => void }> = ({ project, onRelocate, onRemove }) => {
   const [armed, setArmed] = useState(false);
@@ -179,24 +155,12 @@ export const MiddleColumn: React.FC<Props> = (props) => {
   const missedCards = missedHere.length > 0 && !archivedAt ? <MissedCards list={missedHere} busy={busy} onMissed={props.onMissed} /> : null;
 
   if (!task) {
-    const flow = who ? describe(who, entries, settings) : [];
     return (
       <section className="col" aria-label="对话">
         <div className="pk-mod col-grow home scroll">
           <ModHead label="NEW TASK" />
-          <h1 className="t-hero">{project.workspace.name} 要做什么？<Info text="一句话说清楚，谁来干在左栏 AGENTS 里选。每个任务开始前、结束后各存一份快照；不满意，跟模型说一声「撤掉刚才的改动」。WORKTREE 是在项目的一个 git worktree 里做，做完再搬回。" /></h1>
-          {who ? (
-            <div>
-              <p className="lbl">WHO</p>
-              <ol className={cn("flow", flow.length === 1 && "flow--one")}>
-                {flow.map((f, i) => (
-                  <li key={i}>
-                    <p><span className="flow-k">{i + 1}</span><Dot kind={f.dot} /><b className="t-name">{f.name}</b>{f.model && <em>{f.model}</em>}<Info text={f.does} /></p>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : (
+          <h1 className="t-hero">{project.workspace.name} 要做什么？</h1>
+          {!who && (
             <div className="empty">
               <p>还没有能用的：在设置里配一家 API 的 Key，或者看一下 CLI 检测。</p>
               <div><Btn icon="gear" onClick={props.onOpenSettings}>SETTINGS</Btn></div>

@@ -5,7 +5,7 @@ import { ipc, isMockMode, type QuotaPoint, type SpendOverview, type SpendPoint }
 import { usageApi, type BalanceCard, type ClientCard } from "@/lib/usage";
 import { resetIn, windowName } from "@/lib/quota";
 import { agentName, cn } from "@/lib/utils";
-import { Btn, Field, Info, ModHead, Seg } from "@/ui";
+import { Btn, Field, ModHead, Seg } from "@/ui";
 
 // 额度与花费（usage.rs + spend.rs 的事件日志）。原来要等站主用 Peck 另做一个（src/quota/），2026-11-13 站主改了主意：这一页就是它，本地的 Claude 接着做。
 
@@ -96,13 +96,13 @@ export const UsagePage: React.FC<{ onClose: () => void; say: (message: unknown) 
               action={<Btn sm v="ghost" onClick={() => void act(async () => { const card = await usageApi.balance("deepseek"); setBalances((prev) => [...prev.filter((x) => x.provider !== "deepseek"), card]); })}>CHECK</Btn>} />
           </div>
 
-          <h2 className="t-title">每天花了多少<Info text={`近 ${days} 天，按谁花的叠起来。都按 API 价格表算（设置 → QUOTA 里能改、能刷新）：CLI 按它用的模型折成 API 价，是订阅、不真花钱。悬停看每天的明细。`} /></h2>
+          <h2 className="t-title">每天花了多少</h2>
           <DailyChart points={points} days={Number(days)} />
 
-          <h2 className="t-title">花在哪<Info text={`近 ${days} 天，按模型和引擎。`} /></h2>
+          <h2 className="t-title">花在哪</h2>
           <Breakdown points={points} label={label} />
 
-          <h2 className="t-title">订阅额度<Info text="刻度和数字都是还剩多少。客户端的读数只在它运行时读，退出就停，留最后一次的快照；CLI 在 Peck 的任务里报的也记着，折线是近 7 天还剩的。读不到的不推算。" /></h2>
+          <h2 className="t-title">订阅额度</h2>
           <div className="q-clients">
             {clients.map((c) => <ClientQuota key={c.client} card={c} history={(spend?.quota ?? []).filter((q) => q.engine === (c.client === "muse-code" ? "muse" : c.client))} say={say} onCard={(card) => setClients((prev) => prev.map((x) => (x.client === card.client ? card : x)))} />)}
           </div>

@@ -163,22 +163,18 @@ body { overflow: hidden; }
 .composer-who:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: 2px; }
 
 /* ---------- 中栏：新任务、对话、输入位 ---------- */
+/* 中栏的正文大一号（v1.1.10，站主定 15px）：新任务页和对话里用 --text-body 的（回答、YOU、卡片的问题和选项、结果那句）跟着变；
+   小字（--text-small）、代码、标签和按钮不变。弹层画在 body 上，不受影响。 */
+.home, .task-stack { --text-body: 15px; --leading-body: 23px; font-size: var(--text-body); line-height: var(--leading-body); }
 .home { gap: var(--space-6); }
 .home .t-hero { margin: var(--space-4) 0 0; text-shadow: var(--shadow-glow-ink); }
-.home .lbl { margin-top: var(--space-4); }
-.flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-5); }
-.flow--one { grid-template-columns: minmax(0, 1fr); }
-.flow li { position: relative; isolation: isolate; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-5) var(--space-6); clip-path: var(--pk-clip2); background: var(--color-line); }
-.flow li:before { content: ""; position: absolute; inset: 1px; clip-path: var(--pk-clip2); background: var(--color-panel-2); z-index: -1; }
-.flow li p { display: flex; align-items: center; gap: var(--space-4); }
-.flow li p em { margin-left: auto; font-size: var(--text-small); color: var(--color-text-3); }
-.flow li > span { font-size: var(--text-small); line-height: 1.5; color: var(--color-text-2); }
-.flow-k { font-family: var(--font-dots); font-weight: 900; font-size: var(--text-button); color: var(--color-text-3); }
 
 .composer { flex: none; display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-7) var(--space-8) var(--space-6); }
 .composer-in { display: flex; align-items: flex-start; gap: var(--space-4); font-size: 13.5px; line-height: 22px; cursor: text; }
 .composer-in .pk-prompt { margin-right: 0; font-size: inherit; line-height: 22px; }
 .composer-in textarea { flex: 1; min-width: 0; resize: none; line-height: 22px; min-height: 22px; caret-color: var(--color-cyan-block); }
+/* 中栏输入框打的字跟对话正文一样大（v1.1.10）；ONE SHOT 的不变 */
+.composer .composer-in, .composer .composer-in .pk-prompt { font-size: 15px; line-height: 23px; }
 .composer-in.is-off .pk-prompt { color: var(--color-text-3); }
 .composer-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 
@@ -429,7 +425,8 @@ body { overflow: hidden; }
 .md-editor { flex: 1; min-width: 0; min-height: 22px; font-size: 13.5px; }
 .md-editor .cm-editor { max-height: var(--md-max, 132px); }
 /* 中栏的输入框（v1.1.9）：跟着内容长高，到半个窗口才开始滚 */
-.composer .md-editor { --md-max: min(48vh, 520px); }
+.composer .md-editor { --md-max: min(48vh, 520px); font-size: 15px; min-height: 23px; }
+.composer .md-editor .cm-scroller { line-height: 23px; }
 .composer-in.is-off .md-editor { opacity: .6; }
 .composer-cost { font-size: var(--text-small); color: var(--color-text-3); white-space: nowrap; }
 
@@ -518,6 +515,8 @@ body { overflow: hidden; }
 :root, [data-theme="dark"] { --chart-api: #4F94E8; --chart-grok: #C58131; --chart-muse: #987CE9; --chart-claude-code: #CD795B; --chart-codex: #CA5DDB; }
 [data-theme="light"] { --chart-api: #2563EB; --chart-grok: #A35E00; --chart-muse: #6D4AE8; --chart-claude-code: #B4532A; --chart-codex: #A21CAF; }
 .quota h2.t-title { margin-top: var(--space-11); }
+/* QUOTA 撑满宽栏、居中（v1.1.10）：窗口很宽时最多 1280；设置页还是 760 靠左 */
+.set-pane.quota > * { width: 100%; max-width: 1280px; margin-left: auto; margin-right: auto; }
 .q-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-5); margin-top: var(--space-2); }
 .q-tile { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-6) var(--space-7); }
 .q-tile .lbl { margin: 0; }
@@ -556,7 +555,8 @@ body { overflow: hidden; }
 .q-bars-track span { display: block; height: 100%; }
 .q-bars-v { font-family: var(--font-code); font-weight: 400; text-align: right; color: var(--color-text); }
 .q-bars-n { color: var(--color-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.q-clients { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: var(--space-5); margin-top: var(--space-6); }
+/* 订阅额度卡片最多两列，窄到一张不到 380 就一列 */
+.q-clients { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(380px, calc((100% - var(--space-5)) / 2)), 1fr)); gap: var(--space-5); margin-top: var(--space-6); }
 .q-client { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6) var(--space-7); }
 .q-client-head { display: flex; align-items: center; gap: var(--space-4); }
 .q-window { display: grid; grid-template-columns: 80px minmax(60px, 1fr) 44px 72px 96px; align-items: center; gap: var(--space-5); font-size: var(--text-small); }
@@ -582,7 +582,7 @@ body { overflow: hidden; }
 @font-face { font-family: "Peck Pixel CJK 12"; src: url("./vendor/peck/fonts/fusion-pixel-12.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap;
   unicode-range: U+2E80-2FFF, U+3000-303F, U+3040-30FF, U+3100-312F, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF; }
 :root { --font-dots: "Doto", "Peck Pixel CJK 13", "IBM Plex Mono", monospace; }
-:is(.pk-btn, .pk-seg > button, .pk-mod-label, .t-button, .flow-k, .pk-step-time, .pk-opt-key) { font-family: "Doto", "Peck Pixel CJK 14", "IBM Plex Mono", monospace; }
+:is(.pk-btn, .pk-seg > button, .pk-mod-label, .t-button, .pk-step-time, .pk-opt-key) { font-family: "Doto", "Peck Pixel CJK 14", "IBM Plex Mono", monospace; }
 :is(.pk-menu-group, .pk-del) { font-family: "Doto", "Peck Pixel CJK 12", "IBM Plex Mono", monospace; }
 /* 菜单里的动作（配 Key、右键菜单的改名、删除……）是选项，用名字的像素字；右边的说明照旧。 */
 .pk-menu-action { font-family: var(--font-name); font-size: var(--text-name); }
@@ -812,6 +812,17 @@ body { overflow: hidden; }
 .ask-q-head { margin-right: var(--space-3); color: var(--color-text-3); }
 .ask-body { margin: 0 0 var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
 .agent-asked .ask-body { margin: 0; }
+/* 装饰的地方用像素字，要读的用 Body（v1.1.10，站主定的，见 docs/design.md「字」）。方案 peck 里这几处还是像素字，先在这里盖掉：
+   卡片（ASK、审批、TRUST）的问题和选项、问题的短名、工具调用每步的标题、回答和 YOU 里的 Markdown 标题。 */
+.agent-card .pk-ask-q { margin-bottom: var(--space-3); font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); font-weight: 600; }
+.agent-card .pk-opt-name { font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); }
+.agent-card .pk-opt .pk-radio, .agent-card .pk-opt .pk-check { margin-top: calc((var(--leading-body) - 16px) / 2); }
+.ask-q-head.t-label { font-family: var(--font-body); font-size: var(--text-small); font-weight: 600; letter-spacing: 0; }
+.agent-call-title.pk-step-name { font-family: var(--font-body); }
+:is(.task-stack, .agent) .md :is(h1, h2, h3, h4) { font-family: var(--font-body); font-weight: 600; line-height: 1.4; }
+:is(.task-stack, .agent) .md h1 { font-size: 1.3em; }
+:is(.task-stack, .agent) .md h2 { font-size: 1.15em; }
+:is(.task-stack, .agent) .md :is(h3, h4) { font-size: 1em; }
 /* + 附的文档、文件夹（v1.1.8）：一片一个，叉掉 */
 .composer-upload { cursor: default; max-width: 220px; }
 .composer-upload button { display: inline-flex; padding: 0; border: 0; background: none; color: var(--color-text-3); cursor: pointer; }

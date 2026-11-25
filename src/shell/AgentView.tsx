@@ -531,7 +531,7 @@ const ApprovalCard: React.FC<{ approval: ApprovalView; who: string; onControl: P
     <section className={cn("pk-mod pk-mod--wait pk-ask agent-card", approval.highRisk && "agent-card--risk")} aria-label="要你批">
       <Edge />
       <div className="pk-anim-reveal">
-        <ModHead label={approval.highRisk ? "RISK" : "ALLOW?"} note={<><span className="pk-who">{who}</span><Info text={approval.highRisk ? "高危：不管哪档都要你批。只这一次，不能总是允许。" : "批了就跑；选「总是允许」以后这个项目里这一类不再问（设置 → 权限里能撤）。"} /></>} />
+        <ModHead label={approval.highRisk ? "RISK" : "ALLOW?"} note={<span className="pk-who">{who}</span>} />
         <p className="pk-ask-q">{approval.title}</p>
         {approval.detail && <ApprovalDetail text={approval.detail} />}
         <div className="pk-ask-foot">
