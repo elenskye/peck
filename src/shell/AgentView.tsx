@@ -1,5 +1,5 @@
 // 一次任务的过程（Peck Loop 和 CLI 引擎同一套）：回答、思考、折叠的工具调用、审批和 ASK 卡片、任务清单、花费。
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent, ApprovalDecision, AskQuestion, BoardItem, BoardStatus, Control, PlanStep } from "@/lib/agentEvents";
 import { COMPACT_STEP, englishTitle, findCall, foldEvents, liveAgent, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
@@ -515,6 +515,19 @@ const Board: React.FC<{ plan: PlanStep[] | null; items: BoardItem[]; calls: View
 
 const Edge: React.FC = () => <span className="pk-card-edge" aria-hidden="true"><i /><i /><i /><i /></span>;
 
+/** 等站主的卡片（审批、提问、信任）出来时在视线外就滚到它（v1.2.0：长提示词发出去以后，中栏停在 YOU 顶上，
+ *  卡片在下面看不见）。进任务后位置记忆还会对两秒，所以两秒后再看一次。 */
+function useReveal() {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const reveal = () => ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const raf = requestAnimationFrame(reveal);
+    const later = window.setTimeout(reveal, 2200);
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(later); };
+  }, []);
+  return ref;
+}
+
 /** 审批卡片里的命令、参数：太长（比如 MCP 写一整张画板）只露前 12 行，点了看全文，按钮不被挤出视线。
  *  命令（v1.1.11，学 Claude Code Desktop）先收着，点「看命令」才露出来。 */
 const ApprovalDetail: React.FC<{ text: string; folded: boolean }> = ({ text, folded }) => {
@@ -539,8 +552,9 @@ const ApprovalCard: React.FC<{ approval: ApprovalView; who: string; onControl: P
     try { await onControl({ type: "approve", requestId: approval.requestId, decision }); } catch (e) { setSent(false); say(e); }
   };
   const has = (d: ApprovalDecision) => approval.options.includes(d);
+  const ref = useReveal();
   return (
-    <section className={cn("pk-mod pk-mod--wait pk-ask agent-card", approval.highRisk && "agent-card--risk")} aria-label="要你批">
+    <section ref={ref} className={cn("pk-mod pk-mod--wait pk-ask agent-card", approval.highRisk && "agent-card--risk")} aria-label="要你批">
       <Edge />
       <div className="pk-anim-reveal">
         <ModHead label={approval.highRisk ? "RISK" : "ALLOW?"} note={<span className="pk-who">{who}</span>} />
@@ -565,8 +579,9 @@ const TrustCard: React.FC<{ trust: { requestId: string; label: string }; onContr
     setSent(true);
     try { await onControl({ type: "approve", requestId: trust.requestId, decision }); } catch (e) { setSent(false); say(e); }
   };
+  const ref = useReveal();
   return (
-    <section className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="信任这个文件夹">
+    <section ref={ref} className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="信任这个文件夹">
       <Edge />
       <div className="pk-anim-reveal">
         <ModHead label="TRUST" note={<span className="pk-who">{trust.label.toUpperCase()}</span>} />
@@ -669,8 +684,9 @@ const AskCard: React.FC<{ ask: AskView; who: string; onControl: Props["onControl
     if (e.key === "ArrowRight") { e.preventDefault(); go(at + 1); }
   };
   const q = list[at];
+  const ref = useReveal();
   return (
-    <section className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="停下来问你" onKeyDown={onKey}>
+    <section ref={ref} className="pk-mod pk-mod--wait pk-ask agent-card" aria-label="停下来问你" onKeyDown={onKey}>
       <Edge />
       <div className="pk-anim-reveal">
         <ModHead label="ASK" note={<span className="pk-who">{who}</span>} count={paged ? `${each.filter((a) => a.length > 0).length}/${list.length}` : undefined} />
