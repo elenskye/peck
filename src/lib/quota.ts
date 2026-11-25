@@ -40,11 +40,14 @@ export function resetIn(at: number): string {
   return h < 1 ? `${Math.ceil(ms / 60_000)} 分钟后` : h < 48 ? `${Math.round(h)} 小时后` : `${Math.round(h / 24)} 天后`;
 }
 
-/** 一家的窗口读数：已用百分比读得到的那几个。 */
-function windows(id: string, cards: ClientCard[]): Array<{ label: string; pct: number }> {
+/** 一家的窗口读数：已用百分比读得到的那几个。快照是旧的、窗口已经过了重置时间的当清零了（v1.2.0：Codex 没开着时
+ *  Peck 不去读，4 个多小时前那份「5 小时窗口 100%」一直在提醒换引擎）。 */
+function windows(id: string, cards: ClientCard[], now = Date.now()): Array<{ label: string; pct: number }> {
   const engine = id.startsWith("cli:") ? id.slice(4) : null;
   const card = engine ? cards.find((c) => c.client === CLIENT_OF[engine]) : undefined;
-  return (card?.windows ?? []).filter((w) => w.usedPercent != null).map((w) => ({ label: w.label, pct: w.usedPercent! }));
+  return (card?.windows ?? [])
+    .filter((w) => w.usedPercent != null)
+    .map((w) => ({ label: w.label, pct: w.resetAtMs != null && w.resetAtMs <= now ? 0 : w.usedPercent! }));
 }
 
 /** 这一家超过阈值的那个窗口（用得最多的）；读不到或没超过是 null。 */
