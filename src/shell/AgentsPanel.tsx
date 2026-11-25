@@ -247,20 +247,25 @@ const CliBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
   const [list, setList] = useState<CliModels | null>(null);
   const [reading, setReading] = useState(false);
   // 存着的清单超过 3 天就在后台重读一次（v1.2.0：Codex 的清单停在 11-13，新出的 gpt-6.2-sol 选不到）；悄悄的，读不到不报。
-  const read = async (refresh: boolean, quiet = false) => {
+  // 回来时已经换成别的引擎了就丢掉（后台重读要几秒，不然会把新引擎的清单冲掉）。
+  const current = useRef(engine);
+  current.current = engine;
+  const read = async (refresh: boolean) => {
+    const asked = engine;
     setReading(true);
     try {
-      const r = await ipc.cliModels(engine, refresh);
+      const r = await ipc.cliModels(asked, refresh);
+      if (current.current !== asked) return;
       setList(r);
-      if (refresh && r.error && !quiet) say(r.error);
+      if (refresh && r.error) say(r.error);
       if (!refresh && r.source === "cli" && r.readAt && Date.now() - r.readAt > STALE_LIST_MS) {
-        const fresh = await ipc.cliModels(engine, true);
-        if (!fresh.error) setList(fresh);
+        const fresh = await ipc.cliModels(asked, true).catch(() => null);
+        if (fresh && !fresh.error && current.current === asked) setList(fresh);
       }
     } catch (e) {
-      if (!quiet) say(e);
+      if (current.current === asked) say(e);
     } finally {
-      setReading(false);
+      if (current.current === asked) setReading(false);
     }
   };
   useEffect(() => { setList(null); void read(false); }, [engine]); // eslint-disable-line react-hooks/exhaustive-deps

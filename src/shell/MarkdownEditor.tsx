@@ -130,18 +130,12 @@ interface Span { from: number; to: number }
 const setSlots = StateEffect.define<Span[]>();
 /** Tab 跳到第几个。 */
 const toSlot = StateEffect.define<number>();
-const fieldMark = Decoration.mark({ inclusive: true });
 const openMark = Decoration.mark({ class: "cm-slot" });
 
-/** 一组占位：`fields` 是每个占位现在的范围（填了字跟着长，两头含），`open` 是还没动过的（标琥珀），`active` 是光标在第几个。 */
-interface Slots { fields: DecorationSet; open: DecorationSet; active: number }
-const NO_SLOTS: Slots = { fields: Decoration.none, open: Decoration.none, active: -1 };
-
-function spans(set: DecorationSet): Span[] {
-  const out: Span[] = [];
-  for (const it = set.iter(); it.value; it.next()) out.push({ from: it.from, to: it.to });
-  return out;
-}
+/** 一组占位：`fields` 是每个占位现在的范围（填了字跟着长，两头含；自己按改动映射，不用标记装饰——空了的标记 CodeMirror
+ *  下一次改动就丢掉，清空一个占位再在旁边删字，后面的就跳不了了），`open` 是还没动过的（标琥珀），`active` 是光标在第几个。 */
+interface Slots { fields: Span[]; open: DecorationSet; active: number }
+const NO_SLOTS: Slots = { fields: [], open: Decoration.none, active: -1 };
 
 /** 插进来的提示词里的占位，照 snippet 的做法：选中、打字替换、Tab 跳下一个。光标走出所有占位（点别处、方向键）、Esc、
  *  一次改动吞掉整个占位还多（撤销插入、全选重打、发出去清空）就整组退出，Tab 回到列表缩进那套。 */
@@ -150,26 +144,28 @@ const slotField = StateField.define<Slots>({
   update(s, tr) {
     let set: Span[] | null = null;
     for (const e of tr.effects) if (e.is(setSlots)) set = e.value;
-    if (!s.fields.size && !set) return s;
+    if (!s.fields.length && !set) return s;
     let { fields, open, active } = s;
     if (set) {
       if (!set.length) return NO_SLOTS;
-      fields = Decoration.set(set.map((r) => fieldMark.range(r.from, r.to)), true);
+      fields = set.map((r) => ({ from: r.from, to: r.to }));
       open = Decoration.set(set.map((r) => openMark.range(r.from, r.to)), true);
       active = 0;
     } else {
       if (tr.docChanged) {
         const hit: Span[] = [];
         tr.changes.iterChangedRanges((from, to) => hit.push({ from, to }));
-        if (spans(fields).some((f) => hit.some((h) => h.from <= f.from && h.to >= f.to && h.to - h.from > f.to - f.from))) return NO_SLOTS;
+        // 清空了的占位（长度 0）旁边删字不算吞掉它；整个输入框清空（发出去了）一定退出。
+        if (tr.state.doc.length === 0) return NO_SLOTS;
+        if (fields.some((f) => f.to > f.from && hit.some((h) => h.from <= f.from && h.to >= f.to && h.to - h.from > f.to - f.from))) return NO_SLOTS;
         // 动过的不再标：删的一段和它重叠，或者插在它中间（紧挨着两头插不算）。
         open = open.update({ filter: (from, to) => !hit.some((h) => h.from < to && h.to > from) }).map(tr.changes);
-        fields = fields.map(tr.changes);
+        fields = fields.map((f) => ({ from: tr.changes.mapPos(f.from, -1), to: tr.changes.mapPos(f.to, 1) }));
       }
       for (const e of tr.effects) if (e.is(toSlot)) active = e.value;
     }
     if (tr.docChanged || tr.selection) {
-      const list = spans(fields);
+      const list = fields;
       const { from, to } = tr.state.selection.main;
       const inside = (f: Span | undefined) => !!f && f.from <= from && to <= f.to;
       if (!inside(list[active])) {
@@ -186,15 +182,22 @@ const slotField = StateField.define<Slots>({
 function nextSlot(view: EditorView): boolean {
   if (view.compositionStarted) return false;
   const s = view.state.field(slotField);
-  const next = s.active < 0 ? undefined : spans(s.fields)[s.active + 1];
-  if (!next) return false;
+  if (s.active < 0) return false;
+  const list = s.fields;
+  const next = list[s.active + 1];
+  if (!next) {
+    // 最后一个占位里的 Tab：退出占位、光标放到它后面，不交给列表缩进（不然这一项会被缩成上一项的子项）。
+    const end = list[s.active]?.to ?? view.state.selection.main.head;
+    view.dispatch({ selection: { anchor: end }, effects: setSlots.of([]), userEvent: "select" });
+    return true;
+  }
   view.dispatch({ selection: { anchor: next.from, head: next.to }, effects: toSlot.of(s.active + 1), scrollIntoView: true, userEvent: "select" });
   return true;
 }
 
 /** Esc：退出这组占位（没填的留着当普通字）。 */
 function leaveSlots(view: EditorView): boolean {
-  if (!view.state.field(slotField).fields.size) return false;
+  if (!view.state.field(slotField).fields.length) return false;
   view.dispatch({ effects: setSlots.of([]) });
   return true;
 }
@@ -250,8 +253,13 @@ export const MarkdownEditor = forwardRef<EditorHandle, Props>(({ value, onChange
       if (!v) return false;
       const len = v.state.doc.length;
       const a = Math.max(0, Math.min(from, len));
-      const b = Math.max(a, Math.min(to, len));
-      if (expect != null && v.state.doc.sliceString(a, b) !== expect) return false;
+      let b = Math.max(a, Math.min(to, len));
+      if (expect != null) {
+        if (v.state.doc.sliceString(a, b) !== expect) return false;
+        // 外面按上一次渲染算的位置：这一拍里又多打了几个字（`/re` → `/rev`）就把整个词一起换掉，不留尾巴。
+        const rest = v.state.doc.sliceString(b, Math.min(len, b + 200));
+        b += rest.match(/^\S*/)?.[0].length ?? 0;
+      }
       const { text, slots } = expandPrompt(body);
       const first = slots[0];
       v.dispatch({

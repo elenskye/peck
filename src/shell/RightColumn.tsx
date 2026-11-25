@@ -445,21 +445,27 @@ const Term: React.FC<Props> = ({ project, wide, onWide, busy, term, onTermRun, o
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [size]);
   const workspaceId = project?.workspace.id ?? "";
   const [servers, setServers] = useState<BgInfo[]>([]);
+  // 现在看的是哪个项目：读数回来时对不上就丢掉（切项目时上一个项目的不写进来，点了也就不会停错）。
+  const shownId = useRef(workspaceId);
+  shownId.current = workspaceId;
+  const later = useRef(0);
   // 留着在跑的 dev server（3 秒看一次）。点一下停；要再起，在对话里跟模型说。
   const readServers = useCallback(() => {
     if (!workspaceId || document.visibilityState !== "visible") return;
-    ipc.backgroundList(workspaceId).then((b) => setServers(b.filter((x) => x.kind === "server" && x.status === "running"))).catch(() => {});
+    const id = workspaceId;
+    ipc.backgroundList(id).then((b) => { if (shownId.current === id) setServers(b.filter((x) => x.kind === "server" && x.status === "running")); }).catch(() => {});
   }, [workspaceId]);
   useEffect(() => {
-    if (!workspaceId) { setServers([]); return; }
     setServers([]);
+    if (!workspaceId) return;
     readServers();
     const t = window.setInterval(readServers, 3000);
-    return () => window.clearInterval(t);
+    return () => { window.clearInterval(t); window.clearTimeout(later.current); };
   }, [workspaceId, readServers]);
   const stopServer = async (server: BgInfo) => {
     try { await ipc.backgroundStop(server.id); say(`dev server「${server.name}」停了`); } catch (e) { say(e); }
-    window.setTimeout(readServers, 300);
+    window.clearTimeout(later.current);
+    later.current = window.setTimeout(readServers, 300);
   };
   const running = !!term.runningId;
   const locked = busy;

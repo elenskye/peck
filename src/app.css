@@ -306,7 +306,6 @@ body { overflow: hidden; }
 .term-in.is-off .term-p { color: var(--color-text-3); }
 .term-lock { display: flex; align-items: center; gap: var(--space-3); color: var(--color-text-3); }
 .term-note { flex: none; margin-top: var(--space-4); }
-.term > .pk-mod-head :is(.pk-chip, .pk-btn--sm) { height: 32px; }
 
 /* ---------- 整页的东西（L6）：设置、额度与花费，占中栏和右栏合成的宽栏 ---------- */
 .page-mod { padding-bottom: var(--space-9); }
