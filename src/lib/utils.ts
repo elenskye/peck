@@ -1,4 +1,4 @@
-import type { Permission, RunRecord, StepDescriptor } from "@/lib/types";
+import type { Permission, RunRecord } from "@/lib/types";
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -56,6 +56,12 @@ export function plainLine(markdown: string): string {
     .trim();
 }
 
+/** 报错给人看的字：去掉开头的「Error:」。 */
+export const errorText = (e: unknown): string => String(e instanceof Error ? e.message : e).replace(/^Error:\s*/, "");
+
+/** 按的是回车，而且不是输入法在组字（isComposing、keyCode 229）。 */
+export const plainEnter = (e: { key: string; nativeEvent: KeyboardEvent }): boolean => e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229;
+
 export function shortenHomePath(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
 }
@@ -80,7 +86,7 @@ const ENGINE_DOTS: DotKind[] = ["muse", "grok", "codex", "claude-code"];
 /** 引擎 id → 色点；不认识的是空的。 */
 export const engineDot = (engine: string): DotKind => (ENGINE_DOTS.includes(engine as DotKind) ? (engine as DotKind) : "");
 const NAME: Record<string, string> = { muse: "Muse", grok: "Grok", codex: "Codex", "claude-code": "Claude Code", peck: "Peck" };
-export const agentName = (id: string, fallback?: string) => NAME[id.toLowerCase()] ?? fallback ?? id;
+export const agentName = (id: string) => NAME[id.toLowerCase()] ?? id;
 
 // 模型列表（gateway_models）里每一项的显示名：App 拿到列表时记一下，whoLabel 用。
 const ENTRY_LABELS = new Map<string, string>();
@@ -94,8 +100,11 @@ export function entryDot(id: string): DotKind {
   return engineDot(id.replace(/^cli:/, ""));
 }
 
+/** 模型名收短：去掉 api:、cli: 和供应商前缀（目录里没有的 id 也能显示）。 */
+export const bareName = (id: string) => id.replace(/^(api|cli):/, "").replace(/^[a-z-]+\//, "");
+
 /** 「谁来干」（api:、cli:）的显示名。 */
-export function entryLabel(id: string): string {
+function entryLabel(id: string): string {
   const known = ENTRY_LABELS.get(id);
   if (known) return known;
   if (id.startsWith("api:")) return id.slice(4).split("/").pop() ?? id;
@@ -106,17 +115,6 @@ export function entryLabel(id: string): string {
 /** 一个任务是谁干的：点阵字的短名字。 */
 export function whoLabel(run: Pick<RunRecord, "who">): string {
   return run.who ? entryLabel(run.who).toUpperCase() : "—";
-}
-
-export function whoDots(run: Pick<RunRecord, "who">): DotKind[] {
-  const d = run.who ? entryDot(run.who) : "";
-  return d ? [d] : [];
-}
-
-/** 步骤的名字：Peck Loop、CLI 引擎的任务步骤名就是「Peck · DeepSeek V4 Pro」「Codex」，不再重复。 */
-export function stepName(step: StepDescriptor): string {
-  const name = agentName(step.agentId, step.agentName);
-  return step.title.startsWith(name) ? step.title : `${name} ${step.title}`;
 }
 
 export const PERMISSIONS: Array<{ id: Permission; label: string; name: string; does: string }> = [

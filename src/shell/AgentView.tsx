@@ -4,7 +4,7 @@ import type { AgentEvent, ApprovalDecision, AskQuestion, BoardItem, BoardStatus,
 import { COMPACT_STEP, englishTitle, findCall, foldEvents, liveAgent, groupSpan, groupSummary, spillPath, tokens, usageText, type ApprovalView, type AskView, type BackgroundView, type SkillProposalView, type ThoughtView, type ToolView, type ViewItem } from "@/lib/agentView";
 import { parseDiff } from "@/lib/diff";
 import { ipc, type SkillDraft } from "@/lib/ipc";
-import { cn, copyText, span } from "@/lib/utils";
+import { cn, copyText, plainEnter, span } from "@/lib/utils";
 import { Btn, Field, Icon, Info, ModHead, Twinkle, useNow } from "@/ui";
 import { Md } from "@/shell/Markdown";
 
@@ -430,6 +430,18 @@ const ToolRow: React.FC<{ call: ToolView; now: number; onShowFile: (path: string
   );
 };
 
+/** 任务清单那几步（任务清单、任务板上面都用）。 */
+const PlanSteps: React.FC<{ steps: { text: string; status: string }[] }> = ({ steps }) => (
+  <ul className="checklist sel">
+    {steps.map((s, i) => (
+      <li key={i} className={cn(s.status === "completed" && "is-done", s.status === "in_progress" && "is-doing")}>
+        <span className={cn("pk-check", s.status === "completed" && "is-on")}><Icon name="check" size={12} /></span>
+        <span>{s.text}</span>
+      </li>
+    ))}
+  </ul>
+);
+
 const Plan: React.FC<{ steps: { text: string; status: string }[] }> = ({ steps }) => {
   const [open, setOpen] = useState(true);
   const done = steps.filter((s) => s.status === "completed").length;
@@ -441,16 +453,7 @@ const Plan: React.FC<{ steps: { text: string; status: string }[] }> = ({ steps }
         <span>任务清单{!open && doing ? ` · 在做：${doing.text}` : ""}</span>
         <em className="t-label">{done}/{steps.length}</em>
       </button>
-      {open && (
-        <ul className="checklist sel">
-          {steps.map((s, i) => (
-            <li key={i} className={cn(s.status === "completed" && "is-done", s.status === "in_progress" && "is-doing")}>
-              <span className={cn("pk-check", s.status === "completed" && "is-on")}><Icon name="check" size={12} /></span>
-              <span>{s.text}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {open && <PlanSteps steps={steps} />}
     </div>
   );
 };
@@ -475,16 +478,7 @@ const Board: React.FC<{ plan: PlanStep[] | null; items: BoardItem[]; calls: View
         <span>任务板{!open && brief ? ` · ${brief}` : ""}</span>
         <em className="t-label">{done}/{items.length + steps.length}</em>
       </button>
-      {open && steps.length > 0 && (
-        <ul className="checklist sel">
-          {steps.map((s, i) => (
-            <li key={i} className={cn(s.status === "completed" && "is-done", s.status === "in_progress" && "is-doing")}>
-              <span className={cn("pk-check", s.status === "completed" && "is-on")}><Icon name="check" size={12} /></span>
-              <span>{s.text}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      {open && steps.length > 0 && <PlanSteps steps={steps} />}
       {open && (
         <ul className="board-list">
           {items.map((it) => {
@@ -620,7 +614,7 @@ const AskFields: React.FC<{ q: AskQuestion; freeText: boolean; value: AskPick; k
       <label className="pk-field agent-own">
         <span className="pk-prompt">›</span>
         <input value={value.own} placeholder="写你的回答…" spellCheck={false} autoCorrect="off" autoCapitalize="off"
-          onChange={(e) => own(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) onEnter(); }} />
+          onChange={(e) => own(e.target.value)} onKeyDown={(e) => { if (plainEnter(e)) onEnter(); }} />
       </label>
     ) : null;
   }
@@ -641,7 +635,7 @@ const AskFields: React.FC<{ q: AskQuestion; freeText: boolean; value: AskPick; k
           onClick={(e) => { if (!(e.target instanceof HTMLInputElement)) pickOther(); }}>
           {mark(value.other)}
           <input className="agent-other-in" value={value.own} placeholder="Other：自己写，或者给选的那项补充…" spellCheck={false} autoCorrect="off" autoCapitalize="off"
-            onChange={(e) => own(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) onEnter(); }} />
+            onChange={(e) => own(e.target.value)} onKeyDown={(e) => { if (plainEnter(e)) onEnter(); }} />
           <span className="pk-opt-key" />
         </div>
       )}

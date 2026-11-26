@@ -5,10 +5,10 @@ import { cn, type DotKind } from "@/lib/utils";
 
 export type IconName =
   | "check" | "x" | "play" | "ask" | "bang" | "term" | "file" | "folder" | "shield" | "globe" | "trash" | "pen"
-  | "undo" | "bell" | "send" | "out" | "clock" | "lock" | "plus" | "expand" | "collapse" | "chat" | "triR" | "triD"
-  | "stop" | "gear" | "log" | "oneshot" | "files" | "archive" | "prompt";
+  | "undo" | "send" | "clock" | "lock" | "plus" | "expand" | "collapse" | "chat" | "triR" | "triD"
+  | "stop" | "gear" | "oneshot" | "files" | "archive" | "prompt";
 
-export const Icon: React.FC<{ name: IconName; size?: 12 | 16 | 24; className?: string }> = ({ name, size = 16, className }) => (
+export const Icon: React.FC<{ name: IconName; size?: 12 | 16; className?: string }> = ({ name, size = 16, className }) => (
   <i aria-hidden="true" className={cn("pk-i", `pk-i--${name}`, size !== 16 && `pk-i--${size}`, className)} />
 );
 
@@ -41,13 +41,11 @@ type BtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   sm?: boolean;
   square?: boolean;
   icon?: IconName;
-  iconEnd?: IconName;
 };
-export const Btn: React.FC<BtnProps> = ({ v, sm, square, icon, iconEnd, className, children, ...rest }) => (
+export const Btn: React.FC<BtnProps> = ({ v, sm, square, icon, className, children, ...rest }) => (
   <button type="button" {...rest} className={cn("pk-btn", v && `pk-btn--${v}`, sm && "pk-btn--sm", square && "pk-btn--square", className)}>
     {icon && <Icon name={icon} size={sm ? 12 : 16} />}
     {children}
-    {iconEnd && <Icon name={iconEnd} size={sm ? 12 : 16} />}
   </button>
 );
 
@@ -138,7 +136,7 @@ function screenBox(el: Element): Box {
   return { left: r.left * z, top: r.top * z, right: r.right * z, bottom: r.bottom * z, width: r.width * z, height: r.height * z };
 }
 
-export interface FloatPlace {
+interface FloatPlace {
   /** 先往哪边弹（放不下会翻）。默认往下。 */
   side?: "top" | "bottom";
   /** 左边对齐锚点的左边（start，默认）还是右边对齐右边（end）。 */
@@ -251,13 +249,12 @@ export function Float({ anchor, point, side, align, gap, matchWidth, inset, floa
 }
 
 /** 选项片 + 弹出的菜单（K10）：默认往上弹，放不下自己翻；再点一下收起，点外面也收起。 */
-export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLabel, title, caret = true }: {
+export function MenuChip({ label, dot, children, up = true, disabled, ariaLabel, title, caret = true }: {
   label: React.ReactNode;
   /** 悬停看全名（字是元素不是字符串时要给）。 */
   title?: string;
   dot?: DotKind;
   children: (close: () => void) => React.ReactNode;
-  sm?: boolean;
   up?: boolean;
   disabled?: boolean;
   ariaLabel: string;
@@ -268,7 +265,7 @@ export function MenuChip({ label, dot, children, sm, up = true, disabled, ariaLa
   const ref = useRef<HTMLSpanElement>(null);
   return (
     <span className="menu-anchor" ref={ref}>
-      <button type="button" disabled={disabled} className={cn("pk-chip", sm && "pk-chip--sm", open && "is-on")} aria-haspopup="menu" aria-expanded={open} aria-label={ariaLabel} title={title ?? (typeof label === "string" ? label : undefined)} onClick={() => setOpen((v) => !v)}>
+      <button type="button" disabled={disabled} className={cn("pk-chip pk-chip--sm", open && "is-on")} aria-haspopup="menu" aria-expanded={open} aria-label={ariaLabel} title={title ?? (typeof label === "string" ? label : undefined)} onClick={() => setOpen((v) => !v)}>
         {dot !== undefined && <Dot kind={dot} />}
         <span className="pk-chip-label">{label}</span>
         {caret && <Icon name="triD" size={12} />}
@@ -377,7 +374,7 @@ export const Lightbox: React.FC<{ src: string; alt: string; onClose: () => void 
 
 /** 能打字、也能从下拉里挑的输入框（设置里的编辑器）：下拉是 Peck 的菜单，不用系统的 datalist。
  *  `emptyLabel` 给了就在最前面多一项「空着」（比如「系统默认」）。 */
-export const ComboField: React.FC<{ value: string; options: string[]; onChange: (v: string) => void; label: string; placeholder?: string; width?: number; emptyLabel?: string }> = ({ value, options, onChange, label, placeholder, width, emptyLabel }) => {
+export const ComboField: React.FC<{ value: string; options: string[]; onChange: (v: string) => void; label: string; placeholder?: string; emptyLabel?: string }> = ({ value, options, onChange, label, placeholder, emptyLabel }) => {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const ref = useRef<HTMLLabelElement>(null);
@@ -402,7 +399,7 @@ export const ComboField: React.FC<{ value: string; options: string[]; onChange: 
   };
   return (
     <>
-      <label ref={ref} className="pk-field combo-field" style={width ? { width } : undefined}>
+      <label ref={ref} className="pk-field combo-field">
         <span className="pk-prompt">›</span>
         <input role="combobox" aria-label={label} aria-expanded={open} aria-autocomplete="list" placeholder={placeholder} value={value}
           spellCheck={false} autoComplete="off" autoCorrect="off" autoCapitalize="off"
@@ -442,6 +439,11 @@ export const Row: React.FC<{ name: React.ReactNode; desc?: React.ReactNode; info
     </div>
     <div className="set-ctl">{children}</div>
   </div>
+);
+
+/** MCP 服务器的命令：写命令名和参数，悬停看全路径。 */
+export const CmdLine: React.FC<{ command: string; args: string[] }> = ({ command, args }) => (
+  <span className="t-code set-cmd" title={[command, ...args].join(" ")}>{[command.split("/").pop(), ...args].join(" ")}</span>
 );
 
 /** 每秒跳一次的当前时间（计时用）；不在跑时不跳。 */

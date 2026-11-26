@@ -1,4 +1,4 @@
-// `?mock` 的假数据：项目列表、每个项目最近几次任务（在跑的、做完的、失败的、接力的、归档的），每次带一段事件日志。
+// `?mock` 的假数据：项目列表、每个项目最近几次任务（在跑的、做完的、失败的、归档的），每次带一段事件日志。
 // 只在浏览器里用，刷新重置。用词照 docs/design.md。
 import type { ApiStatus } from "@/lib/api";
 import type { AgentCaps, AgentEvent, FileDiff, ToolKind } from "@/lib/agentEvents";
@@ -26,10 +26,10 @@ export const MOCK_SESSIONS: Session[] = [
   { id: "task-12", workspaceId: "ws-notebook", title: "笔记列表加搜索框", createdAt: NOW - 6 * MIN, updatedAt: NOW - 20_000 },
   { id: "task-11", workspaceId: "ws-notebook", title: "日期统一成 YYYY-MM-DD", createdAt: NOW - 3 * HOUR, updatedAt: NOW - 3 * HOUR + 4 * MIN },
   { id: "task-10", workspaceId: "ws-notebook", title: "导出 Markdown 时保留标签", createdAt: NOW - 1 * DAY, updatedAt: NOW - 1 * DAY + 9 * MIN },
-  // peck：一个接力做完，一个 CLI 失败
+  // peck：一个 API 做完，一个 CLI 失败
   { id: "task-9", workspaceId: "ws-peck", title: "设置面板加通知开关", createdAt: NOW - 1 * HOUR - 30 * MIN, updatedAt: NOW - 1 * HOUR },
   { id: "task-8", workspaceId: "ws-peck", title: "菜单栏图标在跑时变样", createdAt: NOW - 5 * HOUR, updatedAt: NOW - 5 * HOUR + 2 * MIN },
-  // edge-gateway：一个接力做完
+  // edge-gateway：一个 CLI 做完
   { id: "task-7", workspaceId: "ws-gateway", title: "限流中间件按路由配置", createdAt: NOW - 2 * DAY, updatedAt: NOW - 2 * DAY + 11 * MIN },
   // edge-gateway：一个归档了的任务（左栏不列，设置 → ARCHIVE 里看）
   { id: "task-6", workspaceId: "ws-gateway", title: "健康检查接口带上版本号", createdAt: NOW - 6 * DAY, updatedAt: NOW - 6 * DAY + 4 * MIN, archivedAt: NOW - 3 * DAY },

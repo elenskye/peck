@@ -15,7 +15,7 @@ const MAX_CHARS = 200_000;
 const ext = (path: string) => (path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "");
 
 /** 这个文件用哪种语言（认不出为空）。 */
-export function languageOf(path: string): string | null {
+function languageOf(path: string): string | null {
   const e = ext(path);
   const map: Record<string, string> = {
     ts: "ts", mts: "ts", cts: "ts", tsx: "tsx", js: "js", mjs: "js", cjs: "js", jsx: "jsx",

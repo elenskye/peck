@@ -1,4 +1,4 @@
-// 额度快用完时提醒换引擎（v0.9 Phase 14 B3）：发任务前看这次要用到的 CLI（实施、写规范、审查）的订阅额度
+// 额度快用完时提醒换引擎（v0.9 Phase 14 B3）：发任务前看这次要用到的 CLI 的订阅额度
 // （QUOTA 页读到的 5 小时 / 每周窗口），超过阈值就在输入框上方提示一行，能一键换成额度还够的另一家。
 // 不自动换、不拦着发；额度读不到的不提示。
 import type { ModelEntry } from "@/lib/agentEvents";
@@ -43,15 +43,13 @@ export function resetIn(at: number): string {
 /** 一家的窗口读数：已用百分比读得到的那几个。快照是旧的、窗口已经过了重置时间的当清零了（v1.2.0：Codex 没开着时
  *  Peck 不去读，4 个多小时前那份「5 小时窗口 100%」一直在提醒换引擎）。 */
 function windows(id: string, cards: ClientCard[], now = Date.now()): Array<{ label: string; pct: number }> {
-  const engine = id.startsWith("cli:") ? id.slice(4) : null;
-  const card = engine ? cards.find((c) => c.client === CLIENT_OF[engine]) : undefined;
-  return (card?.windows ?? [])
+  return (cardOf(id, cards)?.windows ?? [])
     .filter((w) => w.usedPercent != null)
     .map((w) => ({ label: w.label, pct: w.resetAtMs != null && w.resetAtMs <= now ? 0 : w.usedPercent! }));
 }
 
 /** 这一家超过阈值的那个窗口（用得最多的）；读不到或没超过是 null。 */
-export function hotWindow(id: string, cards: ClientCard[], threshold: number): { label: string; pct: number } | null {
+function hotWindow(id: string, cards: ClientCard[], threshold: number): { label: string; pct: number } | null {
   const hot = windows(id, cards).filter((w) => w.pct >= threshold).sort((a, b) => b.pct - a.pct);
   return hot[0] ?? null;
 }
@@ -72,7 +70,7 @@ export interface QuotaHint {
   to: ModelEntry | null;
 }
 
-/** 这次要用到的 CLI 里头一个快用完的（实施的先看）。`threshold` 空着是关了提醒。 */
+/** 这次要用到的 CLI 里头一个快用完的。`threshold` 空着是关了提醒。 */
 export function quotaHint(involved: string[], entries: ModelEntry[], cards: ClientCard[], threshold: number | null): QuotaHint | null {
   if (threshold == null) return null;
   for (const id of involved) {
@@ -91,7 +89,7 @@ export function quotaHint(involved: string[], entries: ModelEntry[], cards: Clie
 }
 
 /** 这次发任务会用到哪几家 CLI：只有单干的 CLI 有订阅额度（PLOOP 只用 API 模型）。 */
-export function involvedIds(_settings: AppSettings, chosen: string | null): string[] {
+export function involvedIds(chosen: string | null): string[] {
   return chosen?.startsWith("cli:") ? [chosen] : [];
 }
 

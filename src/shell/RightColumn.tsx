@@ -5,7 +5,7 @@ import { foldEvents } from "@/lib/agentView";
 import { ipc, type BgInfo } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
 import type { FileChangeItem, FileListing, FilePreview, IgnoredEntry, ProjectOverview, RunRecord } from "@/lib/types";
-import { cn, copyText, fileSize, runState, shortenHomePath, span } from "@/lib/utils";
+import { cn, copyText, errorText, fileSize, runState, shortenHomePath, span } from "@/lib/utils";
 import { Btn, Icon, Info, ModHead, Twinkle, type IconName } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { parseDiff } from "@/lib/diff";
@@ -271,7 +271,7 @@ const OfficePreview: React.FC<{ workspaceId: string; path: string; say: (m: unkn
   useEffect(() => {
     let stop = false;
     setImg(null); setErr("");
-    void ipc.filesQuicklook(workspaceId, path).then((u) => { if (!stop) setImg(u); }).catch((e) => { if (!stop) setErr(String(e instanceof Error ? e.message : e).replace(/^Error:\s*/, "")); });
+    void ipc.filesQuicklook(workspaceId, path).then((u) => { if (!stop) setImg(u); }).catch((e) => { if (!stop) setErr(errorText(e)); });
     return () => { stop = true; };
   }, [workspaceId, path]);
   return (

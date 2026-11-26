@@ -209,8 +209,7 @@ export const ipc = {
     if (isMockMode()) return mockIpc.termState(workspaceId);
     return invoke<TermState>("term_state", { workspaceId });
   },
-  /** 菜单栏小图标跟着变。浏览器里没有菜单栏，不做事。 */
-  /** 菜单栏图标的状态；`count` 是在跑几个（两个以上图标旁边写个数，v0.7）。 */
+  /** 菜单栏图标的状态；`count` 是在跑几个（两个以上图标旁边写个数，v0.7）。浏览器里没有菜单栏，不做事。 */
   async setActivity(activity: Activity, count = 0): Promise<void> {
     if (isMockMode()) return;
     return invoke<void>("shell_set_activity", { activity, count });
@@ -221,12 +220,12 @@ export const ipc = {
   },
 
   // ── Model Gateway（v0.5 契约，src-tauri/src/gateway/）──
-  /** 模型列表：API 模型（配了 Key 的能用）、CLI 引擎（检测到的能用）、接力。 */
   /** 一家 CLI 能选的模型（从 CLI 自己那里读，存着；refresh 才重读）。 */
   async cliModels(engine: string, refresh = false): Promise<CliModels> {
-    if (isMockMode()) return mockCliModels(engine);
+    if (isMockMode()) return mockIpc.cliModels(engine);
     return invoke<CliModels>("cli_models", { engine, refresh });
   },
+  /** 模型列表：API 模型（配了 Key 的能用）、CLI 引擎（检测到的能用）。 */
   async gatewayModels(): Promise<ModelEntry[]> {
     if (isMockMode()) return mockIpc.gatewayModels();
     return invoke<ModelEntry[]>("gateway_models");
@@ -448,12 +447,12 @@ export const ipc = {
     if (isMockMode()) return mockIpc.harnessImageRead(path);
     return invoke<string>("harness_image_read", { path });
   },
-  /** 用编辑器（app 空着用系统默认）或访达打开项目里的文件（v0.8）。 */
   /** 用系统浏览器打开一个网址（v1.1.7，读网页那一步）。只认 http / https。 */
   async openUrl(url: string): Promise<void> {
     if (isMockMode()) { window.open(url, "_blank", "noopener"); return; }
     return invoke<void>("open_url", { url });
   },
+  /** 用编辑器（app 空着用系统默认）或访达打开项目里的文件（v0.8）。 */
   async openPath(workspaceId: string, path: string, how: "editor" | "finder", app?: string): Promise<void> {
     if (isMockMode()) return mockIpc.openPath(workspaceId, path, how, app);
     return invoke<void>("open_path", { workspaceId, path, how, app: app || null });
@@ -733,18 +732,6 @@ export interface OneshotArgs {
 /** CLI 能选的一个模型（`gateway/cli_models.rs`）。 */
 export interface CliModel { id: string; label: string; efforts: string[]; defaultEffort: string | null; isDefault: boolean }
 export interface CliModels { engine: string; models: CliModel[]; source: "cli" | "builtin" | "mock"; readAt: number | null; error: string | null }
-
-/** 浏览器演示：照夹具里录到的。 */
-function mockCliModels(engine: string): Promise<CliModels> {
-  const m = (id: string, efforts: string[], isDefault = false): CliModel => ({ id, label: id, efforts, defaultEffort: null, isDefault });
-  const list: Record<string, CliModel[]> = {
-    "claude-code": [["claude-opus-5-5", "Opus 5.5"], ["claude-fable-5-2", "Fable 5.2"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"], ["claude-opus-4-8", "Opus 4.8"]].map(([id, label], i) => ({ ...m(id, ["low", "medium", "high", "xhigh", "max"], i === 0), label })),
-    codex: [m("gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], true), m("gpt-6-luna", ["low", "medium", "high"])],
-    muse: [m("muse-wonder-1.0", ["minimal", "low", "medium", "high", "max"], true), m("muse-ember-1.0", ["low", "medium", "high"]), m("muse-spark-1.3", ["low", "medium", "high"])],
-    grok: [m("grok-4.6", ["medium", "high", "xhigh"], true), m("grok-4.5", ["medium", "high", "xhigh"])],
-  };
-  return Promise.resolve({ engine, models: list[engine] ?? [], source: "mock", readAt: Date.now(), error: null });
-}
 
 /** 「这个项目总是允许」的一条。 */
 export interface AllowRule {

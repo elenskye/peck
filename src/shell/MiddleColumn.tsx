@@ -9,7 +9,7 @@ import type { QuotaHint } from "@/lib/quota";
 import type { ClientCard } from "@/lib/usage";
 import { QuotaRing } from "@/shell/QuotaRing";
 import type { Permission, ProjectOverview, RunRecord, TaskBrief } from "@/lib/types";
-import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, runState, span, timer, whoDots, whoLabel, shortenHomePath } from "@/lib/utils";
+import { PERMISSIONS, ago, clock, cn, engineDot, entryDot, runState, span, timer, whoLabel, shortenHomePath } from "@/lib/utils";
 import { Blocks, Btn, Dot, DotCheck, Float, Icon, Info, Lightbox, MenuChip, ModHead, Seg, useNow } from "@/ui";
 import { AgentView } from "@/shell/AgentView";
 import { Md } from "@/shell/Markdown";
@@ -73,7 +73,7 @@ interface Props {
 }
 
 /** 额度提醒那一行（v0.9 B3）：「这次换」只换下一次发出去的；「以后都换」改 AGENTS。 */
-export interface QuotaBar {
+interface QuotaBar {
   hint: QuotaHint;
   /** 点过「这次换」：换成了谁。 */
   swapped: ModelEntry | null;
@@ -715,14 +715,14 @@ const Composer: React.FC<Props & {
         <span className="pk-prompt">›</span>
         <MarkdownEditor ref={editorRef} value={draft} onChange={onDraft} onSubmit={submit} onKey={onKey} onCaret={setCaret} placeholder={placeholder} disabled={locked} ariaLabel="一句话说要做什么" />
       </div>
-      {/* 谁来干在左栏 AGENTS 里选；这里一行短的写现在是谁（用着预设就写预设名），悬停看全的，点它跳过去。 */}
+      {/* 谁来干在左栏 AGENTS 里选；这里一行短的写现在是谁，悬停看全的，点它跳过去。 */}
       <button type="button" className="composer-who" title={`${whoText(who, settings, entries)}\n在左栏 AGENTS 里换`} onClick={onShowAgents}>
         <Dot kind={who ? entryDot(who.id) : ""} />
         <span>{whoShort(who, settings, entries)}</span>
       </button>
       <div className="composer-row">
         <div className="composer-tools">
-          <MenuChip sm up caret={false} disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label={<Icon name="plus" size={12} />}>
+          <MenuChip up caret={false} disabled={busy} ariaLabel="附文档或文件夹" title="附文档或文件夹" label={<Icon name="plus" size={12} />}>
             {(close) => (
               <>
                 <button type="button" role="menuitem" className="pk-menu-item" onClick={() => { void pickUploadFiles(); close(); }}>
@@ -863,14 +863,14 @@ const TaskModule: React.FC<{
   const elapsed = (run.finishedAt ?? now) - run.startedAt;
   // 没做完的那一句：同一个错过程里已经画成红条了，就不再画一遍（v1.1.9 验收）。
   const failNote = run.summary && !view?.items.some((i) => i.kind === "error" && run.summary!.includes(i.text)) ? run.summary : null;
-  const dots = whoDots(run);
+  const dot = run.who ? entryDot(run.who) : "";
 
   return (
     <section className={cn("pk-mod task", running && "pk-mod--run", state === "failed" && "pk-mod--err", latest && "task--latest")} aria-label={`任务 ${run.number}`}>
       {running && <span className="pk-scan pk-scan--loop" />}
       <ModHead
         label="TASK"
-        note={<>{dots.map((d) => <Dot key={d} kind={d} />)} {whoLabel(run)}{run.permission ? ` · ${run.permission.toUpperCase()}` : ""}</>}
+        note={<>{dot && <Dot kind={dot} />} {whoLabel(run)}{run.permission ? ` · ${run.permission.toUpperCase()}` : ""}</>}
         count={plan && plan.length ? `${donePlan}/${plan.length}` : undefined}
       >
         {onShow && (

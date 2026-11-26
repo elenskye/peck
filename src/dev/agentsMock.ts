@@ -1,5 +1,5 @@
 // `?mock` 里的 PLOOP 子代理（v1.1.2）：主角色一次派两个 explorer（同时跑，事件带 subagentId，挂在派的那一步下面），
-// 一批做完报告一起回来；派的那一步等子代理做完才算完。还有开头那条成员名单（LOG 里看）。
+// 一批做完报告一起回来；派的那一步等子代理做完才算完。还有开头那条成员名单。
 // 任务板（v1.1.3）：派 worker、member 划文件，不重叠的同时跑、重叠的排队，member 再派自己的 explorer；板上进度 Peck 填。
 import type { BoardItem, ToolKind } from "@/lib/agentEvents";
 import type { ReplayEvent } from "@/dev/gatewayMock";

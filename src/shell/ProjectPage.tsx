@@ -3,7 +3,7 @@ import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, type AllowRule, type MemoryNote, type ProjectMcpView, type SkillRow, type SkillVersion, type ToolHint } from "@/lib/ipc";
 import type { Permission, ProjectOverview, ProjectSettings } from "@/lib/types";
 import { ago, cn, PERMISSIONS, ruleWord, shortenHomePath } from "@/lib/utils";
-import { Btn, Field, Icon, Info, ModHead, Row, Seg, Switch } from "@/ui";
+import { Btn, CmdLine, Field, Icon, Info, ModHead, Row, Seg, Switch } from "@/ui";
 import { WhoPicker, pickable } from "@/shell/ModelPicker";
 import { ProjectPluginsSection } from "@/shell/Plugins";
 import { MemoryModal, memoryCount } from "@/shell/Memory";
@@ -217,7 +217,7 @@ const ProjectMcp: React.FC<{
         {view?.rows.map((r) => (
           <div key={`${r.source}-${r.name}`} className="set-block">
             <Row name={<span className="t-code">{r.name}</span>} off={!r.on}
-              desc={<>{r.source === "project" ? ".mcp.json" : "设置里的"}{r.overridden ? " · 被 .mcp.json 里同名的盖过" : r.offInSettings ? " · 设置里关着" : ""}{r.allowed ? " · 总是允许过" : ""} · <span className="t-code set-cmd" title={[r.command, ...r.args].join(" ")}>{[r.command.split("/").pop(), ...r.args].join(" ")}</span></>}>
+              desc={<>{r.source === "project" ? ".mcp.json" : "设置里的"}{r.overridden ? " · 被 .mcp.json 里同名的盖过" : r.offInSettings ? " · 设置里关着" : ""}{r.allowed ? " · 总是允许过" : ""} · <CmdLine command={r.command} args={r.args} /></>}>
               {!r.overridden && !r.offInSettings && <Switch label={`${r.name} 在这个项目里开着`} on={r.on} disabled={missing || saving} onChange={(on) => void toggle(r.name, on)} />}
               {!r.overridden && <Btn sm disabled={missing || testing !== null} onClick={() => void test(r.name)}>{testing === r.name ? "在起…" : "TEST"}</Btn>}
             </Row>

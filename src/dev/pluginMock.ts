@@ -12,7 +12,7 @@ const builtin = (name: string, title: string, description: string, skill: string
   mcp: [],
 });
 
-export const MOCK_BUILTIN: PluginInfo[] = [
+const MOCK_BUILTIN: PluginInfo[] = [
   builtin("peck-snapshots", "Snapshots", "撤销、回退某次任务的改动。Peck 在每个任务开始前、结束后各存一份快照；跟模型说一声「撤掉刚才的改动」，它列出快照、跟你确认，再放回去。",
     "站主要撤销、反悔、回退某次任务的改动时用：列出任务快照，确认后按任务号放回去",
     [["restore_snapshot", "列出这个项目最近的任务快照；按任务号回到它开始前（撤销）或结束后（重做）。动之前弹高危卡片，批了才动。"]]),

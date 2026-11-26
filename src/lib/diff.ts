@@ -1,7 +1,7 @@
 // 统一格式的 Diff 拆成一行一行（FILES 预览标这次加的行、Skill 提议的替换都用）。
 
 /** 一行：块头、加、删、上下文；带新旧行号。 */
-export interface DiffLine { type: "head" | "hunk" | "add" | "del" | "ctx"; text: string; oldNo?: number; newNo?: number }
+interface DiffLine { type: "head" | "hunk" | "add" | "del" | "ctx"; text: string; oldNo?: number; newNo?: number }
 
 export function parseDiff(raw: string): DiffLine[] {
   const out: DiffLine[] = [];

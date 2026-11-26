@@ -90,7 +90,7 @@ export interface QuotaWindow {
 
 export type NoticeLevel = "info" | "warn";
 
-/** 成员名单上的一个（v1.1.2，LOG 里列）：`main` 是主角色，别的是子代理的类型。 */
+/** 成员名单上的一个（v1.1.2）：`main` 是主角色，别的是子代理的类型。 */
 export interface RosterMember {
   role: string;
   model: string;
@@ -398,7 +398,7 @@ export interface GatewayRunArgs {
   /** 模型列表里的 id：cli:codex、cli:claude-code、cli:muse、cli:grok。 */
   who: string;
   /** plan | edit | auto，不填是 edit。 */
-  permission?: "plan" | "edit" | "auto";
+  permission?: PermissionLevel;
   /** 引擎里的模型名（不填用引擎默认）。 */
   model?: string;
   effort?: string;

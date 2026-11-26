@@ -6,23 +6,21 @@ import type { ThemeChoice } from "@/lib/theme";
 import type { CliAccount, CliAccountStatus, CliLoginState, EngineAccounts, GatewayConfig, ModelEntry } from "@/lib/agentEvents";
 import type { Permission, ProjectOverview } from "@/lib/types";
 import { PERMISSIONS, ago, cn, copyText, engineDot, plainLine, ruleWord, shortenHomePath, versionNumber } from "@/lib/utils";
-import { Btn, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, SetHead, Switch } from "@/ui";
+import { Btn, CmdLine, ComboField, Dot, Field, Icon, MenuChip, ModHead, Row, Seg, SetHead, Switch } from "@/ui";
 import { ModelChip } from "@/shell/AgentsPanel";
 import { EffortPicker, defaultEffort, ploopMain, ploopable } from "@/shell/ModelPicker";
 import { PluginsSettings } from "@/shell/Plugins";
 import { MemorySettings } from "@/shell/Memory";
 
 /** 设置的分组（v0.10 Refine：只写英文；DEV、NOTIFY、LIMIT 并成 GENERAL，新加 AGENTS、QUOTA；v1.1.4 加 MEMORY）。 */
-export const SETTINGS_NAV = ["GENERAL", "PROVIDERS", "AGENTS", "MEMORY", "QUOTA", "ACCESS", "CLI", "LOOK", "PLUGINS", "ARCHIVE", "KEYS"] as const;
-export type SettingsSection = (typeof SETTINGS_NAV)[number];
+const SETTINGS_NAV = ["GENERAL", "PROVIDERS", "AGENTS", "MEMORY", "QUOTA", "ACCESS", "CLI", "LOOK", "PLUGINS", "ARCHIVE", "KEYS"] as const;
+type SettingsSection = (typeof SETTINGS_NAV)[number];
 
 interface Props {
   settings: AppSettings;
   onSettings: (patch: Partial<AppSettings>) => void;
-  /** 模型列表（AGENTS 里编辑预设用）。 */
+  /** 模型列表（AGENTS 里选模型用）。 */
   entries: ModelEntry[];
-  /** 打开时在哪一组（AGENTS 面板里「管理预设」直接到 AGENTS）。 */
-  initial?: SettingsSection;
   /** 重新检测 CLI（重读模型列表）。 */
   onRefreshAgents: () => Promise<void>;
   apiStatus: ApiStatus | null;
@@ -46,7 +44,7 @@ const Tag: React.FC<{ v?: "ok" | "wait" | "high"; children: React.ReactNode }> =
 /** 设置：一个面板，占中栏和右栏合成的宽栏；改了马上生效（Key、Vertex、价格这类要点 SAVE）。
  *  v0.10 Refine（站主 11-17）：分组只写英文、不放 ⓘ 和说明文字。 */
 export const SettingsPage: React.FC<Props> = (props) => {
-  const [section, setSection] = useState<SettingsSection>(props.initial ?? "GENERAL");
+  const [section, setSection] = useState<SettingsSection>("GENERAL");
   return (
     <section className="col page" aria-label="设置">
       <div className="pk-mod col-grow page-mod is-big">
@@ -383,26 +381,24 @@ const AccountRow: React.FC<{ engine: string; engineLabel: string; note: string; 
   return (
     <div className="set-block">
       {row}
-      {login && (
-        <div className="set-login">
-          {login.url ? (
-            <div className="set-inline">
-              <span className="t-code set-cmd" title={login.url}>{login.url}</span>
-              <Btn sm v="primary" onClick={() => copy(login.url!)}>COPY</Btn>
-              {login.running && <Btn sm onClick={() => void cancel()}>CANCEL</Btn>}
-            </div>
-          ) : login.running ? <p className="hint">在等登录链接……</p> : null}
-          {login.running && <p className="hint">把链接复制到你要用的浏览器（或另一个浏览器用户、隐身窗口）里打开、登录，登好以后这里自动验一次。{engine === "codex" ? "Codex 要输下面输出里的一次性代码。" : ""}</p>}
-          {login.output.trim() && <pre className="t-code set-out">{login.output.trim().split("\n").slice(-8).join("\n")}</pre>}
-          {login.running && engine === "claude-code" && (
-            <div className="set-inline">
-              <Field aria-label="粘回登录页给的 code" placeholder="登录页要你粘 code 时贴在这里（多半用不上）" value={code} onChange={(e) => setCode(e.target.value)} />
-              <Btn sm disabled={!code.trim()} onClick={() => void run(async () => { await ipc.cliAccountLoginInput(engine, account.id, code); setCode(""); })}>SEND</Btn>
-            </div>
-          )}
-          {!login.running && login.ok != null && <p className="hint">{login.ok ? "登录命令结束了。" : "登录没成功：看看上面的输出，再点一次 LOGIN。"}</p>}
-        </div>
-      )}
+      <div className="set-login">
+        {login.url ? (
+          <div className="set-inline">
+            <span className="t-code set-cmd" title={login.url}>{login.url}</span>
+            <Btn sm v="primary" onClick={() => copy(login.url!)}>COPY</Btn>
+            {login.running && <Btn sm onClick={() => void cancel()}>CANCEL</Btn>}
+          </div>
+        ) : login.running ? <p className="hint">在等登录链接……</p> : null}
+        {login.running && <p className="hint">把链接复制到你要用的浏览器（或另一个浏览器用户、隐身窗口）里打开、登录，登好以后这里自动验一次。{engine === "codex" ? "Codex 要输下面输出里的一次性代码。" : ""}</p>}
+        {login.output.trim() && <pre className="t-code set-out">{login.output.trim().split("\n").slice(-8).join("\n")}</pre>}
+        {login.running && engine === "claude-code" && (
+          <div className="set-inline">
+            <Field aria-label="粘回登录页给的 code" placeholder="登录页要你粘 code 时贴在这里（多半用不上）" value={code} onChange={(e) => setCode(e.target.value)} />
+            <Btn sm disabled={!code.trim()} onClick={() => void run(async () => { await ipc.cliAccountLoginInput(engine, account.id, code); setCode(""); })}>SEND</Btn>
+          </div>
+        )}
+        {!login.running && login.ok != null && <p className="hint">{login.ok ? "登录命令结束了。" : "登录没成功：看看上面的输出，再点一次 LOGIN。"}</p>}
+      </div>
     </div>
   );
 };
@@ -531,7 +527,7 @@ const Mcp: React.FC<Props> = ({ say }) => {
           return (
             <div key={server.name} className="set-block">
               <Row name={<span className="t-code">{server.name}</span>} off={!server.enabled}
-                desc={<span className="t-code set-cmd" title={[server.command, ...server.args].join(" ")}>{[server.command.split("/").pop(), ...server.args].join(" ")}</span>}>
+                desc={<CmdLine command={server.command} args={server.args} />}>
                 <Switch label={`${server.name} 开着`} on={server.enabled} disabled={busy} onChange={(enabled) => void save(list.map((x, j) => (j === i ? { ...x, enabled } : x)), enabled ? `${server.name} 开了` : `${server.name} 关了`)} />
                 <Btn sm disabled={busy} onClick={() => void test(server)}>TEST</Btn>
                 <Btn sm disabled={busy} onClick={() => edit(server, i)}>EDIT</Btn>
@@ -730,7 +726,7 @@ const QuotaSettings: React.FC<{ say: Props["say"] }> = ({ say }) => {
           <Row name="模型名"><Field aria-label="模型名" placeholder="gpt-6-luna" value={draft.model} onChange={(e) => set({ model: e.target.value })} /></Row>
           <Row name="显示名"><Field aria-label="显示名" placeholder="GPT-6 Luna" value={draft.label} onChange={(e) => set({ label: e.target.value })} /></Row>
           <Row name="哪家">
-            <MenuChip sm up={false} ariaLabel="哪家" label={(book.vendors.find((v) => v.id === draft.vendor)?.label ?? "Other").toUpperCase()}>
+            <MenuChip up={false} ariaLabel="哪家" label={(book.vendors.find((v) => v.id === draft.vendor)?.label ?? "Other").toUpperCase()}>
               {(close) => [...book.vendors, { id: "other", label: "Other" }].map((v) => (
                 <button key={v.id} type="button" role="menuitem" className={cn("pk-menu-item", v.id === draft.vendor && "is-on")} onClick={() => { set({ vendor: v.id, currency: v.id === "deepseek" || v.id === "aliyun" ? "CNY" : draft.currency }); close(); }}>
                   <Dot kind="" /><b>{v.label.toUpperCase()}</b><span />

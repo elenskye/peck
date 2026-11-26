@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ipc, type PromptItem } from "@/lib/ipc";
 import { PROMPT_TITLE_MAX, promptText, tidyPrompt } from "@/lib/prompts";
-import { ago, cn, copyText } from "@/lib/utils";
+import { ago, cn, copyText, plainEnter } from "@/lib/utils";
 import { Btn, Field, Icon, ModHead, Modal, Twinkle } from "@/ui";
 import { GrowText } from "@/shell/Memory";
 
@@ -125,7 +125,7 @@ const PromptModal: React.FC<{
       <div className="prompt-form" ref={formRef}>
         <Field aria-label="标题" placeholder="标题" value={title} maxLength={PROMPT_TITLE_MAX} disabled={busy}
           onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); if (e.metaKey || e.ctrlKey) save(); else bodyBox()?.focus(); } }} />
+          onKeyDown={(e) => { if (plainEnter(e)) { e.preventDefault(); if (e.metaKey || e.ctrlKey) save(); else bodyBox()?.focus(); } }} />
         <GrowText className="prompt-body-edit" label="正文" placeholder="正文" value={body} disabled={busy} onChange={setBody} onSubmit={save} />
         <div className="memo-foot">
           <span className="memo-meta">{item ? `${ago(item.createdAt)} 建 · ${ago(item.updatedAt)} 改` : ""}</span>

@@ -1,7 +1,7 @@
 // 这一句附了什么（v1.1.11）：后端把附的图、文档、文件夹的路径写在这一句后面（`harness/run.rs` 的
 // `attachment_note`、`uploads_note`，模型照它去读）。对话里不显示这段话，拆出来画成小图和小片，像 Claude Desktop。
 
-export interface Attached {
+interface Attached {
   /** 去掉附件那几段的原话。 */
   text: string;
   images: string[];

@@ -14,7 +14,7 @@ import {
 import { MOCK_ENGINE_REPLAYS, MOCK_MODEL_ENTRIES, type ReplayEvent } from "@/dev/gatewayMock";
 import { MOCK_SPILLS, PECK_CAPS, oneshotDemo, peckDemo, type Round } from "@/dev/peckMock";
 import type { AgentEvent, CliAccountStatus, CliLoginState, Control, EngineAccounts, FileDiff, GatewayConfig, GatewaySettings, GatewayRunArgs, ModelEntry, TurnEndReason } from "@/lib/agentEvents";
-import type { AllowRule, BgInfo, CompactArgs, HarnessRunArgs, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, PromptItem, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint } from "@/lib/ipc";
+import type { AllowRule, BgInfo, CliModel, CliModels, CompactArgs, HarnessRunArgs, ImageInput, McpServerConfig, McpToolInfo, MemoryGroup, MemoryNote, PluginList, Prepared, PriceBook, PriceRefresh, PriceRow, ProjectMcpView, ProjectPlugins, PromptItem, SkillDraft, SkillRow, SkillVersion, SlashList, OneshotArgs, Schedule, ScheduleEvent, ScheduleFired, SpendOverview, SpendPoint, WorktreeApply } from "@/lib/ipc";
 import { mockEveryProject, mockExpand, mockInstall, mockPluginCommands, mockPluginList, mockPluginSkillRows, mockProjectPlugins, mockRemove } from "@/dev/pluginMock";
 import pricesRaw from "../../src-tauri/defaults/prices.json?raw";
 import { PROMPT_BODY_MAX, PROMPT_TITLE_MAX, tidyPrompt } from "@/lib/prompts";
@@ -306,7 +306,7 @@ export const mockIpc = {
   async filesQuicklookOpen(_workspaceId: string, _path: string): Promise<void> {
     console.info("[演示] 原生 App 里这里会弹出系统的 Quick Look 窗口。");
   },
-  async worktreeApply(runId: string, force: boolean): Promise<{ applied: string[]; conflicts: string[]; record: RunRecord }> {
+  async worktreeApply(runId: string, force: boolean): Promise<WorktreeApply> {
     const record = findRun(runId);
     const wt = record?.worktree;
     if (!record || !wt) throw new Error("这个任务不在独立工作区里。");
@@ -404,6 +404,17 @@ export const mockIpc = {
   // ── Model Gateway（v0.5 契约）──
   async gatewayModels(): Promise<ModelEntry[]> {
     return structuredClone(MOCK_MODEL_ENTRIES);
+  },
+  /** CLI 能选的模型：照夹具里录到的。 */
+  async cliModels(engine: string): Promise<CliModels> {
+    const m = (id: string, efforts: string[], isDefault = false): CliModel => ({ id, label: id, efforts, defaultEffort: null, isDefault });
+    const list: Record<string, CliModel[]> = {
+      "claude-code": [["claude-opus-5-5", "Opus 5.5"], ["claude-fable-5-2", "Fable 5.2"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"], ["claude-opus-4-8", "Opus 4.8"]].map(([id, label], i) => ({ ...m(id, ["low", "medium", "high", "xhigh", "max"], i === 0), label })),
+      codex: [m("gpt-6.1-sol", ["low", "medium", "high", "xhigh", "max"], true), m("gpt-6-luna", ["low", "medium", "high"])],
+      muse: [m("muse-wonder-1.0", ["minimal", "low", "medium", "high", "max"], true), m("muse-ember-1.0", ["low", "medium", "high"]), m("muse-spark-1.3", ["low", "medium", "high"])],
+      grok: [m("grok-4.6", ["medium", "high", "xhigh"], true), m("grok-4.5", ["medium", "high", "xhigh"])],
+    };
+    return { engine, models: list[engine] ?? [], source: "mock", readAt: Date.now(), error: null };
   },
   async pricesGet(): Promise<PriceBook> {
     return mockPriceBook();
@@ -538,7 +549,7 @@ export const mockIpc = {
     if (!path.startsWith("/mock/")) throw new Error("只能打开 Peck 存下来的图。");
     return attachedImages.get(path) ?? demoPicture(`截图 · ${path.split("/").pop() ?? path}`, true);
   },
-  async uploadReadImage(path: string): Promise<{ mediaType: string; data: string }> {
+  async uploadReadImage(path: string): Promise<ImageInput> {
     // 演示图是 SVG：画到 canvas 上转成 PNG（后端给的也是 PNG、JPEG 这几种）。
     const img = new Image();
     img.src = demoPicture(path.split("/").pop() ?? path);
@@ -940,7 +951,7 @@ const worktreeState: Record<string, { files: Record<string, string>; conflicts: 
 /** 演示用的图（SVG 的 data URL）：深海底、青色的像素鸟格子。 */
 /** 发出去的图（v1.1.11）：照后端的格式记在这一句后面，对话里画成小图；图本身留在内存里给小图用。 */
 const attachedImages = new Map<string, string>();
-function withAttachments(prompt: string, images?: Array<{ mediaType: string; data: string }>, uploads?: string[]): string {
+function withAttachments(prompt: string, images?: ImageInput[], uploads?: string[]): string {
   let out = prompt;
   if (images?.length) {
     const paths = images.map((img, i) => {

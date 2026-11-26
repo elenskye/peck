@@ -8,15 +8,9 @@ import React, { useEffect, useRef, useState } from "react";
 import type { ModelEntry } from "@/lib/agentEvents";
 import { ipc, type CliModel, type CliModels } from "@/lib/ipc";
 import type { AppSettings } from "@/lib/settings";
-import { ago, cn, entryDot } from "@/lib/utils";
-import { Dot, FoldBtn, Icon, Info, MenuChip, ModHead } from "@/ui";
-import { cliEngine, defaultEffort, firstOf, flowOf, labelOf, money, pickable, ploopMain, whoShort, type FlowKind } from "@/shell/ModelPicker";
-
-const priceOf = (e: ModelEntry) => {
-  if (!e.price) return "价格未知";
-  const sym = e.currency === "CNY" ? "¥" : "$";
-  return `进 ${money(e.price.input, sym)} 出 ${money(e.price.output, sym)}`;
-};
+import { ago, bareName, cn, entryDot } from "@/lib/utils";
+import { Dot, FoldBtn, Icon, Info, MenuChip, ModHead, Seg } from "@/ui";
+import { apiGroups, cliEngine, defaultEffort, firstOf, flowOf, labelOf, pickable, ploopMain, priceOf, whoShort, type FlowKind } from "@/shell/ModelPicker";
 
 const FLOWS: Array<{ id: FlowKind; label: string; does: string; none: string }> = [
   { id: "cli", label: "CLI", does: "一个 CLI 整包干，Peck 只当外壳", none: "没检测到 CLI" },
@@ -34,8 +28,8 @@ interface Props {
   onSettings: (patch: Partial<AppSettings>) => void;
   /** 这个项目有任务在跑：不能换。 */
   disabled: boolean;
-  /** 打开设置（`AGENTS`：PLOOP 的子代理）。 */
-  onOpenSettings: (section?: "AGENTS") => void;
+  /** 打开设置。 */
+  onOpenSettings: () => void;
   /** PROJECTS 收起了：这一块占满。 */
   grow: boolean;
   /** 全部项目页：左栏只有这一块，一直展开、不给收起。 */
@@ -53,13 +47,9 @@ const EffortRow: React.FC<{ options: string[]; value: string; onChange: (v: stri
     <div className="agents-row">
       <span className="agents-k">思考</span>
       {options.length <= 4 && options.map(name).join("").length <= 18 ? (
-        <div className="pk-seg pk-seg--sm pk-seg--full" role="group" aria-label="思考强度">
-          {options.map((o) => (
-            <button key={o} type="button" disabled={disabled} aria-pressed={o === value} className={o === value ? "is-on" : undefined} onClick={() => onChange(o)}>{name(o)}</button>
-          ))}
-        </div>
+        <Seg sm full label="思考强度" items={options.map((o) => ({ id: o, label: name(o) }))} value={value} disabled={disabled} onChange={onChange} />
       ) : (
-        <MenuChip sm disabled={disabled} ariaLabel="思考强度" label={name(value)}>
+        <MenuChip disabled={disabled} ariaLabel="思考强度" label={name(value)}>
           {(close) => (
             <>
               <p className="pk-menu-group">思考强度</p>
@@ -105,7 +95,7 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
     onSettings({ ploop: { ...settings.ploop, main: main.id } });
   }, [flow, main, settings.ploop, onSettings, entries]);
   // 头上一行放不下就截断，收起 / 展开的按钮不会被挤出去（站主 11-17 的 Bug：接力的长名字把按钮挤没了，重启也打不开）。
-  const note = folded ? whoShort(value, settings, entries, false) : disabled ? "在跑，跑完再换" : undefined;
+  const note = folded ? whoShort(value, settings, entries) : disabled ? "在跑，跑完再换" : undefined;
 
   return (
     <div ref={ref} className={cn("pk-mod left-agents", folded && "is-folded", grow && !folded && "is-grow", lit && "is-flash")} aria-label="谁来干">
@@ -142,9 +132,6 @@ export const AgentsPanel: React.FC<Props> = ({ entries, value, settings, onSetti
   );
 };
 
-/** 模型名收短：去掉供应商前缀（目录里没有的 id 也能显示）。 */
-const bareName = (id: string) => id.replace(/^(api|cli):/, "").replace(/^[a-z-]+\//, "");
-
 /** 选一个模型的下拉（设置里的子代理用）。`off` 给了就能不选（写成 `off` 的字）。
  *  CLI 不带版本号（站主 11-17：版本在设置 → CLI 里看）；API 模型带价格（每百万 token）。 */
 export const ModelChip: React.FC<{ label: string; entries: ModelEntry[]; value: string; off?: string; disabled?: boolean; onChange: (id: string) => void }> = ({ label: aria, entries, value, off, disabled, onChange }) => {
@@ -158,7 +145,7 @@ export const ModelChip: React.FC<{ label: string; entries: ModelEntry[]; value: 
   }
   const label = chosen ? labelOf(chosen) : value ? bareName(value).toUpperCase() : off ?? "选一个";
   return (
-    <MenuChip sm disabled={disabled} ariaLabel={aria} title={label} dot={chosen ? (chosen.group === "cli" ? entryDot(chosen.id) : "api") : undefined} label={label}>
+    <MenuChip disabled={disabled} ariaLabel={aria} title={label} dot={chosen ? (chosen.group === "cli" ? entryDot(chosen.id) : "api") : undefined} label={label}>
       {(close) => (
         <>
           {off && (
@@ -204,13 +191,8 @@ const PickList: React.FC<{ items: ModelEntry[]; value: ModelEntry; choose: (id: 
   </ul>
 );
 
-const ApiBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: AppSettings; onSettings: Props["onSettings"]; choose: (id: string) => void; disabled: boolean; label?: string }> = ({ entries, value, settings, onSettings, choose, disabled, label = "模型" }) => {
-  const groups: Array<{ key: string; title: string; items: ModelEntry[] }> = [];
-  for (const e of entries.filter((x) => flowOf(x) === "api")) {
-    let g = groups.find((x) => x.key === e.provider);
-    if (!g) groups.push((g = { key: e.provider, title: e.providerLabel.toUpperCase(), items: [] }));
-    g.items.push(e);
-  }
+const ApiBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: AppSettings; onSettings: Props["onSettings"]; choose: (id: string) => void; disabled: boolean; label: string }> = ({ entries, value, settings, onSettings, choose, disabled, label }) => {
+  const groups = apiGroups(entries);
   const thinking = value.efforts.length > 0 && value.thinking !== "never";
   const effortOptions = value.thinking === "always" ? value.efforts : ["off", ...value.efforts];
   const effort = settings.efforts[value.id] ?? defaultEffort(value);
@@ -218,7 +200,7 @@ const ApiBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
     <>
       <div className="agents-row">
         <span className="agents-k">{label}</span>
-        <MenuChip sm disabled={disabled} ariaLabel={label} title={labelOf(value)} dot="api" label={labelOf(value)}>
+        <MenuChip disabled={disabled} ariaLabel={label} title={labelOf(value)} dot="api" label={labelOf(value)}>
           {(close) => groups.map((g, gi) => (
             <React.Fragment key={g.key}>
               {gi > 0 && <div className="pk-menu-sep" />}
@@ -297,7 +279,7 @@ const CliBody: React.FC<{ entries: ModelEntry[]; value: ModelEntry; settings: Ap
       <PickList items={entries.filter((e) => e.group === "cli")} value={value} choose={choose} disabled={disabled} note={cliNote} />
       <div className="agents-row">
         <span className="agents-k">模型</span>
-        <MenuChip sm disabled={disabled} ariaLabel={`${value.label} 的模型`} title={label} dot={entryDot(value.id)} label={reading && !models.length ? "在读…" : label}>
+        <MenuChip disabled={disabled} ariaLabel={`${value.label} 的模型`} title={label} dot={entryDot(value.id)} label={reading && !models.length ? "在读…" : label}>
           {(close) => (
             <>
               <p className="pk-menu-group">{value.label.toUpperCase()} 的模型</p>

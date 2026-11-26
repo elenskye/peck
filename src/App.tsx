@@ -8,13 +8,13 @@ import { involvedIds, quotaHint, swapPatch } from "@/lib/quota";
 import { usageApi, type ClientCard } from "@/lib/usage";
 import { applyTheme } from "@/lib/theme";
 import type { Permission, ProjectOverview, RunRecord, TermEvent } from "@/lib/types";
-import { cn, plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
+import { cn, errorText, plainLine, plainTerminal, rememberEntries, runState, shortenHomePath, whoLabel } from "@/lib/utils";
 import { waitingOnYou } from "@/lib/agentView";
 import { TopBar } from "@/shell/TopBar";
 import { LeftColumn, ProjectsPage } from "@/shell/LeftColumn";
 import { chosenEntry, MiddleColumn } from "@/shell/MiddleColumn";
 import { RightColumn, type RightTab } from "@/shell/RightColumn";
-import { SettingsPage, type SettingsSection } from "@/shell/SettingsPage";
+import { SettingsPage } from "@/shell/SettingsPage";
 import { ProjectPage } from "@/shell/ProjectPage";
 import type { InboxItem, LeftActions } from "@/shell/LeftColumn";
 import { UsagePage } from "@/shell/UsagePage";
@@ -22,7 +22,7 @@ import { AgentsPanel } from "@/shell/AgentsPanel";
 import { PLOOP_ID, cliModelOf, labelOf, ploopMain, sendEffort } from "@/shell/ModelPicker";
 import { Icon } from "@/ui";
 
-export interface TermEntry {
+interface TermEntry {
   id: string;
   command: string;
   cwd: string;
@@ -50,7 +50,7 @@ const App: React.FC = () => {
   const [taskId, setTaskId] = useState<string | null>(null);
   /** 从设置 → ARCHIVE 打开的归档任务（只读）：它那一组，项目可能已经移出列表。 */
   const [peek, setPeek] = useState<ProjectOverview | null>(null);
-  /** 一个任务里发过好几次时，右栏和 LOG 看的是哪一次；没点过就是最新一次。 */
+  /** 一个任务里发过好几次时，右栏看的是哪一次；没点过就是最新一次。 */
   const [shownRunId, setShownRunId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, RunRecord[]>>({});
   const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null);
@@ -65,8 +65,6 @@ const App: React.FC = () => {
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
   const [page, setPage] = useState<"" | "settings" | "quota" | "project">("");
-  /** 设置打开时先到哪一组（AGENTS 面板的「管理预设」到 AGENTS）。 */
-  const [settingsAt, setSettingsAt] = useState<SettingsSection | undefined>(undefined);
   const [tab, setTab] = useState<RightTab>("files");
   const [wide, setWide] = useState(false);
   const [filePath, setFilePath] = useState<string | null>(null);
@@ -83,7 +81,7 @@ const App: React.FC = () => {
 
   /** 底部提示条：一时不能做、或做了会怎样的事，说一句（2.8 秒）。 */
   const say = useCallback((message: unknown) => {
-    const text = String(message instanceof Error ? message.message : message).replace(/^Error:\s*/, "");
+    const text = errorText(message);
     setToast(text);
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(""), text.length > 40 ? 5600 : 2800);
@@ -138,12 +136,12 @@ const App: React.FC = () => {
   const [quotaDismissed, setQuotaDismissed] = useState<string | null>(null);
   const chosenId = useMemo(() => (settings.pick === PLOOP_ID ? PLOOP_ID : chosenEntry(entries, settings)?.id ?? null), [entries, settings]);
   const hint = useMemo(() => {
-    const h = quotaHint(involvedIds(settings, chosenId), entries, clients, settings.quotaWarn);
+    const h = quotaHint(involvedIds(chosenId), entries, clients, settings.quotaWarn);
     return h && `${h.from}|${h.text}` !== quotaDismissed ? h : null;
   }, [settings, chosenId, entries, clients, quotaDismissed]);
   // 换的那一家这次已经用不到了（AGENTS 改了）：「这次换」作废。
   useEffect(() => {
-    if (swapOnce && !involvedIds(settings, chosenId).includes(swapOnce.from)) setSwapOnce(null);
+    if (swapOnce && !involvedIds(chosenId).includes(swapOnce.from)) setSwapOnce(null);
   }, [swapOnce, settings, chosenId]);
 
   // 回到 Peck 窗口（比如刚在访达里删了、挪了项目文件夹）就重读项目列表，文件夹不在了马上标出来。
@@ -634,15 +632,15 @@ const App: React.FC = () => {
     onRevealProject: (id) => act(() => ipc.workspaceReveal(id)),
     onRelocateProject: relocateProject,
     onRemoveProject: removeProject,
-    onRenameTask: (_pid, id, title) => act(async () => { await ipc.sessionRename(id, title); await refreshProjects(); }),
-    onArchiveTask: (_pid, id) => act(async () => {
+    onRenameTask: (id, title) => act(async () => { await ipc.sessionRename(id, title); await refreshProjects(); }),
+    onArchiveTask: (id) => act(async () => {
       await ipc.sessionArchive(id);
       if (taskId === id) setTaskId(null);
       await refreshProjects();
       say("归档了：记录都在，设置 → ARCHIVE 里看、拿回来");
     }),
     onArchiveProjectTasks: archiveProjectTasks,
-    onDeleteTask: (_pid, id) => act(async () => {
+    onDeleteTask: (id) => act(async () => {
       await ipc.sessionDelete(id);
       if (taskId === id) setTaskId(null);
       setRunsByTask((prev) => { const next = { ...prev }; delete next[id]; return next; });
@@ -682,7 +680,7 @@ const App: React.FC = () => {
       if (key !== "." && document.querySelector("[aria-modal=true]")) return;
       if (key === "n" && !e.shiftKey && k.project) { e.preventDefault(); k.selectTask(k.project.workspace.id, null); }
       else if (key === "." && !e.shiftKey) { e.preventDefault(); void k.stop(); }
-      else if (key === "," && !e.shiftKey) { e.preventDefault(); setSettingsAt(undefined); setPage((p) => (p === "settings" ? "" : "settings")); }
+      else if (key === "," && !e.shiftKey) { e.preventDefault(); setPage((p) => (p === "settings" ? "" : "settings")); }
       else if (key === "l" && !e.shiftKey) { e.preventDefault(); setPage(""); window.setTimeout(() => document.querySelector<HTMLElement>(".md-editor .cm-content")?.focus(), 0); }
       else if (/^[1-4]$/.test(key) && !e.shiftKey) { e.preventDefault(); setPage(""); k.selectTab(TABS[Number(key) - 1]); k.setSide("right", true); }
       else if ((key === "[" || key === "]") && k.project) {
@@ -736,7 +734,7 @@ const App: React.FC = () => {
               settings={settings}
               onSettings={updateSettings}
               disabled={busy}
-              onOpenSettings={(section) => { setSettingsAt(section); setPage("settings"); }}
+              onOpenSettings={() => setPage("settings")}
               grow={!project || !!settings.fold.projects}
               solo={!project}
               onFold={(agentsFolded) => updateSettings({ fold: { ...settingsRef.current.fold, agents: agentsFolded } })}
@@ -767,8 +765,6 @@ const App: React.FC = () => {
           />
         ) : page === "settings" ? (
           <SettingsPage
-            key={settingsAt ?? "-"}
-            initial={settingsAt}
             entries={entries}
             onOpenArchived={openArchived}
             onRestoreArchived={(id) => restoreArchived(id, false)}
@@ -780,7 +776,7 @@ const App: React.FC = () => {
             onRefreshAgents={refreshEntries}
             apiStatus={apiStatus}
             onRefreshApi={async () => { const st = await refreshApi(); void refreshEntries(); return st; }}
-            onClose={() => { setPage(""); setSettingsAt(undefined); }}
+            onClose={() => setPage("")}
             say={say}
           />
         ) : page === "quota" ? (
@@ -820,7 +816,7 @@ const App: React.FC = () => {
                   if (event.type === "skill.reviewed") void refreshProjects();
                 }}
                 onStop={stop}
-                onOpenSettings={() => { setSettingsAt(undefined); setPage("settings"); }}
+                onOpenSettings={() => setPage("settings")}
                 onShowAgents={() => { const f = settingsRef.current.fold; if (f.agents || f.left) updateSettings({ fold: { ...f, agents: false, left: false } }); setAgentsFlash((n) => n + 1); }}
                 onRelocate={relocateProject}
                 onRemoveProject={removeProject}

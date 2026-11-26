@@ -73,9 +73,7 @@ body { overflow: hidden; }
 .kbd-send:focus-visible { outline: 1px dotted var(--color-cyan); outline-offset: -1px; }
 .empty { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-1) 0; }
 .empty p { font-size: var(--text-body); line-height: 1.6; color: var(--color-text-2); }
-.empty-line { font-size: var(--text-small); line-height: 1.6; color: var(--color-text-3); }
-.empty-line { display: flex; align-items: center; gap: var(--space-4); }
-.is-err { color: var(--color-bad); }
+.empty-line { font-size: var(--text-small); line-height: 1.6; color: var(--color-text-3); display: flex; align-items: center; gap: var(--space-4); }
 .is-dim { color: var(--color-text-3); }
 .is-warn { color: var(--color-warn); }
 .link { font-size: var(--text-small); color: var(--color-cyan-text); }
@@ -253,7 +251,6 @@ body { overflow: hidden; }
 .right--wide .pk-tabs { align-self: flex-start; display: inline-flex; width: auto; }
 .right--wide .pk-tabs > button { flex: none; padding: 0 var(--space-7); }
 .right > .pk-bar { flex: none; }
-.preview { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
 .preview-head { flex: none; display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
 .preview-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .preview-meta { color: var(--color-text-2); white-space: nowrap; }
@@ -632,8 +629,7 @@ body { overflow: hidden; }
 /* 输入框下的三个按钮：FLOW、CLI、API。前面暗的是按钮名，后面是选中的。 */
 .pk-chip-label .who-k { font-style: normal; color: var(--color-text-3); margin-right: 6px; }
 
-/* 右栏五个页签的图标（站主 2026-11-13 要的，8×8 像素格，画法同方案里的图标）：CHANGES 加减、LOG 时间线、ONE SHOT 闪电、FILES 两张纸；TERM 用方案里的终端。要并进 visual-atelier 方案。 */
-.pk-i--log{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M0 0h2v1h-2zM3 0h4v1h-4zM0 1h1v1h-1zM0 2h1v1h-1zM0 3h2v1h-2zM3 3h5v1h-5zM0 4h1v1h-1zM0 5h1v1h-1zM0 6h2v1h-2zM3 6h3v1h-3z'/%3E%3C/svg%3E")}
+/* 右栏页签的图标（站主 2026-11-13 要的，8×8 像素格，画法同方案里的图标）：ONE SHOT 闪电、FILES 两张纸；TERM 用方案里的终端。要并进 visual-atelier 方案。 */
 .pk-i--oneshot{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M5 0h2v1h-2zM4 1h2v1h-2zM3 2h2v1h-2zM2 3h5v1h-5zM1 4h5v1h-5zM3 5h2v1h-2zM2 6h2v1h-2zM1 7h2v1h-2z'/%3E%3C/svg%3E")}
 .pk-i--files{--pk-i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath fill='%23000' d='M2 0h6v1h-6zM2 1h1v1h-1zM7 1h1v1h-1zM0 2h6v1h-6zM7 2h1v1h-1zM0 3h1v1h-1zM5 3h1v1h-1zM7 3h1v1h-1zM0 4h1v1h-1zM5 4h1v1h-1zM7 4h1v1h-1zM0 5h1v1h-1zM5 5h3v1h-3zM0 6h1v1h-1zM5 6h1v1h-1zM0 7h6v1h-6z'/%3E%3C/svg%3E")}
 
@@ -895,7 +891,6 @@ body { overflow: hidden; }
 .agent-other-in { width: 100%; min-width: 0; padding: 0; border: 0; border-bottom: 1px dotted var(--color-line); outline: none; background: none; font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); color: var(--color-text); }
 .agent-other-in::placeholder { color: var(--color-text-3); }
 .agent-other-in:focus { border-bottom-color: var(--color-cyan); }
-.ask-q-head { margin-right: var(--space-3); color: var(--color-text-3); }
 .ask-body { margin: 0 0 var(--space-4); font-size: var(--text-small); color: var(--color-text-2); }
 .agent-asked .ask-body { margin: 0; }
 /* 装饰的地方用像素字，要读的用 Body（v1.1.10，站主定的，见 docs/design.md「字」）。方案 peck 里这几处还是像素字，先在这里盖掉：
@@ -903,7 +898,6 @@ body { overflow: hidden; }
 .agent-card .pk-ask-q { margin-bottom: var(--space-3); font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); font-weight: 600; }
 .agent-card .pk-opt-name { font-family: var(--font-body); font-size: var(--text-body); line-height: var(--leading-body); }
 .agent-card .pk-opt:not(.agent-other) :is(.pk-radio, .pk-check) { margin-top: calc((var(--leading-body) - 16px) / 2); }
-.ask-q-head.t-label { font-family: var(--font-body); font-size: var(--text-small); font-weight: 600; letter-spacing: 0; }
 .agent-call-title.pk-step-name { font-family: var(--font-body); }
 :is(.task-stack, .agent) .md :is(h1, h2, h3, h4) { font-family: var(--font-body); font-weight: 600; line-height: 1.4; }
 :is(.task-stack, .agent) .md h1 { font-size: 1.3em; }
@@ -953,7 +947,6 @@ body { overflow: hidden; }
 .cost-table tr.is-sub td:first-child, .cost-table tr.is-sub td.cost-who { padding-left: var(--space-6); }
 .cost-table tfoot td { border-bottom: 0; color: var(--color-text); }
 .cost-table th:nth-child(n+3), .cost-table td:nth-child(n+3) { text-align: right; }
-/* AGENTS 的预设（v0.9 B2）：存成新的、改名时下面一行输入框。 */
 
 /* 额度提醒（v0.9 B3）：输入框上方一行，快用完的那一家、换谁、这次换 / 以后都换。 */
 .quota-bar { flex: none; margin: 0 0 var(--space-4); gap: var(--space-4); }

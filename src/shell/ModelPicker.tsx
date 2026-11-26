@@ -9,12 +9,12 @@ import { Dot, MenuChip } from "@/ui";
 import type { AppSettings } from "@/lib/settings";
 
 /** 每百万 token 的价格：国内的模型是人民币。 */
-export const money = (v: number, sym = "$") => `${sym}${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(2).replace(/\.?0+$/, "") : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}`;
+const money = (v: number, sym = "$") => `${sym}${v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(2).replace(/\.?0+$/, "") : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}`;
 
 /** PLOOP（v1.1.1）：「谁来干」里的一项，主角色在设置的 `ploop.main`，子代理在 `subagents`。 */
 export const PLOOP_ID = "ploop";
 
-export const PLOOP_ENTRY: ModelEntry = {
+const PLOOP_ENTRY: ModelEntry = {
   id: PLOOP_ID,
   group: "flow",
   label: "PLOOP",
@@ -69,11 +69,25 @@ function cliNote(e: ModelEntry): string {
   return [e.account, versionText(e.version) || null].filter(Boolean).join(" · ") || "订阅额度";
 }
 
-function apiNote(e: ModelEntry): string {
-  const p = e.price;
+/** 每百万 token 的进、出价格。 */
+export function priceOf(e: ModelEntry): string {
+  if (!e.price) return "价格未知";
   // 国内的模型按人民币（价格表，v0.10.1）。
   const sym = e.currency === "CNY" ? "¥" : "$";
-  return p ? `每百万 进 ${money(p.input, sym)} 出 ${money(p.output, sym)}` : "价格未知";
+  return `进 ${money(e.price.input, sym)} 出 ${money(e.price.output, sym)}`;
+}
+
+const apiNote = (e: ModelEntry) => (e.price ? `每百万 ${priceOf(e)}` : priceOf(e));
+
+/** API 模型按供应商分组。 */
+export function apiGroups(entries: ModelEntry[]): Array<{ key: string; title: string; items: ModelEntry[] }> {
+  const groups: Array<{ key: string; title: string; items: ModelEntry[] }> = [];
+  for (const e of entries.filter((x) => flowOf(x) === "api")) {
+    let g = groups.find((x) => x.key === e.provider);
+    if (!g) groups.push((g = { key: e.provider, title: e.providerLabel.toUpperCase(), items: [] }));
+    g.items.push(e);
+  }
+  return groups;
 }
 
 export function labelOf(e: ModelEntry): string {
@@ -104,7 +118,7 @@ export const WhoPicker: React.FC<WhoProps> = ({ entries, value, onChange, rememb
   const current = shown.find((f) => f.id === flow);
   return (
     <>
-      <MenuChip sm up={up} disabled={disabled} ariaLabel="FLOW：怎么干" title={current ? `FLOW：${current.label}` : "FLOW"} label={<ChipText k="FLOW" v={current ? current.label.toUpperCase() : "选一种"} />}>
+      <MenuChip up={up} disabled={disabled} ariaLabel="FLOW：怎么干" title={current ? `FLOW：${current.label}` : "FLOW"} label={<ChipText k="FLOW" v={current ? current.label.toUpperCase() : "选一种"} />}>
         {(close) => (
           <>
             <p className="pk-menu-group">FLOW</p>
@@ -134,7 +148,7 @@ const CliChip: React.FC<{
 }> = ({ entries, value, onChange, disabled, up }) => {
   const list = entries.filter((e) => e.group === "cli");
   return (
-    <MenuChip sm up={up} disabled={disabled} ariaLabel="CLI：哪一家" title={labelOf(value)} dot={entryDot(value.id)} label={<ChipText k="CLI" v={labelOf(value)} />}>
+    <MenuChip up={up} disabled={disabled} ariaLabel="CLI：哪一家" title={labelOf(value)} dot={entryDot(value.id)} label={<ChipText k="CLI" v={labelOf(value)} />}>
       {(close) => (
         <>
           <p className="pk-menu-group">CLI</p>
@@ -154,15 +168,9 @@ const CliChip: React.FC<{
 const ApiChip: React.FC<{
   entries: ModelEntry[]; value: ModelEntry; onChange: (id: string) => void; disabled?: boolean; up: boolean;
 }> = ({ entries, value, onChange, disabled, up }) => {
-  // 按供应商分组。
-  const groups: Array<{ key: string; title: string; items: ModelEntry[] }> = [];
-  for (const e of entries.filter((x) => flowOf(x) === "api")) {
-    let g = groups.find((x) => x.key === e.provider);
-    if (!g) groups.push((g = { key: e.provider, title: e.providerLabel.toUpperCase(), items: [] }));
-    g.items.push(e);
-  }
+  const groups = apiGroups(entries);
   return (
-    <MenuChip sm up={up} disabled={disabled} ariaLabel="API：哪个模型" title={labelOf(value)} dot="api" label={<ChipText k="API" v={labelOf(value)} />}>
+    <MenuChip up={up} disabled={disabled} ariaLabel="API：哪个模型" title={labelOf(value)} dot="api" label={<ChipText k="API" v={labelOf(value)} />}>
       {(close) => (
         <>
           {groups.map((g, gi) => (
@@ -198,7 +206,7 @@ export const EffortPicker: React.FC<{
   const options = entry.thinking === "always" || entry.group !== "peck" ? entry.efforts : ["off", ...entry.efforts];
   const current = options.includes(value) ? value : defaultEffort(entry);
   return (
-    <MenuChip sm up={up} disabled={disabled} ariaLabel="思考强度" label={`思考 ${current === "off" ? "OFF" : current.toUpperCase()}`}>
+    <MenuChip up={up} disabled={disabled} ariaLabel="思考强度" label={`思考 ${current === "off" ? "OFF" : current.toUpperCase()}`}>
       {(close) => (
         <>
           <p className="pk-menu-group">思考强度</p>
@@ -222,7 +230,7 @@ export function defaultEffort(entry: ModelEntry): string {
 }
 
 /** 发任务时带的强度（OFF 和不支持的不带）。 */
-export function effortFor(entry: ModelEntry | null, saved: Record<string, string>): string | undefined {
+function effortFor(entry: ModelEntry | null, saved: Record<string, string>): string | undefined {
   if (!entry || entry.efforts.length === 0 || entry.thinking === "never") return undefined;
   const v = saved[entry.id] ?? defaultEffort(entry);
   return v === "off" || !entry.efforts.includes(v) ? undefined : v;
@@ -259,7 +267,7 @@ export function ploopMain(entries: ModelEntry[], settings: { ploop?: { main?: st
 }
 
 /** 短的一行（输入框下、AGENTS 收起时）：PLOOP 写「PLOOP · 主角色」，CLI 写它的名字。 */
-export function whoShort(e: ModelEntry | null, settings: AppSettings, entries: ModelEntry[], _flags = true): string {
+export function whoShort(e: ModelEntry | null, settings: AppSettings, entries: ModelEntry[]): string {
   if (!e) return "还没选谁来干";
   if (flowOf(e) !== "ploop") return labelOf(e);
   const main = ploopMain(entries, settings);

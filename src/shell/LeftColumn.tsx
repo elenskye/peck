@@ -3,7 +3,7 @@ import type { ProjectOverview, TaskBrief } from "@/lib/types";
 import type { ModelEntry } from "@/lib/agentEvents";
 import type { Schedule } from "@/lib/ipc";
 import { dayClock, scheduleWhen, scheduleWho } from "@/lib/schedules";
-import { ago, clock, cn, plainLine, runState, STATUS_WORD } from "@/lib/utils";
+import { ago, clock, cn, plainEnter, plainLine, runState, STATUS_WORD } from "@/lib/utils";
 import { Btn, Float, FoldBtn, Field, Icon, ModHead, Twinkle, type IconName } from "@/ui";
 
 /** 全部项目页每个项目带几次最近的任务。 */
@@ -148,7 +148,7 @@ const RenameField: React.FC<{ value: string; label: string; onDone: (next: strin
       onFocus={(e) => e.currentTarget.select()}
       onChange={(e) => setText(e.target.value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) finish(text.trim() && text.trim() !== value ? text.trim() : null);
+        if (plainEnter(e)) finish(text.trim() && text.trim() !== value ? text.trim() : null);
         if (e.key === "Escape") finish(null);
       }}
       onBlur={() => finish(text.trim() && text.trim() !== value ? text.trim() : null)} />
@@ -199,9 +199,9 @@ export interface LeftActions {
   onRevealProject: (id: string) => void;
   onRelocateProject: (id: string) => void;
   onRemoveProject: (id: string) => void;
-  onRenameTask: (projectId: string, taskId: string, title: string) => void;
-  onDeleteTask: (projectId: string, taskId: string) => void;
-  onArchiveTask: (projectId: string, taskId: string) => void;
+  onRenameTask: (taskId: string, title: string) => void;
+  onDeleteTask: (taskId: string) => void;
+  onArchiveTask: (taskId: string) => void;
   onArchiveProjectTasks: (projectId: string) => void;
   onReorderProjects: (ids: string[]) => void;
   onReorderTasks: (projectId: string, ids: string[]) => void;
@@ -256,9 +256,9 @@ const ProjectList: React.FC<ListProps> = ({ projects, projectId, taskId, busyPro
     const running = t.lastRun ? runState(t.lastRun) === "running" : false;
     return [
       { label: "重命名", icon: "pen", onClick: () => { if (!all) onSelectProject(p.workspace.id); setRenaming({ kind: "task", id: t.id }); } },
-      { label: "归档", icon: "archive", disabled: running, hint: running ? "在跑" : "记录留着", onClick: () => actions.onArchiveTask(p.workspace.id, t.id) },
+      { label: "归档", icon: "archive", disabled: running, hint: running ? "在跑" : "记录留着", onClick: () => actions.onArchiveTask(t.id) },
       "sep",
-      { label: "删除任务", icon: "trash", danger: true, disabled: running, hint: running ? "在跑" : "连同记录", confirm: "再点一次：删掉，不能撤回", onClick: () => actions.onDeleteTask(p.workspace.id, t.id) },
+      { label: "删除任务", icon: "trash", danger: true, disabled: running, hint: running ? "在跑" : "连同记录", confirm: "再点一次：删掉，不能撤回", onClick: () => actions.onDeleteTask(t.id) },
     ];
   };
   const recent = all ? RECENT : 1;
@@ -300,7 +300,7 @@ const ProjectList: React.FC<ListProps> = ({ projects, projectId, taskId, busyPro
                   {renaming?.kind === "task" && renaming.id === task.id ? (
                     <div className="task-row is-on is-renaming">
                       <span className="task-si"><TaskIcon task={task} /></span>
-                      <RenameField value={plainLine(task.title)} label="任务的新名字" onDone={(next) => { setRenaming(null); if (next) actions.onRenameTask(workspace.id, task.id, next); }} />
+                      <RenameField value={plainLine(task.title)} label="任务的新名字" onDone={(next) => { setRenaming(null); if (next) actions.onRenameTask(task.id, next); }} />
                     </div>
                   ) : (
                     <button type="button" className={cn("task-row", on && task.id === taskId && "is-on", !on && !all && "task-row--quiet")}
@@ -335,7 +335,7 @@ type Shared = ListProps & {
   schedules: ScheduleBundle;
 };
 
-export interface ScheduleBundle {
+interface ScheduleBundle {
   list: Schedule[];
   entries: ModelEntry[];
   /** 去它跑的地方（错过的卡片在那里）。 */

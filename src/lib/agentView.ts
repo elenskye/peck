@@ -23,7 +23,6 @@ export interface ToolView {
   endedAt?: number;
   durationMs?: number | null;
   approval?: { title: string; decision?: ApprovalDecision; by?: ResolvedBy; highRisk: boolean };
-  subagentId?: string;
   /** 这一步交出去的子任务（委派、Claude Code 的 Task）：它的那几步挂在这一步下面（v0.9 B1）。 */
   sub?: { title: string; model?: string | null; calls: ToolView[]; status?: ToolStatus; round?: number; max?: number };
 }
@@ -77,7 +76,7 @@ export interface BackgroundView {
 }
 
 /** 一段思考（只用来显示「Thinking… 3s」，想完不显示）。 */
-export interface ThoughtView { text: string; done: boolean; startedAt: number; endedAt?: number }
+export interface ThoughtView { done: boolean; startedAt: number; endedAt?: number }
 
 export type ViewItem =
   | { kind: "text"; id: string; text: string; done: boolean }
@@ -126,7 +125,6 @@ export interface UsageLine {
 
 export interface AgentView {
   engine: string | null;
-  model: string | null;
   items: ViewItem[];
   /** 还没批的审批（卡片）。 */
   approvals: ApprovalView[];
@@ -137,25 +135,19 @@ export interface AgentView {
   plan: PlanStep[] | null;
   /** 任务板（v1.1.3）：主角色派出去的 worker、member，进度由 Peck 填（最新一份）。 */
   board: BoardItem[] | null;
-  /** 这一回合改了哪些文件（diff.updated 的最新一份；没有就从工具调用里收）。 */
-  files: FileDiff[];
   usage: UsageLine | null;
   ended: { reason: string; error?: string | null } | null;
   sessionRef: string | null;
   /** 用量是 CLI 报的累计口径（续接以后接着上一次累计）：算整个任务时按会话取差。 */
   cumulativeUsage?: boolean;
-  /** 最新的一份上下文大小。 */
-  context: ContextView | null;
   /** 模型想记住的几条；reviewed 是站主批过的结果。 */
   memory: { notes: string[]; reviewed: { saved: string[]; skipped: string[] } | null } | null;
-  /** 这个任务里的后台命令（最新的状态）。 */
-  background: BackgroundView[];
   /** 插件的收尾 Hook 跑完的结果（v1.1.0，写在 recap 里）：提交了哪一笔、或者为什么没提交。 */
   hooks: Array<{ ok: boolean; text: string }>;
   /** Peck Loop 主角色到第几轮了（v1.1.11）。 */
   round: { round: number; max: number } | null;
   /** 派出去的子代理（v1.1.11）：在跑的、还在排队的（派了、还没开始）。 */
-  agents: { running: number; queued: number; first: string | null };
+  agents: { running: number; queued: number };
 }
 
 const LIVE_TAIL = 8 * 1024;
@@ -170,7 +162,7 @@ export function foldEvents(events: AgentEvent[], stopped = false): AgentView {
 }
 
 function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
-  const view: AgentView = { engine: null, model: null, items: [], approvals: [], asks: [], trust: null, plan: null, board: null, files: [], usage: null, ended: null, sessionRef: null, context: null, memory: null, background: [], hooks: [], round: null, agents: { running: 0, queued: 0, first: null } };
+  const view: AgentView = { engine: null, items: [], approvals: [], asks: [], trust: null, plan: null, board: null, usage: null, ended: null, sessionRef: null, memory: null, hooks: [], round: null, agents: { running: 0, queued: 0 } };
   const bgs = new Map<string, BackgroundView>();
   const tools = new Map<string, ToolView>();
   const texts = new Map<string, Extract<ViewItem, { kind: "text" }>>();
@@ -182,7 +174,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   const skills = new Map<string, SkillProposalView>();
   const subStreamed = new Set<string>();
   const parentOf = (sid: string) => tools.get(sid);
-  let diffFiles: FileDiff[] | null = null;
   // 用量：一回合一次（turn）的加起来；累计（cumulative）的取最后一条。
   let turnUsage: UsageLine | null = null;
   let cumulative: UsageLine | null = null;
@@ -195,7 +186,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
       case "session.started":
         if (e.subagentId) break;
         view.engine = e.engine;
-        view.model = e.model ?? null;
         view.sessionRef = e.sessionRef ?? view.sessionRef;
         break;
       case "message.delta":
@@ -228,19 +218,18 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         let item = thoughts.get(rkey);
         if (!item) {
           if (e.type === "reasoning.completed" && !e.text.trim()) break;
-          item = { text: "", done: false, startedAt: e.at };
+          item = { done: false, startedAt: e.at };
           thoughts.set(rkey, item);
           // 并进前面那一组工具调用；前面不是就新开一组（后面的工具调用接着进这一组）。
           const group = lastGroup();
           if (group) group.thoughts.push(item);
           else view.items.push({ kind: "tools", id: `g-r-${rkey}-${e.seq}`, calls: [], thoughts: [item] });
         }
-        if (e.type === "reasoning.delta") item.text += e.text;
-        else { item.text = e.text || item.text; item.done = true; item.endedAt = e.at; }
+        if (e.type === "reasoning.completed") { item.done = true; item.endedAt = e.at; }
         break;
       }
       case "tool_call.started": {
-        const call: ToolView = { callId: e.callId, name: e.name, kind: e.kind, title: e.title, input: e.input, status: "running", live: "", diff: [], startedAt: e.at, subagentId: e.subagentId };
+        const call: ToolView = { callId: e.callId, name: e.name, kind: e.kind, title: e.title, input: e.input, status: "running", live: "", diff: [], startedAt: e.at };
         tools.set(e.callId, call);
         // 子任务的步骤挂在交出去的那一步下面（找不到那一步就照旧排在组里）。
         const parent = e.subagentId ? parentOf(e.subagentId) : undefined;
@@ -271,10 +260,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
         call.durationMs = e.durationMs ?? e.at - call.startedAt;
         break;
       }
-      case "diff.updated":
-        if (e.subagentId) break;
-        diffFiles = e.files;
-        break;
       case "plan.updated":
         if (e.subagentId) break;
         view.plan = e.steps;
@@ -328,10 +313,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
       case "trust.resolved":
         if (e.trusted && view.trust) view.items.push({ kind: "trusted", id: `tr-${e.seq}`, label: view.trust.label });
         view.trust = null;
-        break;
-      case "context.updated":
-        if (e.subagentId) break;
-        view.context = { used: e.used, window: e.window ?? null, compactAt: e.compactAt ?? null, parts: e.parts ?? [], managedBy: e.managedBy ?? null, warn: !!e.warn };
         break;
       case "context.compacted":
         view.items.push({ kind: "compacted", id: `c-${e.seq}`, step: e.step, text: e.text, before: e.before, after: e.after, summary: e.summary });
@@ -430,8 +411,6 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   if (view.ended) view.trust = null;
   view.usage = cumulative ?? turnUsage;
   view.cumulativeUsage = cumulative != null;
-  view.files = diffFiles ?? collectDiffs([...tools.values()]);
-  view.background = [...bgs.values()];
   if (view.ended) {
     // 模型起的后台命令跟着任务停了；留着的 dev server 以后的变化不进任务记录，只记到起过。
     for (const item of view.items) {
@@ -442,11 +421,7 @@ function foldFresh(events: AgentEvent[], stopped: boolean): AgentView {
   // 派出去的子代理（v1.1.11，任务头上的小片）：交出去的那一步还在跑——开始了的在跑，派了还没开始的在排队。
   if (!view.ended) {
     for (const c of tools.values()) {
-      if (c.status !== "running" || !(c.sub || c.name === "spawn_agent")) continue;
-      if (c.sub && !c.sub.status) view.agents.running += 1;
-      else if (!c.sub) view.agents.queued += 1;
-      else continue;
-      view.agents.first ??= c.callId;
+      if (liveAgent(c)) view.agents[c.sub ? "running" : "queued"] += 1;
     }
   }
   return view;
@@ -486,12 +461,6 @@ export function addUsage(a: UsageLine, b: UsageLine): UsageLine {
     source: a.source === b.source ? a.source : a.source === "unknown" || b.source === "unknown" ? "unknown" : a.source === "estimated" || b.source === "estimated" ? "estimated" : a.source,
     partial: a.partial || b.partial || (a.usd == null) !== (b.usd == null),
   };
-}
-
-function collectDiffs(calls: ToolView[]): FileDiff[] {
-  const byPath = new Map<string, FileDiff>();
-  for (const c of calls) for (const d of c.diff) byPath.set(d.path, d);
-  return [...byPath.values()];
 }
 
 // ---------- 一组的英文摘要、每一步的英文标题（v1.0.1，学 Claude Code） ----------
