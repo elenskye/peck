@@ -1,49 +1,36 @@
 # 当前交接
 
-更新：2026-11-26。**v1.2.0 做完、已提交、已装进 /Applications**（Claude Code 装的；每装一次新包，第一次打开会连弹几个钥匙串框）。没有在做的版本。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
+更新：2026-11-26。**v1.2.1 做完、已提交、已装进 /Applications**（第一次打开会连弹几个钥匙串框）。没有在做的版本。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
 
-## 这一版（1.2.0）
+## 这一版（1.2.1）
 
-站主定的做法：Claude Code 接管电脑，用正式版 Peck 开发，6 个 Phase 各交给一个引擎；真跑里暴露的 Peck 问题由 Claude Code 当场修，各一笔提交。
+- **CLI 的后台进程一起停**：CLI 和它生出来的进程算一组，任务结束时把还活着的一起停掉（怎么认见 architecture「CLI 四家」的「进程」）。
+- **AUTO 能提交**：只做 `git add` / `git commit` 的命令换一个能写 `.git` 的沙箱跑，不弹卡片；EDIT 和别的写 `.git` 照旧弹卡片。
+- **WebKit 走 Peck 的代理**：`web_fetch` 渲染时每条连接由 Peck 解析、查过 IP 再连，WebRTC 关掉；能读回响应的请求不再只限这个网站自己。
+- **Git Plan 1.2.0**：这一轮改到的每个 git 仓库（主文件夹和能改的其他文件夹）各提交一笔，仓库根目录 `CLAUDE.md` / `AGENTS.md` 写了 Git 规则的照它的；其他文件夹的说明文件路径开场带给模型。插件只装主文件夹，Peck 不写其他文件夹里的文件。
+- 文档精简（去掉来历和重复，各放一处）；代码精简：Rust 合并重复的小函数、删只有测试在用的代码（净删约 130 行），前端删没人读的状态和字段、死样式、合并重复的小函数（净删约 70 行），行为不变。
 
-| Phase | 谁来做 | 做了什么 |
-| --- | --- | --- |
-| 1 | Claude Code | 去掉跑完的「下一步」按钮（系统提示那条、recap 的按钮、`?mock`、文档） |
-| 2 | Grok | 右栏去掉 PREVIEW 和本机预览代理；留着的 dev server 小片在 TERM 头上 |
-| 3 | PLOOP | 提示词库：全局一份存在库里（schema 12）；右栏 PROMPT 页签：搜索、复制、放进输入框、小窗增改、删除点两下 |
-| 4 | PLOOP | 输入框打 `/` 插提示词（句首命令在前、提示词在后，句中只列提示词）；`{占位}` 选中、Tab 跳，`\{` 是字面花括号 |
-| 5 | Codex | `web_fetch` 正文太少或 `render: true` 时用离屏 WebKit 跑完 JavaScript 再取正文 |
-| 6 | Muse → Codex | 界面对齐：`+`、↵ 居中，各栏控件高度和基线，设置、小窗、QUOTA 的对齐（Muse 量到一半订阅额度用完，站主改给 Codex） |
-
-真跑里修的 Peck 问题：
-
-- **崩溃**：发任务那一下 App 被 macOS 杀掉。菜单栏图标在后台线程上被并发取放，计数乱掉、在后台线程上被移除。托盘现在只在主线程上碰。
-- **无人值守会卡住的卡片**：CLI 读临时目录里自己截的图也要站主点；`T=$(mktemp -d) … rm -rf "$T"` 被当成删项目外。前者在项目、临时目录里替 CLI 批；后者只认最死板的写法（审查找到过绕过，见 architecture「权限和高危」），顺带补上了 `do`、`then` 后面的 `rm` 认不出的老漏洞。
-- **卡片藏在视线外**：长提示词发出去以后中栏停在 YOU 顶上，审批卡片在下面看不见；现在卡片出来就滚到它。
-- **CLI 的几处显示**：Grok 搜索没搜到被标成 FAIL；Codex 搜网页那一步没有搜索词；额度提醒用的是过了重置时间的旧快照；CLI 模型清单停在 11-13 选不到新模型（现在存了 3 天自动重读）；价格表补上 gpt-6.2 Sol / Astra。
-- **WebKit 读网页的拦截**（收尾审查找到）：页面脚本能经「解析到本机的域名」请求本机服务。现在能读回响应的请求只准发给这个网站自己；剩下的见「已知问题」。
-
-数据库到 schema 12（升级前自动备份 `before-v12`）；没加依赖。
+数据库没变（schema 12）；没加依赖。
 
 ## 验证
 
-- 全量 `cargo test` 379 个过（终端里，要套沙箱的、WebKit 的都真跑了）；`pnpm check`、`pnpm build` 过。
-- 两个只读子代理分头审了这一版的 Rust 和前端，真缺陷都修了：Rust 那份是 mktemp 规则能绕过、WebKit 拦截、托盘动画；前端那份是切项目时 TERM 的 dev server 小片串到别的项目、后台重读的模型清单冲掉新引擎的、`/` 插提示词打得快时留尾巴、最后一个占位按 Tab 把列表项缩进、清空的占位旁边删字后 Tab 跳不了、PROMPT 小窗拼音上屏的 Enter，还有 TERM 头比别的页签高 6px。
-- 升级测试：正式数据副本用新版打开，升到 schema 12、留了备份、项目 / 任务 / 事件行数不变，崩溃时卡在「在跑」的任务收成失败。
-- `?mock` 明暗：PROMPT 页签、`/` 弹层两组、句中插入和占位（真按键：清空一个占位再删旁边的字，Tab 照样跳；列表里最后一个占位 Tab 不缩进）、`+` 居中（32px 框里 12px 图形正中）、四个右栏页签头一样高、等人点的卡片自己滚进视线。
-- 实测 WebKit 拦截：本地页面的 fetch、WebSocket、sendBeacon 经 `localtest.me` 打本机服务，改前三种都到了、改后都没到。Codex 在公开的 TodoMVC React 空壳页上读到了 JavaScript 生成的正文。
+- 全量 `cargo test` 386 个过（17 个要联网、真账号的 ignored）；`pnpm check`、`pnpm build`、`tsc --noUnusedLocals --noUnusedParameters` 过。
+- 新加的测试：一组进程（同组的、换了会话的、被丢下的、两层 fork 带记号的 node 都停了）；AUTO 提交沙箱（真沙箱里 `Project` 写不了 `.git`、`Commit` 能提交、`config` / `hooks` / `info` 写不了）和 `plain_commit` 的认法（含几种绕过写法）；SOCKS 代理的拒绝和放行；WebKit 没有 WebRTC；Git Plan 多仓库（单元测试，加一整条 Peck Loop 任务：主文件夹照 Git Plan、其他文件夹照它的 `## Git`）；`<peck-folders>` 带说明文件。
+- 真跑：Claude Code（Haiku）2 个小任务，让它在后台起 `sleep`：第一次任务结束后还留着（系统程序、新会话、父进程先退了），补上「被丢下的」那条后第二次没了。
+- 联网：TodoMVC 经代理读到 JavaScript 生成的正文；`localtest.me`（解析到本机）的图片、fetch、WebSocket 一次都没到本机服务。
+- `?mock`：精简后的前端开过任务页、任务板和子代理计数、设置 → AGENTS，没有脚本错误。
 - **没验的**：
-  - 正式版窗口里：真中文输入法下的 `/` 弹层和占位（只有模拟的组字事件）、真鼠标点弹层、提示词复制到系统剪贴板、悬停才露的笔。
-  - 真模型用 `web_fetch` 的 `render: true`（只有测试入口和 Codex 的实测）。
-  - 以前留下的：从访达拖图、`+` 的系统选窗；Gemini 原生搜索（Key 额度用完）、Vertex（ADC 过期）、百炼新加坡、Mathpix（没 Key）、通知横幅。
+  - 正式版窗口里没点：Git Plan 多仓库的两行 recap、AUTO 下提交不弹卡片、WebKit 渲染。
+  - 真模型：PLOOP 在 AUTO 下自己 `git commit`、Git Plan 多仓库的问法（真模型照不照编号回）、CLI 的多仓库提交。
+  - 进程清理只在 Claude Code 上真跑过，Codex、Muse、Grok 没有。
+  - 以前留下的：真中文输入法下的 `/` 弹层和占位、从访达拖图、`+` 的系统选窗；Gemini 原生搜索、Vertex、百炼新加坡、Mathpix、通知横幅。
 
 ## 留给站主的
 
-- **push** 你做：`origin/main` 到 1.1.11，1.1.12 两笔和 1.2.0 这一版没推。
-- **Muse** 的订阅额度用完了（北京时间 11-26 04:17 重置）；Peck 读不到 Muse 的余量，事前不提醒。
-- **Claude Code** 的每周额度剩得不多（11-25 晚看是 16%）。
-- 任务 194 的记忆卡片（「Peck 给每条命令的 `$TMPDIR` 跑完就删」）还等你 SAVE / SKIP。任务 193（崩溃）、196（Muse 额度用完）是失败记录，留着当记录。
-- **废纸篓**：两次装包换下来的 `Peck.app.backup-*`，确认不要了自己清空。
+- **push** 你做：`origin/main` 到 1.1.11，1.1.12、1.2.0、1.2.1 都没推。
+- **Git Plan UPDATE**：装着 1.1.0 的项目在项目设置 → PLUGINS 点 UPDATE 才换成新的 Skill 和问法；不点也能用，多仓库提交照样按新规矩走。
+- 任务 194 的记忆卡片（「Peck 给每条命令的 `$TMPDIR` 跑完就删」）还等你 SAVE / SKIP（没再查过）。
+- **废纸篓**：装包换下来的旧 `Peck.app`，确认不要了自己清空。
 - 仓库里没跟踪的 `.agents/skills`（Peck 认结构建的链接）：要不要提交你定。
 - **Vertex**：要用先在终端跑 `gcloud auth application-default login`。
 
@@ -51,8 +38,6 @@
 
 | 问题 | 建议 |
 | --- | --- |
-| WebKit 读网页：图片、脚本、样式还能发往解析到本机、内网的域名（只能盲发、读不回）；同一个主机的 DNS 重绑仍能让页面读到本机服务；WebRTC 不受内容规则管 | 根治要给 WebKit 配 Peck 自己的代理、每条连接查解析出来的 IP（roadmap 候选） |
-| CLI 的后台进程（`pnpm dev &`、无头浏览器）任务结束后不一定停：Claude Code 起的 vite 用 `pkill -f 'vite --port 1430'` 没杀掉（进程名是 `vite.js`） | 提示词里叫它自己停；Peck 不管 CLI 进程以外的 |
 | CLI 跑在它自己的沙箱里：Codex 的沙箱里 WebKit 起不来，截图、渲染要出沙箱，每次弹卡片 | 让它一个脚本截完 |
 | Muse、Grok 读不到订阅余量，用完了只能等 429 | 记着 |
 | 句中 `/` 按标题包含筛：空格后打路径（` /src`）时标题里正好有这几个字会弹，这时 ↵ 是插提示词 | Esc 关掉再 ↵ |
@@ -73,6 +58,10 @@
 | 插件带的 MCP 服务器（`.mcp.json`）只列出来，Peck Loop 不起 | 有插件要用时再接 |
 | Vertex 上的 Claude / Gemini 只有离线测试；Vertex 上的 Claude 没带 `block_binding` | 开了 GCP 项目再试 |
 | 小窗打开的 0.2 秒动画里点下去会落到外面那层、把小窗关掉 | 记着 |
+| 任务结束时认不出的 CLI 子进程：自己 `setsid` 当组长、又是系统自带程序（读不到记号）、父进程先退了的；被丢下的但工作目录不在 CLI 工作目录里的 | 真碰到再看 |
+| 被丢下的进程按工作目录认：站主同时在别的终端里、同一个项目文件夹下用 `sh -c '… &'` 起的后台进程，任务结束时也会被停 | 记着 |
+| 仓库的 Git 规则只认标题带 Git、commit、提交的那几节；写在别的标题下的认不到，就照 Git Plan | 规则放进这样的标题下 |
+| AUTO 的提交沙箱放开了 `.git`（`config`、`hooks`、`info` 除外）：提交时仓库自己的 pre-commit 钩子也能写 `.git` | 记着 |
 
 ## 视觉基线要补的
 
@@ -87,10 +76,8 @@
 ## 留意
 
 - Gemini 4 Carbon / Argon 12 月 1 日起涨价（Google 官网），到时在设置 → QUOTA 点 REFRESH。
-- 设置迁移（`settings.ts` 的 `loadSettings`）别删：正式版的界面设置还是 v1.1.1 以前的样子，第一次打开新版才换。
 - Codex 和 ChatGPT 客户端共用登录；Claude 额度要 `cli/bin` 的 Claude Code 登录一次才读得到。
 - 测试项目 `projects/tester`、`moon-lab`、`gateway-smoke`、`git-plan-smoke`（git 仓库，收尾提交用）在 Peck 仓库外。
-- 改系统级的插件（`src-tauri/defaults/plugins/`、`defaults/library/`）要升它自己的 `version`。
 - 联网搜索的协议各家常变：出 400 先查 `gateway/search.rs` 和各家转换器，`live_web_search` 能单独真跑一家。
 
 ## 下一步
