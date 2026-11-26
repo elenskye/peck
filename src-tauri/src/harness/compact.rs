@@ -384,12 +384,7 @@ pub fn restore_files(ctx: &ToolContext, candidates: &[String], window: Option<u6
             .lines()
             .enumerate()
             .map(|(i, line)| {
-                let shown = if line.chars().count() > tools::fs::LINE_CHARS {
-                    format!("{}…（这一行太长，截断了）", line.chars().take(tools::fs::LINE_CHARS).collect::<String>())
-                } else {
-                    line.to_string()
-                };
-                format!("{:>6}\t{shown}", i + 1)
+                format!("{:>6}\t{}", i + 1, tools::fs::shown_line(line, false))
             })
             .collect();
         let tokens = rows.iter().map(|r| context::estimate(r) + 1).sum();

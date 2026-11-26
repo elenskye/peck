@@ -137,7 +137,7 @@ fn shell_path_dirs() -> Vec<PathBuf> {
 /// 「CLI 目录」没设时自己找一个：几个候选目录里（站主 shell 的 PATH），哪个能找到的引擎最多（至少两家）就用哪个。
 /// 找不到返回 `None`，照旧在 PATH 里找。
 fn discover_cli_dir(candidates: &[PathBuf], commands: &[&str]) -> Option<PathBuf> {
-    let count = |dir: &PathBuf| commands.iter().filter(|c| is_executable(&dir.join(c))).count();
+    let count = |dir: &PathBuf| commands.iter().filter(|c| crate::agent::is_executable(&dir.join(c))).count();
     candidates
         .iter()
         .map(|d| (count(d), d))
@@ -169,11 +169,6 @@ pub fn fill_cli_dir(store: &std::sync::Arc<std::sync::Mutex<Store>>) {
             }
         }
     }
-}
-
-fn is_executable(path: &std::path::Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// 家目录换成 `~`，存进设置、显示给站主看都短一点。

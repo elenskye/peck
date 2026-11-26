@@ -77,10 +77,7 @@ fn session_config(task: &AgentTask) -> Option<Value> {
 /// UUIDv7：前 48 位是毫秒时间戳（Muse 的 `commandId` 要这种）。
 pub fn uuid_v7() -> String {
     let mut b = *uuid::Uuid::new_v4().as_bytes();
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let ms = crate::store::now_ms() as u64;
     for (i, byte) in b.iter_mut().take(6).enumerate() {
         *byte = (ms >> (8 * (5 - i))) as u8;
     }
@@ -479,10 +476,10 @@ impl Session {
         match c {
             Control::Approve { request_id, decision } => {
                 let Some(pending) = self.approvals.remove(&request_id) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 let Some(choice) = MuseConverter::choice_for(decision, &pending.choices) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 let sent = self
                     .command(
@@ -506,7 +503,7 @@ impl Session {
                     return;
                 }
                 let Some((input, questions)) = self.questions.remove(&request_id) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 // 每个问题自己的答案（v1.1.9）。都按 `freeText` 给（Muse 最多收 500 字；多选的几项连成一句）。
                 let answers: Vec<Value> = questions
@@ -554,12 +551,6 @@ impl Session {
         }
     }
 
-    fn unknown(&self, request_id: &str) {
-        self.sink.emit(EventBody::Notice {
-            level: NoticeLevel::Warn,
-            text: format!("这件事（{request_id}）已经不用回答了。"),
-        });
-    }
 }
 
 #[cfg(test)]

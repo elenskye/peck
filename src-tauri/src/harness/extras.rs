@@ -105,15 +105,6 @@ fn status_word(r: &RunRecord) -> &'static str {
     }
 }
 
-fn one_line(text: &str, max: usize) -> String {
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() > max {
-        format!("{}…", flat.chars().take(max).collect::<String>())
-    } else {
-        flat
-    }
-}
-
 impl Extras {
     fn db(&self) -> Result<std::sync::MutexGuard<'_, Store>, String> {
         self.store.lock().map_err(|_| "读不到任务记录。".to_string())
@@ -152,7 +143,7 @@ impl Extras {
                 let more = r.files.len().saturating_sub(shown.len());
                 format!("{} file(s): {}{}", r.files.len(), shown.join(", "), if more > 0 { format!(", +{more} more") } else { String::new() })
             };
-            lines.push(format!("#{} · {} · {} · \"{}\" · {files} · states: {states}{wt}", r.number, stamp(r.started_at), status_word(r), one_line(&r.prompt, 70)));
+            lines.push(format!("#{} · {} · {} · \"{}\" · {files} · states: {states}{wt}", r.number, stamp(r.started_at), status_word(r), super::tools::one_line(&r.prompt, 70)));
         }
         if lines.len() == 1 {
             return Ok("这个项目还没有任务快照。".into());
@@ -238,7 +229,7 @@ impl Extras {
             "高危：{}回到任务 {number} {point}（{total} 个文件）",
             if project { "整个项目" } else if wanted.is_empty() { "" } else { "部分文件" }
         );
-        let mut detail = vec![format!("任务 {number}（{}）：{}", stamp(run.started_at), one_line(&run.prompt, 80))];
+        let mut detail = vec![format!("任务 {number}（{}）：{}", stamp(run.started_at), super::tools::one_line(&run.prompt, 80))];
         if project {
             detail.push("整个项目回到那时：之后每一次任务的改动、你自己后来改的，都会一起放回去。".into());
         }

@@ -316,7 +316,7 @@ impl Session {
         match c {
             Control::Approve { request_id, decision } => {
                 let Some((id, options)) = self.approvals.remove(&request_id) else {
-                    return self.notice(format!("这件事（{request_id}）已经不用回答了。"));
+                    return super::stale(&self.sink, &request_id);
                 };
                 let reply = AcpConverter::permission_reply(&id, decision, &options);
                 if self.pipe.send(&reply).await.is_ok() {
@@ -328,7 +328,7 @@ impl Session {
             Control::Answer { request_id, answer, .. } => {
                 // ACP 自己不问站主；提问都来自 Peck 的本机 MCP（ask_user）。
                 if !crate::gateway::mcp::try_answer(&request_id, &answer, &self.sink).await {
-                    self.notice(format!("这件事（{request_id}）已经不用回答了。"));
+                    super::stale(&self.sink, &request_id);
                 }
             }
             Control::Append { .. } => {

@@ -70,7 +70,7 @@ pub fn build_augmented_path(extra_paths: &[String]) -> String {
         .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".to_string())
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(crate) fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

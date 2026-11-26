@@ -9,6 +9,15 @@ pub const LIST_LIMIT: usize = 300;
 pub const READ_LINES: usize = 2000;
 pub const READ_BYTES: usize = 50 * 1024;
 pub const LINE_CHARS: usize = 2000;
+
+/// 读文件时一行的样子：超过 [`LINE_CHARS`]（或 `long`：这一行本来就太长、只收了开头）截断，写明截断了。
+pub fn shown_line(line: &str, long: bool) -> String {
+    if long || line.chars().count() > LINE_CHARS {
+        format!("{}…（这一行太长，截断了）", line.chars().take(LINE_CHARS).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
 pub const FIND_LIMIT: usize = 100;
 /// 超过这么大的文件不整个读进内存：边读边数行，只留要的那一段（也不记「读过」，不能用 write_file 整个覆盖）。
 pub const WHOLE_FILE: u64 = 8 * 1024 * 1024;
@@ -142,12 +151,7 @@ fn read_file_within(ctx: &ToolContext, input: &Value, whole_file: u64) -> Result
     let mut last = start - 1;
     let mut cut_by_size = false;
     for (i, line) in text.lines().enumerate().skip(start - 1).take(count) {
-        let shown: String = if line.chars().count() > LINE_CHARS {
-            format!("{}…（这一行太长，截断了）", line.chars().take(LINE_CHARS).collect::<String>())
-        } else {
-            line.to_string()
-        };
-        let row = format!("{:>6}\t{}\n", i + 1, shown);
+        let row = format!("{:>6}\t{}\n", i + 1, shown_line(line, false));
         if out.len() + row.len() > READ_BYTES && last >= start {
             cut_by_size = true;
             break;
@@ -185,12 +189,7 @@ fn read_large(ctx: &ToolContext, file: &Path, size: u64, input: &Value) -> Resul
         }
         let text = String::from_utf8_lossy(cur);
         let text = text.strip_suffix('\r').unwrap_or(&text);
-        let shown = if long || text.chars().count() > LINE_CHARS {
-            format!("{}…（这一行太长，截断了）", text.chars().take(LINE_CHARS).collect::<String>())
-        } else {
-            text.to_string()
-        };
-        let row = format!("{idx:>6}\t{shown}\n");
+        let row = format!("{idx:>6}\t{}\n", shown_line(text, long));
         if out.len() + row.len() > READ_BYTES && *last >= start {
             *cut = true;
             *stop = true;

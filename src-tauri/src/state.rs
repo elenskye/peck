@@ -1,4 +1,3 @@
-use crate::run::ActiveRunContext;
 use crate::store::Store;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -6,7 +5,7 @@ use std::sync::{Arc, Mutex};
 pub struct AppState {
     pub api: Arc<crate::api::ApiState>,
     pub store: Arc<Mutex<Store>>,
-    pub active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>>,
+    pub active_runs: crate::run::ActiveRuns,
     pub usage_monitor: Arc<crate::usage::UsageMonitor>,
     pub terminals: Arc<crate::term::Terminals>,
 }

@@ -317,7 +317,7 @@ pub struct SlashList {
     pub skills: Vec<SkillInfo>,
 }
 
-fn workspace_root(state: &crate::state::AppState, workspace_id: &str) -> Result<(PathBuf, crate::workspace::ProjectSettings), String> {
+pub(crate) fn workspace_root(state: &crate::state::AppState, workspace_id: &str) -> Result<(PathBuf, crate::workspace::ProjectSettings), String> {
     let db = state.store.lock().map_err(|_| "读不到项目。")?;
     let ws = db.workspace(workspace_id).map_err(|_| "没找到这个项目。")?;
     Ok((PathBuf::from(ws.path), ws.settings))

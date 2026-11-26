@@ -78,14 +78,7 @@ pub async fn dialog_pick_folder(from: Option<String>, attach: Option<bool>) -> R
 
 #[tauri::command]
 pub async fn workspace_choose(state: State<'_, AppState>) -> Result<Option<Workspace>, String> {
-    let output = tokio::process::Command::new("/usr/bin/osascript")
-        .args([
-            "-e",
-            "POSIX path of (choose folder with prompt \"选择项目文件夹\")",
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let output = choose("return POSIX path of (choose folder with prompt \"选择项目文件夹\"{from})", None).await.map_err(|e| e.to_string())?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
         if message.contains("-128") {
@@ -331,7 +324,6 @@ pub async fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 发一条 macOS 通知（任务做完、要回答）。开关在界面设置里，界面决定发不发。
 /// 用编辑器或访达打开项目里的文件（v0.8）：`how` 是 `finder`（在访达里选中）、`editor`（`app` 给了就用它，
 /// 没给用系统默认的 App）。只认项目里的、项目其他文件夹里的；`app` 只能是一个 App 的名字。
 #[tauri::command]
@@ -376,14 +368,7 @@ fn runs_when_opened(p: &std::path::Path) -> bool {
     if RUNS.contains(&ext.as_str()) {
         return true;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if p.is_file() && std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
-            return true;
-        }
-    }
-    false
+    crate::agent::is_executable(p)
 }
 
 /// 要打开的路径：项目里的相对路径，或者项目根、其他文件夹里的绝对路径；`..` 和指到外面的都不行。
@@ -400,6 +385,7 @@ pub fn resolve_open_path(root: &std::path::Path, folders: &[(PathBuf, bool)], ra
     Ok(real)
 }
 
+/// 发一条 macOS 通知（任务做完、要回答）。开关在界面设置里，界面决定发不发。
 #[tauri::command]
 pub async fn notify(title: String, body: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;

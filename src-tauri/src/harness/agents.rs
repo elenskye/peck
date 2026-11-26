@@ -273,8 +273,12 @@ pub fn spawn_spec(kinds: &[Kind]) -> ToolSpec {
 
 /// 过程里那一步的标题：「派 explorer：…」。
 pub fn title(kind: &str, task: &str) -> String {
-    let first: String = task.lines().next().unwrap_or("").trim().chars().take(60).collect();
-    format!("派 {kind}：{first}")
+    format!("派 {kind}：{}", task_title(task))
+}
+
+/// 派的活的短名：第一行、最多 60 个字。
+pub fn task_title(task: &str) -> String {
+    task.lines().next().unwrap_or("").trim().chars().take(60).collect()
 }
 
 /// 一个子代理交回来的。

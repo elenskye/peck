@@ -153,7 +153,7 @@ fn build_dirs(root: &Path) -> Option<String> {
     if s.contains('"') {
         return None;
     }
-    let names: Vec<String> = BUILD_DIRS.iter().map(|n| n.replace('.', "\\.")).collect();
+    let names: Vec<String> = BUILD_DIRS.iter().map(|n| escape_regex(n)).collect();
     Some(format!("(regex #\"^{}/((.+/)?({})(/|$)|(.+/)?[^/]*\\.tsbuildinfo$|(.+/)?\\.eslintcache$)\")", escape_regex(&s), names.join("|")))
 }
 

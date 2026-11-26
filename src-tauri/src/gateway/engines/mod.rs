@@ -116,6 +116,11 @@ pub async fn from_state(state: &crate::state::AppState, engine: &str) -> Result<
     backend_for(engine, &config, mock, Vec::new()).await
 }
 
+/// 站主回答的那件事引擎已经不等了（过期的审批、提问）：写一行提醒。
+fn stale(sink: &EventSink, request_id: &str) {
+    sink.emit(EventBody::Notice { level: super::event::NoticeLevel::Warn, text: format!("这件事（{request_id}）已经不用回答了。") });
+}
+
 /// CLI 输出的一行：JSON，或者读不懂的文字。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Line {

@@ -15,7 +15,7 @@ pub fn shape(ctx: &ToolContext, label: &str, full: &str, failed: bool) -> (Strin
     let (head, tail) = if failed { (1024, 7 * 1024) } else { (2 * 1024, 6 * 1024) };
     let n = ctx.spill_count.fetch_add(1, Ordering::SeqCst) + 1;
     // 一个任务（会话）一个文件夹，接着发的几次共用：文件名带上时间，前后几次不会撞名。
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let stamp = crate::store::now_ms();
     let path = ctx.spill_dir.join(format!("{stamp}-{n}-{label}.log"));
     let saved = std::fs::create_dir_all(&ctx.spill_dir)
         .and_then(|_| std::fs::write(&path, full))

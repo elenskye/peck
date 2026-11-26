@@ -153,14 +153,8 @@ impl BgProc {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         s.total += text.len();
         s.tail.push_str(text);
-        if s.tail.len() > RING {
-            let cut = s.tail.len() - RING;
-            let mut at = cut;
-            while !s.tail.is_char_boundary(at) {
-                at += 1;
-            }
-            s.tail.drain(..at);
-        }
+        let at = s.tail.len() - tail_bytes(&s.tail, RING).len();
+        s.tail.drain(..at);
         if s.url.is_none() {
             s.url = local_url(text);
         }
@@ -180,12 +174,7 @@ impl BgProc {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let new_bytes = s.total - s.cursor;
         let available = s.tail.len().min(new_bytes);
-        let start = s.tail.len() - available;
-        let mut at = start;
-        while !s.tail.is_char_boundary(at) {
-            at += 1;
-        }
-        let fresh = s.tail[at..].to_string();
+        let fresh = tail_bytes(&s.tail, new_bytes).to_string();
         s.cursor = s.total;
         let lost = new_bytes.saturating_sub(available);
         drop(s);

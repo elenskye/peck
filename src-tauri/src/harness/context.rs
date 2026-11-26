@@ -205,7 +205,7 @@ pub fn environment_block(root: &Path, input: &EnvInput) -> String {
     lines.join("\n")
 }
 
-fn git_bin() -> &'static str {
+pub(crate) fn git_bin() -> &'static str {
     if Path::new("/usr/bin/git").exists() {
         "/usr/bin/git"
     } else {

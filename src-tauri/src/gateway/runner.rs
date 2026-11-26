@@ -13,7 +13,6 @@ use super::log::EventSink;
 use super::{catalog, engines, mcp, AgentTask, Control};
 use crate::events::{RunStatus, StepStatus};
 use crate::harness::run::permission_of;
-use crate::run::ActiveRunContext;
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -148,7 +147,7 @@ pub async fn gateway_compact(
 /// 一个 CLI 引擎任务要的东西（`gateway_run_start` 拼好，测试里直接给）。
 pub(crate) struct EngineRun {
     pub store: Arc<Mutex<crate::store::Store>>,
-    pub active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>>,
+    pub active_runs: crate::run::ActiveRuns,
     pub session_id: String,
     pub prompt: String,
     pub who: String,
@@ -891,7 +890,7 @@ mod tests {
         let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 910_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active_runs: crate::run::ActiveRuns = Arc::default();
         let backend: Arc<dyn super::super::AgentBackend> =
             Arc::new(super::super::mock::ReplayBackend::fixture("codex", std::time::Duration::ZERO).unwrap());
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -1017,7 +1016,7 @@ mod tests {
         let session = store.create_session(&ws.id, None).unwrap();
         store.add_memory(&ws.id, "测试用 pnpm test", None).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active_runs: crate::run::ActiveRuns = Arc::default();
         let seen: Arc<Mutex<Vec<AgentTask>>> = Arc::default();
         let backend: Arc<dyn super::super::AgentBackend> = Arc::new(HookedCli { seen: seen.clone() });
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -1091,7 +1090,7 @@ mod tests {
         let mut store = store;
         store.create_run(&session.id, "占号", 970_001, &DispatchPlan { steps: vec![] }).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active_runs: crate::run::ActiveRuns = Arc::default();
         let seen: Arc<Mutex<Vec<AgentTask>>> = Arc::default();
         let backend: Arc<dyn super::super::AgentBackend> = Arc::new(HookedCli { seen: seen.clone() });
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();

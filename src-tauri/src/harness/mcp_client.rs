@@ -769,7 +769,7 @@ pub async fn mcp_server_test(server: McpServerConfig, state: tauri::State<'_, cr
         return Err(format!("钥匙串里取不到 {m}。"));
     }
     let server = filled.remove(0);
-    let env = crate::term::user_env().clone().unwrap_or_else(|| std::env::vars().collect());
+    let env = shell_env();
     let home = std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
     let client = McpClient::start(&server, &env, &home).await?;
     let tools = client.list_tools().await;
@@ -809,9 +809,13 @@ pub struct ProjectMcpView {
     pub error: Option<String>,
 }
 
+/// 站主 shell 的环境（读不到就用 App 自己的）。
+fn shell_env() -> Vec<(String, String)> {
+    crate::term::user_env().clone().unwrap_or_else(|| std::env::vars().collect())
+}
+
 fn project_env(ws: &crate::workspace::Workspace) -> Vec<(String, String)> {
-    let base: Vec<(String, String)> = crate::term::user_env().clone().unwrap_or_else(|| std::env::vars().collect());
-    crate::harness::run::with_project_env(base, &ws.settings.env_pairs())
+    crate::harness::run::with_project_env(shell_env(), &ws.settings.env_pairs())
 }
 
 /// 项目设置：这个项目的 Peck Loop 会用到的 MCP 服务器。

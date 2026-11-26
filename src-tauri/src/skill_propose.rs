@@ -599,12 +599,6 @@ fn loads(db: &Store, since: i64) -> Vec<(String, String, i64)> {
         .collect()
 }
 
-fn workspace_of(state: &AppState, workspace_id: &str) -> Result<(PathBuf, crate::workspace::ProjectSettings), String> {
-    let db = state.store.lock().map_err(|_| "读不到项目。")?;
-    let ws = db.workspace(workspace_id).map_err(|_| "没找到这个项目。")?;
-    Ok((PathBuf::from(ws.path), ws.settings))
-}
-
 pub(crate) fn overview(store: &Arc<Mutex<Store>>, workspace_id: &str, root: &Path, off: &[String], plugins_off: &[String]) -> Vec<SkillRow> {
     let now = crate::store::now_ms();
     let used = store.lock().map(|db| loads(&db, now - 365 * 86_400_000)).unwrap_or_default();
@@ -640,7 +634,7 @@ pub(crate) fn overview(store: &Arc<Mutex<Store>>, workspace_id: &str, root: &Pat
 
 #[tauri::command]
 pub fn skill_overview(workspace_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<SkillRow>, String> {
-    let (root, settings) = workspace_of(&state, &workspace_id)?;
+    let (root, settings) = crate::skills::workspace_root(&state, &workspace_id)?;
     Ok(overview(&state.store, &workspace_id, &root, &settings.skills_off, &settings.plugins_off))
 }
 
@@ -692,13 +686,13 @@ pub(crate) fn restore(workspace_id: &str, root: &Path, name: &str, id: &str) -> 
 
 #[tauri::command]
 pub fn skill_versions(workspace_id: String, name: String, state: tauri::State<'_, AppState>) -> Result<Vec<SkillVersion>, String> {
-    let (root, _) = workspace_of(&state, &workspace_id)?;
+    let (root, _) = crate::skills::workspace_root(&state, &workspace_id)?;
     versions(&workspace_id, &root, &name)
 }
 
 #[tauri::command]
 pub fn skill_restore(workspace_id: String, name: String, id: String, state: tauri::State<'_, AppState>) -> Result<Vec<SkillRow>, String> {
-    let (root, settings) = workspace_of(&state, &workspace_id)?;
+    let (root, settings) = crate::skills::workspace_root(&state, &workspace_id)?;
     restore(&workspace_id, &root, &name, &id)?;
     Ok(overview(&state.store, &workspace_id, &root, &settings.skills_off, &settings.plugins_off))
 }

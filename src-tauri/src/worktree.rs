@@ -37,8 +37,7 @@ impl WorktreeState {
 }
 
 fn git(main: &Path) -> Command {
-    let bin = if Path::new("/usr/bin/git").exists() { "/usr/bin/git" } else { "git" };
-    let mut c = Command::new(bin);
+    let mut c = Command::new(crate::harness::context::git_bin());
     // 不跑仓库的钩子：`worktree add` 会触发 post-checkout，而钩子文件（比如 husky 的）是模型在沙箱里就能改的项目文件，
     // 这里却是在 Peck 自己的进程里、沙箱外跑。
     c.args(["-c", "core.hooksPath=/dev/null"])
@@ -132,7 +131,7 @@ fn safe_rel(rel: &str) -> bool {
     !rel.is_empty()
         && !p.is_absolute()
         && p.components().all(|c| matches!(c, Component::Normal(_)))
-        && !p.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(".git")))
+        && !crate::harness::tools::touches_git(p)
 }
 
 /// 建一个独立工作区（`at` 是要放的文件夹，还不存在），把主文件夹没提交的改动搬进去。

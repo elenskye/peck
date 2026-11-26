@@ -163,15 +163,6 @@ fn utf8<'a>(tree: &'a Tree, path: &str) -> Option<&'a str> {
     tree.get(path).and_then(|b| std::str::from_utf8(b).ok())
 }
 
-fn clip(text: &str, max: usize) -> String {
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.chars().count() > max {
-        format!("{}…", text.chars().take(max).collect::<String>())
-    } else {
-        text
-    }
-}
-
 /// 版本号按数字一段一段比（`1.10.0` 比 `1.9.3` 新；读不出数字的那一段当 0）。
 fn version_key(version: &str) -> Vec<u64> {
     version
@@ -200,7 +191,7 @@ fn read_skill(dir_name: &str, text: &str) -> Result<(SkillText, String), String>
     }
     let description = crate::skills::field(&fields, "description").map(str::to_string).unwrap_or_else(|| crate::skills::first_line(body));
     let version = crate::skills::field(&fields, "version").unwrap_or("0.0.0").to_string();
-    Ok((SkillText { name, description: clip(&description, 300), text: text.to_string() }, version))
+    Ok((SkillText { name, description: crate::harness::tools::one_line(&description, 300), text: text.to_string() }, version))
 }
 
 /// 读一个完整的插件（要有 `.claude-plugin/plugin.json`）。

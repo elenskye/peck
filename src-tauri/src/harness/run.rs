@@ -13,13 +13,12 @@ use crate::events::{ChangeSetSummary, RunStatus, StepStatus};
 use crate::gateway::event::{AgentEvent, EventBody, PermissionLevel, TurnEndReason};
 use crate::gateway::log::EventSink;
 use crate::gateway::{catalog, engines, providers, runner, AgentBackend, AgentTask, Control, Message, ModelProvider};
-use crate::run::ActiveRunContext;
 use crate::snapshot::ShadowRepo;
 use crate::state::AppState;
 use crate::store::{now_ms, Store, StoreResult};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
@@ -388,7 +387,7 @@ fn rounds_from(saved: Option<&str>, key: &str, default: u32) -> u32 {
 
 pub(crate) struct PeckRun {
     pub store: Arc<Mutex<Store>>,
-    pub active_runs: Arc<Mutex<HashMap<String, ActiveRunContext>>>,
+    pub active_runs: crate::run::ActiveRuns,
     pub session_id: String,
     pub prompt: String,
     pub who: String,
@@ -1145,7 +1144,7 @@ mod tests {
         let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 930_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active: crate::run::ActiveRuns = Arc::default();
         let lib_file = lib.canonicalize().unwrap().join("made.txt");
         let keep = lib.canonicalize().unwrap().join("keep.txt");
         let model = Arc::new(ScriptedModel::new(
@@ -1239,7 +1238,7 @@ mod tests {
         let mut store = store;
         store.create_run(&session.id, "占号", 930_101, &DispatchPlan { steps: vec![] }).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active: crate::run::ActiveRuns = Arc::default();
         let turn = |text: Option<&str>, tools: Vec<(String, serde_json::Value)>| crate::gateway::mock::ScriptTurn { reasoning: None, text: text.map(str::to_string), tool_calls: tools, usage: TokenUsage { input: Some(100), output: Some(10), cache_read: Some(0), cache_write: Some(0), ..Default::default() } };
         let model = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
@@ -1316,7 +1315,7 @@ mod tests {
         let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 940_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active: crate::run::ActiveRuns = Arc::default();
         let model = Arc::new(ScriptedModel::new(
             "deepseek/deepseek-flash",
             vec![crate::gateway::mock::ScriptTurn {
@@ -1390,7 +1389,7 @@ mod tests {
         let filler = DispatchPlan { steps: vec![] };
         store.create_run(&session.id, "占号", 920_001, &filler).unwrap();
         let store = Arc::new(Mutex::new(store));
-        let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let active: crate::run::ActiveRuns = Arc::default();
         let make = |prompt: &str| PeckRun {
             store: store.clone(),
             active_runs: active.clone(),

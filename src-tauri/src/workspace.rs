@@ -113,7 +113,7 @@ pub fn folder_allowed(path: &Path) -> Result<(), String> {
     if crate::run::overlaps(path, &crate::mode::app_data_dir()) {
         return Err("不能把 Peck 自己的数据目录加进项目。".into());
     }
-    if path.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(".git"))) {
+    if crate::harness::tools::touches_git(path) {
         return Err("不能把 .git 里面的文件夹加进项目。".into());
     }
     Ok(())

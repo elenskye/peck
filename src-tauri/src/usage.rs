@@ -69,6 +69,15 @@ pub struct ClientCard {
 }
 
 impl ClientCard {
+    fn not_installed(client: &str, now: i64) -> Self {
+        Self { status: "not_installed".into(), collected_at: now, ..Self::base(client) }
+    }
+
+    /// 装着、在跑，但这次没读到。
+    fn failed(client: &str, now: i64, status: &str, reason: String) -> Self {
+        Self { installed: true, running: true, collected_at: now, status: status.into(), failure_reason: Some(reason), last_failure_at: Some(now), ..Self::base(client) }
+    }
+
     fn base(client: &str) -> Self {
         let (source, coverage) = client_source_coverage(client);
         Self {
@@ -660,25 +669,6 @@ pub fn apply_failure(old: Option<&ClientCard>, mut failure: ClientCard) -> Clien
 
 // ---------- 安装与可执行文件定位 ----------
 
-fn find_executable(command: &str, extra: &[String]) -> Option<PathBuf> {
-    let expanded = crate::agent::expand_tilde(command);
-    if expanded.components().count() > 1 || command.contains('/') {
-        return if expanded.is_file() {
-            Some(expanded)
-        } else {
-            None
-        };
-    }
-    let path = crate::agent::build_augmented_path(extra);
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(command);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
 pub fn codex_binary() -> Option<PathBuf> {
     let bundled = PathBuf::from(
         "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
@@ -686,7 +676,7 @@ pub fn codex_binary() -> Option<PathBuf> {
     if bundled.is_file() {
         return Some(bundled);
     }
-    find_executable("codex", &[])
+    cli_bin("codex", &crate::agent::build_augmented_path(&[]))
 }
 
 /// 找 CLI 的那份 PATH（「CLI 目录」+ 站主 shell 的 PATH，和发任务一样，`GatewayConfig::search_path`）。
@@ -709,7 +699,7 @@ fn installed_map(path: &str) -> HashMap<String, bool> {
     );
     map.insert(
         "claude-code".into(),
-        find_executable("claude", &[]).is_some(),
+        cli_bin("claude", &crate::agent::build_augmented_path(&[])).is_some(),
     );
     map
 }
@@ -777,10 +767,7 @@ async fn query_muse(path: &str) -> ClientCard {
     let now = now_ms();
     let env = HashMap::from([("PATH".to_string(), path.to_string())]);
     let Some(bin) = cli_bin("muse", path) else {
-        let mut c = ClientCard::base("muse-code");
-        c.status = "not_installed".into();
-        c.collected_at = now;
-        return c;
+        return ClientCard::not_installed("muse-code", now);
     };
     let result = run_capture(
         &bin,
@@ -795,14 +782,7 @@ async fn query_muse(path: &str) -> ClientCard {
         Ok((true, stdout, _)) => match serde_json::from_str::<Value>(&stdout) {
             Ok(v) => parse_muse_usage(&v, now),
             Err(e) => {
-                let mut c = ClientCard::base("muse-code");
-                c.installed = true;
-                c.running = true;
-                c.collected_at = now;
-                c.status = "read_failed".into();
-                c.failure_reason = Some(format!("Muse usage 输出不是有效 JSON：{e}"));
-                c.last_failure_at = Some(now);
-                c
+                ClientCard::failed("muse-code", now, "read_failed", format!("Muse usage 输出不是有效 JSON：{e}"))
             }
         },
         Ok((false, stdout, stderr)) => {
@@ -832,14 +812,7 @@ async fn query_muse(path: &str) -> ClientCard {
             c
         }
         Err(e) => {
-            let mut c = ClientCard::base("muse-code");
-            c.installed = true;
-            c.running = true;
-            c.collected_at = now;
-            c.status = "read_failed".into();
-            c.failure_reason = Some(e);
-            c.last_failure_at = Some(now);
-            c
+            ClientCard::failed("muse-code", now, "read_failed", e)
         }
     }
 }
@@ -848,10 +821,7 @@ async fn query_grok(path: &str) -> ClientCard {
     let now = now_ms();
     let env = HashMap::from([("PATH".to_string(), path.to_string())]);
     let Some(bin) = cli_bin("grok", path) else {
-        let mut c = ClientCard::base("grok");
-        c.status = "not_installed".into();
-        c.collected_at = now;
-        return c;
+        return ClientCard::not_installed("grok", now);
     };
     match run_capture(
         &bin,
@@ -892,14 +862,7 @@ async fn query_grok(path: &str) -> ClientCard {
                 c
             }
             Err(e) => {
-                let mut c = ClientCard::base("grok");
-                c.installed = true;
-                c.running = true;
-                c.collected_at = now;
-                c.status = "read_failed".into();
-                c.failure_reason = Some(format!("Grok usage 输出不是有效 JSON：{e}"));
-                c.last_failure_at = Some(now);
-                c
+                ClientCard::failed("grok", now, "read_failed", format!("Grok usage 输出不是有效 JSON：{e}"))
             }
         },
         Ok((false, stdout, stderr)) => {
@@ -931,14 +894,7 @@ async fn query_grok(path: &str) -> ClientCard {
             c
         }
         Err(e) => {
-            let mut c = ClientCard::base("grok");
-            c.installed = true;
-            c.running = true;
-            c.collected_at = now;
-            c.status = "read_failed".into();
-            c.failure_reason = Some(e);
-            c.last_failure_at = Some(now);
-            c
+            ClientCard::failed("grok", now, "read_failed", e)
         }
     }
 }
@@ -946,10 +902,7 @@ async fn query_grok(path: &str) -> ClientCard {
 async fn query_codex() -> ClientCard {
     let now = now_ms();
     let Some(bin) = codex_binary() else {
-        let mut c = ClientCard::base("codex");
-        c.status = "not_installed".into();
-        c.collected_at = now;
-        return c;
+        return ClientCard::not_installed("codex", now);
     };
     match codex_app_server(&bin).await {
         Ok((account, rate)) => parse_codex_rate_limits(&account, &rate, now),

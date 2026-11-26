@@ -16,15 +16,16 @@ pub struct ApiState {
     pub(crate) mode: Mutex<ApiMode>,
     pub(crate) keys: Mutex<Keys>,
 }
+/// 真实模式用钥匙串，模拟模式只在内存。
+fn keys_for(mode: ApiMode) -> Keys {
+    Keys::new((mode == ApiMode::Real).then(|| crate::mode::keychain_service().into()))
+}
+
 impl ApiState {
     pub fn new(mode: ApiMode) -> Self {
         Self {
             mode: Mutex::new(mode),
-            keys: Mutex::new(Keys::new(if mode == ApiMode::Real {
-                Some(crate::mode::keychain_service().into())
-            } else {
-                None
-            })),
+            keys: Mutex::new(keys_for(mode)),
         }
     }
 }
@@ -82,12 +83,7 @@ pub async fn api_set_mode(mode: ApiMode, state: State<'_, AppState>) -> Result<(
             .map_err(|_| "无法保存 API 模式。")?
             .save_api_mode(mode)
             .map_err(|_| "无法保存 API 模式。")?;
-        *state.api.keys.lock().map_err(|_| "无法切换密钥存储。")? =
-            Keys::new(if mode == ApiMode::Real {
-                Some(crate::mode::keychain_service().into())
-            } else {
-                None
-            });
+        *state.api.keys.lock().map_err(|_| "无法切换密钥存储。")? = keys_for(mode);
         *current = mode;
     }
     Ok(())

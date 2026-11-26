@@ -336,7 +336,7 @@ pub fn resolve(root: &Path, raw: &str) -> Result<PathBuf, String> {
 }
 
 /// 路径里有没有 `.git` 这一级（不分大小写）。
-fn touches_git(path: &Path) -> bool {
+pub(crate) fn touches_git(path: &Path) -> bool {
     path.components().any(|c| c.as_os_str().to_str().is_some_and(|s| s.eq_ignore_ascii_case(".git")))
 }
 
@@ -353,6 +353,16 @@ pub fn clip_bytes(text: &str, limit: usize) -> &str {
 }
 
 /// 从结尾往前取最多 `limit` 字节。
+/// 空白并成一个空格，超过 `max` 个字留前面的加「…」。
+pub fn one_line(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > max {
+        format!("{}…", flat.chars().take(max).collect::<String>())
+    } else {
+        flat
+    }
+}
+
 pub fn tail_bytes(text: &str, limit: usize) -> &str {
     if text.len() <= limit {
         return text;

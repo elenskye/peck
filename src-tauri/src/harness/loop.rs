@@ -2221,7 +2221,7 @@ impl Run {
         let label = match (&scope, &self.board) {
             (Some(paths), Some(board)) => {
                 let number = board.next_number(kind.id());
-                let title = input.get("title").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or_else(|| task.lines().next().unwrap_or("").trim().chars().take(60).collect());
+                let title = input.get("title").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or_else(|| agents::task_title(&task));
                 board.add(BoardItem { id: call_id.to_string(), title, owner: kind.id().into(), number, paths: paths.clone(), status: BoardStatus::Queued, model: Some(member.model_id.clone()), started_at: None, finished_at: None });
                 child.board_item = Some((board.clone(), call_id.to_string()));
                 format!("{} {number}", kind.id())

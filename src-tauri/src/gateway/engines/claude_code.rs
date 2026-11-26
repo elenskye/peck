@@ -388,7 +388,7 @@ impl Session {
         match c {
             Control::Approve { request_id, decision } => {
                 let Some((_, input)) = self.pending.remove(&request_id) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 let reply = ClaudeCodeConverter::approval_reply(&request_id, decision, &input);
                 if self.pipe.send(&reply).await.is_ok() {
@@ -406,7 +406,7 @@ impl Session {
                     return;
                 }
                 let Some((_, input)) = self.pending.remove(&request_id) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 let reply = ClaudeCodeConverter::answer_reply(&request_id, &input, &answer, &answers);
                 if self.pipe.send(&reply).await.is_ok() {
@@ -430,12 +430,6 @@ impl Session {
         }
     }
 
-    fn unknown(&self, request_id: &str) {
-        self.sink.emit(EventBody::Notice {
-            level: NoticeLevel::Warn,
-            text: format!("这件事（{request_id}）已经不用回答了。"),
-        });
-    }
 }
 
 #[cfg(test)]

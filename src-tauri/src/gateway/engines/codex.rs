@@ -11,7 +11,7 @@ use super::{emit_all, emit_engine_died, is_rpc_response, EngineSetup, Launch, Li
 use crate::gateway::caps::AgentCaps;
 use crate::gateway::convert::codex::CodexConverter;
 use crate::gateway::convert::LineConverter;
-use crate::gateway::event::{EventBody, NoticeLevel, PermissionLevel, TurnEndReason};
+use crate::gateway::event::{EventBody, PermissionLevel, TurnEndReason};
 use crate::gateway::log::EventSink;
 use crate::gateway::{AgentBackend, AgentTask, BoxFuture, Control, ErrorKind, GatewayError, RunOutcome};
 use serde_json::{json, Value};
@@ -322,7 +322,7 @@ impl Session {
         match c {
             Control::Approve { request_id, decision } => {
                 let Some(id) = self.approvals.remove(&request_id) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 let result = if self.elicitations.remove(&request_id) {
                     CodexConverter::elicitation_reply(decision)
@@ -345,7 +345,7 @@ impl Session {
                     return;
                 }
                 let Some((id, asked)) = self.questions.remove(&request_id) else {
-                    return self.unknown(&request_id);
+                    return super::stale(&self.sink, &request_id);
                 };
                 let answers: serde_json::Map<String, Value> = asked
                     .iter()
@@ -385,12 +385,6 @@ impl Session {
         }
     }
 
-    fn unknown(&self, request_id: &str) {
-        self.sink.emit(EventBody::Notice {
-            level: NoticeLevel::Warn,
-            text: format!("这件事（{request_id}）已经不用回答了。"),
-        });
-    }
 }
 
 /// Peck 的本机 MCP（v0.9 B1，委派时才给）：`codex app-server -c …` 只对这一次进程生效，不改 Codex 的配置文件；

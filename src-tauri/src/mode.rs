@@ -33,9 +33,7 @@ pub fn api_mode(saved: Option<ApiMode>) -> ApiMode {
     match std::env::var("PECK_API_MODE").as_deref() {
         Ok("real") => ApiMode::Real,
         Ok("mock") => ApiMode::Mock,
-        _ if cfg!(debug_assertions)
-            || cfg!(test)
-            || std::env::var_os("PECK_DATA_DIR").is_some() =>
+        _ if cfg!(debug_assertions) || std::env::var_os("PECK_DATA_DIR").is_some() =>
         {
             ApiMode::Mock
         }
