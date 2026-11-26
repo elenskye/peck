@@ -325,7 +325,7 @@ pub fn search_tasks(store: &Store, workspace_id: &str, query: Option<&str>, numb
             }
         }
     }
-    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    hits.sort_by_key(|a| std::cmp::Reverse(a.0));
     let total = hits.len();
     if total == 0 {
         return Ok(if words.is_empty() { "这个项目还没有别的任务。".into() } else { format!("没找到和「{}」有关的任务。", words.join(" ")) });

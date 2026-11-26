@@ -301,7 +301,7 @@ fn valid(row: &PriceRow) -> Result<PriceRow, String> {
     if model.is_empty() {
         return Err("模型名不能空着。".into());
     }
-    let ok = |v: f64| v.is_finite() && v >= 0.0 && v < 10_000.0;
+    let ok = |v: f64| v.is_finite() && (0.0..10_000.0).contains(&v);
     let opt_ok = |v: Option<f64>| v.is_none_or(ok);
     if !ok(row.input) || !ok(row.output) || !opt_ok(row.cache_read) || !opt_ok(row.cache_write) {
         return Err("价格要是 0 到 10000 之间的数。".into());

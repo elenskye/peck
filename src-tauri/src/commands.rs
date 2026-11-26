@@ -178,7 +178,7 @@ fn workspace_is_busy(state: &AppState, root: &std::path::Path) -> bool {
         .active_runs
         .lock()
         .map(|runs| {
-            runs.values().any(|r| r.touches(&[canonical.clone()]))
+            runs.values().any(|r| r.touches(std::slice::from_ref(&canonical)))
         })
         .unwrap_or(false)
 }

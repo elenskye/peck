@@ -437,7 +437,7 @@ fn versions_in(at: &Path) -> Vec<(String, i64)> {
             stem.parse::<i64>().ok().map(|t| (stem.to_string(), t))
         })
         .collect();
-    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out.sort_by_key(|a| std::cmp::Reverse(a.1));
     out
 }
 

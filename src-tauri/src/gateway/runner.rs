@@ -611,9 +611,7 @@ pub(crate) fn rule_allows(level: PermissionLevel, body: &EventBody, root: &std::
     if peck_tool {
         return Some(request_id.clone());
     }
-    let Some(detail) = detail.as_ref().filter(|d| !d.trim().is_empty()) else {
-        return None;
-    };
+    let detail = detail.as_ref().filter(|d| !d.trim().is_empty())?;
     let ok = match kind {
         ToolKind::Run => matches!(check_cli_command(level, detail, root, allowed), Ask::No),
         // 改文件：EDIT、AUTO 本来就不问改项目里的；临时目录 Peck Loop 的沙箱也放开。别处、.git 里的照旧给站主。

@@ -2796,7 +2796,7 @@ async fn ocr_job(kit: ReadKit, input: Value) -> ReadOut {
     };
     let removed = removed.map(|why| format!("\n（Mathpix 那边的这几页没删成：{why}；要删请站主到 Mathpix 的控制台）")).unwrap_or_default();
     let real = matches!(mathpix, crate::gateway::mathpix::Mathpix::Real { .. });
-    let fee = real.then(|| pages.len() as f64 * crate::gateway::mathpix::PRICE_PER_PAGE);
+    let fee = real.then_some(pages.len() as f64 * crate::gateway::mathpix::PRICE_PER_PAGE);
     let (first, last) = (pages[0], pages[pages.len() - 1]);
     let shown = if first == last { format!("第 {first} 页") } else if pages.len() as u32 == last - first + 1 { format!("第 {first}–{last} 页") } else { format!("{} 页", pages.len()) };
     let cost = fee.map(|f| format!("，${f:.3}")).unwrap_or_default();

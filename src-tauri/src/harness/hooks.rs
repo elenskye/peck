@@ -338,7 +338,7 @@ mod tests {
         std::fs::write(dir.join("mine.txt"), "站主自己改的\n").unwrap();
         let round = |files: &[&str]| vec![(dir.clone(), files.iter().map(|f| f.to_string()).collect::<Vec<_>>())];
         // Peck Loop 值不值得问：开头就这样、这一次没动过的不问；动了才问。
-        let before = baseline(&[dir.clone()]);
+        let before = baseline(std::slice::from_ref(&dir));
         assert!(asking(&before, &[]).is_empty());
         assert_eq!(asking(&before, &[dir.join("a.txt")]).len(), 1);
         assert_eq!(asking(&[(dir.clone(), Some(vec![]))], &[]).len(), 1);
@@ -389,7 +389,7 @@ mod tests {
         let plain = std::env::temp_dir().join(format!("peck-hook-plain-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&plain).unwrap();
         std::fs::write(plain.join("a.txt"), "a").unwrap();
-        assert_eq!(baseline(&[plain.clone()]), vec![(plain.clone(), None)]);
+        assert_eq!(baseline(std::slice::from_ref(&plain)), vec![(plain.clone(), None)]);
         assert!(pending(&[(plain.clone(), vec!["a.txt".to_string()])], PermissionLevel::Auto, true, false).is_empty());
         for d in [dir, plain] {
             let _ = std::fs::remove_dir_all(d);

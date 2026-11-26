@@ -299,7 +299,7 @@ impl ProcessPipe {
             stdin,
             lines,
             stderr,
-            family: pgid.map(|pid| crate::process::Family::new(pid, token)),
+            family: pgid.map(|pid| crate::process::Family::new(pid, token, &launch.cwd)),
             pgid,
         })
     }

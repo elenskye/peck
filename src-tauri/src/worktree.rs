@@ -308,7 +308,7 @@ fn pending_run(state: &AppState, run_id: &str) -> Result<(RunRecord, WorktreeSta
     if !main.is_dir() {
         return Err("项目文件夹不在了。".into());
     }
-    let busy = state.active_runs.lock().map(|a| a.values().any(|r| r.touches(&[main.clone()]))).unwrap_or(false);
+    let busy = state.active_runs.lock().map(|a| a.values().any(|r| r.touches(std::slice::from_ref(&main)))).unwrap_or(false);
     if busy {
         return Err("这个项目有任务在跑，等它做完再搬。".into());
     }

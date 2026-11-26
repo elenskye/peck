@@ -370,7 +370,7 @@ fn page_of(ctx: &ToolContext, url: &reqwest::Url, content_type: &str, body: Vec<
     }
     if mime == "application/pdf" || body.starts_with(b"%PDF-") {
         if partial {
-            return Err(format!("这份 PDF 超过 10 MB，没读完：要的话请站主下载下来，用 read_pdf 读。"));
+            return Err("这份 PDF 超过 10 MB，没读完：要的话请站主下载下来，用 read_pdf 读。".into());
         }
         std::fs::create_dir_all(&ctx.spill_dir).map_err(|e| format!("存不了这份 PDF：{e}"))?;
         let n = ctx.spill_count.fetch_add(1, Ordering::SeqCst) + 1;

@@ -306,7 +306,7 @@ pub(crate) fn save_uploads(session_id: &str, uploads: &[String]) -> Result<Saved
             if path.parent().is_none() {
                 return Err("根目录太大了，挑小一点的文件夹。".into());
             }
-            if std::env::var_os("HOME").is_some_and(|h| PathBuf::from(h) == path) {
+            if std::env::var_os("HOME").is_some_and(|h| h == path.as_os_str()) {
                 return Err("家目录太大了，挑小一点的文件夹。".into());
             }
             saved.folders.push(path);

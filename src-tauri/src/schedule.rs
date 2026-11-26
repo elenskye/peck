@@ -569,7 +569,7 @@ fn busy(state: &AppState, workspace_id: &str) -> bool {
     let Ok(db) = state.store.lock() else { return true };
     let Ok(ws) = db.workspace(workspace_id) else { return false };
     let path = std::path::PathBuf::from(&ws.path);
-    state.active_runs.lock().map(|a| a.values().any(|r| r.touches(&[path.clone()]))).unwrap_or(true)
+    state.active_runs.lock().map(|a| a.values().any(|r| r.touches(std::slice::from_ref(&path)))).unwrap_or(true)
 }
 
 /// 记成错过了：`missed_at` 是最近该跑的那一次，下一次往后排（只跑一次的没有下一次，等站主在卡片上点）。

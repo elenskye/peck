@@ -2,7 +2,7 @@
 
 ## 现在
 
-**v1.2.0**（2026-11-26）：去掉跑完的「下一步」按钮；右栏去掉 PREVIEW（dev server 小片挪到 TERM），加 PROMPT 页签（全局提示词库，schema 12）；输入框打 `/` 插提示词、`{占位}` Tab 跳；`web_fetch` 正文太少时用离屏 WebKit 跑完 JavaScript 再读；全界面对齐。这一版由 Claude Code 接管电脑、用正式版 Peck 让 PLOOP 和四家 CLI 分 Phase 开发，真跑里暴露的 Peck 问题当场修（发任务时崩溃、无人值守卡在卡片上、卡片藏在视线外、CLI 的几处显示和额度、WebKit 的本机拦截），经过见 HANDOFF。
+**v1.2.1**（2026-11-26）：CLI 和它生出来的进程任务结束时一起停；AUTO 下只做 `git add` / `git commit` 的命令能写 `.git`、不弹卡片；`web_fetch` 的 WebKit 连接都走 Peck 自己的代理（查过解析出来的 IP 再连），WebRTC 关掉；Git Plan 给这一轮改到的每个 git 仓库各提交一笔，仓库自己写了 Git 规则的照它的，其他文件夹的说明文件开场带给模型；文档和代码精简。
 
 ## 定位
 
@@ -27,8 +27,6 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 - **自定义子代理**（下一步）：在五类以外自己加类型（名字、做什么、给哪些工具、模型）；插件带的子代理（`agents/`）一起接。
 - **自动审查**：先不做；现在审查是主角色自己派 auditor，或 `/review`。
 - Peck 接手站主的其他项目。
-- **WebKit 读网页走 Peck 自己的代理**：每条连接查解析出来的 IP 再连（现在只按网址拦，图片、脚本能发往解析到内网的域名，DNS 重绑挡不住，见 HANDOFF）。
-- CLI 起的后台进程（dev server、无头浏览器）任务结束时一起收掉。
 - 多家 CLI 和 Peck Loop 的 Benchmark（Atelier MCP 那一轮没跑满的一起补）。
 - xAI 直连、GitHub Copilot CLI、Amp、Qwen Code。
 - 快照回退、定时任务在真 CLI 上各走一遍（现在只有假模型和假 MCP 客户端的测试）。

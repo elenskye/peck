@@ -292,9 +292,7 @@ fn collect_codex_windows(v: &Value, label: &str, out: &mut Vec<QuotaWindow>) {
             if k == "usedPercent" || k == "resetsAt" || k == "windowDurationMins" {
                 continue;
             }
-            let child_label = if k == "primary" || k == "secondary" {
-                format!("{label} · {k}")
-            } else if child.is_object() && child.get("usedPercent").is_some() {
+            let child_label = if k == "primary" || k == "secondary" || (child.is_object() && child.get("usedPercent").is_some()) {
                 format!("{label} · {k}")
             } else {
                 label.to_string()

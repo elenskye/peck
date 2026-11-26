@@ -362,7 +362,7 @@ impl McpHub {
                 ok(json!({"tools": tools}))
             }
             "tools/call" if offer.extra_names().contains(&m["params"]["name"].as_str().unwrap_or("")) => {
-                let Some(x) = offer.extras.clone() else { return None };
+                let x = offer.extras.clone()?;
                 let name = m["params"]["name"].as_str().unwrap_or("").to_string();
                 let args = m["params"]["arguments"].clone();
                 let n = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
