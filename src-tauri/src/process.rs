@@ -1,7 +1,126 @@
-//! 子进程的停止：任务的停止开关、整个进程组一起停（v0.8 删了旧的按清单起 CLI 的那一套）。
+//! 子进程的停止：任务的停止开关、整个进程组一起停、CLI 和它生出来的进程一起停（[`Family`]）。
+use std::collections::HashSet;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::watch;
+
+/// Peck 起 CLI 时带的记号（v1.2.1），值每次随机。CLI 生出来的进程都继承它：换了进程组、换了会话（Claude Code 跑命令用
+/// `detached`）、父进程先退了也带着。系统自带的程序（`/bin/sleep` 这类）的环境变量读不到，靠进程树和进程组认。
+pub(crate) const FAMILY_ENV: &str = "PECK_RUN_GROUP";
+
+/// 一个 CLI 和它生出来的全部进程（v1.2.1）：任务结束时一起停（CLI 起的 dev server、无头浏览器不留下）。
+/// 认法：带这次记号的、在 CLI 进程组里的、收尾前记下的进程树里的，再加上它们的子孙和它们所在的整个进程组。
+pub(crate) struct Family {
+    leader: u32,
+    token: String,
+    /// 收尾前记下的进程树：CLI 退了以后它们挂到 launchd 下面，就认不出父子了。
+    seen: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Proc {
+    pid: u32,
+    ppid: u32,
+    pgid: u32,
+    marked: bool,
+}
+
+/// 现在的全部进程（`ps`；僵尸不算）。带了 `token` 才读环境变量。
+fn processes(token: Option<&str>) -> Vec<Proc> {
+    let mut c = std::process::Command::new("/bin/ps");
+    c.args(["-A", "-ww", "-o", "pid=,ppid=,pgid=,stat=,command="]);
+    if token.is_some() {
+        c.arg("-E");
+    }
+    let Ok(out) = c.stdin(Stdio::null()).stderr(Stdio::null()).output() else { return vec![] };
+    let mark = token.map(|t| format!("{FAMILY_ENV}={t}"));
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut w = line.split_whitespace();
+            let (pid, ppid, pgid) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?, w.next()?.parse().ok()?);
+            if w.next()?.starts_with('Z') {
+                return None;
+            }
+            Some(Proc { pid, ppid, pgid, marked: mark.as_deref().is_some_and(|m| line.contains(m)) })
+        })
+        .collect()
+}
+
+impl Family {
+    pub(crate) fn new(leader: u32, token: String) -> Self {
+        Self { leader, token, seen: vec![] }
+    }
+
+    /// 收尾前（CLI 还活着）记下它的进程树。
+    pub(crate) fn remember(&mut self) {
+        let all = processes(None);
+        let mut tree = HashSet::from([self.leader]);
+        while let Some(p) = all.iter().find(|p| tree.contains(&p.ppid) && !tree.contains(&p.pid)) {
+            tree.insert(p.pid);
+        }
+        self.seen = tree.into_iter().collect();
+    }
+
+    /// 这一组现在还活着的进程。Peck 自己和它的进程组不算。
+    fn members(&self) -> Vec<u32> {
+        let all = processes(Some(&self.token));
+        let me = std::process::id();
+        let own_group = all.iter().find(|p| p.pid == me).map(|p| p.pgid);
+        let ok = |p: &Proc| p.pid > 1 && p.pid != me && p.pgid > 1 && Some(p.pgid) != own_group;
+        let mut set: HashSet<u32> = all
+            .iter()
+            .filter(|p| ok(p) && (p.marked || p.pid == self.leader || p.pgid == self.leader || self.seen.contains(&p.pid)))
+            .map(|p| p.pid)
+            .collect();
+        loop {
+            let groups: HashSet<u32> = all.iter().filter(|p| set.contains(&p.pid)).map(|p| p.pgid).collect();
+            let more: Vec<u32> = all.iter().filter(|p| ok(p) && !set.contains(&p.pid) && (set.contains(&p.ppid) || groups.contains(&p.pgid))).map(|p| p.pid).collect();
+            if more.is_empty() {
+                break;
+            }
+            set.extend(more);
+        }
+        set.into_iter().collect()
+    }
+
+    /// 任务结束：先 TERM，等一会儿还在的（连这期间新起的）KILL。
+    pub(crate) async fn stop(self) {
+        let family = std::sync::Arc::new(self);
+        let scan = |f: std::sync::Arc<Family>| async move { tokio::task::spawn_blocking(move || f.members()).await.unwrap_or_default() };
+        let found = scan(family.clone()).await;
+        if found.is_empty() {
+            return;
+        }
+        signal("TERM", &found);
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            if scan(family.clone()).await.is_empty() {
+                return;
+            }
+        }
+        signal("KILL", &scan(family).await);
+    }
+
+    /// 来不及等（跑任务的 future 被丢掉）：直接 KILL。
+    pub(crate) fn kill_now(&self) {
+        signal("KILL", &self.members());
+    }
+}
+
+fn signal(sig: &str, pids: &[u32]) {
+    if pids.is_empty() {
+        return;
+    }
+    let _ = std::process::Command::new("/bin/kill")
+        .arg(format!("-{sig}"))
+        .args(pids.iter().map(u32::to_string))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
 
 /// Handle allowing external callers (e.g. `run_cancel`) to abort a running process group.
 #[derive(Clone)]
@@ -70,6 +189,42 @@ impl Drop for GroupGuard {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::gateway::engines::{Launch, Pipe};
+    use std::time::Duration;
+
+    fn alive(tag: &str) -> bool {
+        let out = std::process::Command::new("/bin/ps").args(["-A", "-ww", "-o", "stat=,command="]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).lines().any(|l| !l.trim_start().starts_with('Z') && l.contains(tag))
+    }
+
+    /// 假 CLI：同组的 `sleep`、`setsid` 出去的 `sleep`（父进程还活着）、有 node 的话再起一个两层 fork 出去的 node（父进程马上退了，只能靠记号认）。
+    /// 收尾以后都不在了。
+    #[tokio::test]
+    async fn a_cli_and_everything_it_started_stop_together() {
+        let tag = format!("{}", 7000 + std::process::id() % 1000);
+        let node = std::process::Command::new("/bin/sh").args(["-lc", "command -v node"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|n| !n.is_empty());
+        let detached = node.as_ref().map(|n| format!("'{n}' -e \"require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{{}}, 9{tag}0)'], {{detached: true, stdio: 'ignore'}}).unref()\"; ")).unwrap_or_default();
+        let script = format!("sleep 1{tag} & /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec \"sleep\", \"2{tag}\"' & {detached}echo ready; cat");
+        let launch = Launch { bin: "/bin/sh".into(), args: vec!["-c".into(), script], cwd: std::env::temp_dir(), env: vec![], path: std::env::var("PATH").unwrap_or_default() };
+        let mut pipe = Pipe::spawn(&launch).unwrap();
+        assert!(matches!(pipe.next().await, Some(crate::gateway::engines::Line::Text(t)) if t == "ready"));
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(alive(&format!("sleep 1{tag}")) && alive(&format!("sleep 2{tag}")));
+        if node.is_some() {
+            assert!(alive(&format!("9{tag}0")), "两层 fork 出去的 node 应该在跑");
+        }
+        pipe.stop(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!alive(&format!("sleep 1{tag}")), "同组的应该停了");
+        assert!(!alive(&format!("sleep 2{tag}")), "换了会话的应该停了");
+        if node.is_some() {
+            assert!(!alive(&format!("9{tag}0")), "带记号的应该停了");
         }
     }
 }

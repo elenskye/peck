@@ -601,13 +601,16 @@ mod tests {
         println!("changed: {files:?}");
         // 问的就是库里 Git Plan 那一句。
         let hooks_json: serde_json::Value = serde_json::from_str(include_str!("../../../defaults/library/plugins/git-plan/hooks/hooks.json")).unwrap();
-        let ask = hooks_json["hooks"]["Stop"][0]["hooks"][0]["ask"].as_str().unwrap().to_string();
+        let ask = hooks_json["hooks"]["Stop"].as_array().unwrap().iter().find_map(|h| h["hooks"][0]["ask"].as_str()).unwrap().to_string();
+        let repos = hooks::pending(&[(cwd.clone(), files)], PermissionLevel::Edit, true, false);
         let again = AgentTask { resume: outcome.session_ref.clone(), ..t };
-        let answer = hooks::ask_cli(&backend, "codex", again, &ask, |body| println!("usage: {}", serde_json::to_string(&body).unwrap().chars().take(160).collect::<String>())).await;
-        println!("answer: {answer:?}");
+        let text = hooks::ask_cli(&backend, "codex", again, &hooks::ask_for(&ask, &repos), |body| println!("usage: {}", serde_json::to_string(&body).unwrap().chars().take(160).collect::<String>())).await;
+        println!("answer: {text:?}");
         let hook = hooks::StopHook { plugin: "Git Plan".into(), ask };
-        let done = hooks::commit(&hook, &cwd, &files, answer.as_deref());
-        println!("{}", serde_json::to_string(&done).unwrap());
+        let answer = text.map(|text| hooks::Answer { roots: repos.iter().map(|r| r.root.clone()).collect(), text });
+        for repo in &repos {
+            println!("{}", serde_json::to_string(&hooks::commit(&hook, repo, answer.as_ref())).unwrap());
+        }
         println!("uncommitted now: {:?}", git::changed(&cwd).unwrap());
     }
 

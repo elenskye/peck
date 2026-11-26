@@ -198,6 +198,9 @@ async fn render_webkit(page: &mut Page, rules_dir: &std::path::Path, allow_local
         }
     }
     std::fs::create_dir(rules_dir).map_err(|e| format!("建不了 WebKit 规则的临时目录：{e}"))?;
+    // WebKit 的连接都走 Peck 的代理（v1.2.1，`socks.rs`）：查过解析出来的 IP 再连。WebKit 只有回环地址不走代理，
+    // 网址里写明的回环由内容规则拦。
+    let proxy = super::socks::start(None).await.map_err(|e| format!("起不了 WebKit 的代理：{e}"))?;
     let profile = format!("(version 1)(allow default){}(deny lsopen)(deny appleevent-send)", super::bash::KEYCHAIN);
     let out = tokio::process::Command::new("/usr/bin/sandbox-exec")
         .args(["-p", &profile, "/usr/bin/osascript", "-l", "JavaScript", "-e", include_str!("web_render.js")])
@@ -206,6 +209,7 @@ async fn render_webkit(page: &mut Page, rules_dir: &std::path::Path, allow_local
         .arg(rules_dir)
         .arg(if allow_local { page.url.origin().ascii_serialization() } else { String::new() })
         .arg(BODY_LIMIT.to_string())
+        .arg(proxy.port.to_string())
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)
         .output()
@@ -265,7 +269,7 @@ async fn check_host(url: &reqwest::Url, allow_local: bool) -> Result<Option<Sock
     if allow_local {
         return Ok(None);
     }
-    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") {
+    if local_name(&host) {
         return Err(LOCAL_NOTE.into());
     }
     let bare = host.trim_start_matches('[').trim_end_matches(']');
@@ -278,6 +282,11 @@ async fn check_host(url: &reqwest::Url, allow_local: bool) -> Result<Option<Sock
         return Err(LOCAL_NOTE.into());
     }
     Ok(addrs.first().copied())
+}
+
+/// 名字就是本机、内网的（小写、不带结尾的点）。
+pub(super) fn local_name(host: &str) -> bool {
+    host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal")
 }
 
 /// 公网地址：不是回环、私有网段、链路本地、100.64/10（运营商 NAT）、未指定、组播、IPv6 的 ULA / 链路本地。
@@ -753,6 +762,40 @@ mod tests {
             assert_eq!(other_hits.load(Ordering::SeqCst), 0, "WebKit 不应请求另一个网站");
             assert!(out.contains("WebKit 渲染失败") && out.contains("Original article"), "{out}");
         }
+    }
+
+    /// WebRTC 不走代理，关掉了（v1.2.1）。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn webkit_has_no_webrtc() {
+        if super::super::bash::nested_sandbox() {
+            return;
+        }
+        let html = "<html><body><main></main><script>document.querySelector('main').innerHTML = '<article><h1>RTC ' + typeof RTCPeerConnection + '</h1><p>' + 'Text from script. '.repeat(40) + '</p></article>';</script></body></html>";
+        let (base, _) = serve(vec![("/", ok("text/html", html))]);
+        let p = TempProject::new();
+        let out = fetcher().fetch(&p.ctx(), &json!({"url": base, "render": true}), no_cancel()).await.unwrap();
+        assert!(out.contains("用 WebKit") && out.contains("# RTC undefined"), "{out}");
+    }
+
+    /// 解析到本机的域名（`localtest.me` → 127.0.0.1）：fetch、图片、WebSocket 都到不了本机的服务。WebKit 自己只对回环地址
+    /// 不走代理（网址里写明的由内容规则拦），名字都交给代理，这条能证明代理在路上。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "需要联网（解析 localtest.me）"]
+    async fn live_webkit_cannot_reach_local_services_by_name() {
+        let (private, private_hits) = serve(vec![("/probe", ok("text/plain", "Private resource"))]);
+        let port = private.rsplit(':').next().unwrap().to_string();
+        let shell = r#"<html><body><img src="http://localtest.me:PORT/probe?img"><main></main><script>
+            fetch('http://localtest.me:PORT/probe?fetch').catch(() => {});
+            new WebSocket('ws://localtest.me:PORT/probe?ws');
+            setTimeout(() => { document.querySelector('main').innerHTML = '<article><h1>Done</h1><p>' + 'Text from script. '.repeat(40) + '</p></article>'; }, 300);
+            </script></body></html>"#.replace("PORT", &port);
+        let (base, _) = serve(vec![("/", ok("text/html", &shell))]);
+        let p = TempProject::new();
+        let out = fetcher().fetch(&p.ctx(), &json!({"url": base, "render": true}), no_cancel()).await.unwrap();
+        assert!(out.contains("用 WebKit") && out.contains("# Done"), "{out}");
+        assert_eq!(private_hits.load(Ordering::SeqCst), 0, "解析到本机的域名不该连上");
     }
 
     #[cfg(target_os = "macos")]

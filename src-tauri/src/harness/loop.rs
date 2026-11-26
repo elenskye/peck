@@ -321,7 +321,7 @@ struct Run {
     cost_usd: f64,
     warned_unpriced: bool,
     /// 收尾 Hook 用（v1.1.0）：任务开头工作区里已经有的没提交的改动；不能提交的项目是 `None`（收尾不问）。
-    stop_baseline: Option<Vec<String>>,
+    stop_baseline: Vec<(PathBuf, Option<Vec<String>>)>,
     /// 估的 tokens → 实报的 tokens 的校准系数（上一次请求算的）。
     scale: f64,
     /// 上一次请求发出去时估的大小（还没校准）。
@@ -506,7 +506,7 @@ impl Run {
             approvals: 0,
             cost_usd: 0.0,
             warned_unpriced: false,
-            stop_baseline: None,
+            stop_baseline: Vec::new(),
             scale: 1.0,
             last_sent: 0,
             compacted_at_round: None,
@@ -1055,20 +1055,22 @@ impl Run {
         Ok(Some(text.trim().to_string()))
     }
 
-    /// 插件的收尾 Hook（v1.1.0）：做完了、项目里有没提交的改动，就照 `summarize` 的办法多问一轮（同样的系统提示、工具和
-    /// 对话，走缓存；不显示成回答、不进存下的对话），答案放进 `stop_ask.answer`。PLAN、ONE SHOT、子任务不问；
+    /// 插件的收尾 Hook（v1.1.0）：做完了、这一次动过的仓库里有没提交的改动，就照 `summarize` 的办法多问一轮（同样的系统提示、
+    /// 工具和对话，走缓存；不显示成回答、不进存下的对话），答案放进 `stop_ask.answer`。PLAN、ONE SHOT、子任务不问；
     /// 被打断、出错就当没答。
     async fn ask_stop_hook(&mut self, base: &ModelRequest) {
         let Some(hook) = self.config.stop_ask.clone() else { return };
         if self.level == PermissionLevel::Plan || self.config.oneshot || self.config.subtask.is_some() || self.ctl.interrupted {
             return;
         }
-        let (cwd, before, touched) = (self.task.cwd.clone(), self.stop_baseline.clone(), !self.ctx.diff_summary().is_empty());
-        if !tokio::task::spawn_blocking(move || super::hooks::wants_ask(&cwd, before.as_deref(), touched)).await.unwrap_or(false) {
+        let before = self.stop_baseline.clone();
+        let touched: Vec<PathBuf> = self.ctx.diff_summary().iter().map(|d| self.ctx.root.join(&d.path)).collect();
+        let repos = tokio::task::spawn_blocking(move || super::hooks::asking(&before, &touched)).await.unwrap_or_default();
+        if repos.is_empty() {
             return;
         }
         let mut messages = self.messages.clone();
-        messages.push(Message { role: Role::User, parts: vec![Part::Text { text: super::hooks::question(&hook.ask) }] });
+        messages.push(Message { role: Role::User, parts: vec![Part::Text { text: super::hooks::question(&super::hooks::ask_for(&hook.ask, &repos)) }] });
         let request = ModelRequest { messages, max_output_tokens: base.max_output_tokens.min(4_000), ..base.clone() };
         let (tx, _rx) = mpsc::unbounded_channel::<ModelEvent>();
         let mut fut = self.provider.complete(request, tx, self.cancel_rx.clone());
@@ -1090,17 +1092,17 @@ impl Run {
             Part::Text { text } => Some(text.as_str()),
             _ => None,
         }).collect::<Vec<_>>().join("\n");
-        let answer = (!text.trim().is_empty()).then(|| text.trim().to_string());
+        let answer = (!text.trim().is_empty()).then(|| super::hooks::Answer { roots: repos.into_iter().map(|r| r.root).collect(), text: text.trim().to_string() });
         if let Ok(mut slot) = hook.answer.lock() {
             *slot = answer;
         };
     }
 
     async fn rounds(&mut self, names: &[&'static str]) -> End {
-        // 收尾 Hook（v1.1.0）：开头记下工作区里已经有的没提交的改动，收尾时看这一次动没动东西。
+        // 收尾 Hook（v1.1.0）：开头记下主文件夹和能改的其他文件夹里已经有的没提交的改动，收尾时看这一次动没动它们。
         if self.config.stop_ask.is_some() && self.level != PermissionLevel::Plan && !self.config.oneshot && self.config.subtask.is_none() {
-            let cwd = self.task.cwd.clone();
-            self.stop_baseline = tokio::task::spawn_blocking(move || super::hooks::baseline(&cwd)).await.ok().flatten();
+            let folders: Vec<PathBuf> = std::iter::once(self.task.cwd.clone()).chain(self.ctx.writable_extra()).collect();
+            self.stop_baseline = tokio::task::spawn_blocking(move || super::hooks::baseline(&folders)).await.unwrap_or_default();
         }
         self.loaded = self.loaded_from_history();
         let window = self.model_spec().and_then(|m| m.context_window);
@@ -2038,7 +2040,7 @@ impl Run {
                     cwd: input.get("cwd").and_then(Value::as_str).map(str::to_string),
                     kind: if keep { BackgroundKind::Server } else { BackgroundKind::Command },
                     ready: None,
-                    sandbox: permission::sandbox_for(self.level),
+                    sandbox: permission::sandbox_for(self.level, ""),
                     env: self.ctx.env.clone(),
                     runtime_dir: self.ctx.runtime_dir.clone(),
                     log_dir: self.ctx.spill_dir.clone(),
@@ -2538,7 +2540,7 @@ impl Run {
         if self.ctl.interrupted {
             return (ToolStatus::Cancelled, "已停止，命令没跑。".into(), None, vec![]);
         }
-        let sandbox = permission::sandbox_for(self.level);
+        let sandbox = permission::sandbox_for(self.level, &command);
         let mut outcome = match self.exec(call_id, input, sandbox).await {
             Ok(o) => o,
             Err(e) => return (ToolStatus::Failed, e, None, vec![]),
@@ -2581,7 +2583,7 @@ impl Run {
         let sink = self.sink.clone();
         let id = call_id.to_string();
         let ctx = self.ctx.clone();
-        let scope = self.sandbox_scope.clone().filter(|_| sandbox == bash::Sandbox::Project);
+        let scope = self.sandbox_scope.clone().filter(|_| matches!(sandbox, bash::Sandbox::Project | bash::Sandbox::Commit));
         let fut = bash::run(&ctx, input, sandbox, scope.as_deref(), self.cancel_rx.clone(), move |text| {
             sink.emit(EventBody::ToolCallOutputDelta { call_id: id.clone(), text });
         });
@@ -3632,7 +3634,7 @@ mod tests {
         let backend = PeckBackend::new(model, cfg, vec![]);
         let (outcome, events) = drive(&backend, task(&p, PermissionLevel::Edit, "写 a.txt"), |_| None).await;
         assert_eq!(outcome.reason, TurnEndReason::Done);
-        assert_eq!(asked.take().as_deref(), Some("v1.0.1: fix some problems"));
+        assert_eq!(asked.take().map(|a| a.text).as_deref(), Some("v1.0.1: fix some problems"));
         let sent = requests.lock().unwrap().clone();
         assert_eq!(sent.len(), 3);
         let last = sent[2].messages.last().unwrap();
@@ -3665,7 +3667,7 @@ mod tests {
             cfg.stop_ask = with_hook.then(|| asked.clone());
             let _ = drive(&PeckBackend::new(model, cfg, vec![]), task(&p, level, "看看"), |_| None).await;
             assert_eq!(requests.lock().unwrap().len(), 1, "{level:?} {with_hook}");
-            assert_eq!(asked.take(), None);
+            assert!(asked.take().is_none());
         }
     }
 

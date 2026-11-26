@@ -2848,7 +2848,7 @@ dependencies = [
 
 [[package]]
 name = "peck"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "dom_query",
  "dom_smoothie",

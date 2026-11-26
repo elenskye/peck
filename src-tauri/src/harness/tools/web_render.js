@@ -1,6 +1,9 @@
 // web_fetch（web.rs）：用 osascript 开离屏 WKWebView，输出渲染后的 DOM。
 ObjC.import('AppKit');
 ObjC.import('WebKit');
+ObjC.import('Network');
+// 系统的 BridgeSupport 里没有这个（macOS 14 起才有的接口），自己绑。
+ObjC.bindFunction('nw_proxy_config_create_socksv5', ['id', ['id']]);
 
 // 在页面脚本前登记 fetch/XHR 和 DOM 活动。资源计时也涵盖图片、脚本等加载。
 function observeActivity() {
@@ -42,14 +45,14 @@ function readDocument(limit) {
 }
 
 function run(argv) {
-  const [url, allowedHosts, rulesDir, localOrigin, limit] = argv;
+  const [url, allowedHosts, rulesDir, localOrigin, limit, proxyPort] = argv;
   const deadline = Date.now() + 28000;
   const spin = () => $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
   const fail = (error, url) => JSON.stringify({ error, url });
   const unwrap = v => v && !v.isNil() ? ObjC.unwrap(v) : null;
   $.NSApplication.sharedApplication.setActivationPolicy($.NSApplicationActivationPolicyProhibited);
 
-  // 同站文档才让进；资源可来自 CDN。URL 规则看不到域名的 DNS 结果。
+  // 同站文档才让进；资源可来自 CDN。网址里写明的本机、内网地址先拦下（解析出来的由代理管）。
   const documentRule = (filter, type) => ({
     trigger: { 'url-filter': filter, 'resource-type': ['document'] }, action: { type },
   });
@@ -74,19 +77,6 @@ function run(argv) {
     for (const prefix of local) rules.push(block('^' + protocol + '://' + prefix));
     rules.push(block('^' + protocol + '://[^/]*@'));
   }
-  // 能把响应读回页面的请求（fetch、XHR、WebSocket、ping）只准发给这个网站自己（v1.2.0 收尾审查：上面的规则只看网址里写的
-  // 主机名，解析到本机、内网的域名能绕过去；图片、脚本、样式、字体照样能从 CDN 来）。DNS 重绑仍挡不住，见 HANDOFF。
-  const reads = ['fetch', 'raw', 'websocket', 'ping', 'other'];
-  rules.push({ trigger: { 'url-filter': '.*', 'resource-type': reads }, action: { type: 'block' } });
-  for (const host of allowedHosts.split(',')) {
-    // url-filter 不认 `|`：每个协议一条。
-    for (const protocol of [scheme, 'wss?']) {
-      rules.push({
-        trigger: { 'url-filter': '^' + protocol + '://' + literal(host) + '[:/]', 'resource-type': reads },
-        action: { type: 'ignore-previous-rules' },
-      });
-    }
-  }
   if (localOrigin) {
     // Rust 的 allow_local 仅在测试中给出一个夹具的 origin。
     rules.push({ trigger: { 'url-filter': '^' + literal(localOrigin) + '/' }, action: { type: 'ignore-previous-rules' } });
@@ -104,9 +94,17 @@ function run(argv) {
     return fail('WebKit 拦截规则没装好：' + (unwrap(ruleError && ruleError.localizedDescription) || '超时'));
   }
 
+  // 连接都走 Peck 的代理（web.rs 起的，查过解析出来的 IP 再连）；配不上就不渲染。WebRTC 不走代理，关掉。
+  const data = $.WKWebsiteDataStore.nonPersistentDataStore;
+  const proxy = $.nw_proxy_config_create_socksv5($.nw_endpoint_create_host('127.0.0.1', proxyPort));
+  if (!proxyPort || !proxy || !data.respondsToSelector('setProxyConfigurations:')) return fail('WebKit 的代理没配上。');
+  data.proxyConfigurations = $.NSArray.arrayWithObject(proxy);
+  if (Number(data.proxyConfigurations.count) !== 1) return fail('WebKit 的代理没配上。');
   const config = $.WKWebViewConfiguration.alloc.init;
-  config.websiteDataStore = $.WKWebsiteDataStore.nonPersistentDataStore;
+  config.websiteDataStore = data;
   config.preferences.javaScriptCanOpenWindowsAutomatically = false;
+  if (!config.preferences.respondsToSelector('_setPeerConnectionEnabled:')) return fail('关不了 WebKit 的 WebRTC。');
+  config.preferences._setPeerConnectionEnabled(false);
   config.userContentController.addContentRuleList(list);
   config.userContentController.addUserScript($.WKUserScript.alloc.initWithSourceInjectionTimeForMainFrameOnly(
     '(' + observeActivity.toString() + ')()', $.WKUserScriptInjectionTimeAtDocumentStart, true

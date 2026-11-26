@@ -197,9 +197,9 @@ impl Lifecycle {
         Self { id, step_id: c.step_id.clone(), run_sink, repo, before, extras, started: Instant::now(), active_runs: active_runs.clone() }
     }
 
-    /// 收尾快照：给回这一轮项目里改了的文件（收尾提交用）和整份改动（加上其他文件夹的）。任务还在跑时批的 Skill
-    /// （v0.10 C3）这时才写，不算进这次的改动。
-    pub fn snapshot_after(&self) -> (Vec<String>, ChangeSetSummary) {
+    /// 收尾快照：给回这一轮改了的文件（收尾提交用：`cwd` 是主文件夹，再是能改的其他文件夹，各自相对那个文件夹）和整份改动。
+    /// 任务还在跑时批的 Skill（v0.10 C3）这时才写，不算进这次的改动。
+    pub fn snapshot_after(&self, cwd: &Path) -> (Vec<(PathBuf, Vec<String>)>, ChangeSetSummary) {
         let mut changeset = ChangeSetSummary::default();
         if let (Some(r), Some(before)) = (self.repo.as_ref(), self.before.as_ref()) {
             if let Ok(after) = r.create_snapshot(&format!("{}-after", self.step_id)) {
@@ -207,10 +207,10 @@ impl Lifecycle {
                 changeset = r.diff_changeset(before, &after).unwrap_or_default();
             }
         }
-        let round_files: Vec<String> = changeset.files.iter().map(|f| f.path.clone()).collect();
-        crate::harness::run::finish_extras(&self.id, &self.extras, &mut changeset);
+        let mut rounds = vec![(cwd.to_path_buf(), changeset.files.iter().map(|f| f.path.clone()).collect())];
+        rounds.extend(crate::harness::run::finish_extras(&self.id, &self.extras, &mut changeset));
         crate::skill_propose::flush(&self.id);
-        (round_files, changeset)
+        (rounds, changeset)
     }
 
     /// 发「做完了」（步骤和任务），不再占着项目。

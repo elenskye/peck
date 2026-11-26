@@ -160,6 +160,13 @@ pub fn environment_block(root: &Path, input: &EnvInput) -> String {
             "Other folders in this project (use absolute paths with the file tools; read-only ones cannot be written): {}",
             list.join(" · ")
         ));
+        // 能改的文件夹的说明文件（v1.2.1）：项目层只读了主文件夹的。
+        for (p, _) in input.folders.iter().filter(|(_, w)| *w) {
+            let rules: Vec<String> = crate::workspace::instructions(Path::new(p)).iter().map(|f| f.display().to_string()).collect();
+            if !rules.is_empty() {
+                lines.push(format!("Before changing anything in {p}, read {} and follow its rules.", rules.join(" and ")));
+            }
+        }
     }
     if !input.env_names.is_empty() {
         lines.push(format!("Project environment variables set for commands: {}", input.env_names.join(", ")));

@@ -76,6 +76,33 @@ pub const MAX_ENV: usize = 60;
 /// 这些变量 Peck 自己管，项目里不能改。
 const RESERVED_ENV: [&str; 7] = ["HOME", "TMPDIR", "PWD", "SHELL", "CI", "PAGER", "TERM"];
 
+/// 这个文件夹的说明文件（v1.2.1）：根上的 `CLAUDE.md`、`AGENTS.md`（同一个文件只算一次）。根上没有、它又在一个仓库里，
+/// 就看仓库根上的。
+pub fn instructions(dir: &Path) -> Vec<PathBuf> {
+    let here = |d: &Path| -> Vec<PathBuf> {
+        let mut seen = Vec::new();
+        let mut out = Vec::new();
+        for name in ["CLAUDE.md", "AGENTS.md"] {
+            let path = d.join(name);
+            if let Ok(real) = path.canonicalize() {
+                if real.is_file() && !seen.contains(&real) {
+                    seen.push(real);
+                    out.push(path);
+                }
+            }
+        }
+        out
+    };
+    let found = here(dir);
+    if !found.is_empty() {
+        return found;
+    }
+    match crate::harness::git::top(dir) {
+        Some((top, prefix)) if !prefix.is_empty() => here(&top),
+        _ => vec![],
+    }
+}
+
 /// 一个文件夹能不能当项目的其他文件夹（存的时候查一遍，每次用之前再查一遍：后来换成了符号链接的也挡住）。
 /// 不能是根目录、家目录或者包着家目录的；不能和 Peck 的数据目录套着（里面有影子仓库和数据库）；不能在某个 `.git` 里面。
 pub fn folder_allowed(path: &Path) -> Result<(), String> {

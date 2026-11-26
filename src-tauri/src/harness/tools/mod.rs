@@ -12,6 +12,8 @@ pub mod patch;
 pub mod pdf;
 pub mod search;
 pub mod shot;
+#[cfg(target_os = "macos")]
+mod socks;
 pub mod v4a;
 pub mod web;
 
@@ -626,7 +628,7 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["edits"]}),
         ),
         BASH_RUN => (
-            "Run a shell command in the project. Network is on. It runs in a sandbox: it can only write inside the project, the temp dir and its own HOME (HOME and TMPDIR point to scratch folders Peck gives it, not the user's home); .git is read-only; the keychain is out of reach; PECK_SANDBOX=seatbelt is set (macOS can't nest sandboxes, so anything that calls sandbox-exec itself fails here). stdin is empty; CI=1, PAGER=cat, NO_COLOR=1. Output over 16KB is saved to a file and you get the head, the tail and the file path (read it with read_file). Long-running servers are stopped when the command finishes or times out. Don't launch browsers or other GUI apps; to look at a local page use screenshot_page.",
+            "Run a shell command in the project. Network is on. It runs in a sandbox: it can only write inside the project, the temp dir and its own HOME (HOME and TMPDIR point to scratch folders Peck gives it, not the user's home); .git is read-only (in AUTO a command made only of git add / git commit, optionally with git status, diff or log, may write it); the keychain is out of reach; PECK_SANDBOX=seatbelt is set (macOS can't nest sandboxes, so anything that calls sandbox-exec itself fails here). stdin is empty; CI=1, PAGER=cat, NO_COLOR=1. Output over 16KB is saved to a file and you get the head, the tail and the file path (read it with read_file). Long-running servers are stopped when the command finishes or times out. Don't launch browsers or other GUI apps; to look at a local page use screenshot_page.",
             json!({"type":"object","properties":{
                 "command":{"type":"string"},
                 "description":{"type":"string","description":"One short sentence in the user's language saying what this command does, in plain words (e.g. 「跑一遍类型检查」「删掉刚才的临时截图」). The user sees it instead of the command."},

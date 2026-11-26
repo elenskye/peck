@@ -435,17 +435,20 @@ pub(crate) fn snapshot_extras(run_id: &str, folders: &[(PathBuf, bool)], level: 
         .collect()
 }
 
-/// 其他文件夹做完的快照和改动（路径写绝对路径）。
-pub(crate) fn finish_extras(run_id: &str, extras: &[(ShadowRepo, String)], into: &mut ChangeSetSummary) {
+/// 其他文件夹做完的快照和改动（并进 `into` 的路径写绝对路径）。给回每个文件夹这一轮改了的文件（相对那个文件夹，收尾提交用）。
+pub(crate) fn finish_extras(run_id: &str, extras: &[(ShadowRepo, String)], into: &mut ChangeSetSummary) -> Vec<(PathBuf, Vec<String>)> {
+    let mut rounds = Vec::new();
     for (repo, before) in extras {
         let Ok(after) = repo.create_snapshot(&format!("{run_id}-extra-after")) else { continue };
         crate::snapshot::record_extra_finish(run_id, &repo.workspace_path, after.clone());
         let Ok(cs) = repo.diff_changeset(before, &after) else { continue };
+        rounds.push((repo.workspace_path.clone(), cs.files.iter().map(|f| f.path.clone()).collect()));
         for mut f in cs.files {
             f.path = repo.workspace_path.join(&f.path).to_string_lossy().into_owned();
             into.files.push(f);
         }
     }
+    rounds
 }
 
 /// 收尾时要的：最后一段回答、回合怎么结束的。
@@ -650,11 +653,10 @@ pub(crate) fn start_peck_run(
             },
             Err(e) => (StepStatus::Failed, RunStatus::Failed, format!("没做完：{}", e.message)),
         };
-        let (round_files, changeset) = life.snapshot_after();
-        // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，用模型收尾时答的那一行提交。
+        let (rounds, changeset) = life.snapshot_after(&cwd);
+        // 收尾 Hook（v1.1.0）：做完了、这一轮改到的仓库还有没提交的，用模型收尾时答的提交说明各提交一笔。
         let answered = stop_ask.clone();
-        let hooked = super::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move { answered.and_then(|a| a.take()) }).await;
-        if let Some(body) = hooked {
+        for body in super::hooks::finish(stop_hook.as_ref(), rounds, level, run_status == RunStatus::Succeeded, worktree, |_| async move { answered.and_then(|a| a.take()) }).await {
             sink.emit(body);
         }
         life.finish(step_status, run_status, summary, changeset);
@@ -1211,6 +1213,87 @@ mod tests {
         crate::snapshot::undo_run(&snapshot).unwrap();
         assert!(!lib_file.exists());
         assert_eq!(std::fs::read_to_string(&keep).unwrap(), "原来的\n");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Git Plan 装在主文件夹（v1.2.1）：这一轮改到的主文件夹和其他文件夹各提交一笔，其他文件夹照它自己 CLAUDE.md 里的 Git 规则。
+    #[tokio::test]
+    async fn git_plan_commits_each_changed_folder_by_its_own_rules() {
+        use crate::harness::git::testing as g;
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
+        let (root, store, mut ws) = temp_store();
+        let main = PathBuf::from(&ws.path).canonicalize().unwrap();
+        g::init(&main);
+        g::install_git_plan(&main);
+        let lib = root.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let lib = lib.canonicalize().unwrap();
+        g::init(&lib);
+        std::fs::write(lib.join("CLAUDE.md"), "# Lib\n\n## Git\n\n提交说明写 `lib: <描述>`。\n").unwrap();
+        g::commit_all(&lib, "v0.0.2: rules");
+        ws.settings.folders = vec![crate::workspace::ProjectFolder { path: lib.to_string_lossy().into_owned(), writable: true }];
+        store.save_workspace(&ws).unwrap();
+        let session = store.create_session(&ws.id, None).unwrap();
+        let mut store = store;
+        store.create_run(&session.id, "占号", 930_101, &DispatchPlan { steps: vec![] }).unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let active: Arc<Mutex<HashMap<String, ActiveRunContext>>> = Arc::default();
+        let turn = |text: Option<&str>, tools: Vec<(String, serde_json::Value)>| crate::gateway::mock::ScriptTurn { reasoning: None, text: text.map(str::to_string), tool_calls: tools, usage: TokenUsage { input: Some(100), output: Some(10), cache_read: Some(0), cache_write: Some(0), ..Default::default() } };
+        let model = Arc::new(ScriptedModel::new(
+            "deepseek/deepseek-flash",
+            vec![
+                turn(None, vec![("write_file".into(), serde_json::json!({"path": "app.txt", "content": "app\n"})), ("write_file".into(), serde_json::json!({"path": lib.join("util.txt").to_string_lossy(), "content": "util\n"}))]),
+                turn(Some("两边都改好了。"), vec![]),
+                turn(Some("[1]\nv1.0.1: add app\n\n[2]\nlib: add util"), vec![]),
+            ],
+            Duration::ZERO,
+        ));
+        let requests = model.requests.clone();
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let _ = start_peck_run(
+            PeckRun {
+                store: store.clone(),
+                active_runs: active.clone(),
+                session_id: session.id.clone(),
+                prompt: "两边都改".into(),
+                who: "api:deepseek/deepseek-flash".into(),
+                permission: Some("auto".into()),
+                level: PermissionLevel::Auto,
+                model_id: "deepseek/deepseek-flash".into(),
+                effort: None,
+                cost_cap: None,
+                env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
+                worktree: false,
+                team: None,
+                team_notes: vec![],
+                images: vec![],
+                search: Default::default(),
+                compact: None,
+            },
+            model,
+            move |e| {
+                let _ = tx.send(e.clone());
+            },
+        )
+        .unwrap();
+        let mut hooks = Vec::new();
+        while let Some(e) = tokio::time::timeout(Duration::from_secs(20), rx.recv()).await.ok().flatten() {
+            if let EventBody::HookRan { ok, text, .. } = &e.body {
+                hooks.push((*ok, text.clone()));
+            }
+            if hooks.len() == 2 {
+                break;
+            }
+        }
+        let asked = requests.lock().unwrap().last().unwrap().messages.last().unwrap().clone();
+        assert!(matches!(&asked.parts[0], crate::gateway::Part::Text { text } if text.contains("[2]") && text.contains("提交说明写 `lib: <描述>`")), "{asked:?}");
+        assert!(hooks.iter().all(|(ok, _)| *ok), "{hooks:?}");
+        assert_eq!(g::log(&main, "%s")[0], "v1.0.1: add app");
+        assert_eq!(g::files_in_head(&main), vec!["app.txt"]);
+        assert_eq!(g::log(&lib, "%s")[0], "lib: add util");
+        assert_eq!(g::files_in_head(&lib), vec!["util.txt"]);
         let _ = std::fs::remove_dir_all(root);
     }
 

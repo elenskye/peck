@@ -48,9 +48,11 @@ pub enum Ask {
     Confirm(Confirm),
 }
 
-pub fn sandbox_for(level: PermissionLevel) -> Sandbox {
+/// 这一条命令在哪个沙箱里跑：AUTO 里只做提交的（`git add`、`git commit`，v1.2.1）能写 `.git`，不弹卡片。
+pub fn sandbox_for(level: PermissionLevel, command: &str) -> Sandbox {
     match level {
         PermissionLevel::Plan => Sandbox::ReadOnly,
+        PermissionLevel::Auto if risk::plain_commit(command) => Sandbox::Commit,
         PermissionLevel::Edit | PermissionLevel::Auto => Sandbox::Project,
     }
 }
@@ -211,7 +213,10 @@ mod tests {
         }
         let allowed: HashSet<String> = ["install-deps".to_string()].into();
         assert!(matches!(check_command(PermissionLevel::Edit, "sudo npm i -g x", root, &allowed), Ask::HighRisk(_)));
-        assert_eq!(sandbox_for(PermissionLevel::Plan), Sandbox::ReadOnly);
-        assert_eq!(sandbox_for(PermissionLevel::Auto), Sandbox::Project);
+        assert_eq!(sandbox_for(PermissionLevel::Plan, "ls"), Sandbox::ReadOnly);
+        assert_eq!(sandbox_for(PermissionLevel::Auto, "ls"), Sandbox::Project);
+        assert_eq!(sandbox_for(PermissionLevel::Auto, "git add -A && git commit -m x"), Sandbox::Commit);
+        assert_eq!(sandbox_for(PermissionLevel::Edit, "git add -A && git commit -m x"), Sandbox::Project);
+        assert_eq!(sandbox_for(PermissionLevel::Plan, "git commit -m x"), Sandbox::ReadOnly);
     }
 }

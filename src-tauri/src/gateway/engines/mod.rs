@@ -6,7 +6,7 @@
 //! - [`muse::MuseBackend`]：`muse serve`（会话协议 MSP）。
 //! - [`acp::AcpBackend`]：Grok（`grok agent stdio`，ACP）。
 //!
-//! 进程放进自己的进程组，收尾时先关 stdin、等它退出，超时再结束整组。
+//! 进程放进自己的进程组、带一次性的记号（`process::Family`）；收尾时先关 stdin、等它退出，再把它生出来的进程一起停掉。
 //! 测试用 [`Pipe::script`]：按录下的原始输出回放，碰到「该 Peck 回话」的地方停下等 Peck 回。
 
 pub mod acp;
@@ -158,12 +158,6 @@ impl Pipe {
         }
     }
 
-    pub fn close_stdin(&mut self) {
-        if let Self::Process(p) = self {
-            p.stdin = None;
-        }
-    }
-
     /// 给进程组发信号（打断用；没有进程组就什么都不做）。
     pub async fn signal(&self, signal: &str) {
         if let Self::Process(p) = self {
@@ -178,14 +172,24 @@ impl Pipe {
         }
     }
 
-    /// 收尾：关 stdin，等 `grace`，还没退就结束整个进程组。
-    pub async fn stop(mut self, grace: Duration) {
-        self.close_stdin();
+    /// 收尾：记下它的进程树，关 stdin，等 `grace`；然后不管它退没退，把它和它生出来的还活着的进程一起停掉（v1.2.1）。
+    pub async fn stop(self, grace: Duration) {
         if let Self::Process(mut p) = self {
-            if tokio::time::timeout(grace, p.child.wait()).await.is_err() {
-                crate::process::terminate_process_group(p.pgid).await;
-                let _ = p.child.kill().await;
+            let family = match p.family.take() {
+                Some(mut f) => tokio::task::spawn_blocking(move || {
+                    f.remember();
+                    f
+                })
+                .await
+                .ok(),
+                None => None,
+            };
+            p.stdin = None;
+            let _ = tokio::time::timeout(grace, p.child.wait()).await;
+            if let Some(f) = family {
+                f.stop().await;
             }
+            let _ = p.child.kill().await;
         }
     }
 
@@ -217,15 +221,28 @@ pub struct ProcessPipe {
     lines: mpsc::UnboundedReceiver<Line>,
     stderr: Arc<Mutex<VecDeque<String>>>,
     pgid: Option<u32>,
+    /// 它和它生出来的进程；`stop` 收过就是 `None`。
+    family: Option<crate::process::Family>,
+}
+
+/// 没走 `stop` 就被丢掉（跑任务的 future 被 abort）：`kill_on_drop` 只杀 CLI 自己，这里把它生出来的一起杀掉。
+impl Drop for ProcessPipe {
+    fn drop(&mut self) {
+        if let Some(f) = self.family.take() {
+            f.kill_now();
+        }
+    }
 }
 
 impl ProcessPipe {
     fn spawn(launch: &Launch) -> Result<Self, GatewayError> {
+        let token = uuid::Uuid::new_v4().simple().to_string();
         let mut cmd = tokio::process::Command::new(&launch.bin);
         cmd.args(&launch.args)
             .current_dir(&launch.cwd)
             .env("PATH", &launch.path)
             .envs(launch.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .env(crate::process::FAMILY_ENV, &token)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -282,6 +299,7 @@ impl ProcessPipe {
             stdin,
             lines,
             stderr,
+            family: pgid.map(|pid| crate::process::Family::new(pid, token)),
             pgid,
         })
     }

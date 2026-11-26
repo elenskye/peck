@@ -1,7 +1,8 @@
 //! `git_commit`（v1.1.0，Git Plan 插件要的工具）：替模型、也替 Peck 自己的收尾钩子在项目的 git 仓库里提交。
 //!
 //! 只会提交：`git add` 指定的文件、`git commit --only`。碰不到 push、amend、rebase、reset，不改 git 配置，不署名。
-//! - 说明必须是一行 `v<x.y.z>: <description>`，带 `Co-Authored-By`、「Generated with」这类署名的拒绝。
+//! - 说明必须是一行 `v<x.y.z>: <description>`，带 `Co-Authored-By`、「Generated with」这类署名的拒绝；仓库根目录的
+//!   `CLAUDE.md` / `AGENTS.md` 里写了 Git 规则的（[`rules`]，v1.2.1）照仓库的，Peck 不校验格式。
 //! - 只提交点名的文件（没点名就是工作区里全部没提交的改动）；被 `.gitignore` 忽略的不会进去。站主先前 `git add` 过、
 //!   这次没点名的别的文件不带上（`--only`）。
 //! - 不是 git 项目、HEAD 是游离的（独立工作区里就是）、合并 / cherry-pick / revert 到一半（[`committable`]）不提交，
@@ -26,7 +27,7 @@ pub const GIT_COMMIT: &str = "git_commit";
 /// EDIT 档「这个项目总是允许」的那条规则。
 pub const RULE: &str = "git-commit";
 
-pub const DESCRIPTION: &str = "Commit changes in this project's git repository. It can only commit: no push, no amend, no history rewriting, no signature lines. message: exactly one line `v<version>: <description>` (the version this round of work is for, then a short lowercase English summary, e.g. `v1.0.1: fix some problems`). paths: the files to commit (project-relative); omit to commit every uncommitted change in the working tree. Use this instead of running `git commit` yourself. Peck already commits each finished round on its own when the project has the Git Plan plugin, so only call this for an extra commit in the middle of a round or when the user asks.";
+pub const DESCRIPTION: &str = "Commit changes in this project's git repository. It can only commit: no push, no amend, no history rewriting. message: if the repository's CLAUDE.md / AGENTS.md has Git rules, follow them; otherwise exactly one line `v<version>: <description>` (the version this round of work is for, then a short lowercase English summary, e.g. `v1.0.1: fix some problems`) with no signature lines. paths: the files to commit (project-relative); omit to commit every uncommitted change in the working tree. Use this instead of running `git commit` yourself. Peck already commits each finished round on its own when the project has the Git Plan plugin, so only call this for an extra commit in the middle of a round or when the user asks.";
 
 pub fn schema() -> Value {
     json!({"type":"object","properties":{
@@ -183,9 +184,17 @@ fn named(path: &str, wanted: &[String]) -> bool {
     })
 }
 
-/// 提交。`paths` 空着就是全部没提交的改动；点了名的只提交其中确实有改动的那些。
+/// 提交。`paths` 空着就是全部没提交的改动；点了名的只提交其中确实有改动的那些。说明照 Git Plan 的格式校验。
 pub fn commit(root: &Path, message: &str, paths: &[String]) -> Result<Commit, String> {
-    let message = valid_message(message)?;
+    commit_as_is(root, &valid_message(message)?, paths)
+}
+
+/// 同 [`commit`]，说明照原样（仓库自己写了 Git 规则的，v1.2.1）。
+pub fn commit_as_is(root: &Path, message: &str, paths: &[String]) -> Result<Commit, String> {
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("没有提交说明。".into());
+    }
     committable(root)?;
     if let Some(bad) = paths.iter().find(|p| Path::new(p.trim()).is_absolute() || p.split(['/', '\\']).any(|part| part == "..")) {
         return Err(format!("{bad} 不是项目里的相对路径。"));
@@ -212,8 +221,79 @@ pub fn commit(root: &Path, message: &str, paths: &[String]) -> Result<Commit, St
 pub fn call(root: &Path, input: &Value) -> Result<String, String> {
     let message = input.get("message").and_then(Value::as_str).unwrap_or("");
     let paths: Vec<String> = input.get("paths").and_then(Value::as_array).map(|a| a.iter().filter_map(|p| p.as_str().map(str::to_string)).collect()).unwrap_or_default();
-    let done = commit(root, message, &paths)?;
-    Ok(format!("Committed {} ({} file{}): {}. Not pushed; the user pushes.", done.hash, done.files, if done.files == 1 { "" } else { "s" }, done.message))
+    let own_rules = top(root).is_some_and(|(t, _)| rules(&t).is_some());
+    let done = if own_rules { commit_as_is(root, message, &paths)? } else { commit(root, message, &paths)? };
+    let subject = done.message.lines().next().unwrap_or("");
+    Ok(format!("Committed {} ({} file{}): {subject}. Not pushed; the user pushes.", done.hash, done.files, if done.files == 1 { "" } else { "s" }))
+}
+
+/// 这个文件夹所在仓库的根和它在仓库里的前缀（`sub/`，在根上是空的）。不是 git 仓库是 `None`。
+pub fn top(dir: &Path) -> Option<(std::path::PathBuf, String)> {
+    let mut c = git(dir);
+    c.args(["rev-parse", "--show-toplevel", "--show-prefix"]);
+    let out = String::from_utf8_lossy(&run(c, None).ok()?).into_owned();
+    let mut lines = out.lines();
+    let root = lines.next().filter(|r| !r.is_empty())?.into();
+    Some((root, lines.next().unwrap_or("").to_string()))
+}
+
+/// 仓库自己写的 Git 规则（v1.2.1）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rules {
+    /// 写在哪几个文件里。
+    pub files: Vec<std::path::PathBuf>,
+    /// 那几节的原文。
+    pub text: String,
+}
+
+/// 仓库根目录 `CLAUDE.md` / `AGENTS.md` 里标题带 Git、commit、提交的那几节（到下一个同级或更高的标题为止）。没有就是 `None`。
+pub fn rules(top: &Path) -> Option<Rules> {
+    let mut files = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    for file in crate::workspace::instructions(top) {
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let found: Vec<String> = git_sections(&text).into_iter().filter(|s| !parts.contains(s)).collect();
+        if !found.is_empty() {
+            files.push(file);
+            parts.extend(found);
+        }
+    }
+    let text: String = parts.join("\n\n").chars().take(3000).collect();
+    (!text.is_empty()).then_some(Rules { files, text })
+}
+
+fn git_sections(md: &str) -> Vec<String> {
+    let lines: Vec<&str> = md.lines().collect();
+    // 标题的级别（代码块里的 `#` 不算）。
+    let mut fenced = false;
+    let levels: Vec<Option<usize>> = lines
+        .iter()
+        .map(|l| {
+            if l.trim_start().starts_with("```") {
+                fenced = !fenced;
+                return None;
+            }
+            let n = l.chars().take_while(|c| *c == '#').count();
+            (!fenced && (1..=6).contains(&n) && l[n..].starts_with(' ')).then_some(n)
+        })
+        .collect();
+    let about_git = |title: &str| {
+        let t = title.to_lowercase();
+        t.contains("commit") || t.contains("提交") || t.match_indices("git").any(|(i, _)| !t[..i].ends_with(|c: char| c.is_ascii_alphanumeric()) && !t[i + 3..].starts_with(|c: char| c.is_ascii_alphanumeric()))
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        match levels[i] {
+            Some(level) if about_git(lines[i]) => {
+                let end = (i + 1..lines.len()).find(|j| levels[*j].is_some_and(|l| l <= level)).unwrap_or(lines.len());
+                out.push(lines[i..end].join("\n").trim().to_string());
+                i = end;
+            }
+            _ => i += 1,
+        }
+    }
+    out
 }
 
 /// 审批卡片上的一句和细节。

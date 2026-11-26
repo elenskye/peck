@@ -478,8 +478,8 @@ pub(crate) fn start_engine_run(
         };
         // 引擎停了还没回来的委派子任务：先停掉再拍收尾快照。
         interrupt_subs(&id);
-        let (round_files, changeset) = life.snapshot_after();
-        // 收尾 Hook（v1.1.0）：做完了、这一轮改的文件还没提交，续上这个 CLI 的会话问一行提交说明，Peck 自己提交。
+        let (rounds, changeset) = life.snapshot_after(&cwd);
+        // 收尾 Hook（v1.1.0）：做完了、这一轮改到的仓库还有没提交的，续上这个 CLI 的会话问提交说明，Peck 自己各提交一笔。
         let stop_hook = if worktree || compact { None } else { crate::project_plugins::stop_hook(&workspace) };
         let ask_task = AgentTask {
             run_id: id.clone(),
@@ -496,14 +496,15 @@ pub(crate) fn start_engine_run(
             trusted,
         };
         let (asker, ask, usage_to, asked_engine) = (backend.clone(), stop_hook.as_ref().map(|h| h.ask.clone()).unwrap_or_default(), sink.clone(), engine.clone());
-        let hooked = crate::harness::hooks::finish(stop_hook.as_ref(), &cwd, level, run_status == RunStatus::Succeeded, worktree, round_files, || async move {
-            crate::harness::hooks::ask_cli(asker.as_ref(), &asked_engine, ask_task, &ask, move |body| {
+        let hooked = crate::harness::hooks::finish(stop_hook.as_ref(), rounds, level, run_status == RunStatus::Succeeded, worktree, |repos| async move {
+            let text = crate::harness::hooks::ask_cli(asker.as_ref(), &asked_engine, ask_task, &crate::harness::hooks::ask_for(&ask, &repos), move |body| {
                 usage_to.emit(body);
             })
-            .await
+            .await?;
+            Some(crate::harness::hooks::Answer { roots: repos.into_iter().map(|r| r.root).collect(), text })
         })
         .await;
-        if let Some(body) = hooked {
+        for body in hooked {
             sink.emit(body);
         }
         let text = last_text.lock().map(|t| t.clone()).unwrap_or_default();
@@ -566,14 +567,22 @@ async fn run_engine(backend: &dyn super::AgentBackend, task: AgentTask, sink: &E
     outcome
 }
 
-/// 项目的其他文件夹（v0.10）：写在这一句后面，告诉 CLI 能读哪些、能改哪些（PLAN 一律只读）。
+/// 项目的其他文件夹（v0.10）：写在这一句后面，告诉 CLI 能读哪些、能改哪些（PLAN 一律只读）。能改的带上它的说明文件
+/// （v1.2.1：CLI 只读工作目录里的 `CLAUDE.md` / `AGENTS.md`，别的文件夹的规矩它看不到）。
 pub(crate) fn folders_note(folders: &[(PathBuf, bool)], level: PermissionLevel) -> String {
     if folders.is_empty() {
         return String::new();
     }
     let lines: Vec<String> = folders
         .iter()
-        .map(|(p, w)| format!("- {} ({})", p.display(), if *w && level != PermissionLevel::Plan { "you may edit files here" } else { "read-only: do not change files here" }))
+        .map(|(p, w)| {
+            if !*w || level == PermissionLevel::Plan {
+                return format!("- {} (read-only: do not change files here)", p.display());
+            }
+            let rules: Vec<String> = crate::workspace::instructions(p).iter().map(|f| f.display().to_string()).collect();
+            let read = if rules.is_empty() { String::new() } else { format!(" Before changing anything here, read {} and follow its rules.", rules.join(" and ")) };
+            format!("- {} (you may edit files here).{read}", p.display())
+        })
         .collect();
     format!("\n\n<peck-folders>\nThis project also uses these folders outside the working directory (absolute paths):\n{}\n</peck-folders>", lines.join("\n"))
 }
@@ -1147,9 +1156,18 @@ mod tests {
     fn other_folders_are_told_to_the_cli() {
         let folders = vec![(PathBuf::from("/lib/shared"), true), (PathBuf::from("/docs"), false)];
         let note = folders_note(&folders, PermissionLevel::Edit);
-        assert!(note.contains("/lib/shared (you may edit files here)") && note.contains("/docs (read-only"));
+        assert!(note.contains("/lib/shared (you may edit files here).\n") && note.contains("/docs (read-only"));
         assert!(folders_note(&folders, PermissionLevel::Plan).matches("read-only").count() == 2);
         assert_eq!(folders_note(&[], PermissionLevel::Edit), "");
+        // 能改的文件夹有说明文件：带上路径，叫它先读。
+        let lib = std::env::temp_dir().join(format!("peck-folders-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join("CLAUDE.md"), "# rules\n").unwrap();
+        std::os::unix::fs::symlink("CLAUDE.md", lib.join("AGENTS.md")).unwrap();
+        let note = folders_note(&[(lib.clone(), true)], PermissionLevel::Edit);
+        assert!(note.contains(&format!("Before changing anything here, read {} and follow its rules.", lib.join("CLAUDE.md").display())), "{note}");
+        assert!(!note.contains("AGENTS.md"), "同一个文件只算一次：{note}");
+        let _ = std::fs::remove_dir_all(lib);
     }
 
     #[test]

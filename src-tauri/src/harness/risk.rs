@@ -794,6 +794,164 @@ fn assess_with(command: &str, root: &Path, sandboxed: bool) -> Vec<Risk> {
     out
 }
 
+/// 只往前加东西的提交（v1.2.1，AUTO 档换一个能写 `.git` 的沙箱跑）：整条命令只有 `git add`、`git commit`（不带 `--amend`），
+/// 加上 `cd`、`echo` 和只读的 `git status / diff / log / show / rev-parse / ls-files`。不认的写法一律不算：命令替换只认
+/// `$(cat <<'EOF' … EOF)` 这种写提交说明的，重定向只认丢到 `/dev/null`、`2>&1`，git 的全局选项只认 `-C`、`--no-pager`。
+pub fn plain_commit(command: &str) -> bool {
+    // heredoc 只认写提交说明的两种：`"$(cat <<'EOF'`（下一行起是正文，正文后一行开头的 `)` 收尾）和 `git commit -F - <<EOF`。
+    // 正文里不能有命令替换（分隔符不带引号时正文里的 `$(…)` 会被执行）。
+    let mut rest = String::new();
+    let mut lines = command.lines();
+    while let Some(line) = lines.next() {
+        let Some(at) = line.find("<<") else {
+            rest.push_str(line);
+            rest.push('\n');
+            continue;
+        };
+        let (head, from_cat) = match line.find("$(cat <<") {
+            Some(c) if c + 6 == at => (&line[..c], true),
+            _ => (&line[..at], false),
+        };
+        if !from_cat && segments(head).last().is_none_or(|s| words(s).first().map(String::as_str) != Some("git")) {
+            return false;
+        }
+        let Some(delim) = heredoc_word(&line[at..]) else { return false };
+        loop {
+            match lines.next() {
+                None => return false,
+                Some(l) if l.trim() == delim => break,
+                Some(l) if l.contains("$(") || l.contains('`') => return false,
+                Some(_) => {}
+            }
+        }
+        rest.push_str(head);
+        if from_cat {
+            let Some(close) = lines.next().map(str::trim_start).and_then(|n| n.strip_prefix(')')) else { return false };
+            rest.push_str("MSG");
+            rest.push_str(close);
+        }
+        rest.push('\n');
+    }
+    if ["$(", "`", "<(", ">("].iter().any(|s| rest.contains(s)) {
+        return false;
+    }
+    let mut commits = false;
+    for segment in segments(&rest) {
+        if !quiet_redirects(&segment) {
+            return false;
+        }
+        let w: Vec<String> = words(&segment).into_iter().filter(|w| !w.contains('>')).collect();
+        match w.first().map(String::as_str) {
+            Some("cd" | "echo" | "true") => {}
+            Some("git") => match plain_git(&w[1..]) {
+                Some(writes) => commits |= writes,
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+    commits
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::plain_commit;
+
+    #[test]
+    fn only_add_and_commit_count_as_plain_commits() {
+        for ok in [
+            "git add -A && git commit -m \"v1.2.1: fix some problems\"",
+            "cd sub && git add src/a.rs README.md && git status --short && git commit -m 'x' 2>&1",
+            "git -C . add . ; git --no-pager diff --cached --stat; git commit -q -m x >/dev/null",
+            "git add -A && git commit -m \"$(cat <<'EOF'\nv1.2.1: minor improvement\n\nbody > text\nEOF\n)\" && git log --oneline -1",
+            "git commit -F - <<EOF\nv1.2.1: x\nEOF",
+            "git commit -am 'a > b' --no-verify && echo done",
+        ] {
+            assert!(plain_commit(ok), "{ok}");
+        }
+        for bad in [
+            "git status && git diff",
+            "git commit --amend -m x",
+            "git reset --hard && git commit -m x",
+            "git add . && rm -rf .git",
+            "git -c core.hooksPath=/tmp/h commit -m x",
+            "GIT_DIR=/tmp/x git commit -m x",
+            "git commit -m \"$(rm -rf .git)\"",
+            "git commit -m `id`",
+            "git commit -m x > .git/config",
+            "git commit -m x 2>>log.txt",
+            "git commit -m \"$(cat <<'EOF'\nmsg\nEOF\nrm -rf .git)\"",
+            "git commit -m \"$(cat <<EOF\n$(rm -rf .git)\nEOF\n)\"",
+            "git commit -m \"$(cat <<'EOF'; rm -rf .git\nmsg\nEOF\n)\"",
+            "git log --output=.git/config",
+            "git add . | sh",
+            "git ci -m x",
+            "/usr/bin/git commit -m x",
+            "pnpm check && git commit -am x",
+        ] {
+            assert!(!plain_commit(bad), "{bad}");
+        }
+    }
+}
+
+/// `<<'EOF'`、`<<-EOF`、`<< "EOF"` 到行尾：给回分隔符；`<<<` 和后面还有别的都不认。
+fn heredoc_word(tail: &str) -> Option<&str> {
+    let t = tail.strip_prefix("<<").filter(|t| !t.starts_with('<'))?;
+    let word = t.trim_start_matches('-').trim().trim_matches(|c| c == '\'' || c == '"');
+    (!word.is_empty() && word.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')).then_some(word)
+}
+
+/// `git …` 能不能放进能写 `.git` 的沙箱：`Some(true)` 是 add / commit，`Some(false)` 是只读的那几个。
+fn plain_git(args: &[String]) -> Option<bool> {
+    let mut i = 0;
+    while let Some(w) = args.get(i) {
+        match w.as_str() {
+            "-C" => i += 2,
+            "--no-pager" | "-P" => i += 1,
+            w if w.starts_with('-') => return None,
+            _ => break,
+        }
+    }
+    let rest = args.get(i + 1..).unwrap_or_default();
+    if rest.iter().any(|a| a.starts_with("--output") || a.starts_with("--exec") || a == "--amend" || a.starts_with("--fixup=amend") || a.starts_with("--fixup=reword")) {
+        return None;
+    }
+    match args.get(i)?.as_str() {
+        "add" | "commit" => Some(true),
+        "status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" => Some(false),
+        _ => None,
+    }
+}
+
+/// 这一段引号外的重定向都只是丢掉输出（`>/dev/null`、`2>&1`、`&>/dev/null`）。
+fn quiet_redirects(segment: &str) -> bool {
+    let w = words(segment);
+    let mut quote: Option<char> = None;
+    let mut bare = String::new();
+    for c in segment.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None => bare.push(c),
+        }
+    }
+    if !bare.contains('>') {
+        return true;
+    }
+    let mut ok = true;
+    for (i, word) in w.iter().enumerate() {
+        let Some(at) = word.find('>') else { continue };
+        if !bare.contains(word.as_str()) {
+            continue;
+        }
+        let target = &word[at..].trim_start_matches('>');
+        let target = if target.is_empty() { w.get(i + 1).map(String::as_str).unwrap_or("") } else { target };
+        ok &= target == "/dev/null" || target == "&1" || target == "&2";
+    }
+    ok
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

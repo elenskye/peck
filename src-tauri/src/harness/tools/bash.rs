@@ -28,6 +28,8 @@ pub enum Sandbox {
     Project,
     /// PLAN：只能写临时目录。
     ReadOnly,
+    /// AUTO 里只做提交的命令（v1.2.1，`risk::plain_commit`）：和 `Project` 一样，另外能写 `.git`（`config`、`hooks`、`info` 照样不能）。
+    Commit,
     /// 站主在高危卡片上批了「出沙箱再跑」。
     Off,
 }
@@ -187,7 +189,14 @@ pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, 
     git.extend(nested_git(root));
     // 只读的其他文件夹：明着不让写（它在临时目录这类本来能写的地方时也挡住）。
     git.extend(extra_read_only.iter().map(|p| format!("(subpath {})", sb(p))));
-    if sandbox == Sandbox::Project {
+    let mut commit = Vec::new();
+    if matches!(sandbox, Sandbox::Project | Sandbox::Commit) {
+        if sandbox == Sandbox::Commit {
+            for dir in git_dirs(root).into_iter().chain(extra_writable.iter().flat_map(|e| git_dirs(e))) {
+                commit.push(format!("(allow file-write* (subpath {}))", sb(&dir)));
+                commit.push(format!("(deny file-write* (literal {}) (literal {}) (subpath {}) (subpath {}))", sb(&dir.join("config")), sb(&dir.join("config.worktree")), sb(&dir.join("hooks")), sb(&dir.join("info"))));
+            }
+        }
         match scope {
             Some(parts) => {
                 writable.extend(parts.iter().map(|p| format!("(subpath {})", sb(p))));
@@ -212,12 +221,25 @@ pub fn sandbox_profile(root: &Path, temp: &Path, home: &Path, sandbox: Sandbox, 
          (deny file-write*)\
          (allow file-write* {})\
          (deny file-write* {})\
+         {}\
          {KEYCHAIN}\
          (deny lsopen)\
          (deny appleevent-send)",
         writable.join(" "),
         git.join(" "),
+        commit.join(""),
     )
+}
+
+/// 这个文件夹的 git 目录：`.git` 是文件夹就是它；是文件（git worktree）就是它指的那个，加上共用的那个（`commondir`）。
+fn git_dirs(dir: &Path) -> Vec<PathBuf> {
+    let dot = dir.join(".git");
+    if dot.is_dir() {
+        return dot.canonicalize().into_iter().collect();
+    }
+    let Some(gitdir) = std::fs::read_to_string(&dot).ok().and_then(|t| t.trim().strip_prefix("gitdir:").map(|g| dir.join(g.trim()))) else { return vec![] };
+    let common = std::fs::read_to_string(gitdir.join("commondir")).ok().map(|c| gitdir.join(c.trim()));
+    [Some(gitdir), common].into_iter().flatten().filter_map(|d| d.canonicalize().ok()).collect()
 }
 
 /// Peck 给沙箱里的命令设的记号（v1.1.12，照 Codex 的 `CODEX_SANDBOX`）：macOS 不让沙箱里的进程再套一层沙箱，
@@ -342,7 +364,7 @@ pub async fn run_command(
     let cargo_home = real_cargo.clone().unwrap_or_else(|| home.join(".cargo"));
     let mut cmd = if cfg!(target_os = "macos") {
         let mut profile = if sandbox == Sandbox::Off { keychain_only_profile() } else { sandbox_profile(&ctx.root, &temp, &home, sandbox, &ctx.writable_extra(), &ctx.read_only_extra(), scope) };
-        if sandbox == Sandbox::Project {
+        if matches!(sandbox, Sandbox::Project | Sandbox::Commit) {
             profile.push_str(&real_cargo.as_deref().and_then(cargo_caches).unwrap_or_default());
         }
         let mut c = tokio::process::Command::new("/usr/bin/sandbox-exec");
@@ -579,6 +601,29 @@ mod tests {
         for sandbox in [Sandbox::Project, Sandbox::Off] {
             let out = run(&ctx, &json!({"command": "security list-keychains 2>&1"}), sandbox, None, watch::channel(false).1, |_| {}).await.unwrap();
             assert!(!out.output.contains("System.keychain"), "{sandbox:?}: 钥匙串还连得上：{}", out.output);
+        }
+    }
+
+    /// AUTO 的提交（v1.2.1）：`Commit` 能 `git add`、`git commit`，`.git/config`、`hooks` 照样写不了；`Project` 写不了 `.git`。
+    #[tokio::test]
+    #[cfg(target_os = "macos")]
+    async fn the_commit_sandbox_writes_git_but_not_its_config_or_hooks() {
+        if crate::harness::tools::bash::nested_sandbox() {
+            return;
+        }
+        let p = TempProject::new();
+        p.write("a.txt", "a\n");
+        let ctx = p.ctx();
+        let git = |c: &str| format!("git -c user.name=t -c user.email=t@e {c}");
+        assert!(std::process::Command::new("git").args(["init", "-q"]).current_dir(&p.dir).status().unwrap().success());
+        let commit = format!("{} && {}", git("add -A"), git("commit -qm 'v1.0.0: x'"));
+        let blocked = run(&ctx, &json!({ "command": commit }), Sandbox::Project, None, never(), |_| {}).await.unwrap();
+        assert!(blocked.sandbox_denied() && blocked.denied_git(), "{}", blocked.output);
+        let done = run(&ctx, &json!({ "command": commit }), Sandbox::Commit, None, never(), |_| {}).await.unwrap();
+        assert!(done.ok(), "{}", done.output);
+        for write in ["echo x >> .git/config", "echo x > .git/hooks/pre-commit", "echo x > .git/info/exclude"] {
+            let out = run(&ctx, &json!({ "command": write }), Sandbox::Commit, None, never(), |_| {}).await.unwrap();
+            assert!(out.sandbox_denied(), "{write}: {}", out.output);
         }
     }
 
