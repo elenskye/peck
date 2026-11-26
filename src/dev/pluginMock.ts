@@ -26,7 +26,7 @@ export const MOCK_BUILTIN: PluginInfo[] = [
 
 const gitPlan = (version: string): PluginInfo => ({
   name: "git-plan", title: "Git Plan", version, kind: "plugin", source: "library", everyProject: true,
-  description: "版本号怎么升、什么时候分 Phase、提交说明怎么写；一轮做完自动提交，不 push。",
+  description: "版本号怎么升、什么时候分 Phase、提交说明怎么写；一轮做完给改到的每个 git 仓库各提交一笔，不 push。",
   skills: [{ name: "git-plan", description: "开工前定这次是哪种程度的开发、版本号怎么升、提交说明怎么写时用" }],
   commands: [
     { name: "git-plan:plan", description: "给一个新版本写 Phase 计划", hint: "<版本> <要做的>" },
@@ -48,7 +48,7 @@ const zhCopy: PluginInfo = {
   commands: [], tools: [], hooks: [], mcp: [],
 };
 
-const LATEST = "1.1.0";
+const LATEST = "1.2.0";
 const everyProject: Record<string, boolean> = { "git-plan": true, "zh-ui-copy": false };
 /** 每个项目装着的：名字 → 版本。 */
 const installed: Record<string, Record<string, string>> = {

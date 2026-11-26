@@ -138,18 +138,7 @@ fn sb(path: &Path) -> String {
 /// 这个文件夹下面任何一层的 `.git`（比如 `~/code` 里各个仓库的钩子）：SBPL 的正则。路径里有引号就不写这条。
 fn nested_git(dir: &Path) -> Option<String> {
     let s = dir.to_string_lossy();
-    if s.contains('"') {
-        return None;
-    }
-    let mut out = String::from("(regex #\"^");
-    for c in s.chars() {
-        if "\\.^$|?*+()[]{}".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out.push_str("/(.+/)?\\.git(/|$)\")");
-    Some(out)
+    (!s.contains('"')).then(|| format!("(regex #\"^{}/(.+/)?\\.git(/|$)\")", escape_regex(&s)))
 }
 
 /// 构建、缓存目录（v1.1.3）：划了文件的 worker、member 跑构建、测试时也能写（不算改乱：都是生成的）。
