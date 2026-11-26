@@ -61,7 +61,7 @@ impl Answer {
                 marked = true;
                 current = Some(k);
                 let rest = rest.trim();
-                if k == n && !rest.is_empty() && !rest.contains(&*root.to_string_lossy()) {
+                if k == n && !rest.is_empty() && !rest.contains(&*root.to_string_lossy()) && !rest.contains("照 Git Plan") && !rest.contains("照这个仓库") {
                     out.push(rest);
                 }
             } else if current == Some(n) && !t.starts_with("```") {
@@ -180,7 +180,11 @@ pub fn pending(folders: &[(PathBuf, Vec<String>)], level: PermissionLevel, succe
 
 /// 用模型答的那一段提交这个仓库；给回要发的那条 `hook.ran`。
 pub fn commit(hook: &StopHook, repo: &Repo, answer: Option<&Answer>) -> EventBody {
-    let message = answer.and_then(|a| a.part(&repo.root)).map(|m| if repo.rules.is_some() { m } else { git::first_line(&m) });
+    // 照 Git Plan 的取第一行合格的（模型可能先抄一遍编号那一行）。
+    let message = answer.and_then(|a| a.part(&repo.root)).map(|m| match repo.rules {
+        Some(_) => m,
+        None => m.lines().map(git::first_line).find(|l| git::valid_message(l).is_ok()).unwrap_or_else(|| git::first_line(&m)),
+    });
     let result = match message.filter(|m| !m.is_empty()) {
         None => Err("模型没给出提交说明。".to_string()),
         Some(m) if repo.rules.is_some() => git::commit_as_is(&repo.root, &m, &repo.files),
@@ -421,7 +425,7 @@ mod tests {
         assert!(q.contains(&format!("[1] {}：照 Git Plan", main.display())) && q.contains(&format!("[2] {}：照这个仓库自己的 Git 规则", atelier.display())));
         assert!(q.contains("Git Plan：只写一行") && q.contains("`vx.x.x: dev description`"));
         // 各提交一笔：主仓库照 Git Plan 校验，Atelier 照原样（可以有正文）。
-        let reply = answer(&[&main, &atelier], &format!("[1] {}\nv1.0.1: add app\n\n[2]\n```\nv0.0.3: add canvas\n\nbody line\n```", main.display()));
+        let reply = answer(&[&main, &atelier], &format!("[1] {}\n{}：照 Git Plan\nv1.0.1: add app\n\n[2] 照这个仓库自己的 Git 规则\n```\nv0.0.3: add canvas\n\nbody line\n```", main.display(), main.display()));
         let events: Vec<(bool, String)> = repos.iter().map(|r| said(commit(&hook, r, Some(&reply)))).collect();
         assert!(events[0].0 && events[0].1.starts_with("Git Plan 提交了") && events[0].1.contains("v1.0.1: add app"), "{events:?}");
         assert!(events[1].0 && events[1].1.contains(&format!("在 {} 提交了", atelier.file_name().unwrap().to_string_lossy())) && events[1].1.contains("v0.0.3: add canvas（1 个文件"), "{events:?}");

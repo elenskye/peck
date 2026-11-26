@@ -61,5 +61,4 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 
 | 版本 | 对象 | 模型 | 用了 | 做了什么 |
 | --- | --- | --- | ---: | --- |
-| v1.2.0 | Anthropic 等（站主另给 $50） | PLOOP：Opus 5.5 xhigh 主角色（子代理照设置） | $17.47 | Phase 3（任务 192，93 次请求 $7.96，派了一个 auditor）、Phase 4（任务 194，107 次 $9.51；任务 193 发出去 App 就崩了，没花） |
-| v1.2.0 | 订阅（站主另给，按 API 价估） | Claude Code Sonnet 5.5 xhigh、Grok 4.7 high、Codex Sol 6.2 xhigh、Muse wonder xhigh | 约 $15.5 | Claude Code Phase 1（$0.93）、Grok Phase 2（$5.98）、Codex Phase 5（约 $1.5）和 6（约 $1.9）、Muse Phase 6 没做完（$5.22，额度用完） |
+| v1.2.1 | Claude Code（订阅） | Haiku | 2 个小任务（约 $0.01，按 API 价估） | 让它在后台起 `sleep`，看任务结束后还在不在：改前留下了、补上「被丢下的」那条以后没了 |
