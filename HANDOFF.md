@@ -90,6 +90,7 @@
 
 ## 留意
 
+- **visual-atelier 的权限**（2026-11-27 定）：这边的会话对 Atelier 有全部权限（本体也能直接改、照那边的规矩提交和打 tag），用到前先读它的 `CLAUDE.md`，只有改别的项目的方案、给 Atelier 加新功能先问，见 `CLAUDE.md`「边界」。
 - **改用到的引擎**（2026-11-27 定）：Peck 用到的引擎（含间接用到的）可以直接改、照那边的规矩提交和打 tag，见 `CLAUDE.md`「边界」和总仓库 `personal-engine-studio/docs/decisions/0009`。
 - Gemini 4 Carbon / Argon 12 月 1 日起涨价（Google 官网），到时在设置 → QUOTA 点 REFRESH。
 - 测试项目 `projects/tester`、`moon-lab`、`gateway-smoke`、`git-plan-smoke`（git 仓库，收尾提交用）在 Peck 仓库外。

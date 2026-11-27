@@ -17,6 +17,7 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 3. 用提问功能问站主这次属于哪种程度（见「版本」），答了再动手；站主已经写明版本号就不用再问。
 4. 开发中拿不准的决策点也用提问功能问；问了没人答，按 `docs/` 里写的默认做法做，记进 HANDOFF。
 5. 改完自己验：前端 `pnpm check`，后端跑改到的模块，界面开 `?mock` 看（命令见 `docs/testing.md`「每次改完」）。
+6. 这次要用到 visual-atelier（改视觉、同步方案、用 `dw` 看画布、改 Atelier 本身），开工前先读它的 `CLAUDE.md`（见「边界」）。
 
 ## 版本
 
@@ -39,9 +40,10 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 
 ## 边界
 
-- 只在 `personal-cli-studio/` 里开发；`~/Documents/GitHub/pomelo` 只读。
+- 只在 `personal-cli-studio/` 里开发（例外见下面两条）；`~/Documents/GitHub/pomelo` 只读。
 - 例外：Peck 用到的引擎（`src-tauri/Cargo.toml` 里依赖它，或当期版本正在接它；隔几层的也算，如 engine-pdf 用的 engine-core）在 `~/Documents/GitHub/personal-engine-studio/engine-*`，可以直接改、照那边的规矩提交和打 tag，不用另开会话；动之前读它的 `CLAUDE.md`、`HANDOFF.md`、`ROADMAP.md`。细则（改已有接口先问、版本号、开发时怎么指本机路径、push 先后）见引擎 `CLAUDE.md`「二」末尾「改用到的引擎」（总仓库 `docs/decisions/0009`）。没用到的引擎只读。
-- `src/vendor/peck/` 是 visual-atelier 方案 `peck` 同步来的，不手改；视觉方案要站主批。visual-atelier 里只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里 Peck 那一行，守它自己的 `CLAUDE.md`。
+- 例外：visual-atelier（`~/Documents/GitHub/visual-atelier`，Peck 的方案在 `schemes/peck/`）。**用到它就先读它的 `CLAUDE.md`**；在那边做事照它的规矩：版本、Git、提交信息（`v<Atelier 的版本>: …`）、自己打 tag、几个会话一起做，不照本文件的「版本」「Git」。这边的会话对它有全部权限（站主 2026-11-27）：Atelier 本体（`bench/`、共用的 `tooling/`、`skills/`、`docs/`、根目录的规则和配置）和 Peck 负责的那块（`schemes/peck/`、`canvases/peck-*/`）都能直接编辑、优化、更新、提交、打 tag，不用问、不用另开会话；用的时候发现 Atelier 不顺就回那边改，记进它的 `CHANGELOG.md`。只有两件先问站主：改别的项目的方案（Pomelo、Pith、Vermilion）；给 Atelier 加新功能（修小毛病、改顺手的直接做）。那边还有别的会话：别人没提交的改动别动、别还原，只提交自己改的。细则见 Atelier `CLAUDE.md`「几个会话怎么分」。
+- `src/vendor/peck/` 是 Atelier 方案 `peck` 同步来的，不手改，要改回那边改；方案里的资产要站主批了才算定（Atelier 的「待批」到「已批准」）。
 - 不接 Google 的 Antigravity（条款风险），以后也不加回来。
 - CLI 保持原厂设置：不改它们的配置，不读、不复用任何 CLI 的登录凭据；Peck 只在外面编排。信任项目文件夹只在站主点了 TRUST 卡片以后，用各家官方的开关带上（见 `docs/architecture.md`「CLI 四家」），Peck 不直接写它们的文件。例外只有站主同意过的：Claude Code 每次带 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（`-p` 默认不给清单工具，只对那一次进程）。
 - 不碰 Keychain 里的 Key 内容；Key、账号、绝对路径、提示词不进文档和夹具。不新增付费服务；新加依赖写成 `^x.y.z`，在 HANDOFF 记一笔。
