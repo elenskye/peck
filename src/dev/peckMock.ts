@@ -312,7 +312,7 @@ function scenarioRounds(
       { type: "context.compacted", step: "spill", before: k(0.83), after: k(0.71), text: "3 份长的工具输出落了盘，上下文里只留开头、结尾和路径", summary: null },
       { type: "context.compacted", step: "clear", before: k(0.71), after: k(0.64), text: "清掉了 2 份旧的工具输出（最近两轮的留着）", summary: null },
       { type: "context.compacted", step: "summary", before: k(0.64), after: 9800, text: "前面的对话换成了一份交接摘要（加上你最近说的几句）",
-        summary: "## 目标\n把两个月的事件夹具按日期合并，测试照旧通过。\n\n## 做了什么\n- 读了 `fixtures/events-2026-10.jsonl`、`fixtures/events-2026-11.jsonl`（各 2000 行以内的部分）\n- `pnpm test` 通过（41s）\n\n## 现在\n两个文件的格式一样，按 `at` 排序就能合并。\n\n## 下一步\n改 `" + editPath + "`，加一行说明，再收尾。" },
+        summary: "## 目标\n把两个月的事件夹具按日期合并，测试照旧通过。\n\n## 已定的决策\n- 按 `at` 排序合并：两个文件的格式一样，不用转换\n\n## 踩过的坑\n- `pnpm test` 输出 2.1 MB，只看结尾的汇总行\n\n## 文件现在的状态\n- `fixtures/events-2026-10.jsonl`、`fixtures/events-2026-11.jsonl`：只读过，格式一样\n- `" + editPath + "`：还没改\n\n## 下一步\n改 `" + editPath + "`，加一行说明，再收尾。" },
       context(o, 2400, 7400),
       ...say(5, "压缩以后接着做：照交接摘要，改要改的那一处。"), usage(7400, 120, 0, 0.0011),
       ...editRound("l5"),

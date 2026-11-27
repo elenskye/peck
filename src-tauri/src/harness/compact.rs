@@ -2,8 +2,8 @@
 //!
 //! 1. **落盘**：旧的、长的工具输出整份写进这个任务的输出目录，上下文里只留开头、结尾和路径（`read_file` 能读回来）；
 //! 2. **清旧工具输出**：除了最近两轮，工具输出换成一句「做过什么」（`tool_search` 留着「已加载：…」那一行）；旧的思考、旧的环境块也去掉；
-//! 3. **交接摘要**：让模型写一份交接摘要（长度跟着窗口），前面的对话换成它 + 站主说过的话，
-//!    再放回压缩会丢掉的东西：新的环境块、加载过的 MCP 工具、最近读过和改过的文件（现读）。
+//! 3. **交接摘要**：让模型照固定五栏写一份交接摘要（长度跟着窗口），前面的对话换成它 + 站主说过的话（ASK 的回答也算，
+//!    再压一次也原样带着），再放回压缩会丢掉的东西：新的环境块、加载过的 MCP 工具、最近读过和改过的文件（现读）。
 //!
 //! 自动压缩：上下文估到压缩线（窗口的 80%）时按顺序做，降到目标线（60%）以下就停。手动 `/compact [重点]`：三步都做。
 //! 第 3 步要问模型，在循环里做（`loop.rs`）；这里是不用问模型的部分。
@@ -33,6 +33,12 @@ pub const RESTORED_TAG: &str = "<peck-restored-files>";
 pub const LOADED_TAG: &str = "<peck-loaded-tools>";
 /// 压缩后接着干的那一句。
 pub const RESUME_TAG: &str = "<peck-resume>";
+/// 压缩以后原样带着的站主的话（v1.3.0 单独一块：再压一次时从这里认回来）。
+pub const SAID_TAG: &str = "<peck-said>";
+/// `ask_user` 的结果开头：站主在 ASK 卡片里答的（算站主说的话，压缩不清、不落盘）。
+pub const ANSWERED: &str = "站主回答：";
+const SKIPPED_HEAD: &str = "（中间还有 ";
+const SKIPPED_TAIL: &str = " 句，见摘要）";
 /// `tool_search` 结果的头一行。
 pub const LOADED: &str = "已加载：";
 /// 放回最多几个文件、一共占窗口的多少。
@@ -45,14 +51,14 @@ const UNKNOWN_WINDOW: u64 = 128_000;
 /// 清掉的旧输出开头写这一句。
 const CLEARED: &str = "[旧的工具输出已清掉";
 
-/// 第 1 步：旧的长工具输出落盘。最后一条消息（刚跑完的工具结果）不动。返回落了几份。
+/// 第 1 步：旧的长工具输出落盘。最后一条消息（刚跑完的工具结果）、站主在 ASK 里的回答不动。返回落了几份。
 pub fn spill_large(messages: &mut [Message], spill_dir: &Path, counter: &AtomicU32) -> usize {
     let last = messages.len().saturating_sub(1);
     let mut spilled = 0;
     for m in messages.iter_mut().take(last) {
         for p in &mut m.parts {
             let Part::ToolResult { output, .. } = p else { continue };
-            if output.len() <= SPILL_OVER || output.contains("[压缩上下文时落盘") || output.contains(CLEARED) {
+            if output.len() <= SPILL_OVER || output.contains("[压缩上下文时落盘") || output.contains(CLEARED) || output.starts_with(ANSWERED) {
                 continue;
             }
             if std::fs::create_dir_all(spill_dir).is_err() {
@@ -83,7 +89,7 @@ pub fn spill_large(messages: &mut [Message], spill_dir: &Path, counter: &AtomicU
     spilled
 }
 
-/// 第 2 步：最近 [`KEEP_ROUNDS`] 轮以外的工具输出换成一句话；旧的思考、旧的环境块去掉。返回清了几份输出。
+/// 第 2 步：最近 [`KEEP_ROUNDS`] 轮以外的工具输出换成一句话（站主在 ASK 里的回答留着）；旧的思考、旧的环境块去掉。返回清了几份输出。
 /// `tool_search` 的输出留着头一行「已加载：…」（下一句话开头靠它认回加载过的工具）。
 pub fn clear_old(messages: &mut [Message]) -> usize {
     // 工具调用的 id → 给人看的一行（「读 src/App.tsx」），清掉的输出写它。
@@ -122,7 +128,7 @@ pub fn clear_old(messages: &mut [Message]) -> usize {
         if i < keep_from {
             for p in &mut m.parts {
                 if let Part::ToolResult { call_id, output, .. } = p {
-                    if output.len() > 160 && !output.contains(CLEARED) {
+                    if output.len() > 160 && !output.contains(CLEARED) && !output.starts_with(ANSWERED) {
                         let what = titles.get(call_id).cloned().unwrap_or_else(|| "一步工具调用".into());
                         let note = format!("{CLEARED}（压缩上下文）：{what}。要用再读一次或再跑一次。]");
                         *output = match output.lines().next().filter(|l| l.starts_with(LOADED)) {
@@ -154,6 +160,7 @@ pub fn summary_max_output(window: Option<u64>, model_max: u64) -> u32 {
 }
 
 /// 问模型要交接摘要时，接在对话最后一条（站主那一条）后面的话。`focus` 是站主 `/compact` 后面写的重点。
+/// 固定五栏（v1.3.0）：长任务压几次以后，定下的事、踩过的坑不靠模型自己想起来写。
 pub fn summary_request(window: Option<u64>, focus: Option<&str>) -> String {
     let words = ((summary_target(window) as f64 * 0.75 / 100.0).round() as u64 * 100).max(100);
     let focus = focus
@@ -162,7 +169,7 @@ pub fn summary_request(window: Option<u64>, focus: Option<&str>) -> String {
         .map(|f| format!("\n\nThe user asked you to keep this in particular, in detail: {f}"))
         .unwrap_or_default();
     format!(
-        "<peck-compact>\nThe conversation is being compacted. Write a handoff summary so you can pick up the work in a fresh context. Do not call any tools now.\n\nInclude, in Markdown, at most about {words} words:\n1. The user's goal and every explicit request, constraint or decision (quote short user messages verbatim).\n2. What has been done: files read and changed (paths) and key findings.\n3. Current state: what works, what fails (exact error lines), commands run and their results.\n4. What remains and the very next step.{focus}\n</peck-compact>"
+        "<peck-compact>\nThe conversation is being compacted. Write a handoff summary so you can pick up the work in a fresh context. Do not call any tools now.\n\nUse exactly these five Markdown headings, in this order, at most about {words} words in all. Keep the headings as written; write the items in the user's language, short and concrete; put （无） under a heading with nothing in it. What the user said is carried over verbatim separately: don't copy it, just keep what it settled.\n\n## 目标\nThe user's goal and every explicit request or constraint.\n\n## 已定的决策\nEvery decision made so far, by the user (answers to your questions included) or by you: what was chosen and why. These are settled: don't reopen them unless the user does.\n\n## 踩过的坑\nWhat failed or turned out wrong: approaches tried, exact error lines, wrong assumptions, and what works instead. Don't repeat them.\n\n## 文件现在的状态\nEach file read or changed, one line each: path — done / partly done (what is missing) / only read (what matters in it).\n\n## 下一步\nWhat remains, then the very next step.\n\nIf an earlier handoff summary (<peck-handoff>) is in the conversation, carry every decision and pitfall in it over unless it was overturned since.{focus}\n</peck-compact>"
     )
 }
 
@@ -191,26 +198,74 @@ fn added_by_peck(text: &str) -> bool {
     text.starts_with("<peck-") || text.starts_with(REF_TAG) || text.starts_with("<hook-")
 }
 
-/// 站主自己写的每一句（不算环境块、引用、交接摘要、Hook 补充的话、工具输出），每句最多 1500 字节；
-/// 一共不超过窗口的 3%（至少 2000 tokens），超了留第一句（原来的目标）和最近的，中间的省掉。
+/// `ask_user` 调用里问的几个问题。
+fn asked(input: &serde_json::Value) -> Vec<String> {
+    let q = |v: &serde_json::Value| v.get("question").and_then(serde_json::Value::as_str).map(|t| t.trim().to_string());
+    match input.get("questions").and_then(serde_json::Value::as_array) {
+        Some(qs) if !qs.is_empty() => qs.iter().filter_map(q).collect(),
+        _ => q(input).into_iter().collect(),
+    }
+}
+
+/// 站主在 ASK 里的回答写成一句站主的话：一个问题的带上问题（结果里没有），几个的结果里一问一行。
+fn answer_line(output: &str, questions: &[String]) -> String {
+    let answer = output.strip_prefix(ANSWERED).unwrap_or(output).trim();
+    match questions {
+        [q] if !answer.contains('\n') => format!("（回答「{q}」）{answer}"),
+        _ => format!("（回答提问）\n{answer}"),
+    }
+}
+
+/// 上一次压缩带着的站主的话（`<peck-said>` 那一块）：几句、当时省掉了几句。
+fn said_before(text: &str) -> (Vec<String>, usize) {
+    let body = text.strip_prefix(SAID_TAG).unwrap_or(text);
+    let body = body.split("</peck-said>").next().unwrap_or(body);
+    let (mut said, mut skipped) = (Vec::new(), 0);
+    for chunk in body.split("\n\n").map(|c| c.trim_matches('\n')) {
+        if chunk.starts_with('>') {
+            said.push(chunk.lines().map(|l| l.strip_prefix("> ").or_else(|| l.strip_prefix('>')).unwrap_or(l)).collect::<Vec<_>>().join("\n"));
+        } else if let Some(n) = chunk.strip_prefix(SKIPPED_HEAD).and_then(|r| r.strip_suffix(SKIPPED_TAIL)).and_then(|n| n.parse::<usize>().ok()) {
+            skipped += n;
+        }
+    }
+    (said, skipped)
+}
+
+/// 站主自己说的每一句（不算环境块、引用、交接摘要、Hook 补充的话、别的工具输出），按先后：写的话、ASK 里的回答、
+/// 上一次压缩带着的（`<peck-said>`，所以压几次都还在）。每句最多 1500 字节；一共不超过窗口的 3%（至少 2000 tokens），
+/// 超了留第一句（原来的目标）和最近的，中间的省掉。
 pub fn user_requests(messages: &[Message], window: Option<u64>) -> Requests {
-    let said: Vec<String> = messages
+    let questions: HashMap<&str, Vec<String>> = messages
         .iter()
-        .filter(|m| m.role == Role::User)
         .flat_map(|m| m.parts.iter())
         .filter_map(|p| match p {
-            Part::Text { text } if !added_by_peck(text) => Some(clip_bytes(text.trim(), 1500).to_string()),
+            Part::ToolCall { call_id, name, input, .. } if name == tools::ASK_USER => Some((call_id.as_str(), asked(input))),
             _ => None,
         })
-        .filter(|t| !t.is_empty())
         .collect();
+    let (mut said, mut skipped) = (Vec::new(), 0);
+    for p in messages.iter().filter(|m| m.role == Role::User).flat_map(|m| m.parts.iter()) {
+        match p {
+            Part::Text { text } if text.starts_with(SAID_TAG) => {
+                let (before, n) = said_before(text);
+                said.extend(before);
+                skipped += n;
+            }
+            Part::Text { text } if !added_by_peck(text) => said.push(text.trim().to_string()),
+            Part::ToolResult { call_id, output, .. } if output.starts_with(ANSWERED) => {
+                said.push(answer_line(output, questions.get(call_id.as_str()).map(Vec::as_slice).unwrap_or_default()));
+            }
+            _ => {}
+        }
+    }
+    let said: Vec<String> = said.iter().map(|t| clip_bytes(t, 1500).to_string()).filter(|t| !t.is_empty()).collect();
     let budget = ((window.unwrap_or(UNKNOWN_WINDOW) as f64 * 0.03) as u64).max(2000);
     let total: u64 = said.iter().map(|s| context::estimate(s)).sum();
     let mut it = said.into_iter();
     let Some(first) = it.next() else { return Requests::default() };
     let later: Vec<String> = it.collect();
     if total <= budget {
-        return Requests { first: Some(first), skipped: 0, rest: later };
+        return Requests { first: Some(first), skipped, rest: later };
     }
     let mut left = budget.saturating_sub(context::estimate(&first));
     let mut rest = Vec::new();
@@ -223,7 +278,7 @@ pub fn user_requests(messages: &[Message], window: Option<u64>) -> Requests {
         rest.push(s.clone());
     }
     rest.reverse();
-    Requests { first: Some(first), skipped: later.len() - rest.len(), rest }
+    Requests { first: Some(first), skipped: skipped + later.len() - rest.len(), rest }
 }
 
 /// 重建时放回去的东西（第 3 步以后）。
@@ -237,23 +292,21 @@ pub struct Restore {
     pub files: Option<String>,
 }
 
-/// 第 3 步：压缩以后的对话：一条站主消息。顺序：交接摘要 → 站主说过的话 → 环境块 → 加载过的 MCP 工具 → 放回的文件 → 接着干。
+/// 第 3 步：压缩以后的对话：一条站主消息。顺序：交接摘要 → 站主说过的话（`<peck-said>`）→ 环境块 → 加载过的 MCP 工具 → 放回的文件 → 接着干。
 pub fn rebuild(summary: &str, requests: &Requests, restore: &Restore) -> Vec<Message> {
-    let mut text = format!("{HANDOFF_TAG}\n{}\n</peck-handoff>\n\nThe earlier conversation was compacted into the handoff summary above (written by you).", summary.trim());
-    if !requests.is_empty() {
-        text.push_str(" Everything the user said, verbatim:\n");
-        let quote = |t: &str| format!("> {}\n", t.replace('\n', "\n> "));
-        if let Some(f) = &requests.first {
-            text.push_str(&quote(f));
-        }
-        if requests.skipped > 0 {
-            text.push_str(&format!("> （中间还有 {} 句，见摘要）\n", requests.skipped));
-        }
-        for r in &requests.rest {
-            text.push_str(&quote(r));
-        }
-    }
+    let text = format!("{HANDOFF_TAG}\n{}\n</peck-handoff>\n\nThe earlier conversation was compacted into the handoff summary above (written by you).", summary.trim());
     let mut parts = vec![Part::Text { text }];
+    if !requests.is_empty() {
+        // 一句一段（引用里的空行写成「> 」），再压一次时 `said_before` 照段认回来。
+        let quote = |t: &str| format!("> {}", t.replace('\n', "\n> "));
+        let mut chunks = vec!["Everything the user said, verbatim, oldest first (answers to your questions included):".to_string()];
+        chunks.extend(requests.first.as_deref().map(quote));
+        if requests.skipped > 0 {
+            chunks.push(format!("{SKIPPED_HEAD}{}{SKIPPED_TAIL}", requests.skipped));
+        }
+        chunks.extend(requests.rest.iter().map(|r| quote(r)));
+        parts.push(Part::Text { text: format!("{SAID_TAG}\n{}\n</peck-said>", chunks.join("\n\n")) });
+    }
     if let Some(env) = &restore.env {
         parts.push(Part::Text { text: env.clone() });
     }
@@ -546,6 +599,8 @@ mod tests {
         assert_eq!(summary_target(Some(1_000_000)), 8000);
         let small = summary_request(Some(64_000), None);
         assert!(small.contains("about 1100 words") && !small.contains("in particular"), "{small}");
+        let at: Vec<usize> = ["## 目标", "## 已定的决策", "## 踩过的坑", "## 文件现在的状态", "## 下一步"].iter().map(|h| small.find(h).expect(h)).collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "五栏按顺序：{small}");
         let big = summary_request(Some(1_000_000), Some("数据库迁移的步骤"));
         assert!(big.contains("about 6000 words") && big.contains("in particular, in detail: 数据库迁移的步骤"), "{big}");
         assert_eq!(summary_max_output(Some(200_000), 64_000), 16_000);
@@ -572,8 +627,8 @@ mod tests {
         assert!(asks.skipped > 0 && asks.rest.last().unwrap().starts_with("第 29 句"));
         assert_eq!(asks.skipped + asks.rest.len(), 30);
         let new = rebuild("## 目标\n改标题", &asks, &Restore::default());
-        let Part::Text { text } = &new[0].parts[0] else { panic!() };
-        assert!(text.contains(&format!("（中间还有 {} 句，见摘要）", asks.skipped)));
+        let Part::Text { text } = &new[0].parts[1] else { panic!() };
+        assert!(text.starts_with(SAID_TAG) && text.contains(&format!("\n\n（中间还有 {} 句，见摘要）\n\n", asks.skipped)), "{text}");
     }
 
     #[test]
@@ -587,13 +642,60 @@ mod tests {
         let new = rebuild("## 目标\n改标题", &asks, &restore);
         assert_eq!(new.len(), 1);
         let texts: Vec<&str> = new[0].parts.iter().map(|p| match p { Part::Text { text } => text.as_str(), _ => "" }).collect();
-        assert!(texts[0].starts_with(HANDOFF_TAG) && texts[0].contains("> 把标题改成中文"));
-        assert!(texts[1].starts_with(CONTEXT_TAG));
-        assert!(texts[2].starts_with(LOADED_TAG));
-        assert!(texts[3].starts_with(RESTORED_TAG));
-        assert!(texts[4].starts_with(RESUME_TAG) && texts[4].contains("don't need to re-read"));
-        assert!(user_requests(&new, Some(200_000)).is_empty(), "Peck 加的都不算站主说的");
+        assert!(texts[0].starts_with(HANDOFF_TAG));
+        assert!(texts[1].starts_with(SAID_TAG) && texts[1].contains("> 把标题改成中文"));
+        assert!(texts[2].starts_with(CONTEXT_TAG));
+        assert!(texts[3].starts_with(LOADED_TAG));
+        assert!(texts[4].starts_with(RESTORED_TAG));
+        assert!(texts[5].starts_with(RESUME_TAG) && texts[5].contains("don't need to re-read"));
+        assert_eq!(user_requests(&new, Some(200_000)), asks, "再压一次：站主的话从带着的那块认回来，Peck 加的别的不算");
         assert_eq!(loaded_in(&new), vec!["mcp__gh__issues".to_string()], "压缩后还认得回加载过的工具");
+    }
+
+    #[test]
+    fn compacting_again_keeps_what_the_user_said_before_and_their_answers() {
+        // 第一次压缩前：目标、一句多行的话、一次单选的 ASK、一次几个问题的 ASK（长，过了清旧输出的 160 字节）
+        let long_answer = format!("{ANSWERED}\n- 用哪个库？：serde\n- 为什么？：{}", "因为".repeat(80));
+        let mut m = vec![said("原始目标：把导出改成 CSV"), said("第二句\n\n> 引用的一行")];
+        m.push(Message { role: Role::Assistant, parts: vec![Part::ToolCall { call_id: "a1".into(), name: tools::ASK_USER.into(), input: json!({"question": "分隔符？", "options": ["逗号", "分号"]}), signature: None }] });
+        m.push(result("a1", format!("{ANSWERED}分号")));
+        m.push(Message { role: Role::Assistant, parts: vec![Part::ToolCall { call_id: "a2".into(), name: tools::ASK_USER.into(), input: json!({"questions": [{"question": "用哪个库？"}, {"question": "为什么？"}]}), signature: None }] });
+        m.push(result("a2", long_answer.clone()));
+        m.push(Message { role: Role::Assistant, parts: vec![Part::ToolCall { call_id: "a3".into(), name: tools::ASK_USER.into(), input: json!({"question": "要不要表头？"}), signature: None }] });
+        m.push(result("a3", "站主没回答（任务停了）。".into()));
+        for i in 0..4 {
+            m.push(call(&format!("c{i}"), &format!("f{i}.rs")));
+            m.push(result(&format!("c{i}"), "x".repeat(5000)));
+        }
+        let dir = std::env::temp_dir().join(format!("peck-compact-{}", uuid::Uuid::new_v4()));
+        spill_large(&mut m, &dir, &AtomicU32::new(0));
+        clear_old(&mut m);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(m.iter().flat_map(|x| &x.parts).any(|p| matches!(p, Part::ToolResult { output, .. } if *output == long_answer)), "ASK 的回答不清、不落盘");
+        let first = user_requests(&m, Some(200_000));
+        assert_eq!(first.all(), vec![
+            "原始目标：把导出改成 CSV".to_string(),
+            "第二句\n\n> 引用的一行".into(),
+            "（回答「分隔符？」）分号".into(),
+            format!("（回答提问）\n{}", long_answer.strip_prefix(ANSWERED).unwrap().trim()),
+        ], "没答的不算");
+        // 压完又说了一句、又压一次：前面的都还在，第一句还是原来的目标
+        let mut again = rebuild("## 目标\n导出 CSV", &first, &Restore::default());
+        again.push(said("第三句"));
+        let second = user_requests(&again, Some(200_000));
+        assert_eq!(second.all(), [first.all(), vec!["第三句".to_string()]].concat());
+        // 超预算省掉的句数跨压缩累加，位置在第一句后面
+        let mut long = vec![said("原始目标")];
+        for i in 0..30 {
+            long.push(said(&format!("第 {i} 句 {}", "字".repeat(400))));
+        }
+        let cut = user_requests(&long, Some(64_000));
+        let mut later = rebuild("摘要", &cut, &Restore::default());
+        later.push(said(&format!("第 30 句 {}", "字".repeat(400))));
+        let cut2 = user_requests(&later, Some(64_000));
+        assert_eq!(cut2.first.as_deref(), Some("原始目标"));
+        assert!(cut2.rest.last().unwrap().starts_with("第 30 句"));
+        assert_eq!(cut2.skipped + cut2.rest.len(), 31, "{} + {}", cut2.skipped, cut2.rest.len());
     }
 
     #[test]

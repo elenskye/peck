@@ -2456,9 +2456,9 @@ impl Run {
                 self.emit(EventBody::UserInputResolved { request_id, answer: answer.clone() });
                 let text = if several && answers.len() == list.len() {
                     let lines: Vec<String> = list.iter().zip(&answers).map(|(q, a)| format!("- {}：{}", q.question, a.join("、"))).collect();
-                    format!("站主回答：\n{}", lines.join("\n"))
+                    format!("{}\n{}", compact::ANSWERED, lines.join("\n"))
                 } else {
-                    format!("站主回答：{answer}")
+                    format!("{}{answer}", compact::ANSWERED)
                 };
                 (ToolStatus::Ok, text, None, vec![])
             }

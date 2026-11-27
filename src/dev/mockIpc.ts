@@ -648,7 +648,7 @@ export const mockIpc = {
       { type: "context.compacted", step: "clear", before: k(0.27), after: k(0.19), text: "清掉了 4 份旧的工具输出（最近两轮的留着）", summary: null },
       { type: "usage.updated", usage: { input: 2100, output: 1300, cacheRead: k(0.18), cacheWrite: 0, reasoning: 400 }, cost: { usd: 0.0061, source: "priced" }, scope: "turn" } as ReplayEvent,
       { type: "context.compacted", step: "summary", before: k(0.19), after: 16400, text: `前面的对话换成了一份交接摘要${focus ? `（重点：${focus}）` : ""}，带上你说过的话，放回了最近的 2 个文件`,
-        summary: `## 目标\n笔记列表加一个搜索框，按标题和正文过滤。\n\n## 做了什么\n- 改了 \`src/NoteList.tsx\`（加输入框和过滤）、\`src/search.ts\`（新建）\n- \`pnpm test\` 通过\n\n## 现在\n搜索框能用，空格分开的几个词要都对上才算。${focus ? `\n\n## ${focus}\n（照你说的写细）` : ""}\n\n## 下一步\n给 \`search.ts\` 补一个大小写的测试。` },
+        summary: `## 目标\n笔记列表加一个搜索框，按标题和正文过滤。${focus ? `重点：${focus}（照你说的写细）。` : ""}\n\n## 已定的决策\n- 空格分开的几个词要都对上才算（你在 ASK 里选的）\n\n## 踩过的坑\n- 中文标题用 \`toLowerCase\` 比较没问题，别再换成正则\n\n## 文件现在的状态\n- \`src/NoteList.tsx\`：改完（输入框和过滤）\n- \`src/search.ts\`：新建，改完\n\n## 下一步\n给 \`search.ts\` 补一个大小写的测试。` },
       { type: "context.updated", used: 16400, window, compactAt: Math.round(window * 0.8), parts: [{ key: "system", tokens: 4300 }, { key: "tools", tokens: 7400 }, { key: "conversation", tokens: 4700 }] },
     ]];
     void replayAgent(runId, rounds, header, onEvent, { costCap: args.costCap ?? null, countSpend: true }).then((end) => {
