@@ -40,6 +40,7 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 ## 边界
 
 - 只在 `personal-cli-studio/` 里开发；`~/Documents/GitHub/pomelo` 只读。
+- 例外：Peck 用到的引擎（`src-tauri/Cargo.toml` 里依赖它，或当期版本正在接它；隔几层的也算，如 engine-pdf 用的 engine-core）在 `~/Documents/GitHub/personal-engine-studio/engine-*`，可以直接改、照那边的规矩提交和打 tag，不用另开会话；动之前读它的 `CLAUDE.md`、`HANDOFF.md`、`ROADMAP.md`。细则（改已有接口先问、版本号、开发时怎么指本机路径、push 先后）见引擎 `CLAUDE.md`「二」末尾「改用到的引擎」（总仓库 `docs/decisions/0009`）。没用到的引擎只读。
 - `src/vendor/peck/` 是 visual-atelier 方案 `peck` 同步来的，不手改；视觉方案要站主批。visual-atelier 里只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里 Peck 那一行，守它自己的 `CLAUDE.md`。
 - 不接 Google 的 Antigravity（条款风险），以后也不加回来。
 - CLI 保持原厂设置：不改它们的配置，不读、不复用任何 CLI 的登录凭据；Peck 只在外面编排。信任项目文件夹只在站主点了 TRUST 卡片以后，用各家官方的开关带上（见 `docs/architecture.md`「CLI 四家」），Peck 不直接写它们的文件。例外只有站主同意过的：Claude Code 每次带 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（`-p` 默认不给清单工具，只对那一次进程）。
