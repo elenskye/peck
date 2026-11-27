@@ -9,7 +9,7 @@
 | 不出现在界面上 | 界面上写 |
 |---|---|
 | Run #12 / Step | 任务 12 / 步骤 |
-| Worker / Supervisor | 谁来干 |
+| Supervisor | 谁来干 |
 | Ploop / team run | PLOOP（Peck Loop：一个 API 模型当主角色，能派子代理） |
 | Orchestrator / lead | 主角色 |
 | Sub-agent / spawn_agent | 子代理（五类写英文：explorer / searcher / worker / member / auditor；过程里「Spawn explorer: …」） |
@@ -18,7 +18,7 @@
 | Hook（脚本） | Hook（过程里一行「Hook 调工具前 · 命令（出处）：…」） |
 | Web search / server tool | 搜网页（过程里「Searched the web」；花费行「搜 N 次」） |
 | Fork / switch engine | 换成 X 接着做 |
-| Board / Artifact | 改动 |
+| Artifact | 改动 |
 | 影子 Git / Shadow | 任务前快照 |
 | 回滚 / Revert | 回到任务快照（跟模型说「撤掉刚才的改动」；卡片上写「回到任务 N 开始前 / 结束后」） |
 | 用量监控 / 台账 | 额度与花费 |
@@ -26,7 +26,6 @@
 | 预算 | 花费上限 |
 | Workspace | 项目 |
 | Session / 会话 | 任务（一次对话就是一个任务） |
-| Handoff / intent.md | 规范 |
 | ASK | 停下来问你（卡片） |
 | Side Chat | ONE SHOT（右栏的一个页签） |
 | Prompt library / snippet | 提示词（右栏 PROMPT；全局一份） |
@@ -51,7 +50,7 @@
 | Missed run | 错过了（`[ MISSED ]` 卡片：RUN NOW / SKIP） |
 | Screenshot tool | 截窗口（「截 X 的窗口」） |
 
-- 专有名词保留英文：Muse、Grok、API、Key、Diff、MCP、CLI、Token。不写开发者口径：Worker、Run、Step、影子、台账、IPC、schema。
+- 专有名词保留英文：Muse、Grok、API、Key、Diff、MCP、CLI、Token。不写开发者口径：Run、Step、影子、台账、IPC、schema。
 - 状态词：在跑、等你回答、完成、失败、已停止、已撤销。时间写「3 分钟前」「11-10 14:02」。
 ## 默认取舍
 
@@ -80,7 +79,7 @@
 
 ## 设置
 
-左边竖排十组，右边是内容，改了马上生效（Key、价格这类要点 SAVE）。
+左边竖排十一组，右边是内容，改了马上生效（Key、价格这类要点 SAVE）。
 
 **统一排法**（设置、项目设置、小窗都照这个；样式在 `app.css` 的 `.set-scope`）：
 
@@ -149,19 +148,19 @@ NEW TASK 只有大标题「X 要做什么？」，不写谁来干（看输入框
 | EDIT（默认） | 不问 | 不问 | 问一次（能选「这个项目总是允许」） | 弹卡片 |
 | AUTO | 不问 | 不问 | 不问 | 弹卡片 |
 
-高危卡片只有 ALLOW、DENY；不是高危的多一个 ALWAYS，点过的在设置 → ACCESS 里能撤。CLI 引擎弹同一套卡片。项目里、临时目录里删东西，看不出会做什么的命令都不问（命令在沙箱里、项目有任务前快照）；AUTO 下只做提交的命令（`git add`、`git commit`）也不问；CLI 的命令不在 Peck 的沙箱里，另外还问写到项目外、命令是拼出来的。规则在 architecture.md「Peck Loop」。
+高危卡片只有 ALLOW、DENY；不是高危的多一个 ALWAYS，点过的在设置 → ACCESS 里能撤。CLI 引擎弹同一套卡片。哪些问、哪些不问见 architecture「权限和高危」。
 
-- **审批卡片**（学 Claude Code Desktop）：标题是模型给这条命令写的一句人话（「把这次的改动推到 GitHub」）；下面一个小标签写为什么要批（高危红、别的琥珀：「推送或改 Git 历史」「装依赖」「要写到项目外，出沙箱再跑」）；命令收着，点「看命令」才露出来。不是命令的（改文件、MCP 的参数）照旧直接列。
+- **审批卡片**：标题是模型给这条命令写的一句人话（「把这次的改动推到 GitHub」）；下面一个小标签写为什么要批（高危红、别的琥珀：「推送或改 Git 历史」「装依赖」「要写到项目外，出沙箱再跑」）；命令收着，点「看命令」才露出来。不是命令的（改文件、MCP 的参数）照旧直接列。
 - **信任文件夹**：CLI 没信任项目文件夹、站主也没在 Peck 里批过时，任务开头一张 `[ TRUST ]` 卡片「让 X 信任这个项目文件夹？」，NOT NOW / TRUST，点了才起 CLI。TRUST 记在这个项目上（项目设置里一个开关能关），留一行「信任了这个文件夹 · X」；NOT NOW 这次打开 Peck 期间不再问。
 
 ## 过程
 
 Peck Loop 和 CLI 引擎同一套显示（`src/shell/AgentView.tsx`）：
 
-- **回答**按 Markdown 显示。任务清单在过程最上面（四家 CLI 的清单一样显示，Claude Code 的 `TodoWrite` / `TaskCreate` 也转过来）。
+- **回答**按 Markdown 显示。任务清单在过程最上面（四家 CLI 的清单一样显示）。
 - **任务板**（PLOOP 派了 worker、member 时代替任务清单）：头一行「任务板」和做完几项（收起时写「n 个在跑」「n 个等你批」）；上面是主角色自己那几步（勾选框），下面一项一行：状态（排队暗字、在跑青、等你批琥珀、做完绿、没做完红、停了暗字）、做什么、`WORKER 2` / `MEMBER 1`、用时，下一行暗字写它划的文件。点一项展开它自己的几步（member 派的 explorer 再挂在那一步下面），排着队的写「还在排队，没开始」。
 - **任务头**：PLOOP 在跑时「任务 N · 几点开始」后面接「第 37/100 轮」，用到八成变琥珀；派出去的子代理还在跑时多一个小片「子代理 2 在跑 · 1 排队」，点了滚到它们那几步。子代理那一步的头上右边写它自己的「12/30 轮」。
-- **工具调用**（学 Claude Code，英文）：连着的折成一组，头上一行「Read 3 files, edited 2 files, ran 1 command · 38s」（按出现的先后：read / listed / searched for / edited / ran / fetched / searched the web / recalled memory / used N skills / ran N subagents / used N tools…），失败的组标 FAIL；点开每步一行，标题也是英文（Run pnpm test、Edit src/a.ts），改的带 Diff 入口和 +/−，跑的带 exit 码、能看输出。各引擎给的中文标题在前端翻（`englishTitle`）。PLOOP 的命令标题就是模型写的那句中文说明，点开先一行 `$ 命令`、再是输出；Claude Code 的 Bash 自己带说明（英文），一样用。
+- **工具调用**（英文）：连着的折成一组，头上一行「Read 3 files, edited 2 files, ran 1 command · 38s」（按出现的先后：read / listed / searched for / edited / ran / fetched / searched the web / recalled memory / used N skills / ran N subagents / used N tools…），失败的组标 FAIL；点开每步一行，标题也是英文（Run pnpm test、Edit src/a.ts），改的带 Diff 入口和 +/−，跑的带 exit 码、能看输出。各引擎给的中文标题在前端翻（`englishTitle`）。PLOOP 的命令标题就是模型写的那句中文说明，点开先一行 `$ 命令`、再是输出；Claude Code 的 Bash 自己带说明（英文），一样用。
 - **思考**不算一步、不单独占行，也不打断上下的工具调用：在想时那一组下面一行「Thinking… 3s」，想完就不显示。
 - 英文只到工具调用的组和 Thinking 为止；卡片、recap、提醒行这些细的信息用中文。
 - **卡片**：审批（`[ RISK ]` 高危 / `[ ALLOW? ]`，见「权限」）、ASK（问题 + 选项 + Other；模型写成几行的，第一行当问题，后面按 Markdown 画成小字）；Peck 不在最前面时发通知。等你点的卡片（审批、ASK、TRUST）出来时不在视线里，中栏自己滚到它。任务结束了卡片不能再点。
@@ -169,7 +168,7 @@ Peck Loop 和 CLI 引擎同一套显示（`src/shell/AgentView.tsx`）：
   - **一次问几个**（PLOOP 和 CLI 一样）：一张卡片一次一个问题，头上一排短名当页签（答了的带勾），← → 翻（键盘左右键也行），翻页键和 SUBMIT 同高。单选的点了自动翻到下一个没答的。头上写答了几个，都答了才能 SUBMIT。答完过程里一个问题一行「短名：答案」。
 - **花费**：每次任务下面一行（进、出、缓存命中、搜了几次、花费；CLI 的标「估」——它自己估的，或者它不报、Peck 按会话的模型查价格表估的；真算不出写「花费未知」）。
 - **追加的话**：任务跑着时站主接着说的一句，在过程里当时那一处一行 YOU。
-- **YOU 附的东西**（像 Claude Desktop）：话下面一排，图是小图（点了放大），文档、文件夹是小片（图标 + 名字，悬停看路径）；路径那段话（模型照它去读）不显示。
+- **YOU 附的东西**：话下面一排，图是小图（点了放大），文档、文件夹是小片（图标 + 名字，悬停看路径）；路径那段话（模型照它去读）不显示。
 - **搜网页**：供应商自己搜的、Peck 的 `web_search` 一个样，一次一步「Search the web: …」，输出里列来源。
 - **子代理**：主线里一步「Spawn explorer: …」，子代理的几步挂在这一步下面（左边一道虚线，头上「explorer · 模型名」）；没碰过时在跑摊开、跑完收起，点过就按点的来；派的那一步等它做完才算完。一批报告交回来时不单独显示。Claude Code 自己的子代理一样。
 - **Hook**：项目里配的脚本拦下了、出错了、有输出时，在当时那一处一行提示「Hook 调工具前 · 命令第一行（出处）：拦下了：…」（拦下、出错的琥珀，有输出的暗字）；静默成功的不显示。第一次跑一条命令前弹审批卡片（标题写时刻和命令）。

@@ -82,9 +82,9 @@ PECK_DATA_DIR=$T/data PECK_SHADOW_ROOT=$T/shadow \
 - 日常只跑改到的模块：末尾加过滤，如 `-- snapshot::`；`loop` 模块要写 `'harness::r#loop'`（写 `harness::loop` 一个也匹配不到）。收尾才全跑。
 - **在 Peck 的沙箱里跑**（PLOOP 开发 Peck 时）：命令带 `PECK_SANDBOX=seatbelt`，要再套一层沙箱的那十几个测试（沙箱、高危、后台命令里的）写一句「跳过」、算通过，全量 20 多秒；要验它们在终端里跑。Peck 给的临时目录在「Application Support」下面、带空格，测试里拼进 shell 命令的路径要加引号。
 - **每次用新的临时目录**，不碰正式数据（模拟授权次数记在数据目录里，重复用会失败）。
-- **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样（现在用了 700105、700106、700201–700205、905001、910_001、920_001、930_001、930_002、930_101、940_001、960_001、970_001），新测试另挑一个。
+- **测试撞号**：任务前快照的登记表、Gateway 的控制表都是整个进程共用、按任务号存的，每个临时库的任务号都从 `run-105` 开始：会发任务的测试先 `create_run` 占一个大号，各测试不一样，新测试先 `grep -rn create_run src-tauri/src` 挑一个没用过的。
 - 要 git 仓库的测试（`git_commit`、收尾 Hook）用 `harness::git::testing` 起临时仓库（自己配 `user.name`，不碰站主的 git 配置）。
-- Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环（子代理一批叫醒一次、worker 和 auditor、划文件的 worker 同时跑和排队、member 再派 explorer、只读的一批同时跑、原地打转、项目里的脚本 Hook 和开场时、MCP 按需加载、读 Notebook 和 PDF 都在 `harness::r#loop` 里；CLI 的脚本 Hook 用 `gateway::runner` 里的假 CLI 跑一整个任务；读 PDF 的测试用 `cupsfilter` 现做一份 PDF；会派子代理的测试各用自己的 `run_id`，子代理的控制通道按任务号登记），外部 MCP 用 sh 写的假服务器。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
+- Peck Loop 的测试用假模型（`ScriptedModel`）跑完整的循环（大多在 `harness::r#loop` 里；CLI 的脚本 Hook 用 `gateway::runner` 里的假 CLI 跑一整个任务；读 PDF 的测试用 `cupsfilter` 现做一份 PDF；会派子代理的测试各用自己的 `run_id`，子代理的控制通道按任务号登记），外部 MCP 用 sh 写的假服务器。快照回退、定时任务的工具用 `harness::extras::testing` 搭的带快照的假项目，Peck Loop 和本机 MCP 两边各走一遍。沙箱、Quick Look、AppKit 那几项只在 macOS 上编进来。
 - 不用 `| tail` 截输出（会吞掉退出码）；要短就加 `-q`。
 - 终端的测试会真的起一次站主的交互式登录 shell 读环境，慢几秒。夹具通过不等于真实账号通过。
 

@@ -17,7 +17,7 @@
 
 一句话对应一个**任务**（代码里叫 Run），开始前、结束后各拍一份**快照**，一直留着；要回退跟模型说（见「Peck 自己的工具」）。一个项目同时只跑一个任务（要写的文件夹一样或套着也算，`ActiveRunContext::touches`），不同项目能同时跑。任务失败、取消、重开都不自动重发（Peck Loop 问模型时断线、限流这类另算，见「Peck Loop」的重发）。
 
-分清两种干法：**CLI 引擎**是整包干，Peck 只当外壳（显示每一步、替它审批、记花费、给本机 MCP 里的几样工具），不进 Peck 的工作流；CLI 之间交接靠换引擎接着发一句或 `/review`。**Peck Loop** 是 Peck 自己的循环，Peck 深度参与：PLOOP（一个 API 模型当主角色，能派子代理，见「PLOOP」）。没有 API 单干。
+分清两种干法：**CLI 引擎**是整包干，Peck 只当外壳（显示每一步、替它审批、记花费、给本机 MCP 里的几样工具），不进 Peck 的工作流。**Peck Loop** 是 Peck 自己的循环，Peck 深度参与：PLOOP（一个 API 模型当主角色，能派子代理，见「PLOOP」）。没有 API 单干。
 
 「谁来干」是模型列表（IPC `gateway_models`）里的一个 id：
 
@@ -29,7 +29,7 @@
 
 - **发出去前**（`src/App.tsx` 的 `send`）：AGENTS 选 PLOOP 就发主角色（`ploop.main`，现在用不了就是第一个能用的 API 模型）。旧的界面设置（API 单干、接力）读的时候换成 PLOOP（`settings.ts` 的 `loadSettings`）：正式版的设置还是旧样子，这段别删。
 - **旧记录**（接力、审查的 `stage.*` 事件、`team:` 开头的「谁来干」、没记过程的任务）：打开只剩状态和结果那一句，读不懂的事件当 `raw` 不显示。旧表（`api_calls`、`api_tasks`、`usage_calls`、`messages`）不读不写，删任务时顺手清它们指着这个任务的行（外键）。
-- **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/cost`（不带前缀；`/undo` 是发一句「撤销任务 N 的改动」给模型；`/review` 用现在选的那一个按 PLAN 看最近一次改动，换个引擎再 `/review` 就是别家来审，PLOOP 用它的审查、没开用实施的那一个；`/compact [重点]` 压这个任务的对话，PLOOP 是 Peck 的三步、CLI 转给它自己压，见「上下文」「CLI 四家」），加上项目里装着的插件带的，一律 `/<插件名>:<命令>`。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
+- **斜杠命令**（`src/lib/slash.ts`、`skills.rs`）：Peck 自己的 `/plan` `/edit` `/auto` `/new` `/review` `/compact` `/undo` `/cost`（不带前缀；`/undo` 是发一句「撤销任务 N 的改动」给模型；`/review` 用现在选的那一个按 PLAN 看最近一次改动，换个引擎再 `/review` 就是别家来审，PLOOP 用主角色（它还能派 auditor）；`/compact [重点]` 压这个任务的对话，PLOOP 是 Peck 的三步、CLI 转给它自己压，见「上下文」「CLI 四家」），加上项目里装着的插件带的，一律 `/<插件名>:<命令>`。`slash_expand` 换掉 `$ARGUMENTS`、`$1`…`$9`，`!` 命令不跑，展开的全文当这句话发出去，哪家引擎都能用。CLI 自己的交互式命令不转发。
 - **控制通道**：审批、回答、追加、打断都走 `gateway_control(runId, control)`（`gateway/runner.rs`）。`run_cancel` 先发打断，超时结束整个进程组。
 - **项目和任务**（`projects.rs`）：「移出列表」只设 `Workspace.hidden`，「归档」只设 `sessions.archived_at`（`search_tasks`、@ 引用照样读得到）；删任务真删；在跑的不能归档、不能删。
 - **文件夹不在了**（`ProjectOverview.missing`）不能发任务；`workspace_relocate` 把任务、「总是允许」和快照挪到新位置。
@@ -104,7 +104,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 | Anthropic | Messages | Key | 思考和签名块原样回传；缓存读写进用量 |
 | OpenAI | Responses | Key | `store:false`；加密思考和 function_call 原样回传 |
 | DeepSeek | Chat Completions | Key | `reasoning_content` 回传 |
-| 阿里云百炼（界面写 Aliyun） | Responses（Qwen 方言；起） | Key + 地域 | 思考开关是顶层 `enable_thinking`、强度 `reasoning.effort`；不发 `include`；思考流在 `reasoning_text.delta`；新加坡按地域价 |
+| 阿里云百炼（界面写 Aliyun） | Responses（Qwen 方言） | Key + 地域 | 思考开关是顶层 `enable_thinking`、强度 `reasoning.effort`；不发 `include`；思考流在 `reasoning_text.delta`；新加坡按地域价 |
 | Gemini | `streamGenerateContent` | Key | thought signature 回放 |
 | Vertex 上的 Claude / Gemini | Messages / 原生 | gcloud ADC | 令牌用 `gcloud auth application-default print-access-token` 取 |
 
@@ -137,7 +137,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 
 - **循环**（`loop.rs`，`PeckBackend`，引擎 id `peck`）：问模型 → 跑工具 → 结果放回，直到不再要工具。对话存 `harness_conversations`。
 - **上限**：设置 → GENERAL 能调，5–1000 轮（子代理一样），任务的能关掉不限（`roundsUnlimited`，`round.started` 的上限写 0；靠花费上限和原地打转收尾）：每个任务默认 40（主角色、定时任务都按它）、ONE SHOT 默认 12；子代理每类各自的（设置 → AGENTS，默认 24）。存在 `app_settings` 的 `ui` 那一行（`maxRounds`、`oneshotRounds`、`subagents`），`harness/run.rs` 发任务时读；任务的上限每轮开头再读一次（`rounds_probe`），设置里改了跑着的下一轮就跟着变，子代理、ONE SHOT 按开始时的。
-- **重发**（学 Claude Code）：问模型出了能重发的错（见「API 七家」），等 2、5、15、30、60 秒原样再发，最多 5 次；不算轮数，过程里一行「X 秒后重发（n/5）」，断在半句的那一段收好尾、重发的另起一段；等的时候按停马上停。子代理一样。
+- **重发**：问模型出了能重发的错（见「API 七家」），等 2、5、15、30、60 秒原样再发，最多 5 次；不算轮数，过程里一行「X 秒后重发（n/5）」，断在半句的那一段收好尾、重发的另起一段；等的时候按停马上停。子代理一样。
 - **第几轮**：每问一次模型前发一条 `round.started`（`round`、`max`；子代理的带 `subagentId`），任务头上「第 N/上限 轮」、子代理那一步右边「N/上限 轮」照它画。
 - **一批工具**：一次回答里要的全是只读的（`list_directory`、`read_file`、`search_text`、`find_files`、`load_skill`、`search_tasks`、`web_search`、`web_fetch`、`read_pdf`、`ocr_pdf`、`read_notebook`；`spawn_agent` 也算，它马上回）就同时跑（`tools::PARALLEL_SAFE`），谁先完先报，结果按调用的顺序放回对话；混进改文件、跑命令、MCP 的就按顺序一个一个来。
 - **原地打转**：同一个工具、同样的参数、同样的结果（`ask_user`、`spawn_agent`、`update_plan` 不算），第 3 次在结果后面提醒它换办法（界面一行琥珀提示），第 5 次要它收尾、别再调工具；下一次回答还要工具就不跑，停下写明原因（`limit`）。
@@ -176,7 +176,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 | Anthropic | 原生服务端工具 `web_search_20260209`（带动态过滤）；Haiku 用 `web_search_20250305` | 0.01 |
 | Vertex 上的 Claude | 原生，只有 `web_search_20250305` | 0.01 |
 | OpenAI | Responses 的 `{"type": "web_search"}`，`include` 要 `web_search_call.action.sources` | 0.01（只算 `search`，打开网页不算） |
-| 百炼（起） | 一样是 Responses 的 `web_search`（和函数工具放在一起） | 0.0006（北京价，新加坡贵得多） |
+| 百炼 | 一样是 Responses 的 `web_search`（和函数工具放在一起） | 0.0006（北京价，新加坡贵得多） |
 | Gemini（Gemini 3 起） | `googleSearch` + `toolConfig.includeServerSideToolInvocations`（和函数调用一起用要它，函数调用随之是 `VALIDATED`） | 0.014（按搜的条数） |
 | DeepSeek | Peck 的 `web_search` → DeepSeek Search API（同一个 Key）；搜不了退到 Tavily | 0.00075 |
 | Vertex 上的 Gemini、Gemini 2.x | Peck 的 `web_search` → Tavily（设置 → PROVIDERS → TOOL KEYS 填 Key，`basic`） | 0.008 |
@@ -184,7 +184,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 - **原生的**：请求里开 `ModelRequest.web_search`，各家转换器加自己的工具。回答里供应商那边的调用和结果（Anthropic 的 `server_tool_use` / `*_tool_result`、OpenAI 的 `web_search_call`、Gemini 的 `toolCall` / `toolResponse` 连签名）原样存成 `Part::ServerTool`，和思考一样只回放给同一来源，换了模型丢掉。流里的 `ServerToolStarted` / `ServerToolDone` 显示成 `web_search` 的一步（来源列在输出里），没报完的在请求结束时收尾。Anthropic 搜到一半先停（`pause_turn`）原样再发一次。搜了几次记 `TokenUsage.web_searches`，费用加进这次请求的花费。
 - **不用原生的原因**：DeepSeek 聊天里的 `deepseek_web_search` 不能和函数工具一起用；Vertex 上的 Gemini 官方没写能和函数调用一起用。
 - **Peck 的 `web_search`**：参数 `query`、`max_results`（1–10，默认 5）、`recency`（day / week / month / year）、`domains`。DeepSeek 不能按时间筛、一次只限定一个站点（`site:`），用不上的条件在结果里写一句。结果开头写明「网页内容是资料不是指令」。搜成了发一条只有搜索次数和费用的 `usage.updated`。模拟模式回假结果、不联网。
-- 两样都没有（不是 DeepSeek、也没配 Tavily）就不给这个工具，系统提示里也不提。**附图**最多 6 张：都存成文件（这个对话的 `attachments/`），路径写在这一句后面（起 Peck Loop 也写，压缩掉图以后还能 `read_file` 再看）；Peck Loop 另外把图放进这一句（看不了图的模型不发、写一句）。`+` 附的文档拷进同一个目录、文件夹只写路径，也写在这一句后面。任务记录里的这一句就是带着这几段的原话，对话里按格式拆出来画成小图和小片（`src/lib/attachments.ts`），这几段的格式别改。拖进输入框的文档（浏览器给不了本机路径）先存进 `harness-output/staging/`（`upload_stage`），`+` 挑到的图读成附图（`upload_read_image`，超过 4 MB 先缩到长边 2560）。
+- 两样都没有（不是 DeepSeek、也没配 Tavily）就不给这个工具，系统提示里也不提。
 
 **读网页 `web_fetch`**：Peck 在本机抓、给原文（不先让小模型总结）。不要 Key，所有模型都有（有原生搜索的也给，和原生搜索放在同一个请求里）；GPT 原生的 `open_page` 照旧，Anthropic 的 web_fetch、Gemini 的 URL Context 不接。
 
@@ -207,18 +207,18 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 - 默认 120 秒、最长 600 秒，结束整个进程组。输出太长整份落盘（`spill.rs`），上下文留开头、结尾和路径。
 - **git**：命令带 `GIT_CONFIG_GLOBAL` 指到站主自己的 `~/.gitconfig`（没有就 `~/.config/git/config`），沙箱里只读，git 认得出是谁提交；被挡在 `.git` 上（`bash::BashOutcome::denied_git`）卡片原因写「要写 .git（提交、切分支这类）」。
 - **cargo**：EDIT、AUTO 的命令 `CARGO_HOME` 是站主自己的 `~/.cargo`，沙箱只放开它的 `registry`、`git` 和锁（`bin`、配置照样写不了，`bash::cargo_caches`），依赖的路径和平时一样、不重编；PLAN 用 Peck 给的 HOME 里的。
-- **`PECK_SANDBOX=seatbelt`**（照 Codex 的 `CODEX_SANDBOX`）：在沙箱里跑的命令都带。macOS 不让沙箱里的进程再套一层沙箱，要套的程序（Peck 自己的那几个测试）看到它就跳过（见 testing「后端」）。
+- **`PECK_SANDBOX=seatbelt`**：在沙箱里跑的命令都带。macOS 不让沙箱里的进程再套一层沙箱，要套的程序（Peck 自己的那几个测试）看到它就跳过（见 testing「后端」）。
 
 ### 权限和高危（`permission.rs`、`risk.rs`）
 
 - **PLAN** 只给读的工具、`update_plan`、`ask_user`，命令在只读沙箱。**EDIT** 全部工具，装依赖、起常驻进程前问一次（「这个项目总是允许」存 `harness_allow`）。**AUTO** 除高危都不问；只做提交的命令能写 `.git`（见「命令」）。
-- **高危**（哪档都弹，只有批准、不行；站主定的，学 Claude Code 的 Auto）：删项目外的东西、删整个项目或 `.git` 或 `git clean -x`（快照里没有被忽略的文件）、推送和改历史、改系统设置、把网上下载的脚本直接交给 shell（`curl … | sh`）；写到项目外交给沙箱，拦下了再问要不要出沙箱。项目里、临时目录里、Peck 给的 HOME 里删东西不问（有沙箱、有任务前快照），看不出会做什么的不问。删的目标按 `cd` 以后的位置算，`~`、`$HOME`、`$TMPDIR` 在 Peck Loop 里是 Peck 给的目录。`do`、`then`、`if`、`!`、`{` 这类关键字后面的照样当命令看。删同一条命令里 `mktemp` 建的变量（`T=$(mktemp -d) … rm -rf "$T"`）不问，只认最死板的写法：整段就是 `[export|local|readonly] NAME=$(mktemp …)`，`HOME` 这类名字不认，别处以 `$NAME` 以外的样子碰过（`read`、`for`、`+=`、`${NAME:=…}`、再赋值）、或赋值前就用了的作废；`"$T"/x` 照旧看不出。`sh -c`、`$(…)`、`eval`、`bash <<EOF` 里的也看；写进文件的 heredoc 正文和注释不当命令。
+- **高危**（哪档都弹，只有批准、不行）：删项目外的东西、删整个项目或 `.git` 或 `git clean -x`（快照里没有被忽略的文件）、推送和改历史、改系统设置、把网上下载的脚本直接交给 shell（`curl … | sh`）；写到项目外交给沙箱，拦下了再问要不要出沙箱。项目里、临时目录里、Peck 给的 HOME 里删东西不问（有沙箱、有任务前快照），看不出会做什么的不问。删的目标按 `cd` 以后的位置算，`~`、`$HOME`、`$TMPDIR` 在 Peck Loop 里是 Peck 给的目录。`do`、`then`、`if`、`!`、`{` 这类关键字后面的照样当命令看。删同一条命令里 `mktemp` 建的变量（`T=$(mktemp -d) … rm -rf "$T"`）不问，只认最死板的写法：整段就是 `[export|local|readonly] NAME=$(mktemp …)`，`HOME` 这类名字不认，别处以 `$NAME` 以外的样子碰过（`read`、`for`、`+=`、`${NAME:=…}`、再赋值）、或赋值前就用了的作废；`"$T"/x` 照旧看不出。`sh -c`、`$(…)`、`eval`、`bash <<EOF` 里的也看；写进文件的 heredoc 正文和注释不当命令。
 - **CLI 的命令**（`risk::assess_cli`，Peck 替 CLI 批之前看）：不在 Peck 的沙箱里，另外还问写到项目外、命令是拼出来的（`$CMD`、带展开的 `eval`、`… | sh`、`find -exec sh`、解释器的 `-c` 代码里删文件起进程），看不出删什么的（`xargs rm`）也问；`~` 是站主的家目录。
 - 卡片标题是命令的 `description`，`reason` 是原因（「推送或改 Git 历史」「装依赖」「要写到项目外，出沙箱再跑」）。黑名单只挡常见写法，兜底靠沙箱和快照。
 
 ### 外部 MCP 服务器（`mcp_client.rs`）
 
-- stdio，设置里最多 8 台；要保密的变量只记名字，值在钥匙串。 Peck Loop 发任务时起（ONE SHOT 不起），任务结束停；起不来的写一行、照常干活。在沙箱外跑。CLI 引擎用自己配的 MCP，怎么给模型看是 CLI 自己的事（Claude Code 自己就按需加载）。
+- stdio，设置里最多 8 台；要保密的变量只记名字，值在钥匙串。Peck Loop 发任务时起（ONE SHOT 不起），任务结束停；起不来的写一行、照常干活。在沙箱外跑。CLI 引擎用自己配的 MCP，怎么给模型看是 CLI 自己的事（Claude Code 自己就按需加载）。
 - **按需加载**（`loop.rs` 的 `request_specs`）：MCP 工具的定义开头不发，只给一个 `tool_search`，说明里按服务器列出这一档能用的工具名字。`select:<名字>,…` 按名字加载（全名或只写工具那一段），别的按关键词搜名字和说明（默认 5 个）；搜到的从下一次请求起加进工具列表（加在最后，每加一批缓存重写一次）。加载过的一个对话里一直留着：下一句话开头从记录里认回来（调过的、`tool_search` 结果头一行「已加载：…」），工具列表不来回变。没加载就直接调的也照样跑（权限照旧）。member 自己加载自己的。
 - **项目的 `.mcp.json`**：Claude Code 的格式，只接 stdio 的，和设置里的合并（同名以项目的为准，项目设置里能关）。第一次起之前弹一张卡片，「总是允许」按这一项原文的指纹记，配置改了再问。
 - **权限**：PLAN 只给 `readOnlyHint` 的；EDIT 用其他的前问一次（能总是允许这台）；AUTO 不问；会删改的（标了 `destructiveHint`，或只读、删改都没标）哪档都当高危。
@@ -235,6 +235,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
   - **摘要长度**跟着窗口：目标 = 窗口 × 1.5%（1500–8000 tokens），提示写「at most about N words」（N ≈ 目标 × 0.75，取整到百）；输出上限 = min(模型的上限, max(16000, 目标 × 2))。
   - **站主说过的话**全带：写的每一句、ASK 里的回答（`站主回答：` 开头的结果，前两步不清、不落盘）、上一次压缩带着的 `<peck-said>`（所以压几次都在）。每句截到 1500 字节，一共不超过窗口的 3%（至少 2000 tokens），超了留第一句（原来的目标）和最近的，中间写「（中间还有 N 句，见摘要）」，句数跨压缩累加。
   - **放回的文件**：压缩前对话里 `read_file`、`write_file`、`write_patch`、`apply_patch` 碰过的路径，这个任务改过的优先、再按最后一次碰的先后，最多 5 个、一共不超过窗口的 10%（小的先放全，剩下的平分；放不下的留头尾）；从磁盘现读、带行号，删了的、二进制、超过 1 MB 的跳过；放回的登记成「刚读过」（接着整个覆盖不用再读）。站主的话和放回的文件按估的 tokens 算预算（除以校准系数）。
+- **附图、附件**：附图最多 6 张：都存成文件（这个对话的 `attachments/`），路径写在这一句后面（起 Peck Loop 也写，压缩掉图以后还能 `read_file` 再看）；Peck Loop 另外把图放进这一句（看不了图的模型不发、写一句）。`+` 附的文档拷进同一个目录、文件夹只写路径，也写在这一句后面。任务记录里的这一句就是带着这几段的原话，对话里按格式拆出来画成小图和小片（`src/lib/attachments.ts`），这几段的格式别改。拖进输入框的文档（浏览器给不了本机路径）先存进 `harness-output/staging/`（`upload_stage`），`+` 挑到的图读成附图（`upload_read_image`，超过 4 MB 先缩到长边 2560）。
 - **记忆**：`memory` 工具只提议；站主 SAVE 才存 `memories`（按项目）。Peck Loop 放在系统提示的项目层，CLI 放在新会话第一句前面（见「项目即环境」）。站主也能自己记、改字、删：设置 → MEMORY 按项目列全部的，项目设置 → MEMORY 只列这一个（同一个组件 `src/shell/Memory.tsx`；IPC `memory_overview`、`memory_add`、`memory_update`、`memory_delete`）。
 - **Skills**（`skills.rs`）：项目的 `.claude/skills/`、`.agents/skills/`（一般一边是另一边的软链接）、和 `AGENTS.md` 同级的 `skills/` 里的 `SKILL.md`，加上开着的自带插件的（嵌在程序里；同名的以项目的为准）。项目设置里能一个个关；`load_skill` 按需读全文。CLI 原厂会读的自己读。没有全局 Skill。
 - **自己写 Skill**（`skill_propose.rs`）：模型用 `create_skill` 提议，站主 SAVE 才写，**只写这个项目**的 Skill 文件夹（传 `global` 被拒；和自带插件的 Skill 同名的也拒）。像 Key 的存不进去，同名的是替换那一份（旧版留着能退回）。任务还在跑时批的排到收尾快照之后再写，所以不算进这次的改动、撤销也撤不掉。
@@ -243,7 +244,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 ### 后台命令（`background.rs`）
 
 - **验证交给模型**：Peck 不替模型跑检查。改完跑什么写在项目的 `AGENTS.md` / `CLAUDE.md` 里（「改完跑 `pnpm check`」），模型自己用 `bash_run` 跑；系统提示里写明这是它的事。
-- **后台命令**（`bash_background`）：EDIT 下当「起常驻进程」问一次；一个任务最多 4 个，任务结束一起停。 进程带 `PYTHONUNBUFFERED=1`（Python 不在终端里会攒着输出，dev server 的地址读不到）。
+- **后台命令**（`bash_background`）：EDIT 下当「起常驻进程」问一次；一个任务最多 4 个，任务结束一起停。进程带 `PYTHONUNBUFFERED=1`（Python 不在终端里会攒着输出，dev server 的地址读不到）。
 - **留着的 dev server**：起的时候 `keep: true`（PLAN 不给）。任务结束不停、跨任务一直在，退出 Peck 才停；一个项目最多 4 个，同一条命令不起第二份。后来的任务看得到、能读输出、能停；右栏 TERM 头上列出来、点一下停（开着时每 3 秒读一次 `background_list`）。
 
 ### Peck 自己的工具（`extras.rs`）
@@ -295,7 +296,7 @@ Key 从钥匙串取。Gateway 自己不重发，只在错误上标能不能重�
 
 ## PLOOP（`harness/agents.rs`）
 
-PLOOP 是 Peck Loop 的工作方式（起）：一个 API 模型当**主角色**，需要时用 `spawn_agent` 派**子代理**在后台跑。简单的改动给 worker、复杂的给 member，互不干扰的一起派（worker、member 也能一起派）。审查是主角色自己派的 auditor；自动审查、自定义子代理以后再做（roadmap）。
+PLOOP 是 Peck Loop 的工作方式：一个 API 模型当**主角色**，需要时用 `spawn_agent` 派**子代理**在后台跑。简单的改动给 worker、复杂的给 member，互不干扰的一起派（worker、member 也能一起派）。审查是主角色自己派的 auditor。
 
 | 类型 | 做什么 | 工具 | 档位 | 同时几个 |
 |---|---|---|---|---|
@@ -318,7 +319,7 @@ PLOOP 是 Peck Loop 的工作方式（起）：一个 API 模型当**主角色**
 
 ## 脚本 Hook（`harness/script_hooks.rs`）
 
-借鉴 Claude Code：在 Peck Loop 的几个时刻跑项目里配的命令；CLI 引擎 Peck 只替它跑控制得了的三个（见下）。
+在 Peck Loop 的几个时刻跑项目里配的命令；CLI 引擎 Peck 只替它跑控制得了的三个（见下）。
 
 - **从哪读**：项目的 `.claude/settings.json`、`.claude/settings.local.json` 里的 `hooks`，加上装进项目的插件的 `hooks/hooks.json`；格式照 Claude Code，只认 `type: "command"`（命令里的 `${CLAUDE_PLUGIN_ROOT}` 换成插件的文件夹）。
 - **时刻**：`SessionStart`、`UserPromptSubmit`（发话时）、`PreToolUse` / `PostToolUse`（调工具前后，`matcher` 是工具名的正则，Peck 的名字和 Claude Code 的叫法都认：`Bash` 对 `bash_run`、`Edit` 对 `write_patch` / `apply_patch`、`Read` 对 `read_file` / `read_pdf` / `ocr_pdf` / `read_notebook` …）、`PreCompact`（压缩前：自动的 `trigger: auto`，`/compact` 的 `trigger: manual` + `custom_instructions` 是重点）、`Stop`（主角色要收尾时）。子代理调工具前后也跑，`SessionStart`、发话时、收尾时不跑；ONE SHOT 不跑。

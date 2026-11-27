@@ -16,7 +16,7 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 2. `git status`、`git log --oneline -3`：有不认识的改动不动、不还原，先问。
 3. 用提问功能问站主这次属于哪种程度（见「版本」），答了再动手；站主已经写明版本号就不用再问。
 4. 开发中拿不准的决策点也用提问功能问；问了没人答，按 `docs/` 里写的默认做法做，记进 HANDOFF。
-5. 改完自己验：前端 `pnpm check`，后端跑改到的模块，界面开 `?mock` 看（命令见 `docs/testing.md`「每次改完」）。Peck 不替 Agent 跑检查。
+5. 改完自己验：前端 `pnpm check`，后端跑改到的模块，界面开 `?mock` 看（命令见 `docs/testing.md`「每次改完」）。
 
 ## 版本
 
@@ -41,7 +41,7 @@ Peck：只为站主、只在站主这台 Mac 上跑的个人 Harness（Tauri 2 +
 
 - 只在 `personal-cli-studio/` 里开发；`~/Documents/GitHub/pomelo` 只读。
 - `src/vendor/peck/` 是 visual-atelier 方案 `peck` 同步来的，不手改；视觉方案要站主批。visual-atelier 里只碰 `schemes/peck/`、`canvases/peck-*/` 和两份索引里 Peck 那一行，守它自己的 `CLAUDE.md`。
-- 不接 Google 的 Antigravity（条款风险，v1.1.5 整个去掉了），以后也不加回来。
+- 不接 Google 的 Antigravity（条款风险），以后也不加回来。
 - CLI 保持原厂设置：不改它们的配置，不读、不复用任何 CLI 的登录凭据；Peck 只在外面编排。信任项目文件夹只在站主点了 TRUST 卡片以后，用各家官方的开关带上（见 `docs/architecture.md`「CLI 四家」），Peck 不直接写它们的文件。例外只有站主同意过的：Claude Code 每次带 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（`-p` 默认不给清单工具，只对那一次进程）。
 - 不碰 Keychain 里的 Key 内容；Key、账号、绝对路径、提示词不进文档和夹具。不新增付费服务；新加依赖写成 `^x.y.z`，在 HANDOFF 记一笔。
 - 真跑（花 API 的钱、用 CLI 的订阅额度）只按 `docs/roadmap.md`「现行授权」。

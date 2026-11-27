@@ -1,34 +1,41 @@
 # 当前交接
 
-更新：2026-11-26。**v1.2.1 做完、已提交、已装进 /Applications**（第一次打开会连弹几个钥匙串框）。没有在做的版本。规则在 [CLAUDE.md](./CLAUDE.md)，设计在 [docs/design.md](./docs/design.md)，实现在 [docs/architecture.md](./docs/architecture.md)，定位和之后要做的在 [docs/roadmap.md](./docs/roadmap.md)。
+更新：2026-11-27。正式版 **v1.2.1**（已装、已推）。**v1.3.0 在做**：PLOOP 评测基线，Phase 表在 [docs/roadmap.md](./docs/roadmap.md#phase)，各 Phase 状态只看那张表。
 
-## 这一版（1.2.1）
+## 这一版（1.3.0，进行中）
 
-- **CLI 的后台进程一起停**：CLI 和它生出来的进程算一组，任务结束时把还活着的一起停掉（怎么认见 architecture「CLI 四家」的「进程」）。
-- **AUTO 能提交**：只做 `git add` / `git commit` 的命令换一个能写 `.git` 的沙箱跑，不弹卡片；EDIT 和别的写 `.git` 照旧弹卡片。
-- **WebKit 走 Peck 的代理**：`web_fetch` 渲染时每条连接由 Peck 解析、查过 IP 再连，WebRTC 关掉；能读回响应的请求不再只限这个网站自己。
-- **Git Plan 1.2.0**：这一轮改到的每个 git 仓库（主文件夹和能改的其他文件夹）各提交一笔，仓库根目录 `CLAUDE.md` / `AGENTS.md` 写了 Git 规则的照它的；其他文件夹的说明文件路径开场带给模型。插件只装主文件夹，Peck 不写其他文件夹里的文件。
-- 文档精简（去掉来历和重复，各放一处）；代码精简：Rust 合并重复的小函数、删只有测试在用的代码（净删约 130 行），前端删没人读的状态和字段、死样式、合并重复的小函数（净删约 70 行），行为不变。
+- **Phase 0 交接摘要**：写摘要的要求改成固定五栏（`## 目标` `## 已定的决策` `## 踩过的坑` `## 文件现在的状态` `## 下一步`，栏名照写、内容用站主的语言）；站主说过的话（含 ASK 的回答）压几次都带着（见 architecture「上下文」）。测试：`harness::compact` 10 个、`harness::r#loop` 44 个过。**没验的**：真模型照不照五栏写。
+- 需求原文是站主桌面的 `brief.md`（不在仓库）。要点：Phase 表 + 下面「Phase 1 怎么做」+「评测要守的」。
 
-数据库没变（schema 12）；没加依赖。
+### Phase 1 怎么做
 
-## 验证
+- **一次尝试**：`peck eval <attempt.json>` 隐藏子命令，`lib.rs` 的 `run()` 在起 Tauri 之前看参数，不带参数的正常启动不变。不用 `#[test]` 入口：测试构建里 `api_mode` 一律 Mock，测的就不是正式行为。它做的：临时数据目录里建 `AppState`、读价格表、把臂的设置写进 `ui`（`ploop.main` 后端不读，`who` / `effort` 照前端 `App.tsx` 的办法自己算）、建项目、像点开项目一样 `project_plugins::prepare`（认结构、装 Git Plan）、建会话、`start_peck_run`；审批卡片一律拒（高危、普通都是），ASK 回固定的话，等 `turn.completed`，把事件（`agent_events` 导出 JSONL）、用量、花费、结束原因写进尝试文件夹。Key 从 Key 目录的文件读进内存的 `Keys`（不进钥匙串、不打印）。`ScriptedModel` 的臂用 JSON 剧本，Phase 1 不花钱。
+- **一组**：`pnpm eval <组.json>` → `evals/run.ts`（Node 24 直接跑 TS，不加依赖）：题 × 臂 × 次数，交替 A B，固定并发；每次尝试新工作区（`git archive` 起点 → 只有一笔提交的新仓库，没有 `evals/`）、`cp -c -R` 预热的 `target/`、`node_modules`；跑完放进隐藏测试判分；有 `result.json` 的跳过（能接着跑）；每次给 `peck eval` 的花费上限是剩下的预算，到了就停、写明停在哪；断线、超时、编译卡死记成 infra、自动重跑。
+- **判分**：对比起点提交（Git Plan 每轮会提交）；`check/` 写两组测试（改前失败改后要过 / 改前就过改后还要过）和要跑的命令；Rust 的隐藏测试追加成文件末尾的 `#[cfg(test)] mod eval_check { use super::*; … }`，只跑 `cargo test --lib <模块>::`；`.git` 完好、没改不该改的文件。
+- **位置**：题、组配置、报告在仓库 `evals/`；工作区、trace 在仓库外 `projects/eval/`。
 
-- 全量 `cargo test` 386 个过（17 个要联网、真账号的 ignored）；`pnpm check`、`pnpm build`、`tsc --noUnusedLocals --noUnusedParameters` 过。
-- 新加的测试：一组进程（同组的、换了会话的、被丢下的、两层 fork 带记号的 node 都停了）；AUTO 提交沙箱（真沙箱里 `Project` 写不了 `.git`、`Commit` 能提交、`config` / `hooks` / `info` 写不了）和 `plain_commit` 的认法（含几种绕过写法）；SOCKS 代理的拒绝和放行；WebKit 没有 WebRTC；Git Plan 多仓库（单元测试，加一整条 Peck Loop 任务：主文件夹照 Git Plan、其他文件夹照它的 `## Git`）；`<peck-folders>` 带说明文件。
-- 真跑：Claude Code（Haiku）2 个小任务，让它在后台起 `sleep`：第一次任务结束后还留着（系统程序、新会话、父进程先退了），补上「被丢下的」那条后第二次没了。
-- 联网：TodoMVC 经代理读到 JavaScript 生成的正文；`localtest.me`（解析到本机）的图片、fetch、WebSocket 一次都没到本机服务。
-- `?mock`：精简后的前端开过任务页、任务板和子代理计数、设置 → AGENTS，没有脚本错误。
-- **没验的**：
-  - 正式版窗口里没点：Git Plan 多仓库的两行 recap、AUTO 下提交不弹卡片、WebKit 渲染。
-  - 真模型：PLOOP 在 AUTO 下自己 `git commit`、Git Plan 多仓库的问法（真模型照不照编号回）、CLI 的多仓库提交。
-  - 进程清理只在 Claude Code 上真跑过，Codex、Muse、Grok 没有。
-  - 以前留下的：真中文输入法下的 `/` 弹层和占位、从访达拖图、`+` 的系统选窗；Gemini 原生搜索、Vertex、百炼新加坡、Mathpix、通知横幅。
+### 评测要守的
+
+- 评测代码不改发任务、权限、沙箱的正常路径；正式版界面和行为不变。
+- 每次尝试全新：数据目录、影子仓库、工作区、记忆、设置、对话都是空的；工作区里不能有起点以后的提交（远端、reflog、stash 也不行）。Pomelo、visual-atelier 只 `git archive` / `git clone` 拷出来用。
+- 给模型的那句话前面不加别的话；ASK 自动回「评测中：按你的判断做，不要再问」，卡片和 ASK 各记次数。
+- Key、账号不进任何结果文件；trace 有代码和提示词，只放 `projects/eval/`，不进 Peck 仓库。
+- 看结果不看过程，代码判分优先（模型判分只给代码判不了的，先和人判的对一遍）；失败的那几次要逐个读过程，确认是模型没做对还是题坏了，没读过的分数不算数。
+- 报 pass@1（带区间）和 pass^3、按题配对比较；先测噪声底。
+- 总预算估法：最便宜的主角色跑 1–2 题量单次花费 × 题数 × 次数 × 臂数；用完就停；Opus 只放一个臂（批和记账见 roadmap「现行授权」）。
+- 收尾告诉站主：报告路径、一句话结论、一共花了多少钱、提交列表。
+
+## 没验的
+
+- 正式版窗口里没点：Git Plan 多仓库的两行 recap、AUTO 下提交不弹卡片、WebKit 渲染；真中文输入法下的 `/` 弹层和占位、从访达拖图、`+` 的系统选窗。
+- 真模型：PLOOP 在 AUTO 下自己 `git commit`、Git Plan 多仓库的问法、CLI 的多仓库提交。
+- 进程清理只在 Claude Code 上真跑过，Codex、Muse、Grok 没有。
+- Gemini 原生搜索、Vertex、百炼新加坡、Mathpix、通知横幅。
 
 ## 留给站主的
 
-- **push** 你做：`origin/main` 到 1.1.11，1.1.12、1.2.0、1.2.1 都没推。
-- **Git Plan UPDATE**：装着 1.1.0 的项目在项目设置 → PLUGINS 点 UPDATE 才换成新的 Skill 和问法；不点也能用，多仓库提交照样按新规矩走。
+- **push** 你做：v1.3.0 的提交都还没推。
+- **Git Plan UPDATE**：装着 1.1.0 的项目在项目设置 → PLUGINS 点 UPDATE 才换成新的 Skill 和问法；不点也能用。
 - 任务 194 的记忆卡片（「Peck 给每条命令的 `$TMPDIR` 跑完就删」）还等你 SAVE / SKIP（没再查过）。
 - **废纸篓**：装包换下来的旧 `Peck.app`，确认不要了自己清空。
 - 仓库里没跟踪的 `.agents/skills`（Peck 认结构建的链接）：要不要提交你定。
@@ -41,7 +48,7 @@
 | CLI 跑在它自己的沙箱里：Codex 的沙箱里 WebKit 起不来，截图、渲染要出沙箱，每次弹卡片 | 让它一个脚本截完 |
 | Muse、Grok 读不到订阅余量，用完了只能等 429 | 记着 |
 | 句中 `/` 按标题包含筛：空格后打路径（` /src`）时标题里正好有这几个字会弹，这时 ↵ 是插提示词 | Esc 关掉再 ↵ |
-| 占位只往后跳、不绕回；⇧Tab 是退缩进；撤销不找回占位；PROMPT 的箭头放进来的不选占位 | 用一阵看要不要 |
+| 占位的跳法和撤销（见 design「插提示词」） | 用一阵看要不要 |
 | App 一直开着、额度快照不变时，过了重置时间的提醒要等快照更新才消失 | 记着 |
 | 关了轮数上限，一个任务（定时任务也是）能一直跑到每月花费上限才停 | 长任务前看一眼花费上限 |
 | 在 Peck 里开发 Peck 时装不了正式版（换包会把自己换掉、签名要钥匙串） | 装包留给站主或 Claude Code，攒一批再装 |
@@ -55,7 +62,6 @@
 | 旧表 `api_calls`、`api_tasks`、`usage_calls`、`messages` 还在库里（几十行），删任务时那几行清理代码得留着（外键） | 要清就加一条迁移把四张表删掉 |
 | 划文件只管文件工具和命令的沙箱：MCP 工具、主角色自己的命令管不到；`sed -i` 原地改划给它的单个文件会被沙箱拦 | 划文件夹，或用文件工具改 |
 | 原地打转只认一模一样的调用和结果 | 用一阵再看 |
-| 插件带的 MCP 服务器（`.mcp.json`）只列出来，Peck Loop 不起 | 有插件要用时再接 |
 | Vertex 上的 Claude / Gemini 只有离线测试；Vertex 上的 Claude 没带 `block_binding` | 开了 GCP 项目再试 |
 | 小窗打开的 0.2 秒动画里点下去会落到外面那层、把小窗关掉 | 记着 |
 | 任务结束时认不出的 CLI 子进程：自己 `setsid` 当组长、又是系统自带程序（读不到记号）、父进程先退了的；被丢下的但工作目录不在 CLI 工作目录里的 | 真碰到再看 |
@@ -76,10 +82,9 @@
 ## 留意
 
 - Gemini 4 Carbon / Argon 12 月 1 日起涨价（Google 官网），到时在设置 → QUOTA 点 REFRESH。
-- Codex 和 ChatGPT 客户端共用登录；Claude 额度要 `cli/bin` 的 Claude Code 登录一次才读得到。
 - 测试项目 `projects/tester`、`moon-lab`、`gateway-smoke`、`git-plan-smoke`（git 仓库，收尾提交用）在 Peck 仓库外。
 - 联网搜索的协议各家常变：出 400 先查 `gateway/search.rs` 和各家转换器，`live_web_search` 能单独真跑一家。
 
 ## 下一步
 
-自定义子代理（站主之前定的）。其他候选在 roadmap「之后要做的」。
+做完 v1.3.0 Phase 1。
