@@ -1,0 +1,10 @@
+diff --git a/src/slug.ts b/src/slug.ts
+index 2e87b99..54d0cf8 100644
+--- a/src/slug.ts
++++ b/src/slug.ts
+@@ -1,4 +1,4 @@
+ /** 标题 → 网址里用的短名：小写，空格换成 `-`。 */
+ export function slug(title: string): string {
+-  return title.toLowerCase().replace(" ", "-");
++  return title.toLowerCase().replace(/^ +| +$/g, "").replace(/ +/g, "-");
+ }

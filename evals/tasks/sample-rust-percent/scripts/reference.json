@@ -1,0 +1,43 @@
+{
+ "turns": [
+  {
+   "text": "先看一下 `percent`。",
+   "tools": [
+    [
+     "read_file",
+     {
+      "path": "src/lib.rs"
+     }
+    ]
+   ],
+   "usage": {
+    "input": 1800,
+    "output": 40
+   }
+  },
+  {
+   "tools": [
+    [
+     "write_file",
+     {
+      "path": "src/lib.rs",
+      "content": "//! 额度条：用了多少、一共多少。\n\n/// 用了 `used`、一共 `total` → 百分比（0–100，往下取整）。\npub fn percent(used: u64, total: u64) -> u64 {\n    if total == 0 {\n        return 0;\n    }\n    used.min(total) * 100 / total\n}\n\n/// 额度条上那一行字。\npub fn label(used: u64, total: u64) -> String {\n    format!(\"{used}/{total}（{}%）\", percent(used, total))\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn half() {\n        assert_eq!(percent(5, 10), 50);\n        assert_eq!(label(5, 10), \"5/10（50%）\");\n    }\n}\n"
+     }
+    ]
+   ],
+   "usage": {
+    "input": 2600,
+    "output": 260,
+    "cacheRead": 1800
+   }
+  },
+  {
+   "text": "改好了：总量是 0 时算 0，用超了停在 100。",
+   "usage": {
+    "input": 400,
+    "output": 30,
+    "cacheRead": 4200
+   }
+  }
+ ]
+}

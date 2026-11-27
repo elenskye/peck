@@ -2,6 +2,7 @@ mod agent;
 mod app_icon;
 mod api;
 mod commands;
+mod eval;
 mod events;
 mod files;
 mod flow;
@@ -34,6 +35,10 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 评测（v1.3.0）：`peck eval <attempt.json>` 不起窗口跑一次就退出；不带参数的照常起 App。
+    if let Some(code) = eval::from_args() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(tray::TrayState::default())

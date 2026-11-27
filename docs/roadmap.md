@@ -19,7 +19,7 @@ Peck 是只为站主、只在站主这台 Mac 上跑的个人 **Harness**：包�
 | Phase | 谁来做 | 内容 | 验收 | 状态 |
 | --- | --- | --- | --- | --- |
 | 0 交接摘要 | Claude Code | 压缩的交接摘要固定五栏（目标、已定的决策、踩过的坑、文件现在的状态、下一步）；站主说过的话（含 ASK 的回答）压几次都原样带着 | compact、Peck Loop 的测试过 | 完成 |
-| 1 框架 | Claude Code | 题目格式；`peck eval` 隐藏子命令跑一次尝试（走 `start_peck_run`，像点开项目一样先装好 Git Plan；审批卡片一律拒、ASK 回固定的话，各记次数）；`pnpm eval` 跑一组（隔离、判分、trace、结果 JSON / JSONL、能接着跑、花费硬上限、infra 自动重跑）；`ScriptedModel` 跑 2 道样题 | 一条命令跑完 2 题 × 2 次，结果和 trace 齐全；中途杀掉再跑自动接着做；参考答案判过、空改动判不过；不花钱 | 进行中 |
+| 1 框架 | Claude Code | 题目格式；`peck eval` 隐藏子命令跑一次尝试（走 `start_peck_run`，像点开项目一样先装好 Git Plan；审批卡片一律拒、ASK 回固定的话，各记次数）；`pnpm eval` 跑一组（隔离、判分、trace、结果 JSON / JSONL、能接着跑、花费硬上限、infra 自动重跑）；`ScriptedModel` 跑 2 道样题 | 一条命令跑完 2 题 × 2 次，结果和 trace 齐全；中途杀掉再跑自动接着做；参考答案判过、空改动判不过；不花钱 | 完成 |
 | 2 题库 | Claude Code；Codex 每题写一份换写法的解 | 从 Peck、Pomelo、visual-atelier 的历史挖约七成，专门出约两成考 PLOOP（排队、auditor、牵连改、先查再改、联网）；15–20 题 + holdout 3–5 题，标 `regression` / `capability` / `holdout` | 每题过三条校验：参考答案过、空改动不过、换一种写法也过 | 未开始 |
 | 3 校准 | Claude Code | 请站主批总预算、定对照臂；最便宜的主角色真跑 1–2 题量单次花费；每题默认配置跑 1 次；同一配置跑两遍测噪声底；读失败的过程，修掉或换掉坏题 | 有噪声底的数；0% 的题都查过 | 未开始 |
 | 4 基线 | Claude Code | 默认配置 + 2 个对照臂，每题每臂 ≥3 次、交替跑 | 一页 v1.3.0 基线报告（`evals/reports/`） | 未开始 |

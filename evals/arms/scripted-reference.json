@@ -1,0 +1,4 @@
+{
+  "ui": { "ploop": { "main": "api:deepseek/deepseek-flash" }, "efforts": {}, "subagents": {}, "maxRounds": 40 },
+  "script": "reference"
+}

@@ -372,6 +372,7 @@ IPC 不返回 Key，Key 不进配置、历史和模型上下文。分两包（AI
 | `src-tauri/src/{run,flow,agent,process,mode}.rs` | 在跑的登记和 Peck Loop、CLI 共用的发任务（`claim_run` 占号、`Lifecycle` 前后快照和收尾、`abandon` 占了号出错时放开项目）、任务记录里的计划、找 CLI、进程组、数据目录和模拟 / 真实 |
 | `src-tauri/src/{store,migrations,workspace,snapshot,watch}.rs` | 存储和迁移、项目和校验、快照、忽略规则 |
 | `src-tauri/src/prompts.rs` | 提示词库的增删改查和 IPC（见「数据存放」） |
+| `src-tauri/src/eval.rs`、`evals/` | 评测：`peck eval <attempt.json>` 不起窗口跑一次尝试（走 `start_peck_run`，卡片自动拒、ASK 自动答）；`pnpm eval` 跑一组、判分、报告（见 `evals/README.md`） |
 | `src-tauri/{defaults,integrations,tests/fixtures/gateway}/` | 模型目录、价格表、自带插件（`plugins/`）、插件库的源（`library/`）；状态栏脚本；Gateway 夹具 |
 | `src/App.tsx`、`src/lib/` | 编排和状态；IPC（`ipc.ts`，浏览器里转给 `?mock`）、设置、事件 → 界面（`agentView.ts`） |
 | `src/shell/`、`src/ui.tsx`、`src/app.css` | 三栏外壳和各页；方案里还没有的样式和身份色 |

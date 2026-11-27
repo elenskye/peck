@@ -1,0 +1,11 @@
+prompt = """
+`slug` 只换了第一个空格：「My Big Title」变成了「my-big title」。改成每个空格都换成 `-`，连着的几个空格算一个，开头结尾的空格去掉。
+"""
+mode = "auto"
+group = "regression"
+tags = ["sample", "字符串"]
+max_rounds = 12
+timeout_min = 10
+
+[source]
+dir = "repo"

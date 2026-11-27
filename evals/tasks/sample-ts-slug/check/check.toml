@@ -1,0 +1,14 @@
+# 跑完、放进隐藏测试以后在工作区里跑，退出码 0 算过。
+protect = ["test/slug.test.ts", "package.json"]
+
+[[test]]
+name = "每个空格、连着的、前后的"
+group = "fail_to_pass"
+run = "node --test test/eval_check.test.ts"
+timeout_min = 2
+
+[[test]]
+name = "原来的测试"
+group = "pass_to_pass"
+run = "node --test test/slug.test.ts"
+timeout_min = 2

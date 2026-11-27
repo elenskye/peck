@@ -1,0 +1,43 @@
+{
+ "turns": [
+  {
+   "text": "看一下 `slug`。",
+   "tools": [
+    [
+     "read_file",
+     {
+      "path": "src/slug.ts"
+     }
+    ]
+   ],
+   "usage": {
+    "input": 1500,
+    "output": 30
+   }
+  },
+  {
+   "tools": [
+    [
+     "write_file",
+     {
+      "path": "src/slug.ts",
+      "content": "/** 标题 → 网址里用的短名：小写，空格换成 `-`。 */\nexport function slug(title: string): string {\n  return title.trim().toLowerCase().split(/\\s+/).join(\"-\");\n}\n"
+     }
+    ]
+   ],
+   "usage": {
+    "input": 2100,
+    "output": 120,
+    "cacheRead": 1500
+   }
+  },
+  {
+   "text": "改好了：先去掉前后空格，再按连着的空白切开、用 `-` 连起来。",
+   "usage": {
+    "input": 300,
+    "output": 30,
+    "cacheRead": 3500
+   }
+  }
+ ]
+}

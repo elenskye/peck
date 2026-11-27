@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index caa8ec3..34e1aab 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ 
+ /// 用了 `used`、一共 `total` → 百分比（0–100，往下取整）。
+ pub fn percent(used: u64, total: u64) -> u64 {
+-    used * 100 / total
++    used.saturating_mul(100).checked_div(total).unwrap_or(0).min(100)
+ }
+ 
+ /// 额度条上那一行字。

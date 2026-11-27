@@ -1,0 +1,8 @@
+{
+  "name": "smoke",
+  "tasks": ["sample-rust-percent", "sample-ts-slug"],
+  "arms": ["scripted-reference", "scripted-empty"],
+  "attempts": 2,
+  "concurrency": 2,
+  "budgetUsd": 0
+}

@@ -1,0 +1,18 @@
+# 跑完、放进隐藏测试以后在工作区里跑，退出码 0 算过。
+protect = ["Cargo.toml"]
+
+[[append]]
+file = "src/lib.rs"
+from = "append/lib.rs"
+
+[[test]]
+name = "总量 0、用超了"
+group = "fail_to_pass"
+run = "cargo test -q --lib eval_check::"
+timeout_min = 5
+
+[[test]]
+name = "原来的测试"
+group = "pass_to_pass"
+run = "cargo test -q --lib tests::"
+timeout_min = 5

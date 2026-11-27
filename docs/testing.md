@@ -66,7 +66,7 @@
 ## 类型和构建
 
 ```bash
-pnpm check     # tsc --noEmit
+pnpm check     # tsc --noEmit（界面和 evals/）
 pnpm build     # 前端生产构建
 ```
 

@@ -1,0 +1,11 @@
+prompt = """
+额度条在总量是 0 的时候直接崩了，用超了的时候还会显示 120% 这种。改一下 `percent`：总量是 0 时算 0，最多到 100。
+"""
+mode = "auto"
+group = "regression"
+tags = ["sample", "边界值"]
+max_rounds = 12
+timeout_min = 10
+
+[source]
+dir = "repo"

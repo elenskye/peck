@@ -1,18 +1,27 @@
 # 当前交接
 
-更新：2026-11-27。正式版 **v1.2.1**（已装、已推）。**v1.3.0 在做**：PLOOP 评测基线，Phase 表在 [docs/roadmap.md](./docs/roadmap.md#phase)，各 Phase 状态只看那张表。
+更新：2026-11-27。正式版 **v1.2.1**（已装、已推）。**v1.3.0 在做**（Phase 0、1 做完）：PLOOP 评测基线，Phase 表在 [docs/roadmap.md](./docs/roadmap.md#phase)，各 Phase 状态只看那张表。
 
 ## 这一版（1.3.0，进行中）
 
 - **Phase 0 交接摘要**：写摘要的要求改成固定五栏（`## 目标` `## 已定的决策` `## 踩过的坑` `## 文件现在的状态` `## 下一步`，栏名照写、内容用站主的语言）；站主说过的话（含 ASK 的回答）压几次都带着（见 architecture「上下文」）。测试：`harness::compact` 10 个、`harness::r#loop` 44 个过。**没验的**：真模型照不照五栏写。
 - 需求原文是站主桌面的 `brief.md`（不在仓库）。要点：Phase 表 + 下面「Phase 1 怎么做」+「评测要守的」。
 
-### Phase 1 怎么做
+### Phase 1 框架（做完）
 
-- **一次尝试**：`peck eval <attempt.json>` 隐藏子命令，`lib.rs` 的 `run()` 在起 Tauri 之前看参数，不带参数的正常启动不变。不用 `#[test]` 入口：测试构建里 `api_mode` 一律 Mock，测的就不是正式行为。它做的：临时数据目录里建 `AppState`、读价格表、把臂的设置写进 `ui`（`ploop.main` 后端不读，`who` / `effort` 照前端 `App.tsx` 的办法自己算）、建项目、像点开项目一样 `project_plugins::prepare`（认结构、装 Git Plan）、建会话、`start_peck_run`；审批卡片一律拒（高危、普通都是），ASK 回固定的话，等 `turn.completed`，把事件（`agent_events` 导出 JSONL）、用量、花费、结束原因写进尝试文件夹。Key 从 Key 目录的文件读进内存的 `Keys`（不进钥匙串、不打印）。`ScriptedModel` 的臂用 JSON 剧本，Phase 1 不花钱。
-- **一组**：`pnpm eval <组.json>` → `evals/run.ts`（Node 24 直接跑 TS，不加依赖）：题 × 臂 × 次数，交替 A B，固定并发；每次尝试新工作区（`git archive` 起点 → 只有一笔提交的新仓库，没有 `evals/`）、`cp -c -R` 预热的 `target/`、`node_modules`；跑完放进隐藏测试判分；有 `result.json` 的跳过（能接着跑）；每次给 `peck eval` 的花费上限是剩下的预算，到了就停、写明停在哪；断线、超时、编译卡死记成 infra、自动重跑。
-- **判分**：对比起点提交（Git Plan 每轮会提交）；`check/` 写两组测试（改前失败改后要过 / 改前就过改后还要过）和要跑的命令；Rust 的隐藏测试追加成文件末尾的 `#[cfg(test)] mod eval_check { use super::*; … }`，只跑 `cargo test --lib <模块>::`；`.git` 完好、没改不该改的文件。
-- **位置**：题、组配置、报告在仓库 `evals/`；工作区、trace 在仓库外 `projects/eval/`。
+用法、题目格式、结果在哪都在 [evals/README.md](./evals/README.md)；代码位置见 architecture「代码位置」。
+
+- **一次尝试**：`peck eval <attempt.json>`（`src-tauri/src/eval.rs`，`lib.rs` 的 `run()` 起 Tauri 前看参数）：临时数据目录里建 `AppState`、存臂的 `ui`、打开项目、`project_plugins::prepare`（认结构、装 Git Plan）、把这些记成一笔（判分的起点）、新建任务、`start_peck_run`；审批卡片一律拒、ASK 回固定的话、都计数；到时间打断（`timeout`）；导出 `events.jsonl` 和 `outcome.json`。真跑只用内存里的 Key（从 Key 目录按文件名读）。不用 `#[test]` 入口：测试构建里一律 Mock。
+- **一组**：`pnpm eval run | check | report`（`evals/run.ts`，Node 24 直接跑 TS，没加依赖；读 TOML 是自己写的一小段，只认 README 里的写法）。
+- 验过的：`smoke` 组（2 题 × 2 臂 × 2 次，假模型照参考答案改 / 什么都不改）11 秒跑完，参考答案 4/4 过、空改动 0/4；12 次的组跑到第 4 次时杀掉，重跑跳过做完的 3 次、被杀的那次重做；卡片（`git push` 高危被拒）、ASK 自动回答、到时间打断都单独跑过；`git archive` 和带历史的两种工作区里都看不到起点以后的提交、没有远端和 reflog；`pnpm eval check` 两题都合格；`node --test evals/test/*.test.ts` 5 个、`eval::` 2 个过。
+- **没验的**：真 API 的臂（Key 目录、`PECK_API_MODE=real`、子代理）、并发大于 2、infra 重跑、花到预算停下、噪声底和 `--baseline`（逻辑有单元测试，没有真数据）、预热缓存的拷贝（`projects/eval/cache/` 还是空的）。
+- 假模型剧本每一步都要带 `usage`：Peck Loop 碰到没报用量的回答会停下（本来就这样）。
+
+### Phase 2 要知道的
+
+- 挖题照 brief：一笔真实提交 → 起点是它的上一笔 → 站主当时的原话（正式库任务记录里找，只读；拷一份 `cp -c` 再用 `sqlite3 -readonly` 读）→ 那笔提交里的测试当隐藏测试。优先 v1.1.x–v1.2.x 真跑时踩过的坑：无头 Chrome 连弹钥匙串框、全量测试在沙箱里卡死、删 `mktemp` 临时目录被当成高危、CLI 的后台进程收不干净、旧的界面设置迁移不能删、托盘在后台线程上被碰导致崩溃。
+- Peck 的题要预热缓存：`projects/eval/cache/peck/src-tauri/target`、`…/node_modules`（在起点附近编一次）。
+- 换写法的解用 Codex 写（站主批了，每题 1 个小任务，我审过再用）。
 
 ### 评测要守的
 
@@ -87,4 +96,4 @@
 
 ## 下一步
 
-做完 v1.3.0 Phase 1。
+v1.3.0 Phase 2 题库（站主说开工再做）。
